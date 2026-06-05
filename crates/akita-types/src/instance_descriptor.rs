@@ -182,7 +182,6 @@ impl SetupSection {
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
         setup_seed: &AkitaSetupSeed,
-        level_params: &[LevelParams],
         terminal_proof_mode: TerminalProofMode,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
@@ -190,7 +189,6 @@ impl SetupSection {
             sis_modulus_family,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::with_terminal_proof_mode(terminal_proof_mode),
-            level_params_digest: digest_level_params(level_params),
         })
     }
 }
@@ -891,8 +889,7 @@ mod tests {
                     witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
                     direct_bytes: 32,
                     terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-                    commit_params: None,
-                    level_params: None,
+                    params: None,
                 }),
             ],
             total_bytes: 155,
@@ -912,7 +909,6 @@ mod tests {
                 protocol_features: ProtocolFeatureSet::with_terminal_proof_mode(
                     TerminalProofMode::RingSwitchSumcheck,
                 ),
-                level_params_digest: digest_level_params(&[sample_level_params()]),
             },
             PlanSection::from_schedule(&schedule),
             CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
@@ -1072,7 +1068,6 @@ mod tests {
             },
             SisModulusFamily::Q32,
             &seed,
-            &level_params,
             TerminalProofMode::RingSwitchSumcheck,
         )
         .expect("direct setup section");
@@ -1091,8 +1086,7 @@ mod tests {
                 witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 8,
                 terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 8,
         };
@@ -1102,8 +1096,7 @@ mod tests {
                 witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
                 terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 3,
         };
@@ -1119,22 +1112,20 @@ mod tests {
         let sumcheck = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
                 terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 3,
         };
         let direct = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
                 terminal_proof_mode: TerminalProofMode::DirectRingRelations,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 3,
         };

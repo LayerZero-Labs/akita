@@ -551,7 +551,7 @@ impl<
                 )))
             }
         };
-        let final_witness = DirectWitnessProof::deserialize_with_mode(
+        let final_witness = CleartextWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
             validate,

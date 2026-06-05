@@ -1,36 +1,72 @@
 use super::*;
 
-/// Per-level proving request handed to the suffix prover closure.
-pub enum SuffixLevelRequest<'a, F: FieldCore, L: FieldCore> {
-    /// Intermediate fold level — caller must commit to the next witness via
-    /// the prover's `commit_w_for_next` policy.
-    Intermediate {
-        /// Suffix level index (1-based; level 0 is the root).
-        level: usize,
-        /// Current recursive prover state entering the level.
-        current_state: Box<RecursiveProverState<F, L>>,
-        /// Current level parameters from the schedule.
-        level_params: &'a LevelParams,
-        /// Successor level parameters from the schedule.
-        next_params: LevelParams,
-    },
-    /// Terminal fold level — caller emits the cleartext `final_witness` and
-    /// does not commit to a next witness.
-    Terminal {
-        /// Suffix level index for the terminal fold.
-        level: usize,
-        /// Current recursive prover state entering the terminal fold.
-        current_state: &'a mut RecursiveProverState<F, L>,
-        /// Current level parameters from the schedule.
-        level_params: &'a LevelParams,
-        /// Bits-per-element used to pack the final witness as
-        /// [`PackedDigits`].
-        final_log_basis: u32,
-        /// Expected logical length of the terminal cleartext witness.
-        expected_w_len: usize,
-        /// Terminal relation proof mode selected by the schedule.
-        terminal_proof_mode: TerminalProofMode,
-    },
+/// Dispatch one intermediate fold level to the correct ring dimension under
+/// config `Cfg`.
+///
+/// Handles the fast path (`level_d == D`) and the dynamic-D path. The
+/// `#[inline(never)]` attribute isolates the monomorphized match arms in their
+/// own stack frame.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_level<Cfg, T, B, const D: usize>(
+    level_d: usize,
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    current_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    next_params: LevelParams,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<ProveLevelOutput<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field>,
+    B: ProverComputeBackend<Cfg::Field>,
+{
+    if level_d == D {
+        prove_recursive_level::<Cfg, T, B, D>(
+            expanded,
+            backend,
+            prepared,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            &next_params,
+            setup_contribution_mode,
+        )
+    } else {
+        dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            prove_recursive_level::<Cfg, T, B, { D_LEVEL }>(
+                expanded,
+                backend,
+                &level_prepared,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                &next_params,
+                setup_contribution_mode,
+            )
+        })
+    }
 }
 
 /// Dispatch the terminal fold level to the correct ring dimension under config
@@ -47,6 +83,8 @@ fn dispatch_prove_terminal_level<Cfg, T, B, const D: usize>(
     level: usize,
     level_params: &LevelParams,
     final_log_basis: u32,
+    expected_w_len: usize,
+    terminal_proof_mode: TerminalProofMode,
 ) -> Result<TerminalLevelProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -77,6 +115,8 @@ where
             level,
             level_params,
             final_log_basis,
+            expected_w_len,
+            terminal_proof_mode,
         )
     } else {
         dispatch_ring_dim_result!(level_d, |D_LEVEL| {
@@ -90,6 +130,8 @@ where
                 level,
                 level_params,
                 final_log_basis,
+                expected_w_len,
+                terminal_proof_mode,
             )
         })
     }
@@ -182,7 +224,7 @@ where
         current_w_len: current_state.w.len(),
     };
     let (level_params, next_params) =
-        select_fold_execution(level, inputs, current_state.log_basis)?;
+        scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
     let terminal_direct_step = match schedule.steps.get(level + 1) {
         Some(Step::Direct(step)) => step,
         _ => {
@@ -191,19 +233,19 @@ where
             ));
         }
     };
-    let out = prove_level(SuffixLevelRequest::Terminal {
+    let terminal = dispatch_prove_terminal_level::<Cfg, T, B, D>(
+        level_params.ring_dimension,
+        expanded,
+        backend,
+        prepared,
+        &mut current_state,
+        transcript,
         level,
-        current_state: &mut current_state,
-        level_params: &level_params,
-        final_log_basis: next_params.log_basis,
-        expected_w_len: terminal_direct_step.current_w_len,
-        terminal_proof_mode: terminal_direct_step.terminal_proof_mode,
-    })?;
-    let SuffixLevelOutput::Terminal(terminal) = out else {
-        return Err(AkitaError::InvalidSetup(
-            "prove_level returned an intermediate proof for the terminal level".to_string(),
-        ));
-    };
+        &level_params,
+        next_params.log_basis,
+        terminal_direct_step.current_w_len,
+        terminal_direct_step.terminal_proof_mode,
+    )?;
 
     Ok(RecursiveSuffixOutcome {
         intermediate_levels,
@@ -502,7 +544,8 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     final_log_basis: u32,
     expected_w_len: usize,
     terminal_proof_mode: TerminalProofMode,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
@@ -535,159 +578,153 @@ where
         TerminalProofMode::DirectRingRelations => {
             #[cfg(feature = "zk")]
             {
-                Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::InvalidSetup(
                     "direct terminal proof mode is not supported with zk".to_string(),
-                ))
+                ));
             }
             #[cfg(not(feature = "zk"))]
             {
-                let logical_w = ring_switch_build_terminal_direct_w::<F, { D }>(&mut quad_eq, lp)?;
+                let logical_w =
+                    ring_switch_build_terminal_direct_w::<F, D>(&instance, witness, lp)?;
                 if logical_w.len() != expected_w_len {
                     return Err(AkitaError::InvalidSetup(format!(
                         "scheduled terminal direct witness length did not match runtime witness: expected={expected_w_len}, actual={}",
                         logical_w.len()
                     )));
                 }
-                let final_witness = pack_terminal_direct_final_witness::<F, T>(
+                let final_witness = super::pack_terminal_direct_final_witness::<F, T>(
                     transcript,
                     &logical_w,
                     terminal_layout,
                     final_log_basis,
                 )?;
-                Ok(
+                return Ok(
                     TerminalLevelProof::new_direct_with_extension_opening_reduction::<D>(
                         y_rings,
                         extension_opening_reduction,
                         final_witness,
                     ),
-                )
+                );
             }
         }
-        TerminalProofMode::RingSwitchSumcheck => {
-            let logical_w =
-                ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
-            if logical_w.len() != expected_w_len {
-                return Err(AkitaError::InvalidSetup(format!(
+        TerminalProofMode::RingSwitchSumcheck => {}
+    }
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
+    if logical_w.len() != expected_w_len {
+        return Err(AkitaError::InvalidSetup(format!(
             "scheduled terminal witness length did not match runtime witness: expected={expected_w_len}, actual={}",
             logical_w.len()
         )));
-            }
-            let final_witness =
-                DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits_with_min_bits(
-                    logical_w.as_i8_digits(),
-                    final_log_basis,
-                ));
-            let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
-                &quad_eq,
-                expanded,
-                transcript,
-                &logical_w,
-                &final_witness,
-                terminal_layout,
-                lp,
-            )?;
-
-            // Terminal layout drops the D-block: the relation claim no longer sums
-            // any `v` rows, so pass an empty slice for the v parameter.
-            let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-                &rs.tau1,
-                rs.alpha,
-                &[],
-                commitment_u,
-                &y_rings,
-            )?;
-            #[cfg(feature = "zk")]
-            let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
-                &rs.tau1,
-                rs.alpha,
-                &[],
-                commitment_u,
-                &y_rings_masked,
-            )?;
-            let RingSwitchOutput {
-                w_evals_compact,
-                live_x_cols,
-                m_evals_x,
-                alpha_evals_y,
-                col_bits,
-                ring_bits,
-                tau0: _,
-                tau1: _,
-                b,
-                alpha: _,
-            } = rs;
-
-            // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
-            // contribution to every round polynomial regardless of `r_stage1`, so
-            // dummy zeros for `r_stage1` and `s_claim` are safe.
-            let r_stage1 = vec![L::zero(); col_bits + ring_bits];
-            #[cfg(feature = "zk")]
-            let stage2_round_pads =
-                zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
-            #[cfg(feature = "zk")]
-            let stage2_sumcheck_proof_masked = {
-                let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    L::zero(),
-                    w_evals_compact,
-                    &r_stage1,
-                    L::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
-                let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
-                    .prove_zk::<F, T, _>(
-                        relation_claim_public,
-                        transcript,
-                        |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                        stage2_round_pads,
-                    )?;
-                stage2_sumcheck_proof_masked
-            };
-            #[cfg(not(feature = "zk"))]
-            let stage2_sumcheck = {
-                let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    L::zero(),
-                    w_evals_compact,
-                    &r_stage1,
-                    L::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
-                let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) =
-                    stage2_prover.prove::<F, T, _>(transcript, |tr| {
-                        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-                    })?;
-                stage2_sumcheck
-            };
-
-            Ok(
-                TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-                    #[cfg(not(feature = "zk"))]
-                    y_rings,
-                    #[cfg(feature = "zk")]
-                    y_rings_masked,
-                    extension_opening_reduction,
-                    #[cfg(not(feature = "zk"))]
-                    stage2_sumcheck,
-                    #[cfg(feature = "zk")]
-                    stage2_sumcheck_proof_masked,
-                    final_witness,
-                ),
-            )
-        }
     }
+    let final_witness = CleartextWitnessProof::PackedDigits(
+        PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
+    );
+    let rs = ring_switch_finalize_terminal::<F, L, T, D>(
+        &instance,
+        expanded,
+        transcript,
+        &logical_w,
+        &final_witness,
+        terminal_layout,
+        lp,
+    )?;
+
+    // Terminal layout drops the D-block: the relation claim no longer sums
+    // any `v` rows, so pass an empty slice for the v parameter.
+    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
+        &rs.tau1,
+        rs.alpha,
+        &[],
+        commitment_u,
+        &y_rings,
+    )?;
+    #[cfg(feature = "zk")]
+    let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
+        &rs.tau1,
+        rs.alpha,
+        &[],
+        commitment_u,
+        &y_rings_masked,
+    )?;
+    let RingSwitchOutput {
+        w_evals_compact,
+        live_x_cols,
+        m_evals_x,
+        alpha_evals_y,
+        col_bits,
+        ring_bits,
+        tau0: _,
+        tau1: _,
+        b,
+        alpha: _,
+    } = rs;
+
+    // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
+    // contribution to every round polynomial regardless of `stage1_point`, so
+    // dummy zeros for `stage1_point` and `s_claim` are safe.
+    let stage1_point = vec![L::zero(); col_bits + ring_bits];
+    #[cfg(feature = "zk")]
+    let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
+    #[cfg(feature = "zk")]
+    let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            L::zero(),
+            w_evals_compact,
+            &stage1_point,
+            L::zero(),
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )?;
+        let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
+            .prove_zk::<F, T, _>(
+                relation_claim_public,
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                stage2_round_pads,
+            )?;
+        (stage2_sumcheck_proof_masked, _sumcheck_challenges)
+    };
+    #[cfg(not(feature = "zk"))]
+    let (stage2_sumcheck, _sumcheck_challenges) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            L::zero(),
+            w_evals_compact,
+            &stage1_point,
+            L::zero(),
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )?;
+        let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
+            .prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        (stage2_sumcheck, _sumcheck_challenges)
+    };
+    let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+        #[cfg(not(feature = "zk"))]
+        y_rings,
+        #[cfg(feature = "zk")]
+        y_rings_masked,
+        extension_opening_reduction,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
+        final_witness,
+    );
+    Ok(proof)
 }
 
 pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: FieldCore> {
@@ -1091,7 +1128,6 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, B, const D: usize>(
     final_log_basis: u32,
     expected_w_len: usize,
     terminal_proof_mode: TerminalProofMode,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
     F: FieldCore
@@ -1264,7 +1300,8 @@ where
         final_log_basis,
         expected_w_len,
         terminal_proof_mode,
-        quad_eq,
+        instance,
+        witness,
         extension_opening_reduction,
         y_rings,
         #[cfg(feature = "zk")]
@@ -1356,8 +1393,7 @@ pub fn prove_terminal_recursive_level<Cfg, T, B, const D: usize>(
     final_log_basis: u32,
     expected_w_len: usize,
     terminal_proof_mode: TerminalProofMode,
-    current_layout: CurrentLayout,
-) -> Result<TerminalLevelProof<F, L>, AkitaError>
+) -> Result<TerminalLevelProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -1391,7 +1427,5 @@ where
         final_log_basis,
         expected_w_len,
         terminal_proof_mode,
-        #[cfg(feature = "zk")]
-        &mut current_state.zk_hiding,
     )
 }

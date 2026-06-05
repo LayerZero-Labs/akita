@@ -9,9 +9,10 @@ use super::validate_level_dispatch;
 mod extension_opening_reduction;
 #[cfg(feature = "zk")]
 mod zk;
-#[cfg(not(feature = "zk"))]
-use crate::protocol::ring_switch::verify_terminal_direct_ring_relations;
-use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
+use crate::protocol::ring_switch::{
+    ring_switch_verifier, ring_switch_verifier_terminal, verify_terminal_direct_ring_relations,
+    RingSwitchReplay,
+};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use crate::stages::SetupSumcheckVerifier;
@@ -57,9 +58,10 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
-    Step, TerminalLevelProof, TerminalProofMode, TerminalWitnessSegmentLayout,
+    ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, TerminalLevelProof, TerminalProofMode, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
@@ -247,6 +249,7 @@ where
         Some(&stage2.sumcheck_proof),
         #[cfg(feature = "zk")]
         Some(&stage2.sumcheck_proof_masked),
+        stage3_sumcheck_proof,
         setup,
         transcript,
         claim_points,
@@ -287,7 +290,7 @@ pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     #[cfg(not(feature = "zk"))] stage2_sumcheck: Option<&akita_sumcheck::SumcheckProof<C>>,
     #[cfg(feature = "zk")] stage2_sumcheck_masked: Option<&akita_sumcheck::SumcheckProofMasked<C>>,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     terminal_proof_mode: TerminalProofMode,
     setup: &AkitaVerifierSetup<F>,
@@ -364,6 +367,7 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     stage1: Option<&AkitaStage1Proof<C>>,
     #[cfg(not(feature = "zk"))] stage2_sumcheck: Option<&akita_sumcheck::SumcheckProof<C>>,
     #[cfg(feature = "zk")] stage2_sumcheck_masked: Option<&akita_sumcheck::SumcheckProofMasked<C>>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -864,6 +868,34 @@ where
             }
         }
     }
+    let m_row_layout = if is_terminal {
+        MRowLayout::WithoutDBlock
+    } else {
+        MRowLayout::WithDBlock
+    };
+    let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
+    let (gamma, row_coefficient_rings) =
+        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
+            &row_coefficients,
+        )?;
+    let relation_instance = RingRelationInstance::new(
+        m_row_layout,
+        stage1_challenges.clone(),
+        ring_opening_points.clone(),
+        ring_multiplier_points.clone(),
+        incidence_summary.clone(),
+        commitment_routing,
+        gamma,
+        row_coefficient_rings,
+        y_rings.to_vec(),
+        v_typed.to_vec(),
+    )?;
+    relation_instance.check_v_shape_for_level(batched_lp)?;
+    let ring_switch_replay = RingSwitchReplay {
+        relation: &relation_instance,
+        row_coefficients: &row_coefficients,
+        lp: batched_lp,
+    };
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..

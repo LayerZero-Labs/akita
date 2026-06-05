@@ -3,7 +3,7 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::IntegerChallenge;
-use akita_types::DirectWitnessProof;
+use akita_types::CleartextWitnessProof;
 
 #[derive(Clone)]
 struct TerminalDirectSegments<F: FieldCore, const D: usize> {
@@ -29,7 +29,7 @@ pub(crate) fn verify_terminal_direct_ring_relations<F, E, T, const D: usize>(
     claim_to_point: &[usize],
     challenges: &Challenges,
     final_w_len: usize,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     transcript: &mut T,
     terminal_parts: &TerminalWitnessTranscriptParts,
     setup: &AkitaExpandedSetup<F>,
@@ -76,7 +76,7 @@ pub(super) fn verify_terminal_direct_relation_rows<F, E, const D: usize>(
     claim_to_point: &[usize],
     challenges: &Challenges,
     final_w_len: usize,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     setup: &AkitaExpandedSetup<F>,
     lp: &LevelParams,
     num_polys_per_point: &[usize],
@@ -232,12 +232,18 @@ where
     if commitment_rows.len() != expected_commitment_rows {
         return Err(AkitaError::InvalidProof);
     }
+    let num_t_vectors = num_polys_per_point.iter().try_fold(0usize, |acc, &count| {
+        acc.checked_add(count).ok_or(AkitaError::InvalidProof)
+    })?;
+    let num_digits_fold = lp
+        .num_digits_fold(num_t_vectors, F::modulus_bits())
+        .map_err(|_| AkitaError::InvalidSetup("terminal direct fold depth invalid".to_string()))?;
     if lp.num_blocks == 0
         || !lp.num_blocks.is_power_of_two()
         || lp.block_len == 0
         || lp.num_digits_open == 0
         || lp.num_digits_commit == 0
-        || lp.num_digits_fold == 0
+        || num_digits_fold == 0
     {
         return Err(AkitaError::InvalidSetup(
             "terminal direct verifier layout has zero width".to_string(),
@@ -317,7 +323,7 @@ where
 
 #[cfg(not(feature = "zk"))]
 fn decode_terminal_direct_segments<F, const D: usize>(
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     lp: &LevelParams,
     num_claims: usize,
@@ -341,7 +347,7 @@ where
         })
         .collect::<Vec<_>>();
     let layout =
-        terminal_direct_plane_layout(lp, num_claims, num_polys_per_point, num_public_rows)?;
+        terminal_direct_plane_layout::<F>(lp, num_claims, num_polys_per_point, num_public_rows)?;
     if planes.len() != layout.total_planes {
         return Err(AkitaError::InvalidProof);
     }
@@ -363,13 +369,14 @@ struct TerminalDirectPlaneLayout {
     offset_w: usize,
     offset_t: usize,
     offset_z: usize,
+    num_digits_fold: usize,
     total_blocks: usize,
     t_total_blocks: usize,
     total_planes: usize,
 }
 
 #[cfg(not(feature = "zk"))]
-fn terminal_direct_plane_layout(
+fn terminal_direct_plane_layout<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     num_claims: usize,
     num_polys_per_point: &[usize],
@@ -395,23 +402,32 @@ fn terminal_direct_plane_layout(
         .checked_mul(lp.a_key.row_len())
         .and_then(|len| len.checked_mul(t_total_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal direct T width overflow".to_string()))?;
-    let z_len = lp
-        .num_digits_fold
+    let num_digits_fold = lp
+        .num_digits_fold(total_poly_slots, F::modulus_bits())
+        .map_err(|_| AkitaError::InvalidSetup("terminal direct fold depth invalid".to_string()))?;
+    let z_len = num_digits_fold
         .checked_mul(lp.inner_width())
         .and_then(|len| len.checked_mul(num_public_rows))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal direct Z width overflow".to_string()))?;
-    // Direct mode omits `r_hat` and (being transparent-only) carries no
-    // blinding planes, so the shared ordering authority is consulted with zero
-    // blinding lengths; `offset_r` is intentionally unused here.
-    let offsets = ring_switch_segment_layout(w_len, t_len, z_len, 0, 0, lp.m_vars >= lp.r_vars)?;
+    let z_first = akita_types::ring_column_z_first(lp);
+    let offset_z = if z_first { 0 } else { w_len + t_len };
+    let offset_w = if z_first { z_len } else { 0 };
+    let offset_t = if z_first {
+        z_len.checked_add(w_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal direct T offset overflow".to_string())
+        })?
+    } else {
+        w_len
+    };
     let total_planes = w_len
         .checked_add(t_len)
         .and_then(|len| len.checked_add(z_len))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal direct width overflow".to_string()))?;
     Ok(TerminalDirectPlaneLayout {
-        offset_w: offsets.offset_w,
-        offset_t: offsets.offset_t,
-        offset_z: offsets.offset_z,
+        offset_w,
+        offset_t,
+        offset_z,
+        num_digits_fold,
         total_blocks,
         t_total_blocks,
         total_planes,
@@ -560,13 +576,13 @@ where
     for point_idx in 0..num_public_rows {
         for block_idx in 0..lp.block_len {
             for commit_digit_idx in 0..lp.num_digits_commit {
-                let digits = (0..lp.num_digits_fold)
+                let digits = (0..layout.num_digits_fold)
                     .map(|fold_digit_idx| {
                         let source_idx = layout
                             .offset_z
                             .checked_add(
                                 commit_digit_idx
-                                    .checked_mul(lp.num_digits_fold)
+                                    .checked_mul(layout.num_digits_fold)
                                     .and_then(|idx| idx.checked_add(fold_digit_idx))
                                     .and_then(|idx| idx.checked_mul(num_public_rows))
                                     .and_then(|idx| idx.checked_mul(lp.block_len))

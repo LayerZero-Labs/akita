@@ -9,8 +9,13 @@
 //! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
 //! directly and never need this module.
 
+use std::marker::PhantomData;
+
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams};
+use akita_types::{
+    AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams, SetupMatrixEnvelope,
+    TerminalProofMode,
+};
 
 use crate::CommitmentConfig;
 
@@ -66,4 +71,69 @@ where
     Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
         num_vars, num_claims,
     )?)
+}
+
+/// `Cfg` wrapper that selects [`TerminalProofMode::DirectRingRelations`] while
+/// delegating every other policy hook to the inner config.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DirectTerminalCfg<Cfg>(PhantomData<Cfg>);
+
+#[allow(clippy::expl_impl_clone_on_copy)]
+impl<Cfg> DirectTerminalCfg<Cfg> {
+    /// Construct the marker value.
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Cfg: CommitmentConfig> CommitmentConfig for DirectTerminalCfg<Cfg> {
+    type Field = Cfg::Field;
+    type ClaimField = Cfg::ClaimField;
+    type ChallengeField = Cfg::ChallengeField;
+
+    const D: usize = Cfg::D;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        Cfg::decomposition()
+    }
+
+    fn fold_challenge_shape_at_level(
+        inputs: akita_types::AkitaScheduleInputs,
+    ) -> akita_challenges::TensorChallengeShape {
+        Cfg::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_family() -> akita_types::SisModulusFamily {
+        Cfg::sis_modulus_family()
+    }
+
+    fn terminal_proof_mode() -> TerminalProofMode {
+        TerminalProofMode::DirectRingRelations
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        Cfg::ring_subfield_embedding_norm_bound()
+    }
+
+    fn onehot_chunk_size() -> usize {
+        Cfg::onehot_chunk_size()
+    }
+
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn ring_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        Cfg::ring_challenge_config(d)
+    }
 }

@@ -26,6 +26,3 @@ pub use proof_size::{
     root_extension_opening_partials, sumcheck_rounds, terminal_level_proof_bytes,
     terminal_level_proof_bytes_for_mode,
 };
-pub use sis_derivation::{
-    decomp_depths, level_layout_from_params, recursive_level_layout_from_params,
-};

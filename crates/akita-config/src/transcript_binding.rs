@@ -7,7 +7,7 @@
 //! it without crossing through `akita-pcs`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
-use crate::CommitmentConfig;
+use crate::{setup_level_params_from_runtime_schedule, CommitmentConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -65,7 +65,6 @@ where
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
             setup.seed(),
-            &setup_levels,
             terminal_proof_mode,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,

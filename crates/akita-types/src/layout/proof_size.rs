@@ -2,9 +2,10 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::layout::digit_math::compute_num_digits_full_field;
-use crate::stage1_tree_stage_shapes;
-use crate::{DirectWitnessShape, LevelParams, TerminalProofMode};
+use crate::sis::compute_num_digits_full_field;
+use crate::{
+    CleartextWitnessShape, LevelParams, TerminalProofMode, EXTENSION_OPENING_REDUCTION_DEGREE,
+};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -168,62 +169,7 @@ pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
     col_bits + ring_bits
 }
 
-/// Header-stripped byte size of one intermediate folded proof level.
-///
-/// Ring-valued objects (`y`, `v`, and the next witness commitment) serialize
-/// over the base SIS field. Sumcheck objects and scalar evaluations serialize
-/// over the challenge field, which may be a non-trivial extension of the base
-/// field for small-prime configurations.
-pub fn level_proof_bytes(
-    base_field_bits: u32,
-    challenge_field_bits: u32,
-    lp: &LevelParams,
-    level_lp: &LevelParams,
-    next_lp: &LevelParams,
-    next_w_len: usize,
-    num_claims: usize,
-) -> usize {
-    let base_elem_bytes = field_bytes(base_field_bits);
-    let challenge_elem_bytes = field_bytes(challenge_field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
-    let next_commit_bytes = proof_ring_vec_bytes(
-        next_lp.b_key.row_len(),
-        next_lp.ring_dimension,
-        base_elem_bytes,
-    );
-    let next_eval_bytes = challenge_elem_bytes;
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << level_lp.log_basis;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-
-    y_bytes
-        + v_bytes
-        + stage1_bytes
-        + {
-            #[cfg(feature = "zk")]
-            {
-                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
-            }
-            #[cfg(not(feature = "zk"))]
-            {
-                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
-            }
-        }
-        + next_commit_bytes
-        + next_eval_bytes
-}
-
 /// Header-stripped byte size of one terminal folded proof level.
-///
-/// A terminal level absorbs the cleartext recursive witness directly into the
-/// Fiat-Shamir transcript, so the proof no longer ships the next-level
-/// witness commitment, the stage-1 range-check sumcheck, or the next-witness
-/// evaluation claim. Under MRowLayout::Terminal the D-block is also dropped
-/// from the M-matrix and `v` is omitted from `TerminalLevelProof` entirely.
-/// `y` always remains, followed by an explicit terminal-relation tag and the
-/// relation payload selected by [`TerminalProofMode`]. The cleartext witness
-/// itself is accounted for separately via [`direct_witness_bytes`].
 pub fn terminal_level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,

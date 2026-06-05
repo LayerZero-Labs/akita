@@ -1,11 +1,14 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
-#[cfg(not(feature = "zk"))]
-use crate::protocol::ring_switch::ring_switch_build_terminal_direct_w;
+use crate::dispatch_ring_dim_result;
+use crate::protocol::extension_opening_reduction::{
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+};
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
-    ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
-    NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_terminal_direct_w, ring_switch_build_w, ring_switch_finalize,
+    ring_switch_finalize_terminal, ring_switch_finalize_terminal_with_gamma,
+    ring_switch_finalize_with_gamma, NextWitnessCommitment, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
@@ -32,17 +35,14 @@ use akita_sumcheck::{
 };
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
-#[cfg(not(feature = "zk"))]
-use akita_transcript::labels::ABSORB_TERMINAL_W_REMAINDER;
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-#[cfg(not(feature = "zk"))]
-use akita_types::TerminalWitnessSegmentLayout;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
@@ -61,10 +61,11 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalProofMode,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
+    LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, Step, TerminalLevelProof, TerminalProofMode,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -122,18 +123,26 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub zk_hiding: ZkHidingProverState<F>,
 }
 
+impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
+    /// Logical witness represented by the carried opening claim.
+    #[inline]
+    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
+        self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+}
+
 #[cfg(not(feature = "zk"))]
 fn pack_terminal_direct_final_witness<F, T>(
     transcript: &mut T,
     logical_w: &RecursiveWitnessFlat,
-    terminal_layout: TerminalWitnessSegmentLayout,
+    terminal_layout: akita_types::TerminalWitnessSegmentLayout,
     final_log_basis: u32,
-) -> Result<DirectWitnessProof<F>, AkitaError>
+) -> Result<CleartextWitnessProof<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
     let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
@@ -144,14 +153,6 @@ where
     }
     transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
     Ok(final_witness)
-}
-
-impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
-    /// Logical witness represented by the carried opening claim.
-    #[inline]
-    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
-        self.logical_w.as_ref().unwrap_or(&self.w)
-    }
 }
 
 /// Cursor into the proof-level hiding witness allocated at batched-prove start.

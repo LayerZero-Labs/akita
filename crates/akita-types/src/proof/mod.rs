@@ -50,7 +50,7 @@ pub use incidence::{
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, TerminalLevelProof, TerminalRelationProof,
+    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof, TerminalRelationProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
@@ -67,8 +67,8 @@ pub use setup::{
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,
-    TerminalRelationProofShape,
+    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, TerminalRelationProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

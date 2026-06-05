@@ -17,7 +17,6 @@ use akita_types::{DecompositionParams, SisModulusFamily};
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
-
 pub use generated::GeneratedScheduleTable;
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
@@ -54,4 +53,6 @@ pub struct PlannerPolicy {
     /// folded-witness digit count. Only consulted at a root level whose
     /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
     pub onehot_chunk_size: usize,
+    /// Terminal relation proof mode (`Cfg::terminal_proof_mode()`).
+    pub terminal_proof_mode: akita_types::TerminalProofMode,
 }

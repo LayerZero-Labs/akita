@@ -7,7 +7,9 @@
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
 
-use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
+use crate::layout::{
+    field_bytes, proof_ring_vec_bytes, sumcheck_rounds, terminal_level_proof_bytes_for_mode,
+};
 use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
@@ -84,7 +86,14 @@ pub fn level_proof_bytes(
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        MRowLayout::WithoutDBlock => y_bytes + sumcheck,
+        MRowLayout::WithoutDBlock => terminal_level_proof_bytes_for_mode(
+            base_field_bits,
+            challenge_field_bits,
+            lp,
+            next_w_len,
+            num_claims,
+            crate::TerminalProofMode::RingSwitchSumcheck,
+        ),
         MRowLayout::WithDBlock => {
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");

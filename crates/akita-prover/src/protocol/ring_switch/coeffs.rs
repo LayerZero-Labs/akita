@@ -111,51 +111,6 @@ where
     Ok(w)
 }
 
-/// Build the transparent terminal direct witness without computing or
-/// appending quotient digits.
-///
-/// Direct terminal mode checks the reduced row relation directly, so the
-/// quotient witness `r_hat` is not part of the terminal statement.
-///
-/// # Errors
-///
-/// Returns an error if the quadratic equation is not terminal-layout or is
-/// missing the prover-side witness pieces.
-#[cfg(not(feature = "zk"))]
-#[tracing::instrument(skip_all, name = "ring_switch_build_terminal_direct_w")]
-#[inline(never)]
-pub fn ring_switch_build_terminal_direct_w<F, const D: usize>(
-    quad_eq: &mut QuadraticEquation<F, D>,
-    lp: &LevelParams,
-) -> Result<RecursiveWitnessFlat, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if quad_eq.m_row_layout() != MRowLayout::Terminal {
-        return Err(AkitaError::InvalidInput(
-            "terminal direct witness builder requires terminal row layout".to_string(),
-        ));
-    }
-    let w_hat = quad_eq
-        .take_w_hat()
-        .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
-    let z_pre = quad_eq
-        .take_z_pre()
-        .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let hint = quad_eq
-        .take_hint()
-        .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
-    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    let (decomposed_inner_rows, _recomposed_inner_rows) = hint.into_flat_parts();
-
-    Ok(build_terminal_direct_w_coeffs::<D>(
-        &w_hat,
-        &decomposed_inner_rows,
-        &z_pre.centered_coeffs,
-        lp,
-    ))
-}
-
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     centered: &[i32; D],
     out: &mut [[i8; D]],
@@ -267,59 +222,41 @@ fn emit_z_folded_block_inner<const D: usize>(
     }
 }
 
-/// Build a terminal direct witness from already-decomposed non-quotient
-/// segments.
-#[cfg(not(feature = "zk"))]
-pub(super) fn build_terminal_direct_w_coeffs<const D: usize>(
-    w_hat: &FlatDigitBlocks<D>,
-    t_hat: &FlatDigitBlocks<D>,
-    z_pre_centered: &[[i32; D]],
-    lp: &LevelParams,
-) -> RecursiveWitnessFlat {
-    build_non_quotient_w_coeffs(
-        w_hat,
-        #[cfg(feature = "zk")]
-        &FlatDigitBlocks::empty(),
-        t_hat,
-        #[cfg(feature = "zk")]
-        &[],
-        z_pre_centered,
-        lp,
-    )
-}
-
-#[cfg(not(feature = "zk"))]
-#[allow(unused_variables)]
-fn build_non_quotient_w_coeffs<const D: usize>(
-    w_hat: &FlatDigitBlocks<D>,
+/// Build the committed witness polynomial from ring-domain digit planes.
+///
+/// Emits field-domain coefficients in digit-major order (block index innermost)
+/// with adaptive segment ordering: the segment whose block dimension is the
+/// larger power of two comes first.
+///
+/// Segment ordering:
+/// - If `m_vars >= r_vars`: z-hat (`2^m` blocks), e-hat + t-hat (`2^r` blocks), r-hat
+/// - If `m_vars < r_vars`: e-hat + t-hat (`2^r` blocks), z-hat (`2^m` blocks), r-hat
+///
+/// Within each segment, the power-of-2 block index is the fastest-varying
+/// (innermost) dimension.
+///
+/// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
+/// planes for one block contiguously), which is natural for ring-domain matvec
+/// and recomposition. This function transposes opening digits to digit-major at
+/// the ring-to-field boundary; ZK blinding streams are already direct
+/// digit-plane sources and are emitted in matrix-column order.
+///
+/// # Panics
+///
+/// Panics if the caller supplies digit blocks whose plane counts do not match
+/// the fold layout in `lp`, or if ZK blinding digit counts do not match the
+/// configured blinding columns.
+#[allow(clippy::too_many_arguments)]
+pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
+    e_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
+    z_folded_centered: &[[i32; D]],
+    r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
     num_claims: usize,
 ) -> RecursiveWitnessFlat {
-    RecursiveWitnessFlat::from_i8_digits(build_non_quotient_w_coeffs_into(
-        w_hat,
-        #[cfg(feature = "zk")]
-        d_blinding_digits,
-        t_hat,
-        #[cfg(feature = "zk")]
-        b_blinding_digits,
-        z_pre_centered,
-        lp,
-    ))
-}
-
-#[allow(unused_variables)]
-fn build_non_quotient_w_coeffs_into<const D: usize>(
-    w_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
-    t_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
-    lp: &LevelParams,
-) -> Vec<i8> {
     let log_basis = lp.log_basis;
     let num_digits_fold = lp
         .num_digits_fold(num_claims, F::modulus_bits())
@@ -327,6 +264,7 @@ fn build_non_quotient_w_coeffs_into<const D: usize>(
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;
+    let levels = r_decomp_levels::<F>(log_basis);
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
@@ -345,20 +283,27 @@ fn build_non_quotient_w_coeffs_into<const D: usize>(
         + d_blinding_planes
         + t_hat_planes
         + b_blinding_planes
-        + z_pre_centered.len() * num_digits_fold;
-    let z_first = lp.m_vars >= lp.r_vars;
+        + z_folded_centered.len() * num_digits_fold;
+    let r_hat_count = r.len() * levels;
+    let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
         e_hat_planes,
         d_blinding_planes,
         t_hat_planes,
         b_blinding_planes,
-        z_pre_elems = z_pre_centered.len(),
-        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        z_folded_elems = z_folded_centered.len(),
+        z_folded_planes = z_folded_centered.len() * num_digits_fold,
+        r_elems = r.len(),
+        r_planes = r_hat_count,
+        total_ring = z_count + r_hat_count,
+        total_field = (z_count + r_hat_count) * D,
         z_first,
-        "build_non_quotient_w_coeffs"
+        "build_w_coeffs"
     );
+    let total_planes = z_count + r_hat_count;
+    let total_elems = total_planes * D;
 
-    let mut out = Vec::with_capacity(z_count * D);
+    let mut out = Vec::with_capacity(total_elems);
 
     let w_block_count = e_hat.block_count();
     assert_eq!(
@@ -420,58 +365,6 @@ fn build_non_quotient_w_coeffs_into<const D: usize>(
         );
     }
 
-    out
-}
-
-/// Build the committed witness polynomial from ring-domain digit planes.
-///
-/// Emits field-domain coefficients in digit-major order (block index innermost)
-/// with adaptive segment ordering: the segment whose block dimension is the
-/// larger power of two comes first.
-///
-/// Segment ordering:
-/// - If `m_vars >= r_vars`: z-hat (`2^m` blocks), e-hat + t-hat (`2^r` blocks), r-hat
-/// - If `m_vars < r_vars`: e-hat + t-hat (`2^r` blocks), z-hat (`2^m` blocks), r-hat
-///
-/// Within each segment, the power-of-2 block index is the fastest-varying
-/// (innermost) dimension.
-///
-/// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
-/// planes for one block contiguously), which is natural for ring-domain matvec
-/// and recomposition. This function transposes opening digits to digit-major at
-/// the ring-to-field boundary; ZK blinding streams are already direct
-/// digit-plane sources and are emitted in matrix-column order.
-///
-/// # Panics
-///
-/// Panics if the caller supplies digit blocks whose plane counts do not match
-/// the fold layout in `lp`, or if ZK blinding digit counts do not match the
-/// configured blinding columns.
-pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    w_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
-    t_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
-    r: &[CyclotomicRing<F, D>],
-    lp: &LevelParams,
-) -> RecursiveWitnessFlat {
-    let log_basis = lp.log_basis;
-    let levels = r_decomp_levels::<F>(log_basis);
-    let r_hat_count = r.len() * levels;
-    tracing::debug!(r_elems = r.len(), r_planes = r_hat_count, "build_w_coeffs");
-    let mut out = build_non_quotient_w_coeffs_into(
-        w_hat,
-        #[cfg(feature = "zk")]
-        d_blinding_digits,
-        t_hat,
-        #[cfg(feature = "zk")]
-        b_blinding_digits,
-        z_pre_centered,
-        lp,
-    );
-    out.reserve(r_hat_count * D);
-
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
@@ -483,4 +376,152 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         }
     }
     RecursiveWitnessFlat::from_i8_digits(out)
+}
+
+/// Build the terminal direct witness without appending quotient digits.
+///
+/// Direct terminal mode checks the reduced row relation directly, so the
+/// quotient witness `r_hat` is not part of the terminal statement.
+///
+/// # Errors
+///
+/// Returns an error if the ring relation is not terminal-layout or is missing
+/// prover-side witness pieces.
+#[cfg(not(feature = "zk"))]
+#[tracing::instrument(skip_all, name = "ring_switch_build_terminal_direct_w")]
+#[inline(never)]
+pub fn ring_switch_build_terminal_direct_w<F, const D: usize>(
+    instance: &RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
+    lp: &LevelParams,
+) -> Result<RecursiveWitnessFlat, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if instance.m_row_layout() != MRowLayout::WithoutDBlock {
+        return Err(AkitaError::InvalidInput(
+            "terminal direct witness builder requires terminal row layout".to_string(),
+        ));
+    }
+    let RingRelationWitness {
+        z_folded_rings,
+        e_hat,
+        mut hint,
+        ..
+    } = witness;
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+    hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+    let (decomposed_inner_rows, _) = hint.into_flat_parts();
+    let num_claims = instance.claim_to_point().len();
+    Ok(build_terminal_direct_w_coeffs::<F, D>(
+        &e_hat,
+        &decomposed_inner_rows,
+        &z_folded_rings.centered_coeffs,
+        lp,
+        num_claims,
+    ))
+}
+
+/// Build a terminal direct witness from already-decomposed non-quotient segments.
+#[cfg(not(feature = "zk"))]
+pub(super) fn build_terminal_direct_w_coeffs<F: CanonicalField, const D: usize>(
+    e_hat: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks<D>,
+    z_pre_centered: &[[i32; D]],
+    lp: &LevelParams,
+    num_claims: usize,
+) -> RecursiveWitnessFlat {
+    RecursiveWitnessFlat::from_i8_digits(build_non_quotient_w_coeffs_into::<F, D>(
+        e_hat,
+        t_hat,
+        z_pre_centered,
+        lp,
+        num_claims,
+    ))
+}
+
+#[cfg(not(feature = "zk"))]
+fn build_non_quotient_w_coeffs_into<F: CanonicalField, const D: usize>(
+    e_hat: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks<D>,
+    z_pre_centered: &[[i32; D]],
+    lp: &LevelParams,
+    num_claims: usize,
+) -> Vec<i8> {
+    let log_basis = lp.log_basis;
+    let num_digits_fold = lp
+        .num_digits_fold(num_claims, F::modulus_bits())
+        .expect("build_w_coeffs: degenerate fold bound in validated level params");
+    let depth_open = lp.num_digits_open;
+    let depth_commit = lp.num_digits_commit;
+    let block_len = lp.block_len;
+
+    let e_hat_planes = e_hat.flat_digits().len();
+    let t_hat_planes = t_hat.flat_digits().len();
+    let z_count = e_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
+    let z_first = akita_types::ring_column_z_first(lp);
+    tracing::debug!(
+        e_hat_planes,
+        t_hat_planes,
+        z_pre_elems = z_pre_centered.len(),
+        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        z_first,
+        "build_non_quotient_w_coeffs"
+    );
+
+    let mut out = Vec::with_capacity(z_count * D);
+
+    let w_block_count = e_hat.block_count();
+    assert_eq!(
+        e_hat_planes,
+        w_block_count * depth_open,
+        "build_w_coeffs: e_hat block layout does not match open digit depth"
+    );
+    let t_block_count = t_hat.block_count();
+    let t_planes_per_block = if t_block_count == 0 {
+        0
+    } else {
+        assert_eq!(
+            t_hat_planes % t_block_count,
+            0,
+            "build_w_coeffs: t_hat block layout must be uniform"
+        );
+        t_hat_planes / t_block_count
+    };
+
+    if z_first {
+        emit_z_folded_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            t_block_count,
+            t_planes_per_block,
+        );
+    } else {
+        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            t_block_count,
+            t_planes_per_block,
+        );
+        emit_z_folded_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+    }
+
+    out
 }

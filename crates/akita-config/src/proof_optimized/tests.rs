@@ -21,7 +21,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
-        DirectStep, DirectWitnessShape, FoldStep, SisModulusFamily, Step, TerminalProofMode,
+        CleartextWitnessShape, DirectStep, FoldStep, SisModulusFamily, Step, TerminalProofMode,
     };
 
     let sparse = SparseChallengeConfig::Uniform {
@@ -42,8 +42,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
             witness_shape: CleartextWitnessShape::PackedDigits((16, 3)),
             direct_bytes: 0,
             terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-            commit_params: None,
-            level_params: Some(direct_lp.clone()),
+            params: None,
         }),
     ];
 
@@ -65,7 +64,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     // contract is described on `DirectStep::params` and the
     // materializer comment that branches on it; this test locks
     // it in so neither side drifts.
-    use akita_types::{DirectStep, DirectWitnessShape, Schedule, Step, TerminalProofMode};
+    use akita_types::{CleartextWitnessShape, DirectStep, Schedule, Step, TerminalProofMode};
 
     let uncommittable = Schedule {
         steps: vec![Step::Direct(DirectStep {
@@ -73,8 +72,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
             direct_bytes: 0,
             terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-            commit_params: None,
-            level_params: None,
+            params: None,
         })],
         total_bytes: 0,
     };
@@ -142,8 +140,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
                     direct_bytes: 0,
                     terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-                    commit_params: None,
-                    level_params: None,
+                    params: None,
                 })],
                 total_bytes: 0,
             })
@@ -393,7 +390,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
     for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
         // recursive fold and ships its W in cleartext under
-        // MRowLayout::Terminal (drops the D-block from the per-row `r`
+        // MRowLayout::WithoutDBlock (drops the D-block from the per-row `r`
         // quotients), so its `next_w_len` is smaller than what the
         // intermediate-layout helper would report.
         let is_terminal_fold = idx + 1 == num_fold_levels;

@@ -82,7 +82,7 @@ pub struct TerminalLevelProofShape {
     /// Shape of the terminal relation proof payload.
     pub relation: TerminalRelationProofShape,
     /// Shape of the terminal direct witness.
-    pub final_witness: DirectWitnessShape,
+    pub final_witness: CleartextWitnessShape,
 }
 
 /// Shape of the terminal relation proof payload.
@@ -584,12 +584,7 @@ impl AkitaDeserialize for TerminalRelationProofShape {
     ) -> Result<Self, SerializationError> {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = match tag {
-            0 => Self::RingSwitchSumcheck(SumcheckProofShape::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?),
+            0 => Self::RingSwitchSumcheck(deserialize_shape_vec(&mut reader, compress, validate)?),
             1 => Self::DirectRingRelations,
             other => {
                 return Err(SerializationError::InvalidData(format!(
@@ -670,7 +665,7 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             &(),
         )?;
         let final_witness =
-            DirectWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             y_rings_coeffs,
             extension_opening_reduction,

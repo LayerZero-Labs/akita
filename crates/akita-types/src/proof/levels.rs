@@ -429,7 +429,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
     pub fn new_direct_with_extension_opening_reduction<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        final_witness: DirectWitnessProof<F>,
+        final_witness: CleartextWitnessProof<F>,
     ) -> Self {
         Self {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),

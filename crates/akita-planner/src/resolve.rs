@@ -22,9 +22,11 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
+    root_extension_opening_partials, terminal_level_proof_bytes_for_mode,
+    w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout_bits_and_quotient, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule,
+    Step, TerminalProofMode,
 };
 
 use crate::find_schedule;
@@ -266,7 +268,7 @@ pub fn schedule_from_entry(
                     })
                 };
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring = w_ring_element_count_with_counts_for_layout_bits(
+                    let ring = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
                         field_bits,
                         &lp,
                         np,
@@ -274,6 +276,7 @@ pub fn schedule_from_entry(
                         nw,
                         nz,
                         MRowLayout::WithoutDBlock,
+                        policy.terminal_proof_mode.terminal_witness_quotient(),
                     )?;
                     let len = mul_d(ring)?;
                     terminal_witness_field_len = Some(len);
@@ -307,15 +310,26 @@ pub fn schedule_from_entry(
                 } else {
                     1
                 };
-                let level_bytes = level_proof_bytes(
-                    field_bits,
-                    challenge_field_bits,
-                    &lp,
-                    next_lp.as_ref(),
-                    next_w_len,
-                    num_claims_here,
-                    layout,
-                ) + extension_opening_reduction_level_bytes(
+                let level_bytes = if is_terminal {
+                    terminal_level_proof_bytes_for_mode(
+                        field_bits,
+                        challenge_field_bits,
+                        &lp,
+                        next_w_len,
+                        num_claims_here,
+                        policy.terminal_proof_mode,
+                    )
+                } else {
+                    level_proof_bytes(
+                        field_bits,
+                        challenge_field_bits,
+                        &lp,
+                        next_lp.as_ref(),
+                        next_w_len,
+                        num_claims_here,
+                        layout,
+                    )
+                } + extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_opening_width,
                     fold_level,
@@ -384,10 +398,16 @@ pub fn schedule_from_entry(
                 total = total.checked_add(direct_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
+                let step_terminal_proof_mode = if fold_level > 0 {
+                    policy.terminal_proof_mode
+                } else {
+                    TerminalProofMode::RingSwitchSumcheck
+                };
                 steps.push(Step::Direct(DirectStep {
                     current_w_len: direct_current_w_len,
                     witness_shape,
                     direct_bytes,
+                    terminal_proof_mode: step_terminal_proof_mode,
                     params,
                 }));
             }

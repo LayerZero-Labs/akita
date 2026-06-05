@@ -1,12 +1,13 @@
 use super::*;
-use crate::layout::digit_math::compute_num_digits_full_field;
+use crate::sis::compute_num_digits_full_field;
+use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     proof_ring_vec_bytes, root_extension_opening_partials, stage1_tree_stage_shapes,
     sumcheck_rounds, terminal_level_proof_bytes, terminal_level_proof_bytes_for_mode,
-    AjtaiKeyParams, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof,
-    AkitaStage1StageProof, AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec,
-    PackedDigits, SisModulusFamily, TerminalLevelProof,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, FlatRingVec, PackedDigits,
+    SisModulusFamily, TerminalLevelProof,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -14,7 +15,6 @@ use akita_field::FieldCore;
 use akita_field::Prime128OffsetA7F7;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
-use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 #[cfg(feature = "zk")]
@@ -46,14 +46,13 @@ fn root_direct_schedule_uses_field_element_payload() {
         panic!("root-direct schedule should contain one direct step");
     };
     assert_eq!(step.current_w_len, 8);
-    assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
+    assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
     assert_eq!(step.direct_bytes, 0);
     assert_eq!(
         step.terminal_proof_mode,
         TerminalProofMode::RingSwitchSumcheck
     );
-    assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
-    assert!(step.level_params.is_none());
+    assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
 }
 
 #[test]
@@ -70,7 +69,7 @@ fn terminal_direct_witness_ring_count_excludes_r_hat() {
             nonzero_coeffs: vec![-1, 1],
         },
     )
-    .with_decomp(2, 3, 2, 2, 3, 0)
+    .with_decomp(2, 3, 2, 2, 3)
     .expect("level params");
     let field_bits = 128;
     let num_points = 2;
@@ -85,7 +84,7 @@ fn terminal_direct_witness_ring_count_excludes_r_hat() {
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        crate::layout::MRowLayout::Terminal,
+        crate::layout::MRowLayout::WithoutDBlock,
         TerminalWitnessQuotient::IncludeRHat,
     )
     .expect("sumcheck-terminal witness size");
@@ -96,7 +95,7 @@ fn terminal_direct_witness_ring_count_excludes_r_hat() {
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        crate::layout::MRowLayout::Terminal,
+        crate::layout::MRowLayout::WithoutDBlock,
         TerminalWitnessQuotient::OmitRHat,
     )
     .expect("direct-terminal witness size");
@@ -104,7 +103,7 @@ fn terminal_direct_witness_ring_count_excludes_r_hat() {
         .m_row_count_for(
             num_points,
             num_public_rows,
-            crate::layout::MRowLayout::Terminal,
+            crate::layout::MRowLayout::WithoutDBlock,
         )
         .expect("terminal row count");
     let expected_r_hat = r_rows * compute_num_digits_full_field(field_bits, lp.log_basis);
@@ -118,7 +117,7 @@ fn terminal_direct_witness_ring_count_excludes_r_hat() {
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        crate::layout::MRowLayout::Intermediate,
+        crate::layout::MRowLayout::WithDBlock,
         TerminalWitnessQuotient::OmitRHat,
     )
     .expect_err("non-terminal layouts must keep r_hat");
@@ -151,7 +150,7 @@ fn terminal_direct_witness_ring_count_ignores_omitted_r_hat_geometry() {
             0,
             0,
             0,
-            crate::layout::MRowLayout::Terminal,
+            crate::layout::MRowLayout::WithoutDBlock,
             TerminalWitnessQuotient::OmitRHat,
         )
         .expect("direct mode omits r_hat rows before sizing them"),
@@ -165,7 +164,7 @@ fn terminal_direct_witness_ring_count_ignores_omitted_r_hat_geometry() {
         0,
         0,
         0,
-        crate::layout::MRowLayout::Terminal,
+        crate::layout::MRowLayout::WithoutDBlock,
         TerminalWitnessQuotient::IncludeRHat,
     )
     .expect_err("sumcheck mode must still size r_hat rows");
@@ -359,20 +358,9 @@ fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
             #[cfg(feature = "zk")]
             next_w_eval_masked: F::zero(),
         },
+        stage3_sumcheck_proof: None,
     };
     Ok(proof.serialized_size(Compress::No))
-}
-
-#[test]
-fn generated_schedule_key_preserves_commitment_group_count() {
-    let one_group = AkitaScheduleLookupKey::new_with_points(16, 1, 4, 4, 1);
-    let four_groups = AkitaScheduleLookupKey::new_with_points(16, 4, 4, 4, 1);
-
-    assert_ne!(
-        generated_schedule_lookup_key(one_group),
-        generated_schedule_lookup_key(four_groups),
-        "generated schedule lookup must not alias differently grouped commitment shapes"
-    );
 }
 
 #[test]
@@ -396,10 +384,18 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
             2,
             stage1_config.clone(),
         )
-        .with_decomp(0, 0, 1, 1, 1, 0)
+        .with_decomp(0, 0, 1, 1, 1)
         .unwrap();
         assert_eq!(
-            level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, 1),
+            level_proof_bytes(
+                128,
+                128,
+                &lp,
+                Some(&next_lp),
+                next_w_len,
+                1,
+                crate::layout::MRowLayout::WithDBlock,
+            ),
             exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
             "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
         );
@@ -428,11 +424,11 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             2,
             stage1_config.clone(),
         )
-        .with_decomp(0, 0, 1, 1, 1, 0)
+        .with_decomp(0, 0, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, next_w_len);
 
-        let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+        let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
             &vec![0i8; final_w_num_elems],
             final_w_bits,
         ));
@@ -467,7 +463,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         assert_eq!(
             direct_witness_bytes(
                 128,
-                &DirectWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
             ),
             final_witness_bytes_runtime,
             "direct_witness_bytes should match the serialized packed-digit \
@@ -499,10 +495,10 @@ fn planned_direct_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             2,
             stage1_config.clone(),
         )
-        .with_decomp(0, 0, 1, 1, 1, 0)
+        .with_decomp(0, 0, 1, 1, 1)
         .unwrap();
 
-        let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+        let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
             &vec![0i8; final_w_num_elems],
             final_w_bits,
         ));
@@ -545,22 +541,17 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
     let next_w_len = D * 8;
 
     for log_basis in 2..=6 {
-        let lp = LevelParams {
-            ring_dimension: D,
+        let lp = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            D,
             log_basis,
-            a_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-            b_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-            d_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-            num_blocks: 1,
-            block_len: 1,
-            m_vars: 0,
-            r_vars: 0,
-            stage1_config: stage1_config.clone(),
-            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            num_digits_commit: 1,
-            num_digits_open: 1,
-            num_digits_fold: 1,
-        };
+            2,
+            2,
+            2,
+            stage1_config.clone(),
+        )
+        .with_decomp(0, 0, 1, 1, 1)
+        .unwrap();
         let rounds = sumcheck_rounds(D, next_w_len);
         let b = 1usize << log_basis;
         let next_commitment = FlatRingVec::from_ring_elems(&vec![
@@ -582,7 +573,15 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
         );
 
         assert_eq!(
-            level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, num_points),
+            level_proof_bytes(
+                128,
+                128,
+                &lp,
+                Some(&next_lp),
+                next_w_len,
+                num_points,
+                crate::layout::MRowLayout::WithDBlock,
+            ),
             root_proof.serialized_size(Compress::No),
             "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
         );

@@ -1,18 +1,11 @@
 use super::*;
 
-/// Direct-terminal onehot fixture. The inner [`DirectTerminalCfg`] flips the
-/// terminal proof mode and re-materializes the inner table under
-/// `DirectRingRelations` (keeping the table's root/fold structure and envelope
-/// floor); the outer [`PlannerCfg`] additionally covers any table-miss
-/// incidence through the direct-mode planner DP. No hand surgery: this
-/// exercises the production schedule-construction path with only the terminal
-/// mode flipped.
+/// Direct-terminal onehot fixture. [`DirectTerminalCfg`] flips the terminal
+/// proof mode while delegating every other policy hook to the inner preset;
+/// schedule selection still runs through the production `runtime_schedule` path.
 ///
-/// [`DirectTerminalCfg`]: akita_planner::test_utils::DirectTerminalCfg
-/// [`PlannerCfg`]: akita_planner::test_utils::PlannerCfg
-type DirectRecursiveOneHotCfg = akita_planner::test_utils::PlannerCfg<
-    akita_planner::test_utils::DirectTerminalCfg<fp128::D64OneHot>,
->;
+/// [`DirectTerminalCfg`]: akita_config::test_support::DirectTerminalCfg
+type DirectRecursiveOneHotCfg = akita_config::test_support::DirectTerminalCfg<fp128::D64OneHot>;
 
 #[test]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
@@ -151,12 +144,8 @@ fn direct_recursive_terminal_onehot_roundtrip() {
     // the direct config's actual prove schedule rather than the table-only
     // `akita_batched_root_layout`, which would disagree with what `commit` uses.
     let incidence = ClaimIncidenceSummary::same_point(NV, BATCH_SIZE).expect("incidence");
-    let batched_root = DirectRecursiveOneHotCfg::get_params_for_batched_commitment(&incidence)
+    let layout = DirectRecursiveOneHotCfg::get_params_for_batched_commitment(&incidence)
         .expect("direct batched root layout");
-    let layout = akita_types::split_batched_root_params(
-        &batched_root,
-        DirectRecursiveOneHotCfg::decomposition().field_bits(),
-    );
     let polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
         .map(|poly_idx| debug_make_onehot_poly(&layout, 0x0bee_fcaf_d1ec_7000 + poly_idx as u64))
         .collect();
@@ -198,6 +187,7 @@ fn direct_recursive_terminal_onehot_roundtrip() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot direct recursive terminal prove");
 
@@ -231,6 +221,7 @@ fn direct_recursive_terminal_onehot_roundtrip() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot direct recursive terminal verify");
 }

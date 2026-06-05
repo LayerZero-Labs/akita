@@ -2,8 +2,9 @@ use akita_field::FieldCore;
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof, TerminalRelationProof,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
+    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    TerminalRelationProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {

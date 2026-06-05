@@ -20,6 +20,9 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 
+[dev-dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", features = ["test-support"] }
+
 [features]
 default = []
 zk = ["akita-types/zk"]

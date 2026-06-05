@@ -186,13 +186,9 @@ fn fp32_root_terminal_schedule(
     mode: akita_types::TerminalProofMode,
 ) -> Result<akita_types::Schedule, AkitaError> {
     let field_bits = Fp32RingSubfieldRootFoldCfg::decomposition().field_bits();
-    let lp = akita_types::scale_batched_root_layout(
+    let lp = scale_batched_root_layout_unchecked(
         &Fp32RingSubfieldRootFoldCfg::root_lp(),
         incidence.num_claims(),
-        Fp32RingSubfieldRootFoldCfg::stage1_challenge_config(Fp32RingSubfieldRootFoldCfg::D)
-            .expect("stage1 challenge config")
-            .l1_norm(),
-        field_bits,
     )?;
     let quotient = mode.terminal_witness_quotient();
     let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
@@ -202,11 +198,11 @@ fn fp32_root_terminal_schedule(
         incidence.num_polynomials(),
         incidence.num_claims(),
         incidence.num_public_rows(),
-        akita_types::MRowLayout::Terminal,
+        akita_types::MRowLayout::WithoutDBlock,
         quotient,
     )?;
     let compact_w_len = w_ring * Fp32RingSubfieldRootFoldCfg::D;
-    let witness_shape = akita_types::DirectWitnessShape::PackedDigits((compact_w_len, 3));
+    let witness_shape = akita_types::CleartextWitnessShape::PackedDigits((compact_w_len, 3));
     let direct_bytes = akita_types::direct_witness_bytes(field_bits, &witness_shape);
     let challenge_field_bits = field_bits
         .checked_mul(Fp32RingSubfieldRootFoldCfg::CHAL_EXT_DEGREE as u32)
@@ -224,8 +220,6 @@ fn fp32_root_terminal_schedule(
             Step::Fold(akita_types::FoldStep {
                 params: lp.clone(),
                 current_w_len: akita_types::root_current_w_len(&lp),
-                delta_fold_per_poly: lp.num_digits_fold,
-                w_ring,
                 next_w_len: compact_w_len,
                 level_bytes,
             }),
@@ -234,11 +228,7 @@ fn fp32_root_terminal_schedule(
                 witness_shape,
                 direct_bytes,
                 terminal_proof_mode: mode,
-                commit_params: None,
-                // Stub fixture: terminal-direct level params equal the fold's
-                // `lp` (matches the deleted `Cfg::level_params_with_log_basis`
-                // override that returned `Self::root_lp()`).
-                level_params: Some(lp.clone()),
+                params: Some(lp.clone()),
             }),
         ],
         total_bytes: direct_bytes,
@@ -305,10 +295,10 @@ impl CommitmentConfig for Fp32RingSubfieldDirectRootFoldCfg {
         Fp32RingSubfieldRootFoldCfg::decomposition()
     }
 
-    fn stage1_challenge_config(
+    fn ring_challenge_config(
         d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        Fp32RingSubfieldRootFoldCfg::stage1_challenge_config(d)
+        Fp32RingSubfieldRootFoldCfg::ring_challenge_config(d)
     }
 
     fn sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -317,24 +307,6 @@ impl CommitmentConfig for Fp32RingSubfieldDirectRootFoldCfg {
 
     fn terminal_proof_mode() -> akita_types::TerminalProofMode {
         akita_types::TerminalProofMode::DirectRingRelations
-    }
-
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
-    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-        Fp32RingSubfieldRootFoldCfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        Fp32RingSubfieldRootFoldCfg::envelope(max_num_vars)
     }
 
     fn max_setup_matrix_size(
@@ -349,8 +321,8 @@ impl CommitmentConfig for Fp32RingSubfieldDirectRootFoldCfg {
         )
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Fp32RingSubfieldRootFoldCfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Fp32RingSubfieldRootFoldCfg::basis_range()
     }
 
     fn get_params_for_prove(
@@ -441,9 +413,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     )),
                     direct_bytes: next_w_len,
                     terminal_proof_mode: akita_types::TerminalProofMode::RingSwitchSumcheck,
-                    commit_params: None,
-                    // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp`.
                     params: Some(lp.clone()),
                 }),
             ],
@@ -691,6 +660,7 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
         ],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -737,6 +707,7 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -764,6 +735,7 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(
         result.is_err(),
@@ -802,6 +774,7 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(
         result.is_err(),
@@ -812,7 +785,8 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
     let akita_types::AkitaBatchedRootProof::Terminal(terminal) = &mut tampered.root else {
         panic!("expected terminal root proof");
     };
-    let akita_types::DirectWitnessProof::PackedDigits(packed) = &mut terminal.final_witness else {
+    let akita_types::CleartextWitnessProof::PackedDigits(packed) = &mut terminal.final_witness
+    else {
         panic!("expected packed terminal witness");
     };
     let first_byte = packed.data.first_mut().expect("non-empty packed witness");
@@ -841,6 +815,7 @@ fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(
         result.is_err(),

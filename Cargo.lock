@@ -120,6 +120,7 @@ name = "akita-planner"
 version = "0.1.0"
 dependencies = [
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-types",
 ]

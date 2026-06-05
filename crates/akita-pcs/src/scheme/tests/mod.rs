@@ -86,8 +86,8 @@ fn expected_same_point_batched_shape(
             y_rings_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
             extension_opening_reduction: None,
             relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![3; root_rounds]),
-            final_witness: akita_types::DirectWitnessShape::PackedDigits((
-                root_w_len,
+            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
+                root_step.next_w_len,
                 terminal_next_params.log_basis,
             )),
         });
@@ -152,7 +152,7 @@ fn expected_same_point_batched_shape(
         scheduled_fold_execution(&schedule, current_level, terminal_inputs, current_log_basis)
             .expect("scheduled terminal fold");
     // The terminal recursive fold ships its `w` in cleartext under
-    // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
+    // MRowLayout::WithoutDBlock (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
     // count instead of the intermediate-layout `w_ring_element_count`.
     let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
@@ -171,12 +171,11 @@ fn expected_same_point_batched_shape(
     // structurally zero) only fires on the prover's stage-2 two-round-prefix
     // path, which requires a small fold basis (`b in {4, 8}`); the terminal
     // fold here folds at a larger basis, so it keeps degree-3 in every round.
-    let terminal_stage2 = vec![3; terminal_rounds];
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_params.ring_dimension,
         extension_opening_reduction: None,
         relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![3; terminal_rounds]),
-        final_witness: akita_types::DirectWitnessShape::PackedDigits((
+        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
         )),

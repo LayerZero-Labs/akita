@@ -1,7 +1,10 @@
 use super::*;
+use crate::protocol::ring_switch::verify_terminal_direct_ring_relations;
 #[cfg(not(feature = "zk"))]
 use akita_types::recover_ring_subfield_inner_product;
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
+use akita_types::{
+    ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance, Step, TerminalProofMode,
+};
 
 /// Verify one intermediate recursive fold level.
 ///
@@ -417,7 +420,7 @@ where
         stage1_challenges.clone(),
         ring_opening_points.clone(),
         ring_multiplier_points.clone(),
-        incidence,
+        incidence.clone(),
         commitment_routing,
         gamma_base,
         row_coefficient_rings,
@@ -449,7 +452,7 @@ where
                     verify_terminal_direct_ring_relations::<F, L, T, { D }>(
                         &ring_opening_points,
                         &ring_multiplier_points,
-                        &claim_to_point,
+                        incidence.claim_to_point(),
                         &stage1_challenges,
                         w_len,
                         &terminal_proof.final_witness,
@@ -458,8 +461,8 @@ where
                         &setup.expanded,
                         lp,
                         &[1usize],
-                        &claim_to_point_poly,
-                        &claim_poly_indices,
+                        incidence.claim_to_point(),
+                        incidence.claim_poly_indices(),
                         &gamma,
                         commitment_u,
                         &y_rings,
@@ -933,8 +936,8 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
+                let terminal_proof_mode = scheduled_terminal_proof_mode(schedule, level_index)?;
                 if level_d == D {
-                    let terminal_proof_mode = scheduled_terminal_proof_mode(schedule, level_index)?;
                     verify_terminal_level::<F, L, T, D>(
                         terminal_proof,
                         next_w_len,
@@ -951,7 +954,6 @@ where
                         zk_relations,
                     )?
                 } else {
-                    let terminal_proof_mode = scheduled_terminal_proof_mode(schedule, level_index)?;
                     dispatch_verify_terminal_level::<F, L, T>(
                         level_d,
                         terminal_proof,

@@ -141,7 +141,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
     let wrong_degree = LevelProofShape {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape {
             partials: 1,
-            sumcheck: vec![EXTENSION_OPENING_REDUCTION_DEGREE + 1],
+            sumcheck: vec![crate::EXTENSION_OPENING_REDUCTION_DEGREE + 1],
         }),
         ..oversized
     };
@@ -173,9 +173,10 @@ fn terminal_shape_deserialization_validates_shape() {
     let mut bytes = Vec::new();
     0usize.serialize_compressed(&mut bytes).unwrap(); // y_rings_coeffs
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
+    0u8.serialize_compressed(&mut bytes).unwrap(); // relation tag: RingSwitchSumcheck
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
-        .unwrap(); // stage2_sumcheck
+        .unwrap(); // relation sumcheck shape
 
     let err = TerminalLevelProofShape::deserialize_compressed(&bytes[..], &())
         .expect_err("oversized terminal sumcheck shape must be rejected");
@@ -379,7 +380,7 @@ fn terminal_level_proof_serde_round_trip() {
 #[test]
 fn terminal_direct_relation_proof_serde_round_trip() {
     const D: usize = 8;
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
     );
     let proof = TerminalLevelProof::new_direct_with_extension_opening_reduction::<D>(
@@ -408,7 +409,7 @@ fn terminal_direct_relation_proof_serde_round_trip() {
 #[test]
 fn terminal_relation_shape_mismatch_rejects() {
     const D: usize = 8;
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
     );
     let direct: TerminalLevelProof<F, F> =

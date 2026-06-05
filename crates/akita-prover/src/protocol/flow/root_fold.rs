@@ -931,7 +931,8 @@ where
         expected_w_len,
         final_log_basis,
         terminal_proof_mode,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -1038,7 +1039,8 @@ where
         expected_w_len,
         final_log_basis,
         terminal_proof_mode,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -1336,7 +1338,8 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     expected_w_len: usize,
     final_log_basis: u32,
     terminal_proof_mode: TerminalProofMode,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1363,158 +1366,154 @@ where
         TerminalProofMode::DirectRingRelations => {
             #[cfg(feature = "zk")]
             {
-                Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::InvalidSetup(
                     "direct terminal proof mode is not supported with zk".to_string(),
-                ))
+                ));
             }
             #[cfg(not(feature = "zk"))]
             {
-                let logical_w = ring_switch_build_terminal_direct_w::<F, { D }>(&mut quad_eq, lp)?;
+                let logical_w =
+                    ring_switch_build_terminal_direct_w::<F, D>(&instance, witness, lp)?;
                 if logical_w.len() != expected_w_len {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "scheduled terminal direct witness length did not match runtime witness: expected={expected_w_len}, actual={}",
+                        "scheduled root direct witness length did not match runtime witness: expected={expected_w_len}, actual={}",
                         logical_w.len()
                     )));
                 }
-                let final_witness = pack_terminal_direct_final_witness::<F, T>(
+                let final_witness = super::pack_terminal_direct_final_witness::<F, T>(
                     transcript,
                     &logical_w,
                     terminal_layout,
                     final_log_basis,
                 )?;
-                Ok(
+                return Ok(
                     TerminalLevelProof::new_direct_with_extension_opening_reduction::<D>(
                         y_rings,
                         None,
                         final_witness,
                     ),
-                )
+                );
             }
         }
-        TerminalProofMode::RingSwitchSumcheck => {
-            let logical_w =
-                ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
-            if logical_w.len() != expected_w_len {
-                return Err(AkitaError::InvalidSetup(format!(
+        TerminalProofMode::RingSwitchSumcheck => {}
+    }
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
+    if logical_w.len() != expected_w_len {
+        return Err(AkitaError::InvalidSetup(format!(
             "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
             logical_w.len()
         )));
-            }
-            let final_witness =
-                DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits_with_min_bits(
-                    logical_w.as_i8_digits(),
-                    final_log_basis,
-                ));
-
-            let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, { D }>(
-                &quad_eq,
-                expanded,
-                transcript,
-                &logical_w,
-                &final_witness,
-                terminal_layout,
-                lp,
-                &row_coefficients,
-            )?;
-
-            // Terminal layout: the D-block is omitted, so the relation claim sums no
-            // `v` rows. `quad_eq.v` is constructed as an empty vector under
-            // `MRowLayout::Terminal`; pass `&[]` here for symmetry with the verifier.
-            let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-                &rs.tau1,
-                rs.alpha,
-                &[],
-                commitment_rows,
-                &y_rings,
-            )?;
-            #[cfg(feature = "zk")]
-            let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
-                &rs.tau1,
-                rs.alpha,
-                &[],
-                commitment_rows,
-                &y_rings_masked,
-            )?;
-
-            let RingSwitchOutput {
-                w_evals_compact,
-                live_x_cols,
-                m_evals_x,
-                alpha_evals_y,
-                col_bits,
-                ring_bits,
-                tau0: _,
-                tau1: _,
-                b,
-                alpha: _,
-            } = rs;
-
-            let r_stage1 = vec![C::zero(); col_bits + ring_bits];
-            #[cfg(feature = "zk")]
-            let stage2_round_pads =
-                zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
-            #[cfg(feature = "zk")]
-            let stage2_sumcheck_proof_masked = {
-                let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    C::zero(),
-                    w_evals_compact,
-                    &r_stage1,
-                    C::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
-                let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
-                    .prove_zk::<F, T, _>(
-                        relation_claim_public,
-                        transcript,
-                        |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                        stage2_round_pads,
-                    )?;
-                stage2_sumcheck_proof_masked
-            };
-            #[cfg(not(feature = "zk"))]
-            let stage2_sumcheck = {
-                let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    C::zero(),
-                    w_evals_compact,
-                    &r_stage1,
-                    C::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
-                let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) =
-                    stage2_prover.prove::<F, T, _>(transcript, |tr| {
-                        sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-                    })?;
-                stage2_sumcheck
-            };
-
-            Ok(
-                TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-                    #[cfg(not(feature = "zk"))]
-                    y_rings,
-                    #[cfg(feature = "zk")]
-                    y_rings_masked,
-                    None,
-                    #[cfg(not(feature = "zk"))]
-                    stage2_sumcheck,
-                    #[cfg(feature = "zk")]
-                    stage2_sumcheck_proof_masked,
-                    final_witness,
-                ),
-            )
-        }
     }
+    let final_witness = CleartextWitnessProof::PackedDigits(
+        PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
+    );
+
+    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
+        &instance,
+        expanded,
+        transcript,
+        &logical_w,
+        &final_witness,
+        terminal_layout,
+        lp,
+        &row_coefficients,
+    )?;
+
+    // Terminal layout: the D-block is omitted, so the relation claim sums no
+    // `v` rows. `instance.v` is constructed as an empty vector under
+    // `MRowLayout::WithoutDBlock`; pass `&[]` here for symmetry with the verifier.
+    let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
+        &rs.tau1,
+        rs.alpha,
+        &[],
+        commitment_rows,
+        &y_rings,
+    )?;
+    #[cfg(feature = "zk")]
+    let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
+        &rs.tau1,
+        rs.alpha,
+        &[],
+        commitment_rows,
+        &y_rings_masked,
+    )?;
+
+    let RingSwitchOutput {
+        w_evals_compact,
+        live_x_cols,
+        m_evals_x,
+        alpha_evals_y,
+        col_bits,
+        ring_bits,
+        tau0: _,
+        tau1: _,
+        b,
+        alpha: _,
+    } = rs;
+
+    let stage1_point = vec![C::zero(); col_bits + ring_bits];
+    #[cfg(feature = "zk")]
+    let stage2_round_pads = zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_proof_masked = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            C::zero(),
+            w_evals_compact,
+            &stage1_point,
+            C::zero(),
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )?;
+        let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
+            .prove_zk::<F, T, _>(
+                relation_claim_public,
+                transcript,
+                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                stage2_round_pads,
+            )?;
+        stage2_sumcheck_proof_masked
+    };
+    #[cfg(not(feature = "zk"))]
+    let stage2_sumcheck = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            C::zero(),
+            w_evals_compact,
+            &stage1_point,
+            C::zero(),
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )?;
+        let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
+            .prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        stage2_sumcheck
+    };
+
+    Ok(
+        TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+            #[cfg(not(feature = "zk"))]
+            y_rings,
+            #[cfg(feature = "zk")]
+            y_rings_masked,
+            None,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_proof_masked,
+            final_witness,
+        ),
+    )
 }

@@ -33,10 +33,11 @@ pub(crate) use tensor_challenges::PreparedChallengeEvals;
 mod tensor_challenges;
 #[cfg(not(feature = "zk"))]
 mod terminal_direct;
-#[cfg(not(feature = "zk"))]
-pub(crate) use terminal_direct::verify_terminal_direct_ring_relations;
 #[cfg(test)]
 mod tests;
+
+#[cfg(not(feature = "zk"))]
+pub(crate) use terminal_direct::verify_terminal_direct_ring_relations;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
@@ -188,67 +189,6 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
     pub lp: &'a LevelParams,
 }
 
-/// Single source of truth for the terminal/intermediate witness segment
-/// ordering. Given the per-segment lengths and the `z_first` flag, this pins
-/// `offset_w`, `offset_t`, `offset_z`, the (zk) blinding offsets, and the
-/// quotient `offset_r`. Both the sumcheck row-eval layout
-/// ([`RingSwitchDeferredRowEval::segment_layout`]) and the direct terminal
-/// decoder consume this so the `z_pre | w_hat | t_hat | blinding | r_hat`
-/// ordering can never drift between them. Direct (`OmitRHat`) callers pass
-/// zero blinding lengths and simply ignore `offset_r`.
-pub(crate) fn ring_switch_segment_layout(
-    w_len: usize,
-    t_len: usize,
-    z_len: usize,
-    b_blinding_segment_len: usize,
-    d_blinding_segment_len: usize,
-    z_first: bool,
-) -> Result<RingSwitchSegmentLayout, AkitaError> {
-    let offset_z = if z_first {
-        0
-    } else {
-        w_len
-            .checked_add(t_len)
-            .and_then(|offset| offset.checked_add(b_blinding_segment_len))
-            .and_then(|offset| offset.checked_add(d_blinding_segment_len))
-            .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
-    };
-    let offset_w = if z_first { z_len } else { 0 };
-    let offset_t = if z_first {
-        z_len
-            .checked_add(w_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?
-    } else {
-        w_len
-    };
-    let b_blinding_offset = offset_t
-        .checked_add(t_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
-    let d_blinding_offset = b_blinding_offset
-        .checked_add(b_blinding_segment_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("D blinding offset overflow".to_string()))?;
-    let offset_r_base = d_blinding_offset
-        .checked_add(d_blinding_segment_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-    let offset_r = if z_first {
-        offset_r_base
-    } else {
-        offset_r_base
-            .checked_add(z_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?
-    };
-    Ok(RingSwitchSegmentLayout {
-        offset_w,
-        offset_t,
-        offset_z,
-        offset_r,
-        #[cfg(feature = "zk")]
-        b_blinding_offset,
-        #[cfg(feature = "zk")]
-        d_blinding_offset,
-    })
-}
-
 /// Replay the verifier half of ring switching.
 ///
 /// This handles multiple opening points, arbitrary claim-to-point mapping, and
@@ -311,7 +251,6 @@ where
         .into_terminal_as_output()
 }
 
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
 #[inline(never)]
 fn ring_switch_verifier_core<F, E, T, const D: usize>(
@@ -722,52 +661,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
             num_public_rows: self.num_public_rows,
         }
-        if self.block_len == 0
-            || self.depth_open == 0
-            || self.depth_commit == 0
-            || self.depth_fold == 0
-        {
-            return Err(AkitaError::InvalidSetup(
-                "prepared ring-switch layout has zero width".to_string(),
-            ));
-        }
-
-        let w_len = self
-            .depth_open
-            .checked_mul(self.total_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("W segment length overflow".to_string()))?;
-        let t_total_blocks = self
-            .num_blocks
-            .checked_mul(self.num_t_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
-        let t_len = self
-            .depth_open
-            .checked_mul(self.n_a)
-            .and_then(|len| len.checked_mul(t_total_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
-        let z_len = self
-            .depth_fold
-            .checked_mul(self.depth_commit)
-            .and_then(|len| len.checked_mul(self.num_points))
-            .and_then(|len| len.checked_mul(self.block_len))
-            .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
-        #[cfg(feature = "zk")]
-        let b_blinding_segment_len = self.b_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let b_blinding_segment_len = 0usize;
-        #[cfg(feature = "zk")]
-        let d_blinding_segment_len = self.d_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let d_blinding_segment_len = 0usize;
-
-        ring_switch_segment_layout(
-            w_len,
-            t_len,
-            z_len,
-            b_blinding_segment_len,
-            d_blinding_segment_len,
-            self.z_first,
-        )
     }
 
     /// Evaluate the prepared ring-switch row table at the supplied point.
