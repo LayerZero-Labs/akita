@@ -74,6 +74,26 @@ impl ChallengeShape {
             Self::Tensor => cfg.l1_norm().saturating_mul(inf),
         }
     }
+
+    /// Effective per-logical-block operator-norm cap `Gamma` for this shape.
+    ///
+    /// This is the operator-norm analogue of [`Self::effective_l1_mass`]: the
+    /// cap that governs the L2 folded-witness and weak-binding bounds (the
+    /// `8·Gamma·nu·||z||_2` kernel price). A flat fold applies one sampled
+    /// challenge per block, so its cap is the family's
+    /// [`SparseChallengeConfig::operator_norm_cap`]. A tensor fold materializes
+    /// the product `α_p · β_q`, which is *not* itself operator-norm rejected;
+    /// the operator norm is submultiplicative (`γ(α·β) <= γ(α)·γ(β)`), so the
+    /// sound cap is the product of the two factors' caps, `Gamma^2`.
+    #[inline]
+    #[must_use]
+    pub fn effective_operator_norm_cap(&self, cfg: &SparseChallengeConfig) -> u64 {
+        let cap = u64::from(cfg.operator_norm_cap());
+        match self {
+            Self::Flat => cap,
+            Self::Tensor => cap.saturating_mul(cap),
+        }
+    }
 }
 
 /// Factored tensor sparse challenges for one folding round.

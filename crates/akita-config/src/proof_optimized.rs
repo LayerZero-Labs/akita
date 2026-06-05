@@ -39,6 +39,9 @@ pub(crate) fn proof_optimized_ring_challenge_config(
         64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
+            // `T >= ||c||_1` disables rejection until the S2 support certificate
+            // lands; production keeps the legacy (30, 12) shell unchanged.
+            operator_norm_threshold: 54,
         }),
         128 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
             weight: 31,

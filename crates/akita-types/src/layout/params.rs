@@ -498,10 +498,12 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
+            operator_norm_threshold,
         } => {
             bytes.push(1);
             push_usize(bytes, *count_mag1);
             push_usize(bytes, *count_mag2);
+            push_u32(bytes, *operator_norm_threshold);
         }
         SparseChallengeConfig::BoundedL1Norm => {
             bytes.push(2);
