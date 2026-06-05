@@ -45,7 +45,8 @@
 //!   `r ∈ {2, 3, 5, 7}` (radix 3 uses `1 + ω + ω² = 0`; radix 5 / 7
 //!   use Karatsuba on the conjugate-pair-symmetrized inputs, with
 //!   the constants precomputed in `StageData::winograd`).
-//! - **Smooth-subgroup-derived roots** ([`primitive_nth_root`]):
+//! - **Smooth-subgroup-derived roots**
+//!   ([`primitive_nth_root`](crate::fft::primitive_nth_root)):
 //!   `ω_n` is one exponentiation of the field's compile-time
 //!   `SmoothFftField::SMOOTH_OMEGA` literal — no runtime base scan.
 //!
@@ -55,8 +56,8 @@
 //! known evaluations (one inverse FFT) then evaluates it on
 //! `blowup − 1` cosets of the base subgroup. Each coset evaluation is
 //! a coset FFT — pre-twist `c_i ← c_i · s^i` then run a plain forward
-//! FFT — see [`SmoothDomain::coset_forward`] and
-//! [`SmoothDomain::rs_extend_batch`].
+//! FFT — see [`SmoothDomain::coset_forward`](crate::fft::SmoothDomain::coset_forward)
+//! and [`SmoothDomain::rs_extend_batch`](crate::fft::SmoothDomain::rs_extend_batch).
 
 use crate::{FieldCore, FromPrimitiveInt, Invertible, SmoothFftField};
 

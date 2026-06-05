@@ -3,7 +3,8 @@
 //! Each type splits a canonical field element into 16-bit limbs stored in
 //! `i32` slots.  Addition and negation are element-wise i32 ops — no carry
 //! propagation, no modular reduction.  Reduction back to canonical form
-//! happens once after accumulation via [`reduce`](Fp128x8i32::reduce).
+//! happens once after accumulation via
+//! [`reduce`](crate::unreduced::Fp128x8i32::reduce).
 //!
 //! The i32 overflow budget is `i32::MAX / u16::MAX ≈ 32,769` signed
 //! additions before any limb can overflow.
