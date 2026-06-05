@@ -23,6 +23,15 @@ proof shape into separate `AkitaLevelProof` / `TerminalLevelProof`
 types and refits the planner and generated schedule tables to the new
 terminal-level cost model.
 
+PR #141 extends this terminal split with an explicit terminal proof mode.
+The protocol described in this document is the existing
+`RingSwitchSumcheck` terminal mode: it binds the terminal cleartext
+witness, drops the D-block rows, but still ships `r_hat` quotient digits
+and proves the terminal relation with a relation-only stage-2 sumcheck.
+`DirectRingRelations` keeps the same terminal witness-binding order, then
+omits both `r_hat` and terminal stage-2 and checks the reduced terminal
+ring rows directly.
+
 ## Intent
 
 ### Goal
@@ -78,9 +87,12 @@ the baseline planner.
   `crates/akita-scheme/src/tests.rs::verify_*`, and the
   `crates/akita-pcs/tests/transcript_trace.rs` audit fixture.
 - **Terminal sumcheck shape.** The terminal relation sumcheck runs in
-  relation-only mode (`batching_coeff = 0`, dummy `r_stage1`,
+  relation-only mode (`batching_coeff = 0`, dummy `stage1_point`,
   `s_claim = 0`) with the D-block omitted from `m_evals_x`, so its
   rounds equal `col_bits + ring_bits` of the terminal-layout `w` only.
+  This invariant applies to the `RingSwitchSumcheck` terminal proof
+  mode. In `DirectRingRelations` mode there is no terminal stage-2
+  sumcheck and no terminal ring-switch aggregation challenge stream.
   Protected by `batched_onehot_roundtrip_matches_public_shape_context`
   and the `single_poly_e2e` round-trip assertion.
 - **Schedule/runtime witness length agreement.** For every fold level,
@@ -214,6 +226,12 @@ Per-level wire change (terminal level only):
   under `zk`). Concretely for the failing test's schedule
   (D64Onehot, nv=15, batched 2): root terminal `w` shrinks from
   87,808 to 65,792 field elements (-25.1 %).
+
+Follow-on terminal direct mode shrinks the terminal tail further in
+transparent builds by omitting the remaining `r_hat` quotient segment
+entirely. That extra saving is mode-gated by `TerminalProofMode` and is
+not implied by `MRowLayout::Terminal`; sumcheck-terminal mode still needs
+`r_hat`.
 
 Schedule-table regeneration produces no diff: the cost model
 improvement is real but too small to flip any planner choices in the
