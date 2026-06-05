@@ -5,10 +5,12 @@ use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
+#[cfg(not(feature = "zk"))]
+use crate::protocol::ring_switch::ring_switch_build_terminal_direct_w;
 use crate::protocol::ring_switch::{
-    ring_switch_build_terminal_direct_w, ring_switch_build_w, ring_switch_finalize,
-    ring_switch_finalize_terminal, ring_switch_finalize_terminal_with_gamma,
-    ring_switch_finalize_with_gamma, NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
+    ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
+    NextWitnessCommitment, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
@@ -35,12 +37,13 @@ use akita_sumcheck::{
 };
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
+#[cfg(not(feature = "zk"))]
+use akita_transcript::labels::ABSORB_TERMINAL_W_REMAINDER;
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -78,6 +81,7 @@ use std::sync::Arc;
 mod inputs;
 mod recursive;
 mod root_extension;
+mod root_fold_eval;
 mod root_fold;
 #[cfg(test)]
 mod tests;

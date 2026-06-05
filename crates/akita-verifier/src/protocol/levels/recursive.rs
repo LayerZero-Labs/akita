@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(not(feature = "zk"))]
 use crate::protocol::ring_switch::verify_terminal_direct_ring_relations;
 #[cfg(not(feature = "zk"))]
 use akita_types::recover_ring_subfield_inner_product;

@@ -7,7 +7,7 @@
 //! it without crossing through `akita-pcs`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
-use crate::{setup_level_params_from_runtime_schedule, CommitmentConfig};
+use crate::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -50,14 +50,6 @@ where
     let terminal_proof_mode = Cfg::terminal_proof_mode();
     validate_terminal_proof_mode_selectable(terminal_proof_mode)?;
     validate_schedule_terminal_proof_mode(schedule, terminal_proof_mode)?;
-
-    let mut setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-    if setup_levels.is_empty() {
-        // Defensive fallback: empty schedules and root-direct edge entries
-        // with no `commit_params` go through the same `Cfg`-driven path
-        // setup uses to size the shared matrix.
-        setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-    }
 
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,

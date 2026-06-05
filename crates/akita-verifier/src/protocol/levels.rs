@@ -9,9 +9,10 @@ use super::validate_level_dispatch;
 mod extension_opening_reduction;
 #[cfg(feature = "zk")]
 mod zk;
+#[cfg(not(feature = "zk"))]
+use crate::protocol::ring_switch::verify_terminal_direct_ring_relations;
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, verify_terminal_direct_ring_relations,
-    RingSwitchReplay,
+    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay,
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};

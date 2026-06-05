@@ -89,6 +89,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
+        terminal_proof_mode: Cfg::terminal_proof_mode(),
     };
     assert_eq!(
         policy, expected,

@@ -211,12 +211,8 @@ mod terminal_direct {
     #[test]
     fn terminal_direct_relation_rows_reject_public_row_tamper() {
         let digits = valid_zero_witness_digits();
-        let err = verify_with(
-            &digits,
-            &[CyclotomicRing::one()],
-            &[CyclotomicRing::zero()],
-        )
-        .unwrap_err();
+        let err =
+            verify_with(&digits, &[CyclotomicRing::one()], &[CyclotomicRing::zero()]).unwrap_err();
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 

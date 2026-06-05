@@ -231,7 +231,7 @@ fn fp32_root_terminal_schedule(
                 params: Some(lp.clone()),
             }),
         ],
-        total_bytes: direct_bytes,
+        total_bytes: level_bytes + direct_bytes,
     })
 }
 

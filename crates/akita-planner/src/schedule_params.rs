@@ -24,7 +24,7 @@ use akita_types::{
     w_ring_element_count_with_counts_for_layout_bits,
     w_ring_element_count_with_counts_for_layout_bits_and_quotient, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, Schedule, Step, TerminalProofMode,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -673,7 +673,7 @@ pub fn find_schedule(
         current_w_len: witness_len,
         witness_shape: root_witness_shape,
         direct_bytes: best_cost,
-        terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+        terminal_proof_mode: policy.terminal_proof_mode,
         params: root_direct_commit_params,
     })];
     let mut memo = ScheduleMemo::new();
@@ -797,7 +797,21 @@ pub fn find_schedule(
                 })
             };
             let next_w_len = next_withness_len_impl(MRowLayout::WithDBlock)?;
-            let next_w_len_terminal = next_withness_len_impl(MRowLayout::WithoutDBlock)?;
+            let next_w_len_terminal = {
+                let rings = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+                    field_bits,
+                    &candidate_params,
+                    key.num_points,
+                    key.num_t_vectors,
+                    key.num_w_vectors,
+                    key.num_z_vectors,
+                    MRowLayout::WithoutDBlock,
+                    policy.terminal_proof_mode.terminal_witness_quotient(),
+                )?;
+                rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
+                    AkitaError::InvalidSetup("root next witness length overflow".into())
+                })?
+            };
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {
@@ -833,14 +847,13 @@ pub fn find_schedule(
 
             // Branch A: suffix at level 1 is a Direct
             if let Some((suffix_cost, suffix_sched)) = suffix.best_direct.as_ref() {
-                let root_proof_size = level_proof_bytes(
+                let root_proof_size = terminal_level_proof_bytes_for_mode(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
-                    None,
                     next_w_len_terminal,
                     z_vectors,
-                    MRowLayout::WithoutDBlock,
+                    policy.terminal_proof_mode,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
