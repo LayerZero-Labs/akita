@@ -22,6 +22,7 @@ pub(crate) mod bounded_l1;
 #[cfg(all(test, not(feature = "zk")))]
 mod bounded_l1_support;
 mod exact_shell;
+pub(crate) mod op_norm;
 mod uniform;
 mod xof;
 

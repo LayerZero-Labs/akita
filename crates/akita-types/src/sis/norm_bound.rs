@@ -240,6 +240,133 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
+// --- Euclidean (L2) folded-witness bound primitives -------------------------
+//
+// These price the committed A-role against a Euclidean bound on the folded
+// response `z = Σ c_i·s_i`, the alternative to the coefficient-`L∞` envelope
+// above. Only the *squared* quantity `Σ z[i]^2` is ever consumed, so every
+// primitive here stays in the squared, exact-integer domain: `sqrt(D)` is
+// irrational for `D ∈ {32, 128}`, and squaring it away keeps the values exact
+// `u128` integers. A real square root is taken elsewhere (when bounding the
+// realized `Σ z[i]^2` and its slack), never in these sizing helpers.
+//
+// These are pure sizing leaves: the planner/setup derives the A-role binding
+// rank from them, and the prover bounds the realized witness norm with them.
+
+/// Squared per-block committed-witness Euclidean bound `s_l2_max^2`, the L2
+/// analogue of the [`FoldWitnessNorms`] `(||s||_inf, ||s||_1)` pair:
+///
+/// ```text
+/// s_l2_max^2 = D · (b/2)^2   dense balanced digits (||s||_inf = b/2 = 2^(lb-1)),
+/// s_l2_max^2 = 1             a one-hot block (a single unit coefficient).
+/// ```
+///
+/// The one-hot value is for a block with a single unit coefficient
+/// (`||s||_2 = 1`). Per-level policy for multi-chunk one-hot or tensor folds is
+/// decided by the caller, not here.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] on `u128` overflow of `D · (b/2)^2`.
+#[inline]
+pub fn s_l2_max_squared(
+    is_onehot: bool,
+    ring_dimension: u128,
+    log_basis: u32,
+) -> Result<u128, AkitaError> {
+    if is_onehot {
+        return Ok(1);
+    }
+    let half_basis = 1u128 << log_basis.saturating_sub(1); // b/2 = 2^(lb-1)
+    half_basis
+        .checked_mul(half_basis)
+        .and_then(|sq| sq.checked_mul(ring_dimension))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("s_l2_max_squared: D · (b/2)^2 overflows u128".to_string())
+        })
+}
+
+/// Squared deterministic per-level folded-response bound
+/// `beta_l2^2 = (Gamma · B · s_l2_max)^2`, with fold arity
+/// `B = num_claims · 2^r_vars` and `gamma` the operator-norm cap on accepted
+/// challenges (`gamma(c_i) <= Gamma`):
+///
+/// ```text
+/// ||Σ c_i·s_i||_2 <= Σ ||c_i·s_i||_2 <= Gamma · Σ ||s_i||_2 = Gamma · B · s_l2_max.
+/// ```
+///
+/// Mirrors [`fold_witness_beta`]'s fold-arity guard so the L2 and L∞ betas share
+/// the same overflow contract.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `r_vars >= 127` or the squared
+/// product overflows `u128`.
+#[inline]
+pub fn beta_l2_squared(
+    r_vars: usize,
+    num_claims: usize,
+    gamma: u128,
+    s_l2_max_squared: u128,
+) -> Result<u128, AkitaError> {
+    if r_vars >= 127 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "beta_l2_squared: r_vars = {r_vars} >= 127"
+        )));
+    }
+    let fold_arity = (num_claims as u128)
+        .checked_mul(1u128 << r_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("beta_l2_squared: B overflows u128".to_string()))?;
+    // (Gamma · B)^2 · s_l2_max^2 = (Gamma · B · s_l2_max)^2 = beta_l2^2.
+    gamma
+        .checked_mul(fold_arity)
+        .and_then(|gb| gb.checked_mul(gb))
+        .and_then(|gb_sq| gb_sq.checked_mul(s_l2_max_squared))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("beta_l2_squared: beta_l2^2 overflows u128".to_string())
+        })
+}
+
+/// Conservative squared Euclidean bound over a vector of `W` folded ring rows:
+///
+/// ```text
+/// L2_BOUND_SQUARED = W · beta_l2^2.
+/// ```
+///
+/// This deterministic bound prices the A-role directly when the prover does not
+/// separately prove a tighter bound on the realized squared norm `Σ z[i]^2`.
+/// Any such tighter proven bound lies between `Σ z[i]^2` and this value.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] on `u128` overflow of `W · beta_l2^2`.
+#[inline]
+pub fn l2_bound_squared(width_w: u128, beta_l2_squared: u128) -> Result<u128, AkitaError> {
+    width_w.checked_mul(beta_l2_squared).ok_or_else(|| {
+        AkitaError::InvalidSetup("l2_bound_squared: W · beta_l2^2 overflows u128".to_string())
+    })
+}
+
+/// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
+/// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
+/// `||v||_2^2 <= d·linf^2`.
+///
+/// This lets the B-role and D-role opening-digit collisions (natural bound
+/// `2^lb - 1`, the difference of two balanced digits) be priced by the same
+/// Euclidean MSIS floor as the A-role, rather than a separate `L∞` table.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] on `u128` overflow of `d · linf^2`.
+#[inline]
+pub fn l2_sq_from_linf(d: u128, linf: u128) -> Result<u128, AkitaError> {
+    linf.checked_mul(linf)
+        .and_then(|sq| sq.checked_mul(d))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("l2_sq_from_linf: d · ||v||_inf^2 overflows u128".to_string())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +396,43 @@ mod tests {
         assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
                                                                              // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
         assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
+    }
+
+    #[test]
+    fn s_l2_max_squared_onehot_and_dense() {
+        // One-hot: a single unit coefficient, ||s||_2^2 = 1, independent of D/lb.
+        assert_eq!(s_l2_max_squared(true, 64, 11).unwrap(), 1);
+        // Dense lb=3: b/2 = 2^2 = 4, so s_l2_max^2 = D · 16 = 64 · 16 = 1024.
+        assert_eq!(s_l2_max_squared(false, 64, 3).unwrap(), 1024);
+        // Dense lb=1 (b/2 = 2^0 = 1): s_l2_max^2 = D.
+        assert_eq!(s_l2_max_squared(false, 32, 1).unwrap(), 32);
+    }
+
+    #[test]
+    fn beta_l2_squared_is_exact_square() {
+        // Gamma=16, B = num_claims·2^r_vars = 1·4 = 4, s_l2_max^2 = 1024
+        // (so s_l2_max = 32): beta_l2 = 16·4·32 = 2048, beta_l2^2 = 4_194_304.
+        assert_eq!(beta_l2_squared(2, 1, 16, 1024).unwrap(), 2048 * 2048);
+        // num_claims scales B linearly: B = 2·4 = 8 doubles beta_l2, quadruples^2.
+        assert_eq!(beta_l2_squared(2, 2, 16, 1024).unwrap(), 4096 * 4096);
+    }
+
+    #[test]
+    fn beta_l2_squared_rejects_degenerate() {
+        assert!(beta_l2_squared(127, 1, 16, 1).is_err());
+        assert!(beta_l2_squared(0, 1, u128::MAX, u128::MAX).is_err());
+    }
+
+    #[test]
+    fn l2_bound_squared_scales_with_width() {
+        assert_eq!(l2_bound_squared(8, 4_194_304).unwrap(), 8 * 4_194_304);
+        assert!(l2_bound_squared(u128::MAX, 2).is_err());
+    }
+
+    #[test]
+    fn l2_sq_from_linf_matches_sqrt_d_envelope() {
+        // B/D-role digit collision 2^lb - 1 at lb=3 is 7; ||v||_2^2 <= d·49.
+        assert_eq!(l2_sq_from_linf(64, 7).unwrap(), 64 * 49);
+        assert!(l2_sq_from_linf(u128::MAX, u128::MAX).is_err());
     }
 }
