@@ -43,8 +43,8 @@ pub enum SparseChallengeConfig {
     ///
     /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. A sampled candidate
     /// is retained only if its negacyclic operator norm satisfies
-    /// `gamma_D(c) <= operator_norm_threshold` (the certified integer predicate
-    /// in [`crate::sampler::op_norm`]); otherwise it is rejected and the next
+    /// `gamma_D(c) <= operator_norm_threshold` (the crate-internal certified
+    /// `OpNormTable` predicate); otherwise it is rejected and the next
     /// candidate is drawn from the same transcript-derived stream. This is the
     /// family used for L2 / operator-norm fold pricing, where the accepted cap
     /// `Gamma` (not `||c||_1`) governs the folded-witness and weak-binding

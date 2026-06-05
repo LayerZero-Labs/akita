@@ -230,7 +230,9 @@ def _on_timeout(_signum, _frame):
     raise _EstimateTimeout()
 
 
-signal.signal(signal.SIGALRM, _on_timeout)
+_HAS_ALARM = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
+if _HAS_ALARM:
+    signal.signal(signal.SIGALRM, _on_timeout)
 
 
 def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision: int) -> float:
@@ -241,7 +243,8 @@ def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision
     n = rank * d
     m = width * d
     length_bound = (width * collision) ** 0.5
-    signal.setitimer(signal.ITIMER_REAL, ESTIMATE_TIMEOUT_S)
+    if _HAS_ALARM:
+        signal.setitimer(signal.ITIMER_REAL, ESTIMATE_TIMEOUT_S)
     try:
         out = SIS.lattice(
             SIS.Parameters(n=n, q=q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
@@ -256,7 +259,8 @@ def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision
             return float("-inf")
         raise
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        if _HAS_ALARM:
+            signal.setitimer(signal.ITIMER_REAL, 0)
     return float(log(out["rop"], 2))
 
 
@@ -330,6 +334,8 @@ def main() -> None:
     if not entries:
         print("No matching entries.", file=sys.stderr)
         return
+
+    entries.sort()
 
     if args.format == "csv":
         print("q,d,collision,rank,max_width,target_bits,search_cap")

@@ -53,8 +53,7 @@ const OP_NORM_PREDICATE_SCALE: u32 = 48;
 /// identically on both sides: rejection sampling can only fail closed, never
 /// diverge. At the shipping acceptance probabilities (`p >= ~0.5`) exceeding
 /// even a few dozen attempts is astronomically unlikely; the cap exists only to
-/// keep sampling a terminating, no-panic operation under a pathological
-/// (mis-priced) threshold.
+/// keep sampling a terminating, no-panic operation under a pathological threshold.
 const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
