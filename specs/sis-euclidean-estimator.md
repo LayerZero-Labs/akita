@@ -83,9 +83,10 @@ rename cutover) and **S11** (schedule table regen under L2 pricing).
   e.g. the `d=32, r=1, length_bound=256` knee where `_solve_for_delta_euclidean` returns
   `δ = 1.0`). The reference patch replaces that fallback with a deterministic `-inf`
   reporting convention, and the Rust core implements the same convention directly, with
-  **no wall-clock budget**. This fires on exactly the cells the Sage generator currently guards
-  with its `SIGALRM` timeout, so it reproduces the generator's `-inf` policy machine-
-  independently. It can only **under**-report secure width, never over-report it (a one-width
+  **no wall-clock budget**. This fires on exactly the cells the interim Sage generator guards
+  with a Unix-only `SIGALRM` wall-clock budget (a no-op where `SIGALRM` / `setitimer` are
+  unavailable), so it reproduces the generator's `-inf` policy machine-independently. It can
+  only **under**-report secure width, never over-report it (a one-width
   effect at the observed knees), and is the single deliberate deviation from a hypothetical
   never-diverging estimator; on every cell the patched reference can evaluate, parity is exact
   (see "Reference equivalence").
@@ -93,6 +94,12 @@ rename cutover) and **S11** (schedule table regen under L2 pricing).
   non-increasing in commitment width `w` outside a possible degenerate `-inf` prefix at very
   small `w`; the width search assumes this and Testing Strategy verifies it (a violation is a
   blocker).
+- **Ladder truncation ordering.** Per-`d` all-zero bucket truncation (skip remaining larger
+  buckets once every rank is insecure at the current bucket) is valid only when collision
+  buckets are visited in strictly increasing order for that `d`. Both `scripts/gen_sis_table.py`
+  and the Rust `gen_sis_table` binary must sort work items by `(d, collision)` ascending before
+  truncating; an unsorted custom `--collisions` list must not mark a dimension dead and skip
+  smaller buckets that would still have nonzero secure widths.
 - **No runtime coupling.** Prover, verifier, and planner continue to read only
   `generated_sis_table.rs`; they do not invoke the estimator at proof time. Normal Rust CI and
   prover/verifier builds do not require the `lattice-estimator` submodule to be initialized.
@@ -362,7 +369,8 @@ submodule on the Euclidean path.
   submodule bump is the intentional mechanism for noticing that upstream changed and deciding
   whether Akita should track it.
 - Full regen wall time: mitigate with parallelism and ladder truncation (all-zero bucket stops
-  per-`d` sweep, same as Python).
+  per-`d` sweep in strictly increasing bucket order, same as Python; see "Ladder truncation
+  ordering").
 
 ## References
 
