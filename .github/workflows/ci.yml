@@ -123,12 +123,12 @@ jobs:
       - name: Run tests (all features)
         id: test-all-features
         continue-on-error: true
-        # akita-field defines no zk feature; its tests are field-arithmetic only and
-        # already run in the non-zk leg above. Exclude them here to keep the zk
-        # test coverage narrow (see #75).
         run: |
           start_epoch=$(date +%s)
           set +e
+          # akita-field defines no zk feature; its tests are field-arithmetic only and
+          # already run in the non-zk leg above. Exclude them here to keep the zk
+          # test coverage narrow (see #75).
           cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))'
           status=$?
           set -e
