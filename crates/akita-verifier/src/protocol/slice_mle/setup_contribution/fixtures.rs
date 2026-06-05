@@ -218,6 +218,8 @@ impl SetupContributionFixture {
             n_d: shape.n_d,
             m_row_layout: shape.m_row_layout,
             n_b: shape.n_b,
+            tier_split: 1,
+            n_f: 0,
             num_points,
             rows,
             claim_to_commitment_group_poly: shape.claim_to_point_poly.clone(),
@@ -228,6 +230,7 @@ impl SetupContributionFixture {
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,
+                offset_u: offset_t + t_len,
                 offset_z,
                 offset_r,
                 #[cfg(feature = "zk")]
@@ -278,6 +281,7 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
+            self.prepared.witness_segment_layout.offset_u,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
@@ -302,6 +306,7 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
+            self.prepared.witness_segment_layout.offset_u,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })

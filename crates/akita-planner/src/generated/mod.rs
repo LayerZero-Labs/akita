@@ -7,6 +7,9 @@ pub struct GeneratedFoldStep {
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
+    /// First-tier `B` rank **before** any tiering split. Under a tiered policy,
+    /// expansion re-derives the shrunk `B'` and the second-tier `F` by replaying
+    /// `apply_tiering`, so the table stores the un-tiered rank here.
     pub n_b: u32,
     pub n_d: u32,
 }
@@ -67,6 +70,8 @@ pub mod fp128_d128_onehot_zk;
 pub mod fp128_d64_onehot;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d64_onehot_tensor;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_tensor_zk;
 #[cfg(feature = "zk")]
@@ -142,6 +147,18 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
+    }
+}
+
+/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: entries whose
+/// first-tier `B` footprint exceeds inner `A` carry the un-tiered `n_b`, and
+/// expansion replays `apply_tiering` to recover the `B'`/`F` split. Tiering is
+/// a non-ZK optimization, so this family has no `_zk` variant.
+#[cfg(not(feature = "zk"))]
+pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
     }
 }
 

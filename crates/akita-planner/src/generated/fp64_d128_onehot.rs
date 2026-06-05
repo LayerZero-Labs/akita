@@ -76,7 +76,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 20, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 9, r_vars: 4, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
@@ -248,7 +248,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 18, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 10, r_vars: 1, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 9, r_vars: 2, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),

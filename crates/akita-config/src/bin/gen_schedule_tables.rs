@@ -19,7 +19,30 @@ use std::path::PathBuf;
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_planner::generated::GeneratedScheduleKey;
 use akita_planner::generated_schedule_lookup_key;
+use akita_types::sis::min_secure_rank;
 use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Schedule, Step};
+
+/// First-tier `B` rank to store in the compact table.
+///
+/// For a single-tier level this is just `b_key.row_len()`. For a tiered level
+/// the table stores the **un-tiered** rank (the secure rank for the full,
+/// pre-split `B` width) so [`GeneratedFoldStep::expand_to_level_params`] can
+/// rebuild the un-tiered layout and replay `apply_tiering` to recover the exact
+/// `B'`/`F` split. The un-tiered rank equals the pre-tiering rank the DP sized
+/// against the full width `b_key.col_len() * tier_split`.
+fn untiered_n_b(p: &LevelParams) -> usize {
+    if p.f_key.is_none() {
+        return p.b_key.row_len();
+    }
+    let full_width = (p.b_key.col_len() * p.tier_split.max(1)) as u64;
+    min_secure_rank(
+        p.b_key.sis_family(),
+        p.ring_dimension as u32,
+        p.b_key.collision_inf(),
+        full_width,
+    )
+    .expect("tiered B' level must have a SIS-secure un-tiered rank for the full width")
+}
 
 fn emit_key(key: GeneratedScheduleKey) -> String {
     format!(
@@ -42,7 +65,7 @@ fn emit_fold_struct(p: &LevelParams) -> String {
         p.log_block_len(),
         p.log_num_blocks(),
         p.a_key.row_len(),
-        p.b_key.row_len(),
+        untiered_n_b(p),
         p.d_key.row_len(),
     )
 }

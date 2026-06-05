@@ -221,6 +221,7 @@ where
         layout.offset_e,
         layout.offset_t,
         layout.offset_z,
+        layout.offset_u,
     )?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
@@ -329,6 +330,10 @@ where
         rows,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         num_public_rows,
+        // Stage-3 (recursive setup-contribution mode) tiered support is a
+        // follow-up; the default Direct verifier path uses `eval_at_point`.
+        tier_split: lp.tier_split,
+        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
     })
 }
 

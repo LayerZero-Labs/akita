@@ -161,7 +161,7 @@ impl GeneratedFoldStep {
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
-        Ok(LevelParams {
+        let level = LevelParams {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
@@ -194,7 +194,16 @@ impl GeneratedFoldStep {
             num_digits_commit,
             num_digits_open,
             onehot_chunk_size,
-        })
+            // Single-tier by default; a tiered policy re-derives `B'`/`F` below
+            // by replaying `apply_tiering` on this un-tiered layout.
+            tier_split: 1,
+            f_key: None,
+        };
+
+        // Under a tiered policy, replay the same `B'`/`F` split the DP chose.
+        // The stored `n_b` is the un-tiered first-tier rank, so this is a no-op
+        // for single-tier policies and an exact reconstruction otherwise.
+        crate::schedule_params::apply_tiering(policy, level)
     }
 }
 

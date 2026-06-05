@@ -256,7 +256,16 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
         .row_len()
         .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
+    // Second-tier F prefix (tiered levels only; `b_len` already uses the shrunk
+    // B' since `lp.b_key` holds the B' dims). `0` for single-tier levels.
+    let f_len = match lp.f_key.as_ref() {
+        Some(fk) => fk
+            .row_len()
+            .checked_mul(fk.col_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
+        None => 0,
+    };
+    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
     Ok(())
 }
 
@@ -297,18 +306,32 @@ fn root_runtime_matrix_len_for_incidence(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("batched B setup vector width overflow".to_string())
         })?;
-    let b_width = max_group_poly_count
+    let full_b_width = max_group_poly_count
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("batched B setup width overflow".to_string()))?;
     let d_len =
         lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
             AkitaError::InvalidSetup("batched D setup envelope overflow".to_string())
         })?;
-    let b_len =
-        lp.b_key.row_len().checked_mul(b_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("batched B setup envelope overflow".to_string())
-        })?;
-    Ok(b_len.max(d_len))
+    // Tiered levels store a smaller B' reused across `tier_split` slices, so the
+    // stored width is `full_b_width / tier_split` (div_ceil keeps it an upper
+    // bound when the runtime incidence is skewed relative to the schedule key).
+    // `tier_split == 1` for single-tier levels reproduces the full width.
+    let stored_b_width = full_b_width.div_ceil(lp.tier_split.max(1));
+    let b_len = lp
+        .b_key
+        .row_len()
+        .checked_mul(stored_b_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched B setup envelope overflow".to_string()))?;
+    // Second-tier F prefix (F width does not scale with the per-group poly
+    // count): the planner-sized `f_key` footprint, or `0` for single-tier.
+    let f_len = match lp.f_key.as_ref() {
+        Some(fk) => fk.row_len().checked_mul(fk.col_len()).ok_or_else(|| {
+            AkitaError::InvalidSetup("batched F setup envelope overflow".to_string())
+        })?,
+        None => 0,
+    };
+    Ok(b_len.max(d_len).max(f_len))
 }
 
 #[cfg(feature = "zk")]
@@ -567,12 +590,23 @@ macro_rules! impl_proof_optimized_preset {
     (@onehot_chunk_size) => {
         1
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr)?) => {
+    (@tiered $tiered:expr) => {
+        $tiered
+    };
+    (@tiered) => {
+        false
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr $(, $tiered:expr)?)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
             type ChallengeField = $claim_field;
             const D: usize = $d;
+
+            // Defaults to `false`; the tiered preset(s) pass `true` as the
+            // optional trailing arg (which requires `onehot_chunk_size`).
+            const TIERED_COMMITMENT: bool =
+                impl_proof_optimized_preset!(@tiered $($($tiered)?)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 // Proof-optimized presets fold at `log_basis = 3` and set

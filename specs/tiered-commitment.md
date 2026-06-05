@@ -925,6 +925,69 @@ equivalence test) since it is the source of the verifier speedup; and the
 `effective_commit_rows` selector audit (step 7) since a missed site silently
 mis-prices or mis-validates the commitment.
 
+### Derived implementation contract (from code tracing)
+
+Implementation status (this branch): steps 1–4 are complete and tested
+(config/flag, `LevelParams` + canonical helpers + descriptor, planner
+`f`-search/`F`-sizing, setup envelope both paths). The setup-contribution
+folding **hinge** is proven by `setup_contribution::tests::reused_b_fold_matches_blockdiag`
+(`fold_reused_b_weight`). The remaining steps 5(integration)–7 are specified
+below at the code level; they are mutually consistent and validated only at the
+e2e (`tiered_e2e`).
+
+**Mirror principle.** The new outer commitment `F` mirrors the *old B-block*
+exactly (cyclic image vs a public RHS); the demoted `B'` mirrors the *D-block*
+(cyclic image vs a witness-recomposed RHS). So:
+
+- **`F` block** (`n_f` rows/group, RHS = `u_final` public):
+  `quotient_from_cyclic_and_reduced(F·û_concat[i] cyclic, u_final[i])` — copy of
+  the existing B-block quotient arm.
+- **`B_inner` block** (`tier_split·n_b'` rows/group, RHS = 0): for slice `j`,
+  row `i`, `quotient_from_cyclic_and_reduced(B'·t̂_slice_j[i] cyclic,
+  recompose(û_concat[j][i]))` — copy of the existing D-block arm, with the
+  "reduced" side being the gadget-recompose of the `û_concat` segment (which the
+  prover set equal to the negacyclic `B'·t̂_slice_j` at commit time).
+
+**`û_concat` layout (normative).** Per commitment group `g`: the `tier_split`
+slice images `u_concat = (B'·t̂_slice_0 ‖ … ‖ B'·t̂_slice_{f-1})` are
+`tier_split·n_b'` ring elements ordered `[slice j][b'_row i]`; each is decomposed
+into `num_digits_open` balanced planes, giving `û_concat` of
+`width_f = tier_split·n_b'·num_digits_open` planes ordered `[slice][b'_row][digit]`.
+In the witness `w`, `û_concat` is a **flat contiguous** segment at `offset_u`
+(placed immediately after `t̂`, before the ZK blinding segments and `offset_r`);
+its column-MLE is `u_eq[g][c] = eq_eval_at_index(full_vec_randomness,
+offset_u + g·width_f + c)` (no block-carry, unlike `t̂`).
+
+**Commit (root + recursive).** Where the single-tier path computes
+`u = digit_rows(b_key.row_len(), b_input_digits)` (root
+`commit_with_validated_params`; recursive `commit_w`), the tiered path computes,
+when `params.f_key.is_some()`:
+`for chunk in b_input_digits.chunks(b_key.col_len()) { u_concat.extend(digit_rows(b_key.row_len(), chunk)) }`,
+then `û_concat = balanced_decompose(u_concat, num_digits_open)`,
+then `u_final = digit_rows(f_key.row_len(), û_concat)` reading the `F` prefix of
+the shared matrix (overlapping prefix, like A/B/D). `RingCommitment.u = u_final`.
+`û_concat` is stored on `AkitaCommitmentHint` (new `u_concat_digits` field) so
+`ring_switch_build_w` can emit it at `offset_u` and `compute_relation_quotient`
+can use it for the `F`/`B_inner` arms.
+
+**Setup contribution scan (verifier + prover stage-3).** When `tier_split > 1`,
+disable `B` in the packed D/B/A scan and add two prefix scans (one
+`eval_ring_at_pows` per stored entry):
+- `F`: `for entry (row,col) in F prefix: w = Σ_g eq_tau1[f_start+g·n_f+row]·u_eq[g][col]`.
+- `B_inner`: `for entry (row,col) in B' prefix:
+  w = Σ_g Σ_j eq_tau1[b_inner_start+g·(f·n_b')+j·n_b'+row]·t_eq[g][j·width_small+col]`
+  (this is `fold_reused_b_weight`, reusing the existing `t_eq_slice_per_group`).
+`required = max(d, a, f_required, b_inner_required)` (all ≤ A footprint by the
+planner). Plus a structured `-recompose(û_concat)` term for the `B_inner` RHS,
+analogous to the consistency-row `z` recompose.
+
+**Verifier `eval_at_point`.** Add the `F`/`B_inner`/`û` contributions; derive all
+block starts from the canonical helpers (`f_start`/`b_inner_start`/`a_start`).
+`relation_claim_from_rows_extension`: COMMIT rows ← `u_final`, `B_inner` rows ← 0.
+Root-direct `recommit_direct_witness_group`: recompute `u_final` via
+small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
+`b_key.row_len()` sites that mean "sent-commitment length".
+
 ## References
 
 - Verifier setup contribution:

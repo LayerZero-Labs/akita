@@ -304,6 +304,63 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
+/// Tiered second-tier commitment: `u_final = F · decompose(blockdiag(B')·t̂)`.
+///
+/// `b_input_digits` is the full first-tier opening-digit input `t̂` (the same
+/// `[[i8; D]]` the single-tier path feeds to `B`). The first-tier matrix `B'`
+/// (`params.b_key`) is reused across `tier_split` equal column-slices, the
+/// concatenated images are decomposed at `num_digits_open`, and the second-tier
+/// matrix `F` (`params.f_key`) commits them. Reads the `B'` and `F` prefixes of
+/// the shared setup matrix from the origin (overlapping, like A/B/D).
+///
+/// Returns the sent commitment `u_final` (length `f_key.row_len()`).
+///
+/// # Errors
+///
+/// Returns an error when `params.f_key` is absent, when the `B'` width does not
+/// divide `b_input_digits`, or when a matvec fails.
+pub(crate) fn tiered_commit_u_final<F, const D: usize, B>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    params: &LevelParams,
+    b_input_digits: &[[i8; D]],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: CommitmentComputeBackend<F>,
+{
+    let f_key = params.f_key.as_ref().ok_or_else(|| {
+        AkitaError::InvalidSetup("tiered_commit_u_final requires a second-tier F key".to_string())
+    })?;
+    let n_b_small = params.b_key.row_len();
+    let width_small = params.b_key.col_len();
+    let delta_open = params.num_digits_open;
+    let log_basis = params.log_basis;
+    if width_small == 0 || !b_input_digits.len().is_multiple_of(width_small) {
+        return Err(AkitaError::InvalidSetup(
+            "tiered commit: first-tier B' width does not divide the opening input".to_string(),
+        ));
+    }
+    // u_concat = (B'·t̂_slice_0 ‖ … ‖ B'·t̂_slice_{f-1}), negacyclic.
+    let mut u_concat: Vec<CyclotomicRing<F, D>> = Vec::new();
+    for chunk in b_input_digits.chunks(width_small) {
+        let rows = backend.digit_rows::<D>(prepared, n_b_small, chunk, log_basis)?;
+        u_concat.extend(rows);
+    }
+    // û_concat = decompose(u_concat) at the opening digit depth, ordered
+    // [slice][b'_row][digit].
+    let mut u_hat = vec![[0i8; D]; u_concat.len() * delta_open];
+    for (dst, ring) in u_hat.chunks_mut(delta_open).zip(u_concat.iter()) {
+        ring.balanced_decompose_pow2_i8_into(dst, log_basis);
+    }
+    // u_final = F · û_concat (reads the F prefix of the shared matrix).
+    let u_final = backend.digit_rows::<D>(prepared, f_key.row_len(), &u_hat, log_basis)?;
+    if u_final.len() != f_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(u_final)
+}
+
 fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
     backend: &B,
@@ -359,39 +416,47 @@ where
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
-    #[cfg(feature = "zk")]
-    let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-        prepared,
-        params.b_key.row_len(),
-        &b_input_digits,
-        params.log_basis,
-    )?;
-    #[cfg(not(feature = "zk"))]
-    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-        prepared,
-        params.b_key.row_len(),
-        &b_input_digits,
-        params.log_basis,
-    )?;
-    #[cfg(feature = "zk")]
-    {
-        let blinding_rows = backend.zk_b_digit_rows::<D>(
+    let u: Vec<CyclotomicRing<F, D>> = if params.f_key.is_some() {
+        // Tiered: the sent commitment is the second-tier image
+        // `u_final = F·decompose(blockdiag(B')·t̂)`. ZK blinding of the F tier
+        // is a non-goal; tiered proofs are exercised non-zk.
+        tiered_commit_u_final::<F, D, B>(backend, prepared, params, &b_input_digits)?
+    } else {
+        #[cfg(feature = "zk")]
+        let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
             prepared,
             params.b_key.row_len(),
-            b_blinding_digits.flat_digits().len(),
-            b_blinding_digits.flat_digits(),
+            &b_input_digits,
+            params.log_basis,
         )?;
-        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding;
+        #[cfg(not(feature = "zk"))]
+        let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+            prepared,
+            params.b_key.row_len(),
+            &b_input_digits,
+            params.log_basis,
+        )?;
+        #[cfg(feature = "zk")]
+        {
+            let blinding_rows = backend.zk_b_digit_rows::<D>(
+                prepared,
+                params.b_key.row_len(),
+                b_blinding_digits.flat_digits().len(),
+                b_blinding_digits.flat_digits(),
+            )?;
+            for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+                *row += blinding;
+            }
         }
-    }
-    if u.len() != params.b_key.row_len() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "backend returned {} B commitment rows, expected {}",
-            u.len(),
-            params.b_key.row_len()
-        )));
-    }
+        if u.len() != params.b_key.row_len() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} B commitment rows, expected {}",
+                u.len(),
+                params.b_key.row_len()
+            )));
+        }
+        u
+    };
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,

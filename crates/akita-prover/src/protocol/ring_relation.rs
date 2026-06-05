@@ -596,7 +596,8 @@ impl RingRelationProver {
             &commitment_rows,
             y_rings,
             n_d_active,
-            lp.b_key.row_len(),
+            lp.effective_commit_rows(),
+            lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
@@ -818,7 +819,8 @@ impl RingRelationProver {
             commitment,
             y_rings,
             n_d_active,
-            lp.b_key.row_len(),
+            lp.effective_commit_rows(),
+            lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_claim.into_iter().flatten().collect();

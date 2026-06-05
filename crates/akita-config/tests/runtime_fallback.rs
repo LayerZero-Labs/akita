@@ -89,6 +89,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
+        tiered: Cfg::TIERED_COMMITMENT,
     };
     assert_eq!(
         policy, expected,
@@ -102,7 +103,32 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D32OneHot>();
     assert_policy_matches_cfg::<fp128::D64Full>();
     assert_policy_matches_cfg::<fp128::D128Full>();
+    assert_policy_matches_cfg::<fp128::D64OneHotTiered>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn tiered_flag_is_off_by_default_and_on_for_tiered_preset() {
+    // Read the flag through the runtime `policy_of` bridge (not the associated
+    // const directly) so the assertions are not constant-folded.
+    let plain = policy_of::<fp128::D64OneHot>();
+    let tiered = policy_of::<fp128::D64OneHotTiered>();
+    assert!(!plain.tiered, "default preset must be single-tier");
+    assert!(tiered.tiered, "tiered preset must enable tiering");
+    // The tiered policy resolves to its own dedicated shipped table (whose
+    // compact entries store the un-tiered `n_b` and replay `apply_tiering` on
+    // expansion). Tiering ships no `_zk` family, so under `zk` the tiered
+    // policy has no shipped table and falls back to the runtime DP.
+    #[cfg(not(feature = "zk"))]
+    assert!(
+        akita_planner::shipped_table(&tiered, false).is_some(),
+        "tiered preset must resolve to the shipped tiered table"
+    );
+    #[cfg(feature = "zk")]
+    assert!(
+        akita_planner::shipped_table(&tiered, false).is_none(),
+        "tiering ships no zk table; the tiered policy must fall back to the DP"
+    );
 }
 
 #[test]
