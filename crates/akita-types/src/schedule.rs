@@ -177,7 +177,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in the recursive witness polynomial.
 ///
-/// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
+/// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
 }
@@ -258,7 +258,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
-    let w_hat_count = num_w_vectors
+    let e_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
@@ -302,7 +302,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
                 field_bits as usize,
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
@@ -312,7 +312,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))
@@ -675,17 +675,23 @@ pub fn scheduled_fold_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
-    use crate::{extension_opening_reduction_proof_bytes, root_extension_opening_partials};
-    use akita_field::FieldCore;
-    use akita_field::Prime128OffsetA7F7;
+    use crate::{
+        direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+        root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
+        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+    };
+    use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::{AkitaError, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
+    use akita_sumcheck::EqFactoredUniPoly;
     #[cfg(not(feature = "zk"))]
-    use akita_sumcheck::{CompressedUniPoly, SumcheckProof};
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
     #[cfg(feature = "zk")]
-    use akita_sumcheck::{CompressedUniPoly, SumcheckProofMasked};
-
-    use crate::ExtensionOpeningReductionProof;
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     type F = Prime128OffsetA7F7;
 
@@ -741,6 +747,281 @@ mod tests {
         };
         SumcheckProofMasked {
             masked_round_polys: compressed_rounds(),
+        }
+    }
+
+    #[cfg(not(feature = "zk"))]
+    fn dummy_eq_factored_sumcheck<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> EqFactoredSumcheckProof<F> {
+        EqFactoredSumcheckProof {
+            round_polys: (0..rounds)
+                .map(|_| EqFactoredUniPoly {
+                    coeffs_except_linear_term: vec![
+                        F::zero();
+                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                    ],
+                })
+                .collect(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> EqFactoredSumcheckProofMasked<F> {
+        let rounds_for = || {
+            (0..rounds)
+                .map(|_| EqFactoredUniPoly {
+                    coeffs_except_linear_term: vec![
+                        F::zero();
+                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                    ],
+                })
+                .collect()
+        };
+        EqFactoredSumcheckProofMasked {
+            masked_round_polys: rounds_for(),
+        }
+    }
+
+    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+        AkitaStage1Proof {
+            stages: stage1_tree_stage_shapes(rounds, b)
+                .into_iter()
+                .map(|shape| AkitaStage1StageProof {
+                    #[cfg(not(feature = "zk"))]
+                    sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
+                    #[cfg(feature = "zk")]
+                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
+                        rounds,
+                        shape.sumcheck_proof.1,
+                    ),
+                    child_claims: vec![F::zero(); shape.child_claims],
+                })
+                .collect(),
+            s_claim: F::zero(),
+        }
+    }
+
+    fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
+        lp: &LevelParams,
+        next_lp: &LevelParams,
+        next_w_len: usize,
+    ) -> Result<usize, AkitaError> {
+        let current_coeffs = lp
+            .d_key
+            .row_len()
+            .checked_mul(lp.ring_dimension)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
+            })?;
+        let next_commit_coeffs = next_lp
+            .b_key
+            .row_len()
+            .checked_mul(next_lp.ring_dimension)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
+            })?;
+        let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+        let b = 1usize << lp.log_basis;
+
+        let proof = AkitaLevelProof {
+            y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
+            extension_opening_reduction: None,
+            v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            stage1: dummy_stage1_proof(rounds, b),
+            stage2: AkitaStage2Proof {
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
+                next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                #[cfg(not(feature = "zk"))]
+                next_w_eval: F::zero(),
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: F::zero(),
+            },
+            stage3_sumcheck_proof: None,
+        };
+        Ok(proof.serialized_size(Compress::No))
+    }
+
+    #[test]
+    fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+        let next_w_len = D * 8;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 0)
+            .unwrap();
+            assert_eq!(
+                level_proof_bytes(
+                    128,
+                    128,
+                    &lp,
+                    Some(&next_lp),
+                    next_w_len,
+                    1,
+                    MRowLayout::WithDBlock,
+                ),
+                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
+                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_w_len = D * 8;
+        let num_claims = 3;
+        let final_w_num_elems = 1024;
+        let final_w_bits = 5;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 0)
+            .unwrap();
+            let rounds = sumcheck_rounds(D, next_w_len);
+
+            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+                &vec![0i8; final_w_num_elems],
+                final_w_bits,
+            ));
+            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+            let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
+                vec![CyclotomicRing::<F, D>::zero(); num_claims],
+                None,
+                #[cfg(not(feature = "zk"))]
+                dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                dummy_sumcheck_proof_masked(rounds, 3),
+                final_witness,
+            );
+
+            // The planner accounts for the final witness separately
+            // (`direct_witness_bytes` on the terminal direct step). Subtract
+            // it from the serialized terminal level to compare against
+            // `terminal_level_proof_bytes`.
+            let serialized_without_witness =
+                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+
+            assert_eq!(
+                level_proof_bytes(
+                    128,
+                    128,
+                    &lp,
+                    None,
+                    next_w_len,
+                    num_claims,
+                    MRowLayout::WithoutDBlock,
+                ),
+                serialized_without_witness,
+                "planned terminal-level bytes should match the serialized terminal body \
+                 (less final_witness) at log_basis={log_basis}"
+            );
+
+            // Sanity-check `direct_witness_bytes` against the runtime
+            // packed-digit serialization so any future drift in either
+            // accounting path is caught here too.
+            assert_eq!(
+                direct_witness_bytes(
+                    128,
+                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                ),
+                final_witness_bytes_runtime,
+                "direct_witness_bytes should match the serialized packed-digit \
+                 final witness at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+        let next_w_len = D * 8;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 0)
+            .unwrap();
+            let rounds = sumcheck_rounds(D, next_w_len);
+            let b = 1usize << log_basis;
+            let next_commitment = FlatRingVec::from_ring_elems(&vec![
+                CyclotomicRing::<F, D>::zero();
+                next_lp.b_key.row_len()
+            ])
+            .into_compact();
+            let num_points = 5;
+            let root_proof = AkitaBatchedRootProof::new_two_stage::<D>(
+                vec![CyclotomicRing::<F, D>::zero(); num_points],
+                vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+                dummy_stage1_proof(rounds, b),
+                #[cfg(not(feature = "zk"))]
+                dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                dummy_sumcheck_proof_masked(rounds, 3),
+                next_commitment,
+                F::zero(),
+            );
+
+            assert_eq!(
+                level_proof_bytes(
+                    128,
+                    128,
+                    &lp,
+                    Some(&next_lp),
+                    next_w_len,
+                    num_points,
+                    MRowLayout::WithDBlock,
+                ),
+                root_proof.serialized_size(Compress::No),
+                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
+            );
         }
     }
 

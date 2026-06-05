@@ -22,7 +22,7 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
     )
     .expect("Q32 dispatch should support this field and ring dimension");
 
-    let w_hat: Vec<[i8; D]> = (0..cols)
+    let e_hat: Vec<[i8; D]> = (0..cols)
         .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 7) as i8 - 3))
         .collect();
     let t_hat: Vec<[i8; D]> = (0..cols)
@@ -33,12 +33,12 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
         .collect();
 
     let log_basis = 3;
-    let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &w_hat, log_basis)
+    let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &e_hat, log_basis)
         .expect("expected D rows");
     let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat, log_basis)
         .expect("expected B rows");
     let (d_rows, b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, &w_hat, &t_hat, &z_pre, 1)
+        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, &e_hat, &t_hat, &z_pre, 1)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);
@@ -150,10 +150,10 @@ fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
             .expect("valid ring matrix view"),
     )
     .expect("Q128 dispatch should support this field and ring dimension");
-    let w_hat = vec![[-32i8; D]; cols];
+    let e_hat = vec![[-32i8; D]; cols];
 
     let (d_rows, _b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, &w_hat, &[], &[], 0)
+        fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, &e_hat, &[], &[], 0)
             .expect("fused split-eq rows");
 
     let digit = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
@@ -192,7 +192,7 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
     )
     .expect("Q32 dispatch should support this field and ring dimension");
 
-    let w_hat: Vec<[i8; D]> = (0..d_width)
+    let e_hat: Vec<[i8; D]> = (0..d_width)
         .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 5) as i8 - 2))
         .collect();
     let t_hat: Vec<[i8; D]> = (0..b_width)
@@ -210,7 +210,7 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
 
     let log_basis = 3;
     let expected_d =
-        mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_d, d_width, &w_hat, log_basis)
+        mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_d, d_width, &e_hat, log_basis)
             .expect("expected D rows");
     let expected_b =
         mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, b_width, &t_hat, log_basis)
@@ -228,7 +228,7 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
         })
         .collect::<Vec<_>>();
     let (d_rows, b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, n_d, n_b, n_a, &w_hat, &t_hat, &z_pre, 3)
+        fused_split_eq_quotients::<F, D>(&slot, n_d, n_b, n_a, &e_hat, &t_hat, &z_pre, 3)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);

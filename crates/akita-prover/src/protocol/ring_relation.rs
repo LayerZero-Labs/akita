@@ -19,10 +19,10 @@ use akita_challenges::{
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_W_HAT};
+use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, terminal_w_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
+    gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
 };
 use akita_types::{ClaimIncidenceSummary, CommitmentRouting, LevelParams, RingRelationInstance};
@@ -84,17 +84,17 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
     Ok(z)
 }
 
-fn absorb_terminal_w_hat<F, T, const D: usize>(
+fn absorb_terminal_e_hat<F, T, const D: usize>(
     transcript: &mut T,
-    w_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks<D>,
     planes_per_block: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let bytes = terminal_w_hat_bytes_from_blocks(w_hat, planes_per_block)?;
-    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &bytes);
+    let bytes = terminal_e_hat_bytes_from_blocks(e_hat, planes_per_block)?;
+    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
     Ok(())
 }
 
@@ -232,12 +232,12 @@ where
     }
 }
 
-/// Compute the D-side relation rows `v = D · w_hat` (plus ZK blinding when enabled).
+/// Compute the D-side relation rows `v = D · e_hat` (plus ZK blinding when enabled).
 fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     row_len: usize,
-    w_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks<D>,
     log_basis: u32,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -248,7 +248,7 @@ where
     #[cfg(feature = "zk")]
     {
         let mut rows =
-            backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
+            backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
         let blinding_rows = backend.zk_d_digit_rows::<D>(
             prepared,
             row_len,
@@ -265,7 +265,7 @@ where
     }
     #[cfg(not(feature = "zk"))]
     {
-        let rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
+        let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -297,7 +297,7 @@ impl RingRelationProver {
     ///
     /// # Panics
     ///
-    /// Panics if the batched `w_hat` decomposition or flattened batched hints
+    /// Panics if the batched `e_hat` decomposition or flattened batched hints
     /// produced by the prover do not preserve the expected block sizes.  These
     /// invariants hold by construction for well-formed inputs accepted by the
     /// error checks above and are therefore treated as internal programming
@@ -312,7 +312,7 @@ impl RingRelationProver {
         ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
         claim_to_point: Vec<usize>,
         polys: &[&P],
-        pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+        pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         incidence_summary: &ClaimIncidenceSummary,
         lp: LevelParams,
         hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -371,7 +371,7 @@ impl RingRelationProver {
         }
         // The batched protocol emits one public y-row per packaged public row,
         // so `y_rings.len()` must equal `opening_points.len()`.
-        if polys.len() != pre_folded_by_poly.len()
+        if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
             || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
@@ -420,27 +420,27 @@ impl RingRelationProver {
             .map(|ring| ring.coefficients()[0])
             .collect::<Vec<_>>();
 
-        let w_hat = {
-            let _span = tracing::info_span!("decompose_batched_w_hat").entered();
+        let e_hat = {
+            let _span = tracing::info_span!("decompose_batched_e_hat").entered();
             let depth_open = lp.num_digits_open;
             let log_basis = lp.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
             let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let total_rows: usize = pre_folded_by_poly.iter().map(Vec::len).sum();
+            let total_rows: usize = pre_folded_e_by_poly.iter().map(Vec::len).sum();
             let block_sizes = vec![depth_open; total_rows];
-            let mut w_hat = FlatDigitBlocks::zeroed(block_sizes)
-                .expect("batched w_hat decomposition preserves block sizes");
+            let mut e_hat = FlatDigitBlocks::zeroed(block_sizes)
+                .expect("batched e_hat decomposition preserves block sizes");
             let mut offset = 0usize;
-            for folded_rows in &pre_folded_by_poly {
+            for folded_rows in &pre_folded_e_by_poly {
                 for w_i in folded_rows {
                     w_i.balanced_decompose_pow2_i8_into_with_params(
-                        &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
+                        &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
                         &decompose_params,
                     );
                     offset += depth_open;
                 }
             }
-            w_hat
+            e_hat
         };
         let flattened_hint = {
             let mut decomposed_inner_rows = Vec::new();
@@ -494,7 +494,7 @@ impl RingRelationProver {
         };
 
         // Terminal layout drops the D-block from the M-matrix entirely:
-        // `v = D · w_hat` never travels on the wire, the verifier never
+        // `v = D · e_hat` never travels on the wire, the verifier never
         // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
         // `relation_claim_from_rows_extension`) consume an empty `v` slice.
         // Skip both the D-side blinding sample and the D-NTT under Terminal.
@@ -510,14 +510,14 @@ impl RingRelationProver {
             MRowLayout::WithDBlock => {
                 let _span = tracing::info_span!(
                     "compute_batched_v",
-                    w_hat_planes = w_hat.flat_digits().len()
+                    e_hat_planes = e_hat.flat_digits().len()
                 )
                 .entered();
                 let v = compute_v_rows(
                     backend,
                     prepared,
                     lp.d_key.row_len(),
-                    &w_hat,
+                    &e_hat,
                     lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
@@ -529,7 +529,7 @@ impl RingRelationProver {
         };
 
         if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
-            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
+            absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
         let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
@@ -599,7 +599,7 @@ impl RingRelationProver {
             lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
-        let w_folded = pre_folded_by_poly.into_iter().flatten().collect();
+        let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
         let incidence = incidence_summary.clone();
         let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
@@ -618,8 +618,8 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
-            w_hat,
-            w_folded,
+            e_hat,
+            e_folded,
             hint: flattened_hint,
             #[cfg(feature = "zk")]
             d_blinding_digits,
@@ -647,7 +647,7 @@ impl RingRelationProver {
         ring_opening_points: Vec<RingOpeningPoint<F>>,
         ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
         witness: &RecursiveWitnessView<'_, F, D>,
-        pre_folded_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
+        pre_folded_e_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
@@ -664,7 +664,7 @@ impl RingRelationProver {
         let num_claims = ring_opening_points.len();
         if num_claims == 0
             || ring_multiplier_points.len() != num_claims
-            || pre_folded_by_claim.len() != num_claims
+            || pre_folded_e_by_claim.len() != num_claims
             || y_rings.len() != num_claims
         {
             return Err(AkitaError::InvalidInput(
@@ -687,29 +687,29 @@ impl RingRelationProver {
             ));
         }
 
-        let w_hat = {
-            let _span = tracing::info_span!("decompose_recursive_multipoint_w_hat").entered();
+        let e_hat = {
+            let _span = tracing::info_span!("decompose_recursive_multipoint_e_hat").entered();
             let depth_open = lp.num_digits_open;
             let log_basis = lp.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
             let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let total_rows: usize = pre_folded_by_claim.iter().map(Vec::len).sum();
-            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+            let total_rows: usize = pre_folded_e_by_claim.iter().map(Vec::len).sum();
+            let mut e_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
             let mut offset = 0usize;
-            for folded_rows in &pre_folded_by_claim {
+            for folded_rows in &pre_folded_e_by_claim {
                 for w_i in folded_rows {
                     w_i.balanced_decompose_pow2_i8_into_with_params(
-                        &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
+                        &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
                         &decompose_params,
                     );
                     offset += depth_open;
                 }
             }
-            w_hat
+            e_hat
         };
         hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
-        // See [`Self::new`]: Terminal layout omits `v = D · w_hat`
+        // See [`Self::new`]: Terminal layout omits `v = D · e_hat`
         // entirely, so skip both the D-side blinding sample and the D-NTT.
         #[cfg(feature = "zk")]
         let d_blinding_digits = match m_row_layout {
@@ -723,14 +723,14 @@ impl RingRelationProver {
             MRowLayout::WithDBlock => {
                 let _span = tracing::info_span!(
                     "compute_recursive_multipoint_v",
-                    w_hat_planes = w_hat.flat_digits().len()
+                    e_hat_planes = e_hat.flat_digits().len()
                 )
                 .entered();
                 let v = compute_v_rows(
                     backend,
                     prepared,
                     lp.d_key.row_len(),
-                    &w_hat,
+                    &e_hat,
                     lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
@@ -748,7 +748,7 @@ impl RingRelationProver {
             ));
         }
         if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
-            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
+            absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
         let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
@@ -821,7 +821,7 @@ impl RingRelationProver {
             lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
-        let w_folded = pre_folded_by_claim.into_iter().flatten().collect();
+        let e_folded = pre_folded_e_by_claim.into_iter().flatten().collect();
 
         // True recursive multipoint (one commitment opened at k > 1 points) is
         // a deferred feature. The routing types and the row-evaluation on both
@@ -854,8 +854,8 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
-            w_hat,
-            w_folded,
+            e_hat,
+            e_folded,
             hint,
             #[cfg(feature = "zk")]
             d_blinding_digits,

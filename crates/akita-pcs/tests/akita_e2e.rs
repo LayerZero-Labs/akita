@@ -246,6 +246,7 @@ where
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -393,6 +394,7 @@ fn full_d64_prove_verify() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
         let prove_time = prove_start.elapsed();
@@ -419,6 +421,7 @@ fn full_d64_prove_verify() {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         let verify_time = verify_start.elapsed();
 
@@ -468,6 +471,7 @@ fn full_d32_prove_verify() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
 
         assert!(
@@ -500,6 +504,7 @@ fn fp32_static_dense_round_trip() {
                 &mut verifier_transcript,
                 verify_input(&opening_point[..], &openings[..], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
 
         assert!(
@@ -532,6 +537,7 @@ fn fp64_static_dense_round_trip() {
                 &mut verifier_transcript,
                 verify_input(&opening_point[..], &openings[..], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
 
         assert!(
@@ -605,6 +611,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -661,6 +668,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
 
         assert!(
@@ -720,6 +728,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -789,6 +798,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -844,6 +854,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -959,6 +970,7 @@ fn batched_onehot_same_point_round_trip() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -979,6 +991,7 @@ fn batched_onehot_same_point_round_trip() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -1000,6 +1013,7 @@ fn batched_onehot_same_point_round_trip() {
                 &mut truncated_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         assert!(
             truncated_result.is_err(),
@@ -1077,6 +1091,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -1114,10 +1129,134 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_err(),
             "tampered batched root stage1 s_claim must be rejected"
+        );
+    });
+}
+#[test]
+fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64OneHot;
+        const D: usize = Cfg::D;
+        const NV: usize = 30;
+        const BATCH_SIZE: usize = 4;
+
+        let layout = akita_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<F, D>> = (0..BATCH_SIZE)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x600d_f00d_1234_0000 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let pt = random_point(NV);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(NV);
+
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+            NV, BATCH_SIZE, 1,
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let verifier_setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            &poly_refs,
+        )
+        .unwrap();
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .unwrap();
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize batched onehot proof");
+        let mut cursor = std::io::Cursor::new(serialized);
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
+            .expect("deserialize batched onehot proof");
+
+        assert!(
+            decoded.final_witness().num_elems() <= 245_888,
+            "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
+            decoded.final_witness().num_elems()
+        );
+        assert!(
+            decoded.num_fold_levels() > 0,
+            "test fixture must include a recursive suffix to cover truncation"
+        );
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let opening_groups = [&openings[..]];
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(
+            result.is_ok(),
+            "batched onehot 4x30 verification must pass: {:?}",
+            result.err()
+        );
+
+        let mut truncated = decoded.clone();
+        truncated.steps.remove(0);
+        let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let truncated_result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                &truncated,
+                &verifier_setup,
+                &mut truncated_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
+            );
+        assert!(
+            truncated_result.is_err(),
+            "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
 }

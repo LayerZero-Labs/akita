@@ -15,7 +15,8 @@ use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
-    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    LevelParams, Schedule, SetupContributionMode, SetupMatrixEnvelope, SetupPrefixPopulatePolicy,
+    SisModulusFamily, Step, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_N_MIN,
 };
 
 pub mod generated_families;
@@ -194,6 +195,34 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// override this hook to recover tighter one-hot schedules.
     fn onehot_chunk_size() -> usize {
         1
+    }
+
+    /// Setup-prefix preprocessing policy for a selected verifier setup mode.
+    ///
+    /// The default policy populates the active committed setup prefixes for
+    /// recursive setup-contribution proofs when this config uses the currently
+    /// supported setup-offload ring dimension. Direct mode keeps setup loading
+    /// unchanged. Presets can override this to disable preprocessing, request a
+    /// full ladder, or force selected slots.
+    fn recursion_setup_prefix_policy(
+        mode: SetupContributionMode,
+        active_prefix_lengths: &[usize],
+    ) -> SetupPrefixPopulatePolicy {
+        if mode != SetupContributionMode::Recursive || Self::D != SETUP_OFFLOAD_D_SETUP {
+            return SetupPrefixPopulatePolicy::Disabled;
+        }
+        let mut lengths = active_prefix_lengths
+            .iter()
+            .copied()
+            .filter(|&len| len >= SETUP_OFFLOAD_N_MIN)
+            .collect::<Vec<_>>();
+        lengths.sort_unstable();
+        lengths.dedup();
+        if lengths.is_empty() {
+            SetupPrefixPopulatePolicy::Disabled
+        } else {
+            SetupPrefixPopulatePolicy::SelectedSlots(lengths)
+        }
     }
 
     /// Build the runtime [`Schedule`] for `key`.

@@ -12,18 +12,18 @@ where
 {
     let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
     let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-    let mut w_folded_by_poly = Vec::with_capacity(polys.len());
+    let mut e_folded_by_poly = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
         let prepared_point = &prepared_points[point_idx];
-        let (y_ring, w_folded) = evaluate_poly_at_multiplier_point(
+        let (y_ring, e_folded) = evaluate_poly_at_multiplier_point(
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
         )?;
         per_claim_y_rings.push(y_ring);
-        w_folded_by_poly.push(w_folded);
+        e_folded_by_poly.push(e_folded);
     }
-    Ok((per_claim_y_rings, w_folded_by_poly))
+    Ok((per_claim_y_rings, e_folded_by_poly))
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
@@ -87,7 +87,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     next_log_basis: u32,
     commit_w_for_next: CommitW,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
-    w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+    e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -95,6 +95,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
@@ -140,7 +141,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -180,6 +181,7 @@ where
         #[cfg(feature = "zk")]
         y_rings_masked,
         row_coefficients,
+        setup_contribution_mode,
         commit_w_for_next,
     )?;
     raw.extension_opening_reduction = extension_opening_reduction;
@@ -217,6 +219,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
@@ -329,7 +332,7 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -398,7 +401,7 @@ where
             next_log_basis,
             commit_w_for_next,
             prepared_points,
-            w_folded_by_poly,
+            e_folded_by_poly,
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
@@ -409,6 +412,7 @@ where
             zk_hiding_commitment,
             #[cfg(feature = "zk")]
             zk_hiding,
+            setup_contribution_mode,
         );
     }
 
@@ -424,7 +428,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+    let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -520,7 +524,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -560,6 +564,7 @@ where
         #[cfg(feature = "zk")]
         y_rings_masked,
         row_coefficients,
+        setup_contribution_mode,
         commit_w_for_next,
     )
 }
@@ -594,6 +599,7 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
     expected_w_len: usize,
     final_log_basis: u32,
     basis: BasisMode,
+    _setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
@@ -705,7 +711,7 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -772,7 +778,7 @@ where
             expected_w_len,
             final_log_basis,
             prepared_points,
-            w_folded_by_poly,
+            e_folded_by_poly,
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
@@ -796,7 +802,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+    let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -892,7 +898,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -947,7 +953,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     expected_w_len: usize,
     final_log_basis: u32,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
-    w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+    e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -998,7 +1004,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -1073,6 +1079,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
@@ -1142,9 +1149,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
@@ -1249,6 +1256,27 @@ where
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
+    let stage3_sumcheck_proof = match setup_contribution_mode {
+        SetupContributionMode::Recursive => {
+            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
+            let output = SetupSumcheckProver::prove::<F, T, _, D>(
+                setup_view.as_slice(),
+                lp,
+                &instance,
+                &tau1,
+                alpha,
+                &sumcheck_challenges[ring_bits..],
+                transcript,
+                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            Some(SetupSumcheckProof {
+                claim: output.claim,
+                sumcheck: output.sumcheck,
+            })
+        }
+        SetupContributionMode::Direct => None,
+    };
 
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]
@@ -1264,6 +1292,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval: proof_w_eval,
         next_state: RecursiveProverState {

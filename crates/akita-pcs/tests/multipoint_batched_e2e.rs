@@ -101,12 +101,14 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                num_polys_per_point.len(),
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -135,6 +137,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("multipoint batched prove");
 
@@ -156,6 +159,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -217,11 +221,14 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_prover(
             NV,
             total_claims,
-            num_polys_per_point.len(),
-        ).unwrap();
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -244,7 +251,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
                     &polys_per_point_refs,
                     &commitments,
                     hints,
-                ), &mut prover_transcript, BasisMode::Lagrange)
+                ), &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -268,6 +275,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -314,12 +322,14 @@ fn multipoint_dense_shared_commitment_round_trip() {
             })
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                NUM_POINTS,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            NUM_POINTS)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -364,6 +374,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             prover_claims,
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("shared-commitment multipoint batched prove");
 
@@ -401,6 +412,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             &mut verifier_transcript,
             verifier_claims,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -499,6 +511,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -514,6 +527,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&swapped_points, &openings_per_point_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "swapped opening points must be rejected");
         });
@@ -598,6 +612,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "capacity overflow must be rejected");
         });
@@ -692,6 +707,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -713,6 +729,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&opening_points, &truncated_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_err(),

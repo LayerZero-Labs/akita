@@ -1,6 +1,6 @@
 use crate::report::{
-    emit_runtime_schedule_summary, print_batched_proof_summary, report_crt_profile,
-    report_setup_sizes, report_timing,
+    emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
+    print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
@@ -19,7 +19,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, Step,
+    ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
+    SetupContributionMode, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -115,6 +116,77 @@ fn assert_runtime_matches_planned_proof_size(
              {actual_bytes} by {overcount} bytes (stage-2 degree-2 round micro-optimization; \
              accepted, see specs/planner-refactor.md)"
         );
+    }
+}
+
+/// Setup-contribution mode for the profile run, selected by `AKITA_SETUP_MODE`
+/// (`direct` default, `recursive` to exercise the stage-3 setup-product
+/// sumcheck). Unknown values warn and fall back to direct.
+fn profile_setup_contribution_mode() -> SetupContributionMode {
+    match std::env::var("AKITA_SETUP_MODE").ok().as_deref() {
+        Some("recursive") => SetupContributionMode::Recursive,
+        Some("direct") | None => SetupContributionMode::Direct,
+        Some(other) => {
+            tracing::warn!(
+                value = other,
+                "unknown AKITA_SETUP_MODE; defaulting to direct"
+            );
+            eprintln!("[profile] unknown AKITA_SETUP_MODE={other:?}; defaulting to direct");
+            SetupContributionMode::Direct
+        }
+    }
+}
+
+/// Compare the runtime proof against the planner estimate.
+///
+/// The planner prices the **direct-mode** payload only. In direct mode the
+/// whole proof is checked against it. In recursive mode the stage-3
+/// setup-product bytes are pure overhead layered on top, so they are stripped
+/// before the comparison and reported as an explicit delta instead of being
+/// asserted against `schedule.total_bytes`.
+fn report_proof_size_against_planner<FF, L>(
+    label: &str,
+    proof: &AkitaBatchedProof<FF, L>,
+    planned_bytes: usize,
+    source: &str,
+    mode: SetupContributionMode,
+) where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
+    match mode {
+        SetupContributionMode::Direct => {
+            assert_runtime_matches_planned_proof_size(label, proof.size(), planned_bytes, source);
+        }
+        SetupContributionMode::Recursive => {
+            let stage3_bytes = observed_stage3_setup_product_bytes(proof);
+            let direct_equivalent = proof
+                .size()
+                .checked_sub(stage3_bytes)
+                .expect("stage-3 setup-product bytes are a subset of the serialized proof size");
+            let recursive_source = format!("{source} (recursive; stage-3 setup-product excluded)");
+            assert_runtime_matches_planned_proof_size(
+                label,
+                direct_equivalent,
+                planned_bytes,
+                &recursive_source,
+            );
+            tracing::info!(
+                label,
+                observed_total_bytes = proof.size(),
+                stage3_setup_product_bytes = stage3_bytes,
+                direct_mode_planner_bytes = planned_bytes,
+                "recursive setup-product proof size"
+            );
+            eprintln!(
+                "[{label}] recursive setup: observed={} bytes = direct-mode payload {} \
+                 (+/- planner overcount vs {source} {}) + stage-3 setup-product {} bytes",
+                proof.size(),
+                direct_equivalent,
+                planned_bytes,
+                stage3_bytes,
+            );
+        }
     }
 }
 
@@ -283,6 +355,13 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+    let setup_contribution_mode = profile_setup_contribution_mode();
+    tracing::info!(
+        label,
+        ?setup_contribution_mode,
+        "profile setup-contribution mode"
+    );
+    eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         &CpuBackend,
@@ -297,6 +376,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        setup_contribution_mode,
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -323,17 +403,24 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         );
     }
     if let Some(plan) = plan {
-        assert_runtime_matches_planned_proof_size(label, proof.size(), plan.total_bytes, "planned");
+        report_proof_size_against_planner(
+            label,
+            &proof,
+            plan.total_bytes,
+            "planned",
+            setup_contribution_mode,
+        );
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
     } else {
         let incidence =
             ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
         let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
-        assert_runtime_matches_planned_proof_size(
+        report_proof_size_against_planner(
             label,
-            proof.size(),
+            &proof,
             schedule.total_bytes,
             "runtime schedule",
+            setup_contribution_mode,
         );
         emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
     }
@@ -353,6 +440,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             },
         )],
         BasisMode::Lagrange,
+        setup_contribution_mode,
     ) {
         Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {
@@ -426,11 +514,18 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
     };
     let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        poly.num_vars(),
-        1,
-        1,
-    )
+    let setup = match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover(poly.num_vars(), 1, 1),
+        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover_recursion(
+            poly.num_vars(), 1, 1
+        ),
+    }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
@@ -514,8 +609,16 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
-    let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1).unwrap();
+    let setup = match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1)
+        }
+        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover_recursion(nv, 1, 1),
+    }
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -617,8 +720,16 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1).unwrap();
+    let setup_contribution_mode = profile_setup_contribution_mode();
+    let setup = match setup_contribution_mode {
+        SetupContributionMode::Direct => {
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1)
+        }
+        SetupContributionMode::Recursive => {
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys, 1)
+        }
+    }
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -648,6 +759,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+    tracing::info!(
+        label,
+        ?setup_contribution_mode,
+        "profile setup-contribution mode"
+    );
+    eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         &CpuBackend,
@@ -662,6 +779,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        setup_contribution_mode,
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -671,14 +789,21 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(plan) = plan {
-        assert_runtime_matches_planned_proof_size(label, proof.size(), plan.total_bytes, "planned");
+        report_proof_size_against_planner(
+            label,
+            &proof,
+            plan.total_bytes,
+            "planned",
+            setup_contribution_mode,
+        );
         emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
     } else {
-        assert_runtime_matches_planned_proof_size(
+        report_proof_size_against_planner(
             label,
-            proof.size(),
+            &proof,
             schedule.total_bytes,
             "runtime schedule",
+            setup_contribution_mode,
         );
         emit_runtime_schedule_summary(
             label,
@@ -738,6 +863,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             },
         )],
         BasisMode::Lagrange,
+        setup_contribution_mode,
     ) {
         Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {

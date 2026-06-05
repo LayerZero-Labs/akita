@@ -901,27 +901,9 @@ pub fn prefix_lengths_for_policy(
 ) -> Result<Vec<usize>, AkitaError> {
     match policy {
         SetupPrefixPopulatePolicy::Disabled => Ok(Vec::new()),
-        SetupPrefixPopulatePolicy::FullLadder { n_min, n_max } => {
-            if *n_min == 0 || !n_min.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "setup prefix ladder n_min must be a non-zero power of two".to_string(),
-                ));
-            }
-            if *n_max < *n_min || !n_max.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "setup prefix ladder n_max must be a power of two >= n_min".to_string(),
-                ));
-            }
-            let mut lengths = Vec::new();
-            let mut current = *n_min;
-            while current <= *n_max {
-                lengths.push(current);
-                current = current.checked_mul(2).ok_or_else(|| {
-                    AkitaError::InvalidSetup("prefix ladder overflow".to_string())
-                })?;
-            }
-            Ok(lengths)
-        }
+        SetupPrefixPopulatePolicy::FullLadder { .. } => Err(AkitaError::InvalidSetup(
+            "FullLadder policy not supported".to_string(),
+        )),
         SetupPrefixPopulatePolicy::SelectedSlots(lengths) => {
             for &len in lengths {
                 if len == 0 || !len.is_power_of_two() {

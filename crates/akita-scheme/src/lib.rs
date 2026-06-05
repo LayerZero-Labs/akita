@@ -20,7 +20,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
     scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
-    LevelParams, RingCommitment, Schedule,
+    LevelParams, RingCommitment, Schedule, SetupContributionMode,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
@@ -118,6 +118,7 @@ fn dispatch_prove_level<F, T, B, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
@@ -142,6 +143,7 @@ where
             level,
             level_params,
             next_params.log_basis,
+            setup_contribution_mode,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -181,6 +183,7 @@ where
                 level,
                 level_params,
                 next_params.log_basis,
+                setup_contribution_mode,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
@@ -234,6 +237,7 @@ fn prove_recursive_suffix<F, T, B, const D: usize, Cfg>(
     transcript: &mut T,
     initial_state: RecursiveProverState<F, Cfg::ChallengeField>,
     schedule: &Schedule,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<RecursiveSuffixOutcome<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
@@ -277,6 +281,7 @@ where
                 level,
                 level_params,
                 next_params,
+                setup_contribution_mode,
             )
             .map(akita_prover::SuffixLevelOutput::Intermediate),
             akita_prover::SuffixLevelRequest::Terminal {
@@ -418,6 +423,19 @@ where
         )
     }
 
+    fn setup_prover_recursion(
+        max_num_vars: usize,
+        max_num_polys_per_point: usize,
+        max_num_points: usize,
+    ) -> Result<Self::ProverSetup, AkitaError> {
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
+        akita_setup::new_prover_setup_recursion::<F, D, Cfg>(
+            max_num_vars,
+            max_num_polys_per_point,
+            max_num_points,
+        )
+    }
+
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
         setup.verifier_setup()
     }
@@ -511,6 +529,7 @@ where
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,
@@ -519,9 +538,9 @@ where
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        let expanded = setup.expanded.as_ref();
-        backend.validate_prepared_setup::<D>(prepared, expanded)?;
         let expanded_arc = setup.expanded.clone();
+        let expanded = expanded_arc.as_ref();
+        backend.validate_prepared_setup::<D>(prepared, expanded)?;
         let proof = prove_batched_with_policy::<
             F,
             Cfg::ClaimField,
@@ -572,6 +591,7 @@ where
                         &schedule,
                         basis,
                         &next_params,
+                        setup_contribution_mode,
                         |w| {
                             akita_prover::commit_next_w_with_policy::<
                                 F,
@@ -606,6 +626,7 @@ where
                                 transcript,
                                 next_state,
                                 schedule,
+                                setup_contribution_mode,
                             )
                         },
                     )
@@ -651,6 +672,7 @@ where
         transcript: &mut T,
         claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
@@ -672,6 +694,7 @@ where
                     transcript,
                 )
             },
+            setup_contribution_mode,
             |witnesses,
              setup,
              commitments,

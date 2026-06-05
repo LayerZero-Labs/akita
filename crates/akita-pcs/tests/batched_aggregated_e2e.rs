@@ -108,6 +108,7 @@ mod non_zk_aggregated_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -140,6 +141,7 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -209,6 +211,7 @@ mod non_zk_aggregated_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -241,6 +244,7 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -302,12 +306,11 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                BATCH_SIZE,
-                1,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(NV, BATCH_SIZE, 1)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -338,6 +341,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("mixed batched prove");
         assert!(
@@ -366,6 +370,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         assert!(
             result.is_ok(),

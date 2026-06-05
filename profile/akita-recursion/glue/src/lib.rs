@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, SetupPrefixVerifierRegistry,
-    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, SetupContributionMode,
+    SetupPrefixVerifierRegistry, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -40,6 +40,23 @@ const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
+fn setup_mode_to_u8(mode: SetupContributionMode) -> u8 {
+    match mode {
+        SetupContributionMode::Direct => 0,
+        SetupContributionMode::Recursive => 1,
+    }
+}
+
+fn setup_mode_from_u8(byte: u8) -> Result<SetupContributionMode, SerializationError> {
+    match byte {
+        0 => Ok(SetupContributionMode::Direct),
+        1 => Ok(SetupContributionMode::Recursive),
+        other => Err(SerializationError::InvalidData(format!(
+            "akita-jolt blob has invalid setup-contribution mode byte {other}"
+        ))),
+    }
+}
+
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
     if rest.is_empty() {
         return Ok(());
@@ -60,6 +77,10 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub transcript_domain: Vec<u8>,
     /// Number of variables of the public polynomial (informational; sanity).
     pub num_vars: u64,
+    /// Setup-contribution mode the proof was generated under. Held in the blob
+    /// so host preflight and guest replay verify under the same mode without a
+    /// separate flag.
+    pub setup_contribution_mode: SetupContributionMode,
     /// Opening point in the multilinear basis.
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
@@ -153,6 +174,8 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.num_vars
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        setup_mode_to_u8(self.setup_contribution_mode)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening_point
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
@@ -173,6 +196,7 @@ where
             + (D as u64).serialized_size(BLOB_COMPRESS)
             + self.transcript_domain.serialized_size(BLOB_COMPRESS)
             + self.num_vars.serialized_size(BLOB_COMPRESS)
+            + setup_mode_to_u8(self.setup_contribution_mode).serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
@@ -356,6 +380,9 @@ where
             "akita-jolt transcript domain",
         )?;
         let num_vars = Self::decode_num_vars(&mut rest)?;
+        let setup_mode_byte =
+            u8::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let setup_contribution_mode = setup_mode_from_u8(setup_mode_byte)?;
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
@@ -382,6 +409,7 @@ where
         Ok(Self {
             transcript_domain,
             num_vars: num_vars as u64,
+            setup_contribution_mode,
             opening_point,
             opening,
             commitment,

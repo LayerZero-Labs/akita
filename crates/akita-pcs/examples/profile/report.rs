@@ -3,7 +3,7 @@ use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
-    CleartextWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
+    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -141,6 +141,41 @@ fn extension_opening_reduction_sizes<L: FieldCore + AkitaSerialize>(
     })
 }
 
+fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
+    proof: Option<&SetupSumcheckProof<L>>,
+) -> usize {
+    proof.map_or(0, |proof| {
+        proof.claim.serialized_size(Compress::No) + proof.sumcheck.serialized_size(Compress::No)
+    })
+}
+
+/// Total serialized bytes of the recursive-mode stage-3 setup-product
+/// sumcheck payloads across every non-terminal fold level (the folded root and
+/// each intermediate step). This is the proof-size overhead that
+/// `SetupContributionMode::Recursive` adds on top of the direct-mode payload
+/// priced by `akita_types::level_proof_bytes`; terminal levels carry no
+/// stage-3 proof and contribute zero.
+pub(crate) fn observed_stage3_setup_product_bytes<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> usize
+where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
+    let root_bytes = proof.root.as_fold().map_or(0, |fold| {
+        stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref())
+    });
+    let step_bytes: usize = proof
+        .steps
+        .iter()
+        .map(|step| match step {
+            AkitaProofStep::Intermediate(lp) => {
+                stage3_sumcheck_size(lp.stage3_sumcheck_proof.as_ref())
+            }
+            AkitaProofStep::Terminal(_) => 0,
+        })
+        .sum();
+    root_bytes + step_bytes
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
@@ -196,6 +231,7 @@ where
     let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
     #[cfg(feature = "zk")]
     let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
     tracing::info!(
@@ -211,6 +247,7 @@ where
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
+        stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
         next_w_eval_bytes = next_w_eval_size,
         "proof fold level"
@@ -221,6 +258,7 @@ where
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
         stage2.next_w_commitment.coeff_len(),
@@ -236,6 +274,7 @@ where
             + stage1_interstage_claims_size
             + stage1_s_claim_size
             + stage2_sumcheck_size
+            + stage3_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
     );
@@ -277,9 +316,9 @@ where
     // Only the fields structurally present in `TerminalLevelProof` are
     // emitted: `y_rings`, optional extension-opening reduction, the
     // stage-2 sumcheck, and `final_witness`. The intermediate-level
-    // fields (`v`, `stage1_*`, `next_w_*`) are absent at terminal and
-    // therefore omitted from the tracing payload; downstream parsers
-    // default missing keys to zero.
+    // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
+    // terminal and therefore omitted from the tracing payload; downstream
+    // parsers default missing keys to zero.
     tracing::info!(
         label,
         level = level_idx,
@@ -383,6 +422,7 @@ where
     let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
     #[cfg(feature = "zk")]
     let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
 
@@ -399,6 +439,7 @@ where
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
+        stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
         next_w_eval_bytes = next_w_eval_size,
         root_variant = "fold",
@@ -423,6 +464,7 @@ where
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
         stage2.next_w_commitment.coeff_len(),
@@ -438,6 +480,7 @@ where
             + stage1_interstage_claims_size
             + stage1_s_claim_size
             + stage2_sumcheck_size
+            + stage3_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
     );

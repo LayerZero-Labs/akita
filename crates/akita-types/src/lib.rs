@@ -13,13 +13,14 @@ pub mod layout;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
+pub mod setup_contribution;
 pub mod sis;
 pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
 
-pub use config::DecompositionParams;
+pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     checked_table_len, extension_opening_reduction_claim,
@@ -73,7 +74,7 @@ pub use proof::{
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     select_prefix_len, select_setup_prefix_slot, setup_prefix_commit_ring_slots,
-    setup_prefix_slot_id, terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    setup_prefix_slot_id, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed, verifier_claims_to_incidence,
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,
@@ -90,9 +91,10 @@ pub use proof::{
     RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixDirectReason, SetupPrefixPopulatePolicy,
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSelectionOutcome,
     SetupPrefixSelectionRequest, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, TerminalLevelProof, TerminalLevelProofShape,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_N_MIN,
+    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_N_MIN,
+    SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
@@ -106,6 +108,7 @@ pub use schedule::{
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
 };
+pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
 pub use sis_offline::{
     root_level_params_for_layout_with_log_basis, sis_derived_root_params_for_layout,
