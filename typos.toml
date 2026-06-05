@@ -1,4 +1,6 @@
 [default.extend-words]
+MSIS = "MSIS"
+msis = "msis"
 nd = "nd"
 Ser = "Ser"
 evn = "evn"
