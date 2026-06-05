@@ -18,7 +18,9 @@ fn dummy_witness_segment_layout() -> RingRelationSegmentLayout {
     }
 }
 #[cfg(not(feature = "zk"))]
-use akita_types::{AkitaSetupSeed, CleartextWitnessProof, FlatMatrix, PackedDigits};
+use akita_types::{
+    AkitaSetupSeed, CleartextWitnessProof, FlatDigitBlocks, FlatMatrix, PackedDigits,
+};
 
 type F = Fp32<251>;
 const D: usize = 32;
@@ -102,6 +104,7 @@ mod terminal_direct {
     use super::super::terminal_direct::verify_terminal_direct_relation_rows;
     use super::*;
     use akita_algebra::CyclotomicRing;
+    use akita_prover::protocol::ring_switch::build_terminal_direct_w_coeffs;
 
     const SMALL_D: usize = 2;
 
@@ -113,6 +116,10 @@ mod terminal_direct {
 
     fn one() -> CyclotomicRing<F, SMALL_D> {
         CyclotomicRing::one()
+    }
+
+    fn zero_blocks() -> FlatDigitBlocks<SMALL_D> {
+        FlatDigitBlocks::from_blocks(vec![vec![[0i8; SMALL_D]]])
     }
 
     fn setup() -> AkitaExpandedSetup<F> {
@@ -181,24 +188,44 @@ mod terminal_direct {
         )
     }
 
+    fn valid_zero_witness_digits() -> Vec<i8> {
+        let lp = small_params();
+        build_terminal_direct_w_coeffs::<F, SMALL_D>(
+            &zero_blocks(),
+            &zero_blocks(),
+            &[[0i32; SMALL_D]],
+            &lp,
+            1,
+        )
+        .as_i8_digits()
+        .to_vec()
+    }
+
     #[test]
-    #[ignore = "fixture digit layout needs refresh for current segment_layout API"]
     fn terminal_direct_relation_rows_accept_reduced_identity_relation() {
-        let digits = [1, 0, 1, 0, 1, 0];
-        verify_with(&digits, &[one()], &[one()]).unwrap();
+        let digits = valid_zero_witness_digits();
+        let zero = CyclotomicRing::zero();
+        verify_with(&digits, &[zero], &[zero]).unwrap();
     }
 
     #[test]
     fn terminal_direct_relation_rows_reject_public_row_tamper() {
-        let digits = [1, 0, 1, 0, 1, 0];
-        let err = verify_with(&digits, &[one()], &[CyclotomicRing::zero()]).unwrap_err();
+        let digits = valid_zero_witness_digits();
+        let err = verify_with(
+            &digits,
+            &[CyclotomicRing::one()],
+            &[CyclotomicRing::zero()],
+        )
+        .unwrap_err();
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 
     #[test]
     fn terminal_direct_relation_rows_reject_r_tail_shape() {
-        let digits = [1, 0, 1, 0, 1, 0, 0, 0];
-        let err = verify_with(&digits, &[one()], &[one()]).unwrap_err();
+        let mut digits = valid_zero_witness_digits();
+        digits.extend_from_slice(&[0, 0]);
+        let zero = CyclotomicRing::zero();
+        let err = verify_with(&digits, &[zero], &[zero]).unwrap_err();
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

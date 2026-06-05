@@ -424,7 +424,7 @@ where
 
 /// Build a terminal direct witness from already-decomposed non-quotient segments.
 #[cfg(not(feature = "zk"))]
-pub(super) fn build_terminal_direct_w_coeffs<F: CanonicalField, const D: usize>(
+pub fn build_terminal_direct_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     z_pre_centered: &[[i32; D]],

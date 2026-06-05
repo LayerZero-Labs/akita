@@ -46,7 +46,7 @@ mod finalize;
 mod tests;
 
 #[cfg(not(feature = "zk"))]
-pub use coeffs::ring_switch_build_terminal_direct_w;
+pub use coeffs::{build_terminal_direct_w_coeffs, ring_switch_build_terminal_direct_w};
 pub use coeffs::{build_w_coeffs, ring_switch_build_w};
 pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
