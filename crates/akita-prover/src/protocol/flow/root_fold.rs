@@ -366,7 +366,7 @@ where
             .map(|(y_ring, row)| {
                 recover_ring_subfield_inner_product::<F, C, D>(
                     y_ring,
-                    &prepared_points[row.point_idx()].inner_reduction,
+                    &prepared_points[row.point_idx()].packed_inner_point,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -745,7 +745,7 @@ where
             .map(|(y_ring, row)| {
                 recover_ring_subfield_inner_product::<F, C, D>(
                     y_ring,
-                    &prepared_points[row.point_idx()].inner_reduction,
+                    &prepared_points[row.point_idx()].packed_inner_point,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;

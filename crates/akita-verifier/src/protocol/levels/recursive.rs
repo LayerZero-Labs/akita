@@ -266,7 +266,7 @@ where
                             alpha_bits,
                             block_order,
                         )?
-                        .inner_reduction)
+                        .packed_inner_point)
                     },
                 ),
             );
@@ -321,7 +321,10 @@ where
         .iter()
         .zip(prepared_points.iter())
         .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
+            recover_ring_subfield_inner_product::<F, L, D>(
+                y_ring,
+                &prepared_point.packed_inner_point,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     #[cfg(feature = "zk")]
@@ -329,7 +332,7 @@ where
         let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
             &y_rings[0],
             y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
-            &prepared_points[0].inner_reduction,
+            &prepared_points[0].packed_inner_point,
         )?;
         if let Some((final_claim, factor)) = &zk_eor_final {
             let mut residual = final_claim.clone();

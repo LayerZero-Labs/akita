@@ -22,8 +22,9 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// Inner ring-slot reduction.
-    pub inner_reduction: CyclotomicRing<F, D>,
+    /// The ψ-packed inner block of the opening point (paper `řᵢₙ`), the public
+    /// trace weight paired against the packed witness `Y` in `Tr_H(Y · σ₋₁(·))`.
+    pub packed_inner_point: CyclotomicRing<F, D>,
 }
 
 /// Recursive opening point prepared for ring-level replay.
@@ -38,8 +39,9 @@ pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: us
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// Inner ring-slot reduction.
-    pub inner_reduction: CyclotomicRing<F, D>,
+    /// The ψ-packed inner block of the opening point (paper `řᵢₙ`), the public
+    /// trace weight paired against the packed witness `Y` in `Tr_H(Y · σ₋₁(·))`.
+    pub packed_inner_point: CyclotomicRing<F, D>,
 }
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
@@ -478,12 +480,12 @@ where
         BlockOrder::RowMajor,
     )?;
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
+    let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
     Ok(PreparedRootOpeningPoint {
         padded_point,
         ring_opening_point,
         ring_multiplier_point,
-        inner_reduction,
+        packed_inner_point,
     })
 }
 
@@ -575,7 +577,7 @@ where
         .collect::<Vec<_>>();
     inner_point.resize(packed_inner_bits, L::zero());
     let inner_weights = basis_weights(&inner_point, basis)?;
-    let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, L, D>(
         &inner_weights,
         AkitaError::InvalidInput(
             "opening point does not encode in the ring-subfield basis".to_string(),
@@ -601,7 +603,7 @@ where
         padded_point: Vec::new(),
         ring_opening_point,
         ring_multiplier_point,
-        inner_reduction,
+        packed_inner_point,
     })
 }
 
@@ -667,7 +669,7 @@ where
             block_order,
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
+        let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         let inner_weights = base_point[..alpha_bits]
             .iter()
             .copied()
@@ -679,7 +681,7 @@ where
             inner_weights,
             ring_opening_point,
             ring_multiplier_point,
-            inner_reduction,
+            packed_inner_point,
         });
     }
 
@@ -702,7 +704,7 @@ where
         ));
     }
     let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis)?;
-    let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, L, D>(
         &trace_inner_weights,
         AkitaError::InvalidInput(
             "recursive opening point does not encode in the ring-subfield basis".to_string(),
@@ -729,7 +731,7 @@ where
         inner_weights,
         ring_opening_point,
         ring_multiplier_point,
-        inner_reduction,
+        packed_inner_point,
     })
 }
 

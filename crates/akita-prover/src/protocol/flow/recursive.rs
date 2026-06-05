@@ -977,7 +977,10 @@ where
         .iter()
         .zip(prepared_points.iter())
         .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
+            recover_ring_subfield_inner_product::<F, L, D>(
+                y_ring,
+                &prepared_point.packed_inner_point,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     match &reduction {
@@ -1184,7 +1187,10 @@ where
         .iter()
         .zip(prepared_points.iter())
         .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
+            recover_ring_subfield_inner_product::<F, L, D>(
+                y_ring,
+                &prepared_point.packed_inner_point,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     match &reduction {

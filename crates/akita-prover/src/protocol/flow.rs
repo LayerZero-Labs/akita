@@ -357,7 +357,7 @@ where
     E: RingSubfieldEncoding<F>,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*y_ring * prepared_point.inner_reduction.sigma_m1())
+        return (*y_ring * prepared_point.packed_inner_point.sigma_m1())
             .coefficients()
             .first()
             .copied()
@@ -387,13 +387,13 @@ where
         inner_opening_point[..inner_opening_point.len().min(packed_inner_bits)].to_vec();
     point.resize(packed_inner_bits, E::zero());
     let weights = basis_weights(&point, basis)?;
-    let inner_reduction = embed_ring_subfield_vector::<F, E, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, E, D>(
         &weights,
         AkitaError::InvalidInput(
             "root opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
-    recover_ring_subfield_inner_product::<F, E, D>(y_ring, &inner_reduction)
+    recover_ring_subfield_inner_product::<F, E, D>(y_ring, &packed_inner_point)
 }
 
 fn row_coefficient_rings<F, L, const D: usize>(

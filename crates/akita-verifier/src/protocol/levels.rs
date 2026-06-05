@@ -601,7 +601,7 @@ where
                             root_lp,
                             alpha_bits,
                         )?
-                        .inner_reduction)
+                        .packed_inner_point)
                     },
                 ),
             );
@@ -703,7 +703,7 @@ where
                     y_masks
                         .get(y_mask_start..y_mask_end)
                         .ok_or(AkitaError::InvalidProof)?,
-                    &prepared_points[row.point_idx()].inner_reduction,
+                    &prepared_points[row.point_idx()].packed_inner_point,
                 )?;
                 let mut residual = y_opening;
                 residual.constant -= batched_openings_per_row[row_idx];
@@ -717,7 +717,7 @@ where
                 .iter()
                 .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
             {
-                let v = &prepared_points[row.point_idx()].inner_reduction;
+                let v = &prepared_points[row.point_idx()].packed_inner_point;
                 let trace_input = *y_ring * v.sigma_m1();
                 let coords = batched_opening.to_ring_subfield_coords();
                 if !dispatch_trace_inner_product_check::<F, D>(
@@ -750,7 +750,7 @@ where
                 y_masks
                     .get(y_mask_start..y_mask_end)
                     .ok_or(AkitaError::InvalidProof)?,
-                &prepared_points[row.point_idx()].inner_reduction,
+                &prepared_points[row.point_idx()].packed_inner_point,
             )?;
             final_opening.add_scaled(factors_by_point[row.point_idx()], &y_opening);
         }

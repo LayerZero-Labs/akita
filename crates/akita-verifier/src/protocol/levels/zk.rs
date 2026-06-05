@@ -13,7 +13,7 @@ use akita_types::{
 pub(super) fn zk_recovered_y_ring_lc<F, E, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
     y_masks: &[ZkR1csLinearCombination<E>],
-    inner_reduction: &CyclotomicRing<F, D>,
+    packed_inner_point: &CyclotomicRing<F, D>,
 ) -> Result<ZkR1csLinearCombination<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -22,14 +22,15 @@ where
     if y_masks.len() != D {
         return Err(AkitaError::InvalidProof);
     }
-    let masked_opening = recover_ring_subfield_inner_product::<F, E, D>(y_ring, inner_reduction)?;
+    let masked_opening =
+        recover_ring_subfield_inner_product::<F, E, D>(y_ring, packed_inner_point)?;
     let mut mask_coeffs = Vec::with_capacity(D);
     for coeff_idx in 0..D {
         let mut basis_y = CyclotomicRing::<F, D>::zero();
         basis_y.coeffs[coeff_idx] = F::one();
         mask_coeffs.push(recover_ring_subfield_inner_product::<F, E, D>(
             &basis_y,
-            inner_reduction,
+            packed_inner_point,
         )?);
     }
     zk_masked_linear_value_lc(masked_opening, y_masks, &mask_coeffs)

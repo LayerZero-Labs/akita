@@ -534,13 +534,13 @@ where
 /// scale is not invertible, or the encoded coordinate count is malformed.
 pub fn recover_ring_subfield_inner_product<F, E, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
-    inner_reduction: &CyclotomicRing<F, D>,
+    packed_inner_point: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F>,
 {
-    let trace_input = *y_ring * inner_reduction.sigma_m1();
+    let trace_input = *y_ring * packed_inner_point.sigma_m1();
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| {

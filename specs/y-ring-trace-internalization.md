@@ -1,0 +1,298 @@
+# Spec: Internalize the §3.1 Trace Check and Drop On-Wire `y_ring`
+
+| Field       | Value                          |
+|-------------|--------------------------------|
+| Author(s)   | Quang Dao                      |
+| Created     | 2026-06-05                     |
+| Status      | proposed                       |
+| PR          |                                |
+
+## Summary
+
+Every Akita fold level ships the §3.1 ring opening value `y_ring` (`Y` in the paper) on the wire, and the verifier reads it both to form the ring-switch relation claim `V_alpha` and to run a separate public trace check `Tr_H(y_ring · sigma_{-1}(v)) = (d/k) · opening` that ties the ring value back to the incoming extension-field claim.
+This is one base-field ring element per intermediate level, plus `P` at the root and one at the terminal.
+The opening value is fully determined by the already-committed fold witness: today the public-output row recomposes the committed `e_hat` digits into per-block `e_folded` rings and checks `y_ring = sum_j b_j · e_folded_j`.
+This spec removes `y_ring` from the proof entirely by internalizing the trace projection as one extra fused term in the stage-2 sum-check, enforcing the same normalized trace functional that `recover_ring_subfield_inner_product(y_ring, packed_inner_point)` computes directly against the committed witness.
+The new fused addend does not increase the stage-2 degree bound or add committed data, so the net effect is at least a clean save of one ring element per level and, in ZK builds, removal of that ring element's hiding mask.
+If the public-output rows are removed from `M` rather than kept as inert padding, the quotient tail can shrink too.
+
+## Intent
+
+### Goal
+
+Eliminate the `y_ring` / `y_rings` payload from `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof`, and replace the external `recover_ring_subfield_inner_product` trace check with a fused stage-2 sum-check term that binds the committed fold witness to the public opening through the trace projection, with no extra committed data.
+
+### Background: what `y_ring` does today
+
+`y_ring` plays two roles per level (recursive case, `num_claims = 1`):
+
+1. **Relation RHS.** It is the public right-hand side of the "public-output" rows of `M`, and it enters `V_alpha` only through its evaluation `y_ring(alpha)` (`crates/akita-types/src/proof/relation.rs:75-81`, the public-output loop in `relation_claim_from_rows_extension`; RHS layout built by `generate_y` at `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:595-630`).
+2. **Trace bridge.** The verifier reads the cleartext `y_ring` off the wire and checks `Tr_H(y_ring · sigma_{-1}(packed_inner_point)) = (d/k) · opening`, where `opening` is the incoming extension-field claim (`crates/akita-verifier/src/protocol/levels/recursive.rs:313-357`, via `recover_ring_subfield_inner_product` / `check_trace_inner_product` in `crates/akita-types/src/field_reduction.rs:535-579,600-621`; paper `sections/akita/3_basic_akita.tex:382-390,488-498`).
+
+The fold relation already proves `y_ring = sum_j b_j · e_folded_j` through the public-output row.
+Here each `e_folded_j` is recomposed from the committed `e_hat` digit planes inside the next-level witness `w = (e_hat, t_hat, z_hat, r_hat)`.
+The earlier shorthand `b^T z` is therefore misleading for implementation: the trace term must target the `e_hat` segment, not the `z_hat` segment.
+So `y_ring` is recomputable from committed data; it is sent only because the verifier needs a handle to run the trace check and to form `V_alpha`.
+
+### Why this is not "just add a row to `M`"
+
+A row of `M` acts on the witness by negacyclic ring multiplication, and the ring-switch only ever exposes the committed witness as its evaluation at the random ring-switch challenge `alpha` (the `alpha~(y)` weighting in the stage-2 oracle `w(r) · alpha(r_y) · row(r_x)`, `crates/akita-verifier/src/stages/stage2.rs:444-461`).
+The trace `Tr_H(Y) = sum_{sigma in H} sigma(Y)` is a fixed `Z_q`-linear **projection** `R_q -> R_q^H ≅ F_{q^k}` that collapses `D` ring coordinates to `k` subfield coordinates.
+It is not negacyclic multiplication by any fixed ring element, and it is not recoverable from `y_ring(alpha)` alone (it would need `y_ring(alpha^a)` for every conjugate `a in H`).
+Therefore the trace check cannot be expressed as one extra `M`-row evaluated at `alpha`; it must be a fused inner-product term against a fixed, `alpha`-independent public weighting derived from the opening point.
+
+### Design: the fused trace term
+
+Replace roles (1) and (2) with a single fused stage-2 term, gated by a fresh batching scalar `gamma_tr`, that enforces
+
+```text
+TraceOpen( sum_j b_j · e_folded_j ) = opening
+```
+
+directly over the committed witness.
+Here `opening` is the public incoming claim (already transcript-bound), and `packed_inner_point` is the public ring element that packs the inner opening-point weights.
+In code this is `prepared_point.packed_inner_point`: `prepare_recursive_opening_point_ext` or `prepare_root_opening_point_ext` splits the verifier's opening point into outer block weights and inner ring-slot weights, then embeds the inner weights into a `CyclotomicRing`.
+This `packed_inner_point` is the paper's `řᵢₙ` (`\check{r}_{in}`): the ψ-packed *inner block* of the opening point `r`, used as the public weight in the Hachi trace identity.
+It is **not** the ring-relation vector `v = D · e_hat` (the opening commitment `\mathbf{v}`); the two were deliberately given separate names (see References).
+With that convention,
+
+```text
+TraceOpen(Y) := recover_ring_subfield_inner_product(Y, packed_inner_point).
+```
+
+Equivalently, in the paper's raw ring identity,
+
+```text
+Tr_H( Y · sigma_{-1}(packed_inner_point) ) = (D/K) · embed_subfield(opening).
+```
+
+The implementation should use the normalized `TraceOpen` convention, so the stage-2 input contribution is `gamma_tr · opening`.
+If an implementation instead uses raw trace coordinates, it must multiply both the public input and the trace-weight table by the same `(D/K)` scale.
+
+Concretely, the stage-2 fused oracle gains a third addend over the same Boolean domain as the current stage-2 relation.
+Let `y ∈ {0,1}^{ring_bits}` index the ring coefficient and `x ∈ {0,1}^{col_bits}` index the witness column.
+The per-corner oracle is:
+
+```text
+gamma     · eq(stage1_point, (y, x)) · W(y, x) · (W(y, x) + 1)      [range, unchanged]
++           W(y, x) · alpha_eval(y) · M_without_public(x)            [relation, public-output row dropped]
++ gamma_tr · W(y, x) · TraceWeight(y, x)                           [new: trace projection]
+```
+
+with the matching input-claim contribution `gamma_tr · opening` under the normalized convention above.
+`TraceWeight(y, x)` is a fully public multilinear table.
+It is nonzero only on the `e_hat` segment of the committed witness.
+On an `e_hat` column for block `j` and open-digit plane `h`, and on ring coordinate `c`, it equals
+
+```text
+g_open[h] · TraceOpen( b_j · X^c )
+```
+
+where `g_open[h]` is the open-digit gadget scalar, `b_j` is the public ring multiplier for block `j`, and `X^c` is the ring basis element represented by witness coordinate `c`.
+For a root public row, `b_j` already includes the same per-claim row coefficient used by `combine_root_y_rings`; equivalently the trace weights for all claims in the public row are summed under those row coefficients.
+
+The sum-check instance is therefore:
+
+```text
+input_claim =
+  gamma · s_claim
++ relation_claim_without_public_rows
++ gamma_tr · opening
+
+input_claim =
+sum_{(y,x) in {0,1}^{ring_bits} × {0,1}^{col_bits}} [
+  gamma · eq(stage1_point, (y,x)) · W(y,x) · (W(y,x) + 1)
++ W(y,x) · alpha_eval(y) · M_without_public(x)
++ gamma_tr · W(y,x) · TraceWeight(y,x)
+].
+```
+
+During the sum-check, the verifier samples one challenge per variable.
+Only after all rounds are complete does it have the final random point `r = (r_y, r_x)`.
+At that final point, it checks the oracle value
+
+```text
+gamma · eq(stage1_point, (r_y,r_x)) · W(r_y,r_x) · (W(r_y,r_x) + 1)
++ W(r_y,r_x) · alpha_eval(r_y) · M_without_public(r_x)
++ gamma_tr · W(r_y,r_x) · TraceWeight(r_y,r_x).
+```
+
+For `K = 1` (the `fp128_d128` production optimum) the `y`-weighting is exactly `packed_inner_point` itself: `TraceOpen(X^c) = packed_inner_point[c]` (no reversal), so the table inherits the tensor structure of the opening point and the verifier's final-point evaluation is a pure product of eq / gadget tensors with no ring arithmetic.
+For `K > 1`, `trace_weight` routes through the `|H|` Galois conjugates of `packed_inner_point`, but the verifier collapses them into a single `Tr_H` of one ring product, so its work stays `O(|H| · D)` and proof size is unchanged.
+The exact closed forms the verifier evaluates are derived in *Verifier final-point evaluation* below.
+
+Because the new term is (public table) × (witness MLE), it is degree ≤ the existing relation term and does not add stage-2 proof bytes.
+The mandatory saving is the removed `y_ring`; a full public-row removal can additionally shrink `r_hat` and may reduce padded witness width when it crosses a power-of-two boundary.
+
+### Verifier final-point evaluation
+
+The verifier never materializes the `TraceWeight` table; it only evaluates it once, at the final sum-check point `r = (r_y, r_x)`, where `r_y ∈ E^{ring_bits}` selects the ring coordinate `c` and `r_x ∈ E^{col_bits}` selects the witness column.
+Note `ring_bits = alpha_bits = log2(D)`, so `r_y` and the inner opening coordinates live over the same variables.
+
+The enabling fact is that `TraceOpen` is `E`-linear in its ring argument.
+With the eq-weight ring element
+
+```text
+EQ(r_y) := sum_c eq(r_y, c) · X^c
+```
+
+(tensor-structured, since `eq(r_y, c) = prod_t (c_t · r_y[t] + (1 - c_t)(1 - r_y[t]))`), the per-`c` sum folds into a single ring argument:
+
+```text
+sum_c eq(r_y, c) · TraceOpen(b_j · X^c) = TraceOpen(b_j · EQ(r_y)).
+```
+
+The `e_hat` columns are emitted plane-major as `col = offset_e + h · num_blocks + j` (`crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`, with `num_blocks = 2^{r_vars}`), so the column eq factors as `eq(r_x, x) = eq_seg(r_x) · eq_block(r_x_blk, j) · eq_plane(r_x_pl, h)`.
+This yields the master factorization:
+
+```text
+TraceWeight(r_y, r_x)
+  = eq_seg(r_x)                                                   [e_hat segment selector]
+    · ( sum_h eq_plane(r_x_pl, h) · base^h )                      [gadget factor  G]
+    · ( sum_j eq_block(r_x_blk, j) · TraceOpen(b_j · EQ(r_y)) ) [block / inner factor  B]
+```
+
+`G` is the MLE of the gadget vector `[1, base, base^2, …]` (`base = 2^{log_basis}`, `crates/akita-types/src/layout/digit_math.rs:17-26`).
+When `num_digits_open` is a power of two it tensor-factors as `prod_t ((1 - r_x_pl[t]) + r_x_pl[t] · base^{2^t})` (`O(log num_digits_open)`); otherwise it is a short explicit sum over `h < num_digits_open`.
+
+**K = 1 (the production target).**
+Here the block weights `b_j` are scalars (`b_j = eq(b_open, j)`, the Lagrange block weights threaded through `evaluate_and_fold`, `crates/akita-prover/src/backend/recursive_witness.rs:179-194`), so they pull straight through `TraceOpen`.
+The inner trace collapses to a plain coefficient dot product `TraceOpen(Y) = <coeffs(Y), packed_inner_point>` (`crates/akita-types/src/field_reduction.rs:608-615`; the `(D/K)` scale cancels at `K = 1`).
+Since `packed_inner_point[c] = eq(inner_open, c)` in the Lagrange basis, `TraceOpen(EQ(r_y)) = <eq(r_y, ·), packed_inner_point> = eq(r_y, inner_open)`.
+The entire weight is then a product of per-variable tensor factors, with no ring multiplication:
+
+```text
+TraceWeight(r_y, r_x)
+  = eq_seg(r_x)                                              [segment selector]
+    · eq(r_x_blk, b_open)                                    [block weights]
+    · prod_t ((1 - r_x_pl[t]) + r_x_pl[t] · base^{2^t})      [gadget powers]
+    · eq(r_y, inner_open)                                    [inner / packed_inner_point]
+```
+
+with `inner_open = opening_point[..alpha_bits]` and `b_open = opening_point[alpha_bits .. alpha_bits + r_vars]` (`crates/akita-types/src/proof/batch.rs:660-683`).
+Cost is `O(num_vars)` field operations, the same order as the eq-evals the verifier already does for the relation and range terms, and strictly cheaper than today's per-level `recover_ring_subfield_inner_product` ring contraction.
+
+**K > 1.**
+The `b_j` are ring multipliers, so scalars no longer pull through `TraceOpen`; instead fold the blocks *before* the trace.
+Because `Tr_H` is `E`-linear, with the block-weight ring element `B_blk(r_x_blk) := sum_j eq_block(r_x_blk, j) · b_j` the block / inner factor `B` is a single trace of one triple ring product:
+
+```text
+B = (K / D) · Tr_H( B_blk(r_x_blk) · EQ(r_y) · sigma_{-1}(packed_inner_point) ).
+```
+
+The conjugate sum is taken once per level, not once per block, so verifier cost is `O(|H| · D)` independent of `num_blocks · num_digits_open`.
+The term remains a single `E`-valued sum-check addend whose matching input contribution is `gamma_tr · opening` under the normalized convention.
+
+**Layout preconditions and relation to `z_first`.**
+The `y`-axis factor `eq(r_y, inner_open)` is always clean.
+On the `x`-axis the block factor `eq(r_x_blk, b_open)` is always exact, because `offset_e` is a multiple of `num_blocks` in both column orderings: `offset_e = 0` when `ring_column_z_first(lp) == false`, and `offset_e = z_len` (a multiple of `block_len`, hence of `num_blocks` since `m_vars ≥ r_vars`) when `z_first == true` (`crates/akita-types/src/proof/ring_relation.rs:17-19,256-266`).
+What `z_first` changes is only the high-bit (plane + segment) part of the `x`-axis. With `z_first == false` `e_hat` is the offset-0 prefix, so `G` and `eq_seg` are clean tensor products. With `z_first == true` (`m_vars ≥ r_vars`, which the `fp128_d128` optimum can hit) the high index carries a constant offset `O = offset_e / num_blocks` that need not be a multiple of `num_digits_open`, so that one factor becomes a single `eval_offset_eq_tensor` (carry) call instead of a product, still `O(col_bits)`.
+This is the same offset / carry treatment the existing row-MLE evaluators already apply to the `e_hat` (`ŵ`) segment (`specs/optimized_verifier.md` §3-§4), so the trace term adds no new column-alignment constraint and does not by itself motivate changing or removing `z_first` (which is governed by the `ẑ`-vs-`ŵ`/`t̂` block-width tradeoff; see Non-Goals).
+The only obligation carried into step 2 of Execution is the `K > 1` weighting derivation.
+
+### Invariants
+
+- **Proof-size strictly smaller.** Per intermediate level, the proof shrinks by at least `D · base_elem_bytes` (one ring element; `proof_ring_vec_bytes(num_claims=1, D, base_elem_bytes)`, `crates/akita-types/src/proof_size.rs:83`); the root shrinks by at least `P · D · base_elem_bytes`; the terminal by at least `D · base_elem_bytes`. The stage-1 tree and stage-2 degree bound are unchanged. If public-output rows are removed from `M` rather than kept as inert padding, the `r_hat` quotient tail also shrinks because `r` has one fewer row per removed public output; the planner DP and witness-shape checks must treat this as an intentional layout cutover, not as byte-for-byte witness stability.
+- **No new committed data.** `w = (e_hat, t_hat, z_hat, r_hat)` gains no new semantic segment and no committed `y_ring`. In the full row-removal variant, `w` may become smaller because the removed public-output rows no longer contribute quotient digits to `r_hat`.
+- **Soundness preserved.** The new term must bind the committed fold witness to the public `opening` at least as tightly as today's `sum_j b_j · e_folded_j = y_ring` plus external trace check. The extraction in `thm:batched-root-cwss` must be re-derived for the dropped public-output row and the added fused term; soundness loss must remain bounded by the existing sum-check / field-size terms. This is the gating obligation (see Execution).
+- **Prover/verifier transcript consistency.** Removing the `ABSORB_EVALUATION_CLAIMS` absorb of `y_ring` (`recursive.rs:313-315`) and adding the `gamma_tr` challenge must be mirrored on both sides; `logging-transcript` event-stream equality and wire-before-squeeze checks must stay green (`crates/akita-pcs/tests/transcript_hardening*.rs`).
+- **K-path parity.** `K = 1` keeps a fully tensor-factored weighting (`O(num_vars)` final-point eval, no ring arithmetic) and is the first implementation target. `K in {2,4,8}` route through the conjugate-sum weighting (one `Tr_H` of a single ring product, `O(|H| · D)`) and also require moving the extension-opening-reduction final binding away from on-wire `y_ring`. The existing trace identity tests in `crates/akita-types/src/field_reduction.rs` (and the `K`-generic dispatcher) remain the algebraic anchor for the weighting derivation.
+- **ZK.** The `y_ring` hiding masks (`zk_base_mask_lcs(y_rings.len() * D, …)`, `recursive.rs:316-317`) and the `relation_claim_mask` `y`-contribution are removed; the fused trace term gets its own deferred ZK relation analogous to the stage-2 final relation (`stage2.rs:464-533`). The hiding-witness cursor accounting must still close (`zk_hiding_cursor == hiding_witness.len()`).
+- **End-to-end roundtrip.** All batched / recursive / terminal / zero-fold e2e tests pass for every active profile (`fp128_d128`, the `fp32`/`fp64` extension profiles, dense + onehot, ZK and non-ZK).
+
+### Non-Goals
+
+- Changing the ring-switch challenge `alpha`, the `tau0`/`tau1` row batching, the digit-decomposition bases, or the stage-1 range check.
+- Changing the extension-opening reduction partials or its degree-two sum-check. However, `K > 1` implementation must still redesign the EOR final binding, because the verifier currently recovers the EOR output from on-wire `y_ring`.
+- The zero-fold (`AkitaBatchedRootProof::ZeroFold`) fast path, which sends no `y_ring`.
+- Committing `y_ring` explicitly (the "commit the ring element" framing). That variant is recorded under Alternatives Considered and is deliberately not the chosen design.
+- Changing or removing the `z_first` column ordering (`ring_column_z_first(lp) := m_vars ≥ r_vars`). `z_first` is a divisibility/alignment rule that keeps both block-width families (`ŵ`/`t̂` at `2^{r_vars}`, `ẑ` at `2^{m_vars}`) on the fast multi-factor `eval_offset_eq_tensor` path by placing the larger-block-width family first (`specs/optimized_verifier.md` §3; `setup-offloading-companion.html` "Why This Order"). Removing `y_ring` only drops a materialized *row* family (no column-alignment constraint), and the fused trace term reuses the same offset/carry treatment on the `e_hat` column segment, so neither side of this change alters the `ẑ`-vs-`ŵ`/`t̂` tradeoff that motivates `z_first`. Hard-coding either ordering regresses the levels where the planner's `(m, r)` split makes the other family larger (forcing the misaligned segment onto the carry-DP / materialization fallback, which for `ẑ` is `O(|ẑ|)` and for `ŵ`/`t̂` also hits the shared setup-contribution scan). `z_first` therefore stays adaptive.
+- Any change to setup, SIS sizing, or the security floor.
+
+## Evaluation
+
+### Acceptance Criteria
+
+- [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
+- [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_y` and the verifier `RingRelationInstance` construction.
+- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` via a fused stage-2 term with batching scalar `gamma_tr`, and no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
+- [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables regenerated with `regen_diff` reflecting the new (smaller) sizing.
+- [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
+- [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal + `gamma_tr` sample).
+- [ ] A negative test: tampering the committed `e_hat` digits so that `sum_j b_j · e_folded_j` projects to the wrong subfield value is rejected (replaces the role of the current `y_ring` trace-mismatch rejection paths, e.g. `crates/akita-pcs/src/scheme/tests/batched.rs:419-421`).
+- [ ] Profile shows the expected per-level shrink: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile` reports `y_ring_bytes = 0` at every level and total proof size reduced by the predicted amount.
+
+### Testing Strategy
+
+Must continue passing: the full batched/recursive/terminal/zero-fold e2e set (`crates/akita-pcs/tests/*`), `akita-types` `field_reduction` trace tests, `relation.rs` claim tests, `proof_size.rs` formula tests, `regen_diff`, and the transcript-hardening + proptest suites.
+
+New tests:
+
+- Algebraic anchor: a unit test that the fused `trace_weight` MLE, contracted against a witness whose `e_hat` recomposes to chosen `e_folded` blocks, equals `TraceOpen(sum_j b_j · e_folded_j)` for `K in {1,2,4}` (mirrors and reuses the existing trace-identity harness in `field_reduction.rs`).
+- Soundness smoke: a tampered-witness negative test at recursive, root, and terminal levels.
+- Size-delta fixture: serialize a proof before/after on a fixed fixture and assert the removed `y_ring` blocks account for the mandatory delta; if the implementation also removes public-output rows from `M`, include the expected `r_hat` / row-count shrink in the formula.
+
+### Performance
+
+Proof size: strictly smaller, by at least one base-field ring element per level (+ `P` at root). For `fp128_d128` the mandatory `y_ring` saving is `D · 16 = 2048` bytes per level; for `fp64_d64` it is `512` bytes. If public-output rows are removed from `M`, each removed row also deletes its quotient digits from `r_hat`, subject to the next-power-of-two witness padding used by stage 2. The exact total per profile is read from the profile command above and from the updated planner DP.
+Prover/verifier time: negligible change, and for `K = 1` strictly favorable. The verifier replaces one `recover_ring_subfield_inner_product` (`O(|H| · D)`) per level with one `trace_weight(r)` final-point evaluation plus one extra fused-oracle addend per sum-check round; no new rounds. For `K = 1` that final-point evaluation is a pure product of eq / gadget tensors (`O(num_vars)`, no ring arithmetic); for `K > 1` it is one `Tr_H` of a single ring product (`O(|H| · D)`). The closed forms are in *Verifier final-point evaluation*. The prover adds one public weighting table and one term in the per-round stage-2 evaluation, both `O(witness)`.
+Planner: the proof-size optimum may shift slightly (every level is cheaper); re-run the schedule generation and confirm via `regen_diff` and the profile.
+
+## Design
+
+### Architecture
+
+Affected surfaces:
+
+- `akita-types`: proof structs and shapes (`src/proof/levels.rs`, `src/proof/shapes.rs`, `src/proof/relation.rs`), the RHS layout helpers, `src/proof_size.rs` and `src/layout/proof_size.rs`. The trace primitives in `src/field_reduction.rs` are reused to derive the `y`-weighting (no new primitive; the conjugate set comes from `SubfieldParams::h_exponents`).
+- `akita-prover`: `src/protocol/ring_relation.rs` + `ring_relation/relation_quotient.rs` (drop the public-output row and its quotient contribution; stop placing `y_rings` on the RHS), the stage-2 prover (`src/protocol/sumcheck/akita_stage2/`) to add the `gamma_tr` term and `trace_weight` table, and `src/protocol/ring_switch/finalize.rs` for the claim assembly.
+- `akita-verifier`: `src/protocol/levels.rs` and `levels/recursive.rs` (drop the `y_ring` absorb + external trace check, sample `gamma_tr`, feed the trace term), `src/stages/stage2.rs` (`expected_output_claim`, `input_claim`, and the ZK final relation gain the trace addend), `src/protocol/ring_switch.rs` (relation-claim assembly without the public-output row).
+- `akita-planner` / `akita-config`: re-score and regenerate shipped schedule tables.
+
+The fused trace term reuses the existing stage-2 Boolean domain and final witness oracle.
+It is structurally a sibling of the relation term: over Boolean corners it replaces `alpha_eval(y) · M_without_public(x)` with the public table `TraceWeight(y,x)`, and at the final verifier point it evaluates that table at `(r_y,r_x)`.
+
+### Alternatives Considered
+
+**Commit `y_ring` and add two constraints (the original framing).**
+Append `y_ring`'s balanced digits to `e_hat` so it is bound by `v = D · e_hat` and recursed inside `w`, make the public-output row homogeneous (`sum_j b_j · e_folded_j - y_ring = 0`), and add the trace constraint as a fused term over the committed `y_ring`.
+This matches the "commit the ring element + two extra constraints" intuition and isolates `y_ring` cleanly.
+Rejected as primary because it pays `δ = log_b q` extra committed digit planes per level (range-checked in stage 1 and recursed), partially eating the saving, and it has no `v`/D-block at the terminal level (`MRowLayout::WithoutDBlock`) so the terminal would need a special case.
+The no-commit variant binds the same opening through `e_hat`, which is already committed and range-checked, with zero extra committed data.
+
+**Keep `y_ring` but Frobenius-compress it.**
+Sends fewer than `D` coordinates by exploiting subfield structure.
+Rejected: it still sends a payload and still needs the external trace check; the fused-term approach sends nothing and is simpler downstream.
+
+**Leave it alone.**
+The saving is modest (single-digit to low-double-digit KB total), but the discussion (Jiapeng's suggestion; "every kb is worth it") and the recursive-friendliness (smaller per-level payload compounds across levels and matters for the in-Jolt verifier) justify it, provided the soundness re-derivation is clean.
+
+## Execution
+
+Recommended order, soundness first:
+
+1. **Soundness derivation (gating).** Write the special-soundness/extraction argument for: dropping the public-output `M` row, and adding the fused term `gamma_tr · w(r) · trace_weight_v(r)` with input contribution `gamma_tr · opening` under the normalized trace convention. Confirm the extractor still recovers a witness whose folded opening projects to `opening`, and bound the added soundness error. Do this before code.
+2. **Weighting derivation + unit anchor.** Derive `trace_weight_v(x, y)` for `K = 1` against the `e_hat` segment and current `build_w_coeffs` ordering, then `K in {2,4,8}` via `SubfieldParams::h_exponents`. The closed-form final-point evaluations are already worked out in *Verifier final-point evaluation*; the unit test should check the round table's final-point contraction against them. Land the algebraic unit test against `field_reduction` before wiring the sum-check.
+3. **Verifier non-ZK.** Add `gamma_tr`, the trace addend in `AkitaStage2Verifier::{input_claim, expected_output_claim}`, and remove the `y_ring` absorb + external check across recursive/root/terminal.
+4. **Prover non-ZK.** Build `trace_weight`, add the term to stage-2 per-round evals, drop `y_rings` from the RHS / proof structs.
+5. **Proof structs, shapes, serialization, sizing.** Remove the fields; update `level_proof_bytes`, planner DP, regenerate schedules.
+6. **ZK.** Remove the `y_ring` masks; add the deferred trace relation; close the cursor accounting.
+7. **Tests + profile.** Negative tests, byte-delta test, transcript-hardening, and the profile shrink check.
+
+Risks to resolve first: the exact `M`-row bookkeeping when the public-output row is removed (does the consistency row or commitment binding implicitly depend on it?), whether the intentional `r_hat` shrink should be accepted in the first PR or temporarily avoided with inert padding, and the `e_hat` segment alignment when `ring_column_z_first(lp) == true` (the constant offset folds into `eq_seg`; see *Verifier final-point evaluation*). The `K > 1` per-round eval cost is resolved: the conjugate sum collapses into one `Tr_H` of a single ring product, `O(|H| · D)` per level, independent of `num_blocks · num_digits_open`. These are flagged for step 1–2 before committing to the wiring.
+
+## References
+
+- Paper: `sections/akita/3_basic_akita.tex:382-390` (send `Y`, verifier trace check), `:488-498` (per-claim opening summary), `:757-828` (stage-2 fused sum-check).
+- Proof structs: `crates/akita-types/src/proof/levels.rs:139-152,375-391,451-467`.
+- Relation claim / RHS: `crates/akita-types/src/proof/relation.rs:59-97`; `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:595-630`.
+- Trace primitives: `crates/akita-types/src/field_reduction.rs:185-194,535-579,600-621`.
+- Opening-point split / `packed_inner_point`: `crates/akita-types/src/proof/batch.rs:624-734` (`reduce_inner_opening_to_ring_element`: `crates/akita-types/src/layout/opening_point.rs:185-197`).
+- Notation. The opening/evaluation point is `r` (paper `\mathbf{r}`), per the multilinear sum-check convention (Thaler; Spartan; HyperPlonk; Zeromorph use `u`); Greyhound/Hachi/LaBRADOR use `x` only because they are univariate ring-eval schemes. The packed inner block of `r` is `packed_inner_point` = paper `řᵢₙ` (`\check{r}_{in}`), the public weight in `Tr_H(Y · σ₋₁(·))`; it is distinct from the opening commitment `v = D·ê` (paper bold `\mathbf{v}`, code `RingRelationInstance::v` / `ABSORB_PROVER_V`). Rationale and the cross-scheme survey are in `~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`.
+- Fold producing `y_ring = sum_j b_j · e_folded_j`, `e_folded_j = <a, block_j>`: `crates/akita-prover/src/backend/recursive_witness.rs:179-211`.
+- Plane-major `e_hat` column layout (`col = offset_e + h · num_blocks + j`): `crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`; `z_first`: `crates/akita-types/src/proof/ring_relation.rs:17-19`.
+- Gadget powers `g_open[h] = base^h`: `crates/akita-types/src/layout/digit_math.rs:17-26`.
+- Verifier level + external trace check: `crates/akita-verifier/src/protocol/levels/recursive.rs:313-357`.
+- Stage-2 fused oracle: `crates/akita-verifier/src/stages/stage2.rs:433-461,464-533`.
+- Proof sizing: `crates/akita-types/src/proof_size.rs:72-104`.
+- Notation: `specs/w-to-e-notation.md`; trace cutover lineage: `specs/extension-field-trace-cutover.md`, `specs/extension-field-opening-batching.md`.

@@ -21,11 +21,12 @@ use akita_types::{
     RingSubfieldEncoding, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
-/// Closure that recomputes the inner ring-slot reduction `v` at the sumcheck
-/// point `rho`. The root and recursive sites capture their own opening-point
-/// preparation (`prepare_root_opening_point_ext` / `prepare_recursive_*`), so
-/// the generic instance stays free of the divergent point-prep bounds.
-type InnerReductionFn<'a, F, C, const D: usize> =
+/// Closure that recomputes the ψ-packed inner point `řᵢₙ` (`packed_inner_point`)
+/// at the sumcheck point `rho`. The root and recursive sites capture their own
+/// opening-point preparation (`prepare_root_opening_point_ext` /
+/// `prepare_recursive_*`), so the generic instance stays free of the divergent
+/// point-prep bounds.
+type PackedInnerPointFn<'a, F, C, const D: usize> =
     Box<dyn Fn(&[C]) -> Result<CyclotomicRing<F, D>, AkitaError> + Send + Sync + 'a>;
 
 struct EorRow<'a, F: FieldCore, C: FieldCore, const D: usize> {
@@ -42,7 +43,7 @@ pub(crate) struct ExtensionOpeningReductionVerifier<'a, F: FieldCore, C: FieldCo
     input_claim: C,
     eta: Vec<C>,
     rows: Vec<EorRow<'a, F, C, D>>,
-    inner_reduction: InnerReductionFn<'a, F, C, D>,
+    packed_inner_point: PackedInnerPointFn<'a, F, C, D>,
 }
 
 impl<'a, F: FieldCore, C: FieldCore, const D: usize>
@@ -55,7 +56,7 @@ impl<'a, F: FieldCore, C: FieldCore, const D: usize>
         input_claim: C,
         eta: Vec<C>,
         rows: Vec<(&'a CyclotomicRing<F, D>, Vec<C>)>,
-        inner_reduction: InnerReductionFn<'a, F, C, D>,
+        packed_inner_point: PackedInnerPointFn<'a, F, C, D>,
     ) -> Self {
         Self {
             num_rounds,
@@ -65,7 +66,7 @@ impl<'a, F: FieldCore, C: FieldCore, const D: usize>
                 .into_iter()
                 .map(|(y_ring, point_tail)| EorRow { y_ring, point_tail })
                 .collect(),
-            inner_reduction,
+            packed_inner_point,
         }
     }
 }
@@ -89,11 +90,11 @@ where
     }
 
     fn expected_output_claim(&self, challenges: &[C]) -> Result<C, AkitaError> {
-        let inner_reduction = (self.inner_reduction)(challenges)?;
+        let packed_inner_point = (self.packed_inner_point)(challenges)?;
         let mut acc = C::zero();
         for row in &self.rows {
             let opening =
-                recover_ring_subfield_inner_product::<F, C, D>(row.y_ring, &inner_reduction)?;
+                recover_ring_subfield_inner_product::<F, C, D>(row.y_ring, &packed_inner_point)?;
             let factor = tensor_equality_factor_eval_at_point::<F, C>(
                 &row.point_tail,
                 &self.eta,
