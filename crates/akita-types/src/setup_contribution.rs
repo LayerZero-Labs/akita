@@ -921,8 +921,8 @@ where
 /// `B_inner` row weight times the `t̂` slice-column eq-MLE — yields exactly the
 /// same setup contribution as scanning the full `blockdiag(B', …, B')` once per
 /// logical entry, but with `tier_split×` fewer `eval_ring_at_pows` calls. This
-/// is the verifier-speedup hinge proved by
-/// [`tests::reused_b_fold_matches_blockdiag`].
+/// is the verifier-speedup hinge proved by the `reused_b_fold_matches_blockdiag`
+/// unit test in this module.
 #[inline]
 pub fn fold_reused_b_weight<E: FieldCore>(
     row: usize,

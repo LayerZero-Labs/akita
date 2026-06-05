@@ -70,10 +70,10 @@ pub mod fp128_d128_onehot_zk;
 pub mod fp128_d64_onehot;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d64_onehot_tensor;
-#[cfg(not(feature = "zk"))]
-pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_tensor_zk;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_zk;
 #[cfg(not(feature = "zk"))]

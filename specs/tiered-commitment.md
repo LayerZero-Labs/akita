@@ -923,7 +923,7 @@ Risks to resolve first: the security review of the A→B→F composition over th
 shared flat matrix (Part 2 → Security); the setup-contribution folding (step 5
 equivalence test) since it is the source of the verifier speedup; and the
 `effective_commit_rows` selector audit (step 7) since a missed site silently
-mis-prices or mis-validates the commitment.
+prices or validates the commitment incorrectly.
 
 ### Derived implementation contract (from code tracing)
 

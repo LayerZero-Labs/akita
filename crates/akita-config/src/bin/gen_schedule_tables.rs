@@ -26,8 +26,8 @@ use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Sch
 ///
 /// For a single-tier level this is just `b_key.row_len()`. For a tiered level
 /// the table stores the **un-tiered** rank (the secure rank for the full,
-/// pre-split `B` width) so [`GeneratedFoldStep::expand_to_level_params`] can
-/// rebuild the un-tiered layout and replay `apply_tiering` to recover the exact
+/// pre-split `B` width) so `akita_planner::generated::GeneratedFoldStep::expand_to_level_params`
+/// can rebuild the un-tiered layout and replay `apply_tiering` to recover the exact
 /// `B'`/`F` split. The un-tiered rank equals the pre-tiering rank the DP sized
 /// against the full width `b_key.col_len() * tier_split`.
 fn untiered_n_b(p: &LevelParams) -> usize {
