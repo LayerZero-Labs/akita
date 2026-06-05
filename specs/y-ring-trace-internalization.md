@@ -53,7 +53,7 @@ directly over the committed witness.
 Here `opening` is the public incoming claim (already transcript-bound), and `packed_inner_point` is the public ring element that packs the inner opening-point weights.
 In code this is `prepared_point.packed_inner_point`: `prepare_recursive_opening_point_ext` or `prepare_root_opening_point_ext` splits the verifier's opening point into outer block weights and inner ring-slot weights, then embeds the inner weights into a `CyclotomicRing`.
 This `packed_inner_point` is the paper's `řᵢₙ` (`\check{r}_{in}`): the ψ-packed *inner block* of the opening point `r`, used as the public weight in the Hachi trace identity.
-It is **not** the ring-relation vector `v = D · e_hat` (the opening commitment `\mathbf{v}`); the two were deliberately given separate names (see References).
+It is **not** the opening commitment `\mathbf{v} = D · \hat{\mathbf{e}}` nor the eval claim scalar `v`; the three roles are deliberately separate (see Notation).
 With that convention,
 
 ```text
@@ -281,6 +281,28 @@ Recommended order, soundness first:
 
 Risks to resolve first: the exact `M`-row bookkeeping when the public-output row is removed (does the consistency row or commitment binding implicitly depend on it?), whether the intentional `r_hat` shrink should be accepted in the first PR or temporarily avoided with inert padding, and the `e_hat` segment alignment when `ring_column_z_first(lp) == true` (the constant offset folds into `eq_seg`; see *Verifier final-point evaluation*). The `K > 1` per-round eval cost is resolved: the conjugate sum collapses into one `Tr_H` of a single ring product, `O(|H| · D)` per level, independent of `num_blocks · num_digits_open`. These are flagged for step 1–2 before committing to the wiring.
 
+## Notation
+
+Locked naming for this cutover (full rationale and cross-scheme survey:
+`~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`).
+
+| Object | Paper | Code (this spec) |
+|--------|-------|------------------|
+| Opening/evaluation point | `\mathbf{r}` | opening point / `prepared_point` |
+| Eval/opening claim value | `v`, `\bar{v}`, `v'` | `opening`, `input_claim` |
+| Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | `RingRelationInstance::v`, `ABSORB_PROVER_V` |
+| Packed inner trace weight | `\check{r}_{\mathrm{in}}` | `packed_inner_point` |
+| Sum-check Boolean ring index | `y \in \{0,1\}^{\mathrm{ring\_bits}}` | `ring_bits`, `y_challenges` |
+| Sum-check Boolean column index | `x \in \{0,1\}^{\mathrm{col\_bits}}` | `col_bits`, `x_challenges` |
+| Sum-check random point | `(r_y, r_x)` or `\mathbf{r}_1` | stage-2 challenges |
+
+**Eval claim `y` → `v` (Path A, locked).**
+Greyhound/Hachi write `f(\mathbf{r}) = y` because they are univariate ring-eval schemes with no fused 2D stage-2 hypercube.
+Akita is multilinear: the stage-2 oracle sums over Boolean `(y, x)` where `y` indexes the ring coefficient and `x` indexes the witness column (see the fused-term design above).
+Reserving `y` for that ring axis requires renaming the public eval/opening claim to scalar `v \in E` (Thaler/Spartan convention: point `\mathbf{r}`, value `v`, variables `x`/`y`).
+Disambiguate from the opening commitment by type: scalar `v` vs vector `\mathbf{v}`.
+In this spec, `opening` means the eval claim (`v` in paper notation); it is not `y_{\mathrm{ring}}` / `Y` (the on-wire ring witness this spec removes).
+
 ## References
 
 - Paper: `sections/akita/3_basic_akita.tex:382-390` (send `Y`, verifier trace check), `:488-498` (per-claim opening summary), `:757-828` (stage-2 fused sum-check).
@@ -288,7 +310,7 @@ Risks to resolve first: the exact `M`-row bookkeeping when the public-output row
 - Relation claim / RHS: `crates/akita-types/src/proof/relation.rs:59-97`; `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:595-630`.
 - Trace primitives: `crates/akita-types/src/field_reduction.rs:185-194,535-579,600-621`.
 - Opening-point split / `packed_inner_point`: `crates/akita-types/src/proof/batch.rs:624-734` (`reduce_inner_opening_to_ring_element`: `crates/akita-types/src/layout/opening_point.rs:185-197`).
-- Notation. The opening/evaluation point is `r` (paper `\mathbf{r}`), per the multilinear sum-check convention (Thaler; Spartan; HyperPlonk; Zeromorph use `u`); Greyhound/Hachi/LaBRADOR use `x` only because they are univariate ring-eval schemes. The packed inner block of `r` is `packed_inner_point` = paper `řᵢₙ` (`\check{r}_{in}`), the public weight in `Tr_H(Y · σ₋₁(·))`; it is distinct from the opening commitment `v = D·ê` (paper bold `\mathbf{v}`, code `RingRelationInstance::v` / `ABSORB_PROVER_V`). Rationale and the cross-scheme survey are in `~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`.
+- Notation: see the Notation section above and `~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`.
 - Fold producing `y_ring = sum_j b_j · e_folded_j`, `e_folded_j = <a, block_j>`: `crates/akita-prover/src/backend/recursive_witness.rs:179-211`.
 - Plane-major `e_hat` column layout (`col = offset_e + h · num_blocks + j`): `crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`; `z_first`: `crates/akita-types/src/proof/ring_relation.rs:17-19`.
 - Gadget powers `g_open[h] = base^h`: `crates/akita-types/src/layout/digit_math.rs:17-26`.
