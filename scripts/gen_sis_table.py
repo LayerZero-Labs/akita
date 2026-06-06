@@ -7,8 +7,8 @@ provides >= 128-bit security for each (d, collision_l2_sq, rank) triple. The
 output is the Rust match arm body for `sis_max_widths` in
 `crates/akita-types/src/sis/generated_sis_table.rs`.
 
-Requires SageMath and a checkout of the lattice-estimator repo
-(https://github.com/malb/lattice-estimator).
+Requires SageMath and the pinned lattice-estimator checkout under
+`third_party/lattice-estimator` (or an explicit override).
 
 Usage:
     sage -python scripts/gen_sis_table.py
@@ -19,30 +19,26 @@ Options:
     --q Q                   Explicit modulus integer. Overrides --family.
     --estimator-path PATH   Path to lattice-estimator repo.
                             Falls back to LATTICE_ESTIMATOR_PATH env var,
-                            then ../lattice-estimator (sibling checkout).
+                            then `third_party/lattice-estimator`.
     --search-cap N          Override the per-D binary-search cap.
                             Defaults to 10^10 for D=32/64 and 5*10^10 for D=128.
     --target-bits BITS      Minimum security bits (default: 128).
     --d D                   Only run for ring dimension D (omit for all).
     --collision C           Only run for collision bucket C (omit for all).
+    --jobs N                Run N independent Sage subprocess shards (default: 1).
 
-Key convention (L2 / operator-norm cutover):
-    The bucket is the per-ring-row *squared* Euclidean collision bound
-    `collision_l2_sq` (an exact integer), not an L-infinity coefficient bound.
-    The SIS solution `z_A` spans `width` ring rows, each of squared Euclidean
-    norm <= collision_l2_sq, so its whole-vector Euclidean length bound is
-    `sqrt(width * collision_l2_sq)`. Buckets are exact powers of two (ratio 2 in
-    the squared domain == sqrt(2) in the norm), so the Rust side rounds a raw
-    key up via `next_power_of_two`.
-
-    This reproduces the previous L-infinity table exactly for the B/D opening
-    digits: their `collision_l2_sq = d * (2^lb - 1)^2` plugged into
-    `sqrt(width * collision_l2_sq)` equals the old `sqrt(width*d) * (2^lb - 1)`.
+Collision bucket convention:
+    Each bucket is the per-ring-row squared Euclidean collision bound
+    `collision_l2_sq` (an exact integer). The SIS solution spans `width` ring
+    rows, each of squared norm <= collision_l2_sq, so the whole-vector Euclidean
+    length bound passed to lattice-estimator is `sqrt(width * collision_l2_sq)`.
+    Buckets are exact powers of two; the Rust table rounds a raw key up via
+    `next_power_of_two` and clamps to the same ladder as `MIN_LOG_BUCKET` /
+    `MAX_LOG_BUCKET` in `sis/ajtai_key.rs`.
 
 Modeling choices (matching the existing table):
     - Reduction model: BDGL16
-    - Shape model: lgsa
-    - Norm: Euclidean (l2)
+    - Norm: Euclidean (l2); `red_shape_model` is ignored on this path
     - Field modulus for estimation: selected by --family / --q
     - length_bound = sqrt(width * collision_l2_sq)  (per-row squared key)
 
@@ -61,18 +57,17 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 if hasattr(signal, "SIGPIPE"):
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-# L2 collision buckets are exact powers of two in the *squared* per-row
-# Euclidean domain: 2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET. The Rust side rounds a
-# raw squared key up to the next power of two (`next_power_of_two`) and clamps to
-# this range, so the two ladders must stay in lockstep with the
-# `MIN_LOG_BUCKET` / `MAX_LOG_BUCKET` constants in `sis/ajtai_key.rs`.
+# Squared collision buckets: 2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET. Keep this
+# ladder in lockstep with `MIN_LOG_BUCKET` / `MAX_LOG_BUCKET` in `sis/ajtai_key.rs`.
 MIN_LOG_BUCKET = 1
 MAX_LOG_BUCKET = 84
 SQUARED_BUCKETS = [1 << k for k in range(MIN_LOG_BUCKET, MAX_LOG_BUCKET + 1)]
@@ -101,6 +96,7 @@ FAMILIES: dict[str, tuple[int, str, list[int], list[int]]] = {
 DEFAULT_RANK_SWEEP = 4
 D128_SEARCH_CAP = 50_000_000_000
 DEFAULT_SEARCH_CAP = 10_000_000_000
+DEFAULT_JOBS_CAP = 6
 
 
 def parse_args() -> argparse.Namespace:
@@ -153,6 +149,15 @@ def parse_args() -> argparse.Namespace:
         "--collisions",
         help="Comma-separated collision buckets to run instead of the selected family list.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help=(
+            "Run independent Sage subprocess shards over (d, collision) work items. "
+            f"Defaults to 1; capped at min({DEFAULT_JOBS_CAP}, num_cpus)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -162,6 +167,10 @@ def default_search_cap(d: int) -> int:
     return DEFAULT_SEARCH_CAP
 
 
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
 def locate_estimator(explicit: str | None) -> Path:
     candidates: list[Path] = []
     if explicit:
@@ -169,8 +178,9 @@ def locate_estimator(explicit: str | None) -> Path:
     env_path = os.environ.get("LATTICE_ESTIMATOR_PATH")
     if env_path:
         candidates.append(Path(env_path).expanduser())
-    root = Path(__file__).resolve().parents[1]
+    root = repo_root()
     candidates.extend([
+        root / "third_party" / "lattice-estimator",
         root / "lattice-estimator",
         root.parent / "lattice-estimator",
     ])
@@ -179,16 +189,43 @@ def locate_estimator(explicit: str | None) -> Path:
             return c.resolve()
     raise SystemExit(
         "Could not locate lattice-estimator. "
-        "Set LATTICE_ESTIMATOR_PATH or pass --estimator-path."
+        "Initialize `third_party/lattice-estimator`, set LATTICE_ESTIMATOR_PATH, "
+        "or pass --estimator-path."
     )
+
+
+def estimator_git_sha(path: Path) -> str:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return out.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def estimator_remote_url(path: Path) -> str:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(path), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return out.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 def load_estimator(path: Path):
     sys.path.insert(0, str(path))
     from estimator import SIS
     from estimator.reduction import RC
-    from sage.all import log
-    return SIS, RC, log
+    from sage.all import log, oo
+    return SIS, RC, log, oo
 
 
 def family_entries(family: str) -> list[tuple[int, int]]:
@@ -210,32 +247,25 @@ def parse_int_list(raw: str | None) -> list[int] | None:
     return values
 
 
-# Per-call estimator wall-clock budget (seconds). Real `SIS.lattice` calls
-# finish in well under a second; lattice-estimator nonetheless *diverges* on
-# certain tiny degenerate instances (observed at d=32, rank=1, right at the
-# `inf -> finite` security boundary, e.g. m=128, length_bound=256). A divergent
-# call is treated as insecure (`-inf`), which is the conservative, security-safe
-# choice: it can only *under*-report the secure width (forcing a slightly higher
-# SIS rank), never over-report it, and the boundary answer is off by at most one
-# width. The planner and the audit tests consume the same table, so the result
-# stays self-consistent.
-ESTIMATE_TIMEOUT_S = 5.0
+def select_entries(args: argparse.Namespace) -> list[tuple[int, int]]:
+    custom_dims = parse_int_list(args.dims)
+    custom_collisions = parse_int_list(args.collisions)
+    if custom_dims is not None or custom_collisions is not None:
+        _, _, family_dims, family_collisions = FAMILIES[args.family]
+        dims = custom_dims if custom_dims is not None else family_dims
+        collisions = custom_collisions if custom_collisions is not None else family_collisions
+        entries = [(d, c) for d in dims for c in collisions]
+    else:
+        entries = family_entries(args.family)
+    if args.d is not None:
+        entries = [(d, c) for d, c in entries if d == args.d]
+    if args.collision is not None:
+        entries = [(d, c) for d, c in entries if c == args.collision]
+    entries.sort()
+    return entries
 
 
-class _EstimateTimeout(Exception):
-    pass
-
-
-def _on_timeout(_signum, _frame):
-    raise _EstimateTimeout()
-
-
-_HAS_ALARM = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
-if _HAS_ALARM:
-    signal.signal(signal.SIGALRM, _on_timeout)
-
-
-def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision: int) -> float:
+def estimate_bits(SIS, RC, log, oo, q: int, d: int, rank: int, width: int, collision: int) -> float:
     # `collision` is the per-ring-row squared Euclidean bound (collision_l2_sq).
     # The SIS solution spans `width` ring rows, so the whole-vector Euclidean
     # length bound is sqrt(width * collision_l2_sq). The SIS matrix still has
@@ -243,29 +273,24 @@ def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision
     n = rank * d
     m = width * d
     length_bound = (width * collision) ** 0.5
-    if _HAS_ALARM:
-        signal.setitimer(signal.ITIMER_REAL, ESTIMATE_TIMEOUT_S)
     try:
         out = SIS.lattice(
             SIS.Parameters(n=n, q=q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
             red_cost_model=RC.BDGL16,
-            red_shape_model="lgsa",
             log_level=0,
         )
-    except _EstimateTimeout:
-        return float("-inf")
     except ValueError as exc:
         if "SIS trivially easy" in str(exc):
             return float("-inf")
         raise
-    finally:
-        if _HAS_ALARM:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-    return float(log(out["rop"], 2))
+    rop = out["rop"]
+    if rop == oo:
+        return float("inf")
+    return float(log(rop, 2))
 
 
 def binary_search_max_width(
-    SIS, RC, log,
+    SIS, RC, log, oo,
     q: int,
     d: int, rank: int, collision: int,
     target_bits: float, search_cap: int,
@@ -284,84 +309,86 @@ def binary_search_max_width(
          the common small-answer cells cheap (small `m = width*d`), instead of
          the cap-first binary search's ~log2(cap) huge-`m` probes per cell.
     """
-    if estimate_bits(SIS, RC, log, q, d, rank, 1, collision) < target_bits:
+    if estimate_bits(SIS, RC, log, oo, q, d, rank, 1, collision) < target_bits:
         return 0
 
-    if estimate_bits(SIS, RC, log, q, d, rank, search_cap, collision) >= target_bits:
+    if estimate_bits(SIS, RC, log, oo, q, d, rank, search_cap, collision) >= target_bits:
         return search_cap
 
     hi = 1
     while True:
         nxt = min(hi * 2, search_cap)
-        if estimate_bits(SIS, RC, log, q, d, rank, nxt, collision) >= target_bits:
+        if estimate_bits(SIS, RC, log, oo, q, d, rank, nxt, collision) >= target_bits:
             hi = nxt
             continue
-        # Answer is in [hi, nxt): largest secure width strictly below `nxt`.
         lo, high = hi, nxt
         while lo < high - 1:
             mid = (lo + high) // 2
-            if estimate_bits(SIS, RC, log, q, d, rank, mid, collision) >= target_bits:
+            if estimate_bits(SIS, RC, log, oo, q, d, rank, mid, collision) >= target_bits:
                 lo = mid
             else:
                 high = mid
         return lo
 
 
-def main() -> None:
-    args = parse_args()
-    if args.max_rank < 1:
-        raise SystemExit("--max-rank must be at least 1")
-    estimator_path = locate_estimator(args.estimator_path)
-    SIS, RC, log = load_estimator(estimator_path)
-    family_q, family_label, _, _ = FAMILIES[args.family]
-    q = args.q if args.q is not None else family_q
-    q_label = str(q) if args.q is not None else family_label
-
-    custom_dims = parse_int_list(args.dims)
-    custom_collisions = parse_int_list(args.collisions)
-    if custom_dims is not None or custom_collisions is not None:
-        _, _, family_dims, family_collisions = FAMILIES[args.family]
-        dims = custom_dims if custom_dims is not None else family_dims
-        collisions = custom_collisions if custom_collisions is not None else family_collisions
-        entries = [(d, c) for d in dims for c in collisions]
+def print_provenance_header(
+    args: argparse.Namespace,
+    estimator_path: Path,
+    q: int,
+    q_label: str,
+) -> None:
+    sha = estimator_git_sha(estimator_path)
+    remote = estimator_remote_url(estimator_path)
+    print(f"// Generated by: sage -python scripts/gen_sis_table.py")
+    print(f"// Family: {args.family.upper()}")
+    print(f"// lattice-estimator: {remote} @ {sha}")
+    print(f"// Model: BDGL16, Euclidean (norm=2)")
+    print(f"// Representative q = {q_label}")
+    print(f"// q = {q}")
+    if args.search_cap is None:
+        print(
+            f"// Target: {args.target_bits} bits, search caps: "
+            f"D=32/64 {DEFAULT_SEARCH_CAP:_}, D=128 {D128_SEARCH_CAP:_}"
+        )
     else:
-        entries = family_entries(args.family)
-    if args.d is not None:
-        entries = [(d, c) for d, c in entries if d == args.d]
-    if args.collision is not None:
-        entries = [(d, c) for d, c in entries if c == args.collision]
+        print(f"// Target: {args.target_bits} bits, search cap override: {args.search_cap:_}")
+    print(f"// Ranks: 1..={args.max_rank}")
+    print()
 
-    if not entries:
-        print("No matching entries.", file=sys.stderr)
-        return
 
-    entries.sort()
-
-    if args.format == "csv":
-        print("q,d,collision,rank,max_width,target_bits,search_cap")
-    else:
-        print(f"// Generated by: sage -python scripts/gen_sis_table.py")
-        print(f"// Family: {args.family.upper()}")
-        print(f"// Model: BDGL16 + lgsa, representative q = {q_label}")
-        print(f"// q = {q}")
-        if args.search_cap is None:
-            print(
-                f"// Target: {args.target_bits} bits, search caps: "
-                f"D=32/64 {DEFAULT_SEARCH_CAP:_}, D=128 {D128_SEARCH_CAP:_}"
-            )
-        else:
-            print(f"// Target: {args.target_bits} bits, search cap override: {args.search_cap:_}")
-        print(f"// Ranks: 1..={args.max_rank}")
-        print()
-
-    # Security is monotone in the bucket: once a (d) has no secure width at any
-    # rank for some collision bucket, every larger bucket is also all-zero. We
-    # truncate each (d) ladder at its first all-zero bucket: this keeps the table
-    # compact (unreachable buckets become a `None` table miss, which the planner
-    # already treats as "fold too large to price") and skips the dead searches.
+def emit_rust_rows(
+    rows: list[tuple[int, int, list[int]]],
+) -> None:
     current_d = None
-    dead_dims: set[int] = set()
     emitted: dict[int, list[int]] = {}
+    for d, collision, widths in rows:
+        emitted.setdefault(d, []).append(collision)
+        if d != current_d:
+            if current_d is not None:
+                print()
+            print(f"        // D={d}")
+            current_d = d
+        ws = ", ".join(f"{w:_}" for w in widths)
+        print(f"        ({d}, {collision}) => Some(&[{ws}]),")
+
+    print()
+    print("// Supported collision_l2_sq buckets per D:")
+    for dim in sorted(emitted):
+        cs = ", ".join(str(c) for c in emitted[dim])
+        print(f"//   D={dim}: &[{cs}]")
+
+
+def run_entries(
+    args: argparse.Namespace,
+    entries: list[tuple[int, int]],
+    estimator_path: Path,
+) -> list[tuple[int, int, list[int]]]:
+    SIS, RC, log, oo = load_estimator(estimator_path)
+    family_q, _, _, _ = FAMILIES[args.family]
+    q = args.q if args.q is not None else family_q
+
+    rows: list[tuple[int, int, list[int]]] = []
+    dead_dims: set[int] = set()
     for d, collision in entries:
         if d in dead_dims:
             continue
@@ -371,7 +398,7 @@ def main() -> None:
         for rank in range(1, args.max_rank + 1):
             t0 = time.time()
             w = binary_search_max_width(
-                SIS, RC, log, q, d, rank, collision,
+                SIS, RC, log, oo, q, d, rank, collision,
                 args.target_bits, search_cap,
             )
             elapsed = time.time() - t0
@@ -396,22 +423,125 @@ def main() -> None:
             )
             continue
 
-        emitted.setdefault(d, []).append(collision)
-        if args.format == "rust":
-            if d != current_d:
-                if current_d is not None:
-                    print()
-                print(f"        // D={d}")
-                current_d = d
-            ws = ", ".join(f"{w:_}" for w in widths)
-            print(f"        ({d}, {collision}) => Some(&[{ws}]),")
+        rows.append((d, collision, widths))
+    return rows
 
-    if args.format == "rust":
-        print()
-        print("// Supported collision_l2_sq buckets per D:")
-        for dim in sorted(emitted):
-            cs = ", ".join(str(c) for c in emitted[dim])
-            print(f"//   D={dim}: &[{cs}]")
+
+def shard_jobs(requested: int) -> int:
+    if requested < 1:
+        raise SystemExit("--jobs must be at least 1")
+    cpu_cap = os.cpu_count() or 1
+    return min(requested, DEFAULT_JOBS_CAP, cpu_cap)
+
+
+def sage_command() -> list[str]:
+    return ["sage", "-python", str(Path(__file__).resolve())]
+
+
+def build_child_argv(args: argparse.Namespace, d: int, collision: int) -> list[str]:
+    argv = [
+        *sage_command(),
+        "--family", args.family,
+        "--format", "csv",
+        "--jobs", "1",
+        "--max-rank", str(args.max_rank),
+        "--target-bits", str(args.target_bits),
+        "--d", str(d),
+        "--collision", str(collision),
+    ]
+    if args.q is not None:
+        argv.extend(["--q", str(args.q)])
+    if args.search_cap is not None:
+        argv.extend(["--search-cap", str(args.search_cap)])
+    if args.estimator_path is not None:
+        argv.extend(["--estimator-path", args.estimator_path])
+    return argv
+
+
+def parse_csv_rows(text: str) -> list[tuple[int, int, int, int, int, float, int]]:
+    rows: list[tuple[int, int, int, int, int, float, int]] = []
+    for line in text.splitlines():
+        if not line or line.startswith("q,"):
+            continue
+        q_s, d_s, c_s, rank_s, width_s, bits_s, cap_s = line.split(",")
+        rows.append((
+            int(q_s), int(d_s), int(c_s), int(rank_s), int(width_s),
+            float(bits_s), int(cap_s),
+        ))
+    return rows
+
+
+def run_parallel_shards(
+    args: argparse.Namespace,
+    entries: list[tuple[int, int]],
+    estimator_path: Path,
+) -> list[tuple[int, int, list[int]]]:
+    jobs = shard_jobs(args.jobs)
+    if jobs == 1 or len(entries) <= 1:
+        return run_entries(args, entries, estimator_path)
+
+    print(
+        f"// Sharding {len(entries)} (d, collision) cells across {jobs} Sage subprocesses",
+        file=sys.stderr,
+    )
+
+    def run_one(work: tuple[int, int]) -> tuple[int, int, list[int]]:
+        d, collision = work
+        cmd = build_child_argv(args, d, collision)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            raise SystemExit(
+                f"shard failed for d={d}, collision={collision} "
+                f"(exit {proc.returncode}):\n{proc.stderr}"
+            )
+        parsed = parse_csv_rows(proc.stdout)
+        if not parsed:
+            return (d, collision, [0] * args.max_rank)
+        widths = [width for *_rest, width, _bits, _cap in sorted(parsed, key=lambda r: r[3])]
+        return (d, collision, widths)
+
+    results: list[tuple[int, int, list[int]]] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(run_one, work): work for work in entries}
+        for fut in as_completed(futures):
+            results.append(fut.result())
+
+    results.sort()
+    dead_dims: set[int] = set()
+    filtered: list[tuple[int, int, list[int]]] = []
+    for d, collision, widths in results:
+        if d in dead_dims:
+            continue
+        if all(w == 0 for w in widths):
+            dead_dims.add(d)
+            continue
+        filtered.append((d, collision, widths))
+    return filtered
+
+
+def main() -> None:
+    args = parse_args()
+    if args.max_rank < 1:
+        raise SystemExit("--max-rank must be at least 1")
+
+    entries = select_entries(args)
+    if not entries:
+        print("No matching entries.", file=sys.stderr)
+        return
+
+    estimator_path = locate_estimator(args.estimator_path)
+    family_q, family_label, _, _ = FAMILIES[args.family]
+    q = args.q if args.q is not None else family_q
+    q_label = str(q) if args.q is not None else family_label
+
+    if args.format == "csv":
+        print("q,d,collision,rank,max_width,target_bits,search_cap")
+        run_entries(args, entries, estimator_path)
+        return
+
+    print_provenance_header(args, estimator_path, q, q_label)
+    rows = run_parallel_shards(args, entries, estimator_path)
+    emit_rust_rows(rows)
 
 
 if __name__ == "__main__":

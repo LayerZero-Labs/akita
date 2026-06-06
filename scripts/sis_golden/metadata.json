@@ -1,0 +1,5 @@
+{
+  "description": "q32, D=32, collision_l2_sq=16384, ranks 1..4.",
+  "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",
+  "lattice_estimator_sha": "85110c8010aaace222e4c57ff5bd9c611bdb36c1"
+}

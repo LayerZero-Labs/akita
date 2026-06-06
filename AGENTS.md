@@ -80,6 +80,13 @@ The active transcript-hardening pillars are:
 
 Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardening.md): prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, and NARG migration.
 
+## Offline SIS table regen
+
+`scripts/gen_sis_table.py` regenerates `generated_sis_table.rs` using Sage and the
+pinned `third_party/lattice-estimator` checkout (`git submodule update --init`).
+Reference replay: `sage -python scripts/sis_golden/check.py`. Rust CI does not
+require Sage or an initialized submodule.
+
 ## Profiling
 
 Canonical: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile`. D=128 is the proof-size optimum under the committed-fold A-role SIS pricing (resolved through the runtime DP; there is no shipped D128 table).
