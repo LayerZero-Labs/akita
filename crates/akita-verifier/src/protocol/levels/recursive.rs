@@ -5,7 +5,7 @@ use akita_types::TraceStage2Wire;
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 #[cfg(not(feature = "zk"))]
 use akita_types::{
-    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_k1,
+    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_recursive,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
     RingSubfieldEncoding,
 };
@@ -171,6 +171,8 @@ where
     // `(final_claim_lc, factor)` for that deferred relation.
     #[cfg(feature = "zk")]
     let mut zk_eor_final: Option<(ZkR1csLinearCombination<L>, L)> = None;
+    #[cfg(not(feature = "zk"))]
+    let mut eor_trace_final: Option<(L, L)> = None;
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
         if proof.extension_opening_reduction().is_some() {
             return Err(AkitaError::InvalidProof);
@@ -245,33 +247,15 @@ where
         let tail_point = &current_state.opening_point[split_bits..];
         #[cfg(not(feature = "zk"))]
         {
-            let basis = current_state.basis;
-            let eor_y_ring = CyclotomicRing::<F, D>::zero();
-            let eor_verifier = ExtensionOpeningReductionVerifier::<F, L, D>::new(
-                tail_point.len(),
+            let (final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, L, _>(
                 input_claim,
-                eta,
-                vec![(&eor_y_ring, tail_point.to_vec())],
-                Box::new(
-                    move |rho: &[L]| -> Result<CyclotomicRing<F, D>, AkitaError> {
-                        let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
-                            rho.len(),
-                            rho,
-                        )?;
-                        Ok(prepare_recursive_opening_point_ext::<F, L, D>(
-                            &protocol_point,
-                            basis,
-                            lp,
-                            alpha_bits,
-                            block_order,
-                        )?
-                        .packed_inner_point)
-                    },
-                ),
-            );
-            let rho = eor_verifier.verify::<F, T, _>(&reduction.sumcheck, transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
+                tail_point.len(),
+                &reduction.sumcheck,
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            let factor = tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &rho)?;
+            eor_trace_final = Some((final_claim, factor));
             Some(rho)
         }
         #[cfg(feature = "zk")]
@@ -442,13 +426,18 @@ where
     let trace_wire = if !trace_stage2_enabled(lp, L::EXT_DEGREE, reduction_check.is_some()) {
         None
     } else {
+        let (trace_opening, trace_scale) = eor_trace_final
+            .as_ref()
+            .copied()
+            .unwrap_or((current_state.opening, L::one()));
         Some(build_trace_stage2_wire_recursive::<F, L, D>(
             lp,
             &relation_instance.segment_layout(lp)?,
             rs.col_bits,
             rs.ring_bits,
             &prepared_points[0],
-            current_state.opening,
+            trace_opening,
+            trace_scale,
             gamma_tr,
         )?)
     };
@@ -1119,6 +1108,7 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     ring_bits: usize,
     prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
     opening: L,
+    trace_scale: L,
     gamma_tr: L,
 ) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
 where
@@ -1130,9 +1120,6 @@ where
         layout,
         gamma_tr,
         trace_opening_claim: trace_input_claim(gamma_tr, opening),
-        opening: trace_stage2_opening_owned_k1(
-            &prepared.ring_opening_point.b,
-            &prepared.packed_inner_point,
-        )?,
+        opening: trace_stage2_opening_owned_recursive(prepared, trace_scale)?,
     })
 }

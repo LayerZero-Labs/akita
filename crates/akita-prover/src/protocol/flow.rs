@@ -69,8 +69,8 @@ use akita_types::{
 };
 use akita_types::{
     build_trace_stage2_compact, trace_input_claim, trace_opening_from_incidence,
-    trace_stage2_enabled, trace_stage2_opening_owned_field_terms, trace_stage2_opening_owned_k1,
-    trace_weight_layout_from_segment, TraceFieldBlockOpening,
+    trace_stage2_enabled, trace_stage2_opening_owned_recursive,
+    trace_stage2_opening_owned_root_terms, trace_weight_layout_from_segment,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -127,6 +127,7 @@ fn build_recursive_stage2_trace_compact<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
+    trace_scale: E,
     col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
@@ -136,10 +137,7 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
-    let opening = trace_stage2_opening_owned_k1::<F, E, D>(
-        &prepared.ring_opening_point.b,
-        &prepared.packed_inner_point,
-    )?;
+    let opening = trace_stage2_opening_owned_recursive::<F, E, D>(prepared, trace_scale)?;
     build_trace_stage2_compact(&layout, &opening, live_x_cols)
 }
 
@@ -147,6 +145,8 @@ fn build_root_stage2_trace_compact<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    row_coefficients: &[E],
+    trace_claim_scales: Option<&[E]>,
     col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
@@ -162,33 +162,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
         trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
-    let mut terms = Vec::with_capacity(instance.incidence().num_claims());
-    for (claim_idx, &coefficient) in instance.gamma().iter().enumerate() {
-        let point_idx = *instance
-            .claim_to_point()
-            .get(claim_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let prepared = prepared_points
-            .get(point_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let coefficient = coefficient.degree_one_base().ok_or_else(|| {
-            AkitaError::InvalidInput("trace row coefficient had no base coordinate".to_string())
-        })?;
-        let block_offset = claim_idx
-            .checked_mul(lp.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
-        terms.push(TraceFieldBlockOpening {
-            block_offset,
-            block_weights: prepared
-                .ring_opening_point
-                .b
-                .iter()
-                .map(|&weight| coefficient * weight)
-                .collect(),
-            inner_opening_ring: prepared.packed_inner_point,
-        });
-    }
-    let opening = trace_stage2_opening_owned_field_terms::<F, E, D>(&terms)?;
+    let opening = trace_stage2_opening_owned_root_terms::<F, E, D>(
+        lp,
+        instance.incidence(),
+        prepared_points,
+        row_coefficients,
+        trace_claim_scales,
+    )?;
     build_trace_stage2_compact(&layout, &opening, live_x_cols)
 }
 

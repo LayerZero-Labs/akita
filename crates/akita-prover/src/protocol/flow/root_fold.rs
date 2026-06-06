@@ -1,5 +1,21 @@
 use super::*;
 
+fn root_trace_claim_scales<C: Copy>(
+    incidence_summary: &ClaimIncidenceSummary,
+    factors_by_point: &[C],
+) -> Result<Vec<C>, AkitaError> {
+    incidence_summary
+        .claim_to_point()
+        .iter()
+        .map(|&point_idx| {
+            factors_by_point
+                .get(point_idx)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
@@ -20,6 +36,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     #[cfg(feature = "zk")] _y_rings_masked: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
     trace_opening: C,
+    trace_claim_scales: Option<Vec<C>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
@@ -110,6 +127,7 @@ where
         gamma_tr,
         trace_opening,
         Some(prepared_points.as_slice()),
+        trace_claim_scales.as_deref(),
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
@@ -288,25 +306,42 @@ where
         }
         #[cfg(not(feature = "zk"))]
         let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
-        let internal_claims = y_rings
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .map(|(y_ring, row)| {
-                recover_ring_subfield_inner_product::<F, C, D>(
-                    y_ring,
-                    &prepared_points[row.point_idx()].packed_inner_point,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(not(feature = "zk"))]
+        let trace_opening = reduction.final_claim;
+        #[cfg(not(feature = "zk"))]
+        let trace_claim_scales = Some(root_trace_claim_scales(
+            incidence_summary,
+            &reduction.factors_by_point,
+        )?);
+        #[cfg(feature = "zk")]
         let trace_opening =
             trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
-        let final_opening = internal_claims
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx()]
-            });
-        check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
+        #[cfg(feature = "zk")]
+        let trace_claim_scales = None;
+        #[cfg(feature = "zk")]
+        {
+            let internal_claims = y_rings
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .map(|(y_ring, row)| {
+                    recover_ring_subfield_inner_product::<F, C, D>(
+                        y_ring,
+                        &prepared_points[row.point_idx()].packed_inner_point,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let final_opening = internal_claims
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .fold(C::zero(), |acc, (&opening, row)| {
+                    acc + opening * reduction.factors_by_point[row.point_idx()]
+                });
+            check_extension_opening_reduction_output(
+                reduction.final_claim,
+                final_opening,
+                C::one(),
+            )?;
+        }
         let extension_opening_reduction = Some(reduction.proof);
 
         return finish_root_fold_with_prepared_openings::<
@@ -340,6 +375,7 @@ where
             #[cfg(feature = "zk")]
             C::zero(),
             trace_opening,
+            trace_claim_scales,
             row_coefficients,
             row_coefficient_rings,
             extension_opening_reduction,
@@ -501,25 +537,18 @@ where
         C::zero(),
         trace_opening,
         Some(prepared_points.as_slice()),
+        None,
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
     )
 }
 
-/// Terminal-root analogue of [`prove_root_fold_with_params`] used when the
-/// schedule has exactly one fold level (the root is itself the terminal).
-///
-/// Mirrors the intermediate-root path through claim-incidence absorbs,
-/// optional extension-opening reduction, and ring-relation setup, then
-/// emits a [`TerminalLevelProof`] via
-/// [`prove_terminal_root_fold_from_ring_relation`] instead of a
-/// [`RootLevelRawOutput`].
+/// Terminal-root analogue of [`prove_root_fold_with_params`].
 ///
 /// # Errors
 ///
-/// Returns an error if claim-incidence/transcript setup fails, the
-/// extension-opening reduction proof construction fails, or the inner
+/// Returns an error if claim-incidence setup, EOR construction, or the inner
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -675,25 +704,42 @@ where
         }
         #[cfg(not(feature = "zk"))]
         let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
-        let internal_claims = y_rings
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .map(|(y_ring, row)| {
-                recover_ring_subfield_inner_product::<F, C, D>(
-                    y_ring,
-                    &prepared_points[row.point_idx()].packed_inner_point,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(not(feature = "zk"))]
+        let trace_opening = reduction.final_claim;
+        #[cfg(not(feature = "zk"))]
+        let trace_claim_scales = Some(root_trace_claim_scales(
+            incidence_summary,
+            &reduction.factors_by_point,
+        )?);
+        #[cfg(feature = "zk")]
         let trace_opening =
             trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
-        let final_opening = internal_claims
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx()]
-            });
-        check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
+        #[cfg(feature = "zk")]
+        let trace_claim_scales = None;
+        #[cfg(feature = "zk")]
+        {
+            let internal_claims = y_rings
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .map(|(y_ring, row)| {
+                    recover_ring_subfield_inner_product::<F, C, D>(
+                        y_ring,
+                        &prepared_points[row.point_idx()].packed_inner_point,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let final_opening = internal_claims
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .fold(C::zero(), |acc, (&opening, row)| {
+                    acc + opening * reduction.factors_by_point[row.point_idx()]
+                });
+            check_extension_opening_reduction_output(
+                reduction.final_claim,
+                final_opening,
+                C::one(),
+            )?;
+        }
         let extension_opening_reduction = Some(reduction.proof);
 
         return finish_terminal_root_fold_with_prepared_openings::<
@@ -725,6 +771,7 @@ where
             #[cfg(feature = "zk")]
             C::zero(),
             trace_opening,
+            trace_claim_scales,
             row_coefficients,
             row_coefficient_rings,
             extension_opening_reduction,
@@ -875,6 +922,7 @@ where
         C::zero(),
         trace_opening,
         Some(prepared_points.as_slice()),
+        None,
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -900,6 +948,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     #[cfg(feature = "zk")] _y_rings_masked: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
     trace_opening: C,
+    trace_claim_scales: Option<Vec<C>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
@@ -983,6 +1032,7 @@ where
         gamma_tr,
         trace_opening,
         Some(prepared_points.as_slice()),
+        trace_claim_scales.as_deref(),
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -1023,6 +1073,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     gamma_tr: C,
     trace_opening: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
+    trace_claim_scales: Option<&[C]>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
@@ -1099,6 +1150,8 @@ where
             lp,
             &instance,
             prepared_points,
+            &row_coefficients,
+            trace_claim_scales,
             col_bits,
             ring_bits,
             live_x_cols,
@@ -1295,6 +1348,7 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     gamma_tr: C,
     trace_opening: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
+    trace_claim_scales: Option<&[C]>,
     row_coefficients: Vec<C>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
@@ -1365,6 +1419,8 @@ where
             lp,
             &instance,
             prepared_points,
+            &row_coefficients,
+            trace_claim_scales,
             col_bits,
             ring_bits,
             live_x_cols,

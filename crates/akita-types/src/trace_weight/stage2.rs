@@ -9,8 +9,9 @@ use akita_field::{
 
 use crate::{
     block_rings_at_opening, build_trace_weight_table_field_terms,
-    build_trace_weight_table_ring_terms, eval_trace_weight_at_point, lagrange_weights,
-    ClaimIncidenceSummary, LevelParams, RingRelationSegmentLayout, RingSubfieldEncoding,
+    build_trace_weight_table_ring_terms, embed_ring_subfield_scalar, eval_trace_weight_at_point,
+    lagrange_weights, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
+    PreparedRootOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding,
     TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceWeightLayout,
 };
 
@@ -62,14 +63,23 @@ pub fn trace_stage2_supported(extension_degree: usize) -> bool {
     matches!(extension_degree, 1 | 2 | 4 | 8)
 }
 
-/// True when the fused trace term can be enabled without an external EOR bridge.
+/// True when the fused trace term can be enabled for this build.
 #[inline]
 pub fn trace_stage2_enabled(
-    _lp: &LevelParams,
+    lp: &LevelParams,
     extension_degree: usize,
     has_extension_opening_reduction: bool,
 ) -> bool {
-    extension_degree == 1 && !has_extension_opening_reduction
+    let _ = (lp, has_extension_opening_reduction);
+    #[cfg(feature = "zk")]
+    {
+        let _ = extension_degree;
+        false
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        trace_stage2_supported(extension_degree)
+    }
 }
 
 /// Lagrange block weights for the degree-one closed-form trace evaluator.
@@ -180,6 +190,146 @@ where
         terms: terms.to_vec(),
         _ext: PhantomData,
     })
+}
+
+fn scaled_base_weights<F, E>(weights: &[F], scale: E) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    E: RingSubfieldEncoding<F> + FieldCore,
+{
+    let scale = scale.degree_one_base().ok_or_else(|| {
+        AkitaError::InvalidInput("trace field scale had no base coordinate".to_string())
+    })?;
+    Ok(weights.iter().map(|&weight| scale * weight).collect())
+}
+
+fn scaled_ring_weights<F, E, const D: usize>(
+    weights: &[CyclotomicRing<F, D>],
+    scale: E,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + FieldCore,
+{
+    let scale = embed_ring_subfield_scalar::<F, E, D>(
+        scale,
+        AkitaError::InvalidInput("trace ring scale had no ring-subfield encoding".to_string()),
+    )?;
+    Ok(weights.iter().map(|&weight| weight * scale).collect())
+}
+
+/// Build the owned trace opening for a root incidence, optionally scaling each
+/// claim term by an extra public factor such as the EOR final tensor factor.
+pub fn trace_stage2_opening_owned_root_terms<F, E, const D: usize>(
+    lp: &LevelParams,
+    incidence: &ClaimIncidenceSummary,
+    prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    row_coefficients: &[E],
+    claim_scales: Option<&[E]>,
+) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    if row_coefficients.len() != incidence.num_claims() {
+        return Err(AkitaError::InvalidSize {
+            expected: incidence.num_claims(),
+            actual: row_coefficients.len(),
+        });
+    }
+    if let Some(scales) = claim_scales {
+        if scales.len() != incidence.num_claims() {
+            return Err(AkitaError::InvalidSize {
+                expected: incidence.num_claims(),
+                actual: scales.len(),
+            });
+        }
+    }
+
+    if E::EXT_DEGREE == 1 {
+        let mut terms = Vec::with_capacity(incidence.num_claims());
+        for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
+            let scale = claim_scales
+                .and_then(|scales| scales.get(claim_idx).copied())
+                .unwrap_or_else(E::one);
+            let coefficient = coefficient * scale;
+            let point_idx = *incidence
+                .claim_to_point()
+                .get(claim_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = prepared_points
+                .get(point_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let block_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
+                AkitaError::InvalidSetup("trace block offset overflow".to_string())
+            })?;
+            terms.push(TraceFieldBlockOpening {
+                block_offset,
+                block_weights: scaled_base_weights(&prepared.ring_opening_point.b, coefficient)?,
+                inner_opening_ring: prepared.packed_inner_point,
+            });
+        }
+        trace_stage2_opening_owned_field_terms(&terms)
+    } else {
+        let mut terms = Vec::with_capacity(incidence.num_claims());
+        for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
+            let scale = claim_scales
+                .and_then(|scales| scales.get(claim_idx).copied())
+                .unwrap_or_else(E::one);
+            let coefficient = coefficient * scale;
+            let point_idx = *incidence
+                .claim_to_point()
+                .get(claim_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = prepared_points
+                .get(point_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let block_rings = prepared.ring_multiplier_point.b_rings().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "extension trace opening point is missing ring block weights".to_string(),
+                )
+            })?;
+            let block_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
+                AkitaError::InvalidSetup("trace block offset overflow".to_string())
+            })?;
+            terms.push(TraceRingBlockOpening {
+                block_offset,
+                block_rings: scaled_ring_weights(block_rings, coefficient)?,
+                packed_inner_point: prepared.packed_inner_point,
+            });
+        }
+        trace_stage2_opening_owned_ring_terms(&terms)
+    }
+}
+
+/// Build the owned trace opening for a recursive singleton fold, optionally
+/// scaling it by an EOR final tensor factor.
+pub fn trace_stage2_opening_owned_recursive<F, E, const D: usize>(
+    prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
+    scale: E,
+) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    if E::EXT_DEGREE == 1 {
+        trace_stage2_opening_owned_field_terms(&[TraceFieldBlockOpening {
+            block_offset: 0,
+            block_weights: scaled_base_weights(&prepared.ring_opening_point.b, scale)?,
+            inner_opening_ring: prepared.packed_inner_point,
+        }])
+    } else {
+        let block_rings = prepared.ring_multiplier_point.b_rings().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "extension trace opening point is missing ring block weights".to_string(),
+            )
+        })?;
+        trace_stage2_opening_owned_ring_terms(&[TraceRingBlockOpening {
+            block_offset: 0,
+            block_rings: scaled_ring_weights(block_rings, scale)?,
+            packed_inner_point: prepared.packed_inner_point,
+        }])
+    }
 }
 
 /// Materialize the trace-weight table and keep only live witness columns.

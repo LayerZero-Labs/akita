@@ -268,6 +268,7 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
     trace_opening: L,
+    trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
@@ -341,6 +342,7 @@ where
                 lp,
                 &instance,
                 prepared,
+                trace_scale,
                 col_bits,
                 ring_bits,
                 live_x_cols,
@@ -547,6 +549,7 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
     trace_opening: L,
+    trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
@@ -614,6 +617,7 @@ where
                 lp,
                 &instance,
                 prepared,
+                trace_scale,
                 col_bits,
                 ring_bits,
                 live_x_cols,
@@ -995,32 +999,54 @@ where
     }
     #[cfg(not(feature = "zk"))]
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
-    let internal_claims = y_rings
-        .iter()
-        .zip(prepared_points.iter())
-        .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(
+    #[cfg(not(feature = "zk"))]
+    let (trace_opening, trace_scale) = match &reduction {
+        Some(reduction) => (reduction.final_claim, reduction.final_factor),
+        None => {
+            let y_ring = y_rings.first().ok_or(AkitaError::InvalidProof)?;
+            let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
+            let opening = recover_ring_subfield_inner_product::<F, L, D>(
                 y_ring,
                 &prepared_point.packed_inner_point,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    match &reduction {
-        Some(reduction) => {
-            check_extension_opening_reduction_output(
-                reduction.final_claim,
-                internal_claims[0],
-                reduction.final_factor,
             )?;
-        }
-        None => {
-            if internal_claims[0] != expected_opening {
+            if opening != expected_opening {
                 return Err(AkitaError::InvalidInput(
                     "recursive opening does not match carried claim".to_string(),
                 ));
             }
+            (opening, L::one())
         }
-    }
+    };
+    #[cfg(feature = "zk")]
+    let (trace_opening, trace_scale) = {
+        let internal_claims = y_rings
+            .iter()
+            .zip(prepared_points.iter())
+            .map(|(y_ring, prepared_point)| {
+                recover_ring_subfield_inner_product::<F, L, D>(
+                    y_ring,
+                    &prepared_point.packed_inner_point,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match &reduction {
+            Some(reduction) => {
+                check_extension_opening_reduction_output(
+                    reduction.final_claim,
+                    internal_claims[0],
+                    reduction.final_factor,
+                )?;
+            }
+            None => {
+                if internal_claims[0] != expected_opening {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive opening does not match carried claim".to_string(),
+                    ));
+                }
+            }
+        }
+        (internal_claims[0], L::one())
+    };
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
     let ring_opening_points = prepared_points
@@ -1063,7 +1089,8 @@ where
         gamma_tr,
         #[cfg(feature = "zk")]
         L::zero(),
-        internal_claims[0],
+        trace_opening,
+        trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -1206,32 +1233,54 @@ where
     }
     #[cfg(not(feature = "zk"))]
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
-    let internal_claims = y_rings
-        .iter()
-        .zip(prepared_points.iter())
-        .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(
+    #[cfg(not(feature = "zk"))]
+    let (trace_opening, trace_scale) = match &reduction {
+        Some(reduction) => (reduction.final_claim, reduction.final_factor),
+        None => {
+            let y_ring = y_rings.first().ok_or(AkitaError::InvalidProof)?;
+            let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
+            let opening = recover_ring_subfield_inner_product::<F, L, D>(
                 y_ring,
                 &prepared_point.packed_inner_point,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    match &reduction {
-        Some(reduction) => {
-            check_extension_opening_reduction_output(
-                reduction.final_claim,
-                internal_claims[0],
-                reduction.final_factor,
             )?;
-        }
-        None => {
-            if internal_claims[0] != expected_opening {
+            if opening != expected_opening {
                 return Err(AkitaError::InvalidInput(
                     "recursive opening does not match carried claim".to_string(),
                 ));
             }
+            (opening, L::one())
         }
-    }
+    };
+    #[cfg(feature = "zk")]
+    let (trace_opening, trace_scale) = {
+        let internal_claims = y_rings
+            .iter()
+            .zip(prepared_points.iter())
+            .map(|(y_ring, prepared_point)| {
+                recover_ring_subfield_inner_product::<F, L, D>(
+                    y_ring,
+                    &prepared_point.packed_inner_point,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match &reduction {
+            Some(reduction) => {
+                check_extension_opening_reduction_output(
+                    reduction.final_claim,
+                    internal_claims[0],
+                    reduction.final_factor,
+                )?;
+            }
+            None => {
+                if internal_claims[0] != expected_opening {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive opening does not match carried claim".to_string(),
+                    ));
+                }
+            }
+        }
+        (internal_claims[0], L::one())
+    };
 
     let ring_opening_points = prepared_points
         .iter()
@@ -1273,7 +1322,8 @@ where
         gamma_tr,
         #[cfg(feature = "zk")]
         L::zero(),
-        internal_claims[0],
+        trace_opening,
+        trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
         &mut current_state.zk_hiding,
