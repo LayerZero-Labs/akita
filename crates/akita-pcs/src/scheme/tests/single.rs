@@ -145,16 +145,16 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
-fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
+fn verify_rejects_malformed_v_dimension_without_panicking() {
     let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
     let root_fold = proof
         .root
         .as_fold_mut()
         .expect("expected a fold-rooted batched proof");
-    let mut coeffs = root_fold.y_rings.coeffs().to_vec();
-    let _ = coeffs.pop().expect("expected non-empty y_rings");
-    root_fold.y_rings = FlatRingVec::from_coeffs(coeffs);
+    let mut coeffs = root_fold.v.coeffs().to_vec();
+    let _ = coeffs.pop().expect("expected non-empty v");
+    root_fold.v = FlatRingVec::from_coeffs(coeffs);
 
     let commitments = [commitment];
     let openings = [opening];
@@ -235,12 +235,10 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
         .root
         .as_fold()
         .expect("fixture should use folded root proof");
-    assert_base_flat_ring_vec(&root.y_rings);
     assert_base_flat_ring_vec(&root.v);
     assert_base_flat_ring_vec(&root.stage2.next_w_commitment);
 
     for level in proof.fold_levels() {
-        assert_base_flat_ring_vec(&level.y_ring);
         assert_base_flat_ring_vec(&level.v);
         assert_base_flat_ring_vec(level.next_w_commitment());
     }

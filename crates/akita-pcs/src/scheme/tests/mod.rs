@@ -83,7 +83,6 @@ fn expected_same_point_batched_shape(
         let terminal_next_params =
             scheduled_next_level_params(&schedule, 1).expect("terminal next params");
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
-            y_rings_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
             final_witness: akita_types::CleartextWitnessShape::PackedDigits((
@@ -95,7 +94,6 @@ fn expected_same_point_batched_shape(
 
     let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
     let root_shape = LevelProofShape {
-        y_ring_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
         extension_opening_reduction: None,
         v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << root_step.params.log_basis),
@@ -126,7 +124,6 @@ fn expected_same_point_batched_shape(
             w_ring_element_count::<OneHotF>(&level_params).unwrap() * level_params.ring_dimension;
         let rounds = batched_shape_rounds(level_params.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
-            y_ring_coeffs: level_params.ring_dimension,
             extension_opening_reduction: None,
             v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << level_params.log_basis),
@@ -173,7 +170,6 @@ fn expected_same_point_batched_shape(
     // fold here folds at a larger basis, so it keeps degree-3 in every round.
     let terminal_stage2 = vec![3; terminal_rounds];
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
-        y_rings_coeffs: terminal_params.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: terminal_stage2,
         final_witness: akita_types::CleartextWitnessShape::PackedDigits((

@@ -1,7 +1,12 @@
 use super::*;
+use akita_transcript::labels::CHALLENGE_TRACE_BATCH;
+use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 #[cfg(not(feature = "zk"))]
-use akita_types::recover_ring_subfield_inner_product;
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
+use akita_types::{
+    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_k1,
+    trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
+    RingSubfieldEncoding, TraceStage2Wire,
+};
 
 /// Verify one intermediate recursive fold level.
 ///
@@ -109,12 +114,6 @@ enum FoldProofView<'a, F: FieldCore, L: FieldCore> {
 }
 
 impl<F: FieldCore, L: FieldCore> FoldProofView<'_, F, L> {
-    fn y_rings_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        match self {
-            Self::Intermediate(proof) => proof.try_y_rings_typed::<D>(),
-            Self::Terminal(proof) => proof.try_y_rings_typed::<D>(),
-        }
-    }
     fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
         match self {
             Self::Intermediate(proof) => proof.extension_opening_reduction.as_ref(),
@@ -147,7 +146,7 @@ where
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let is_last = matches!(proof, FoldProofView::Terminal(_));
-    let y_rings = proof.y_rings_typed::<D>()?;
+    let num_claims = 1usize;
     let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
         FoldProofView::Intermediate(level_proof) => level_proof.v.as_ring_slice::<D>()?,
@@ -165,9 +164,6 @@ where
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    if y_rings.len() != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
     // The zk EOR final relation consumes the shared y-ring opening masks, so it
     // stays in this outer flow rather than inside the sumcheck driver. It carries
     // `(final_claim_lc, factor)` for that deferred relation.
@@ -248,11 +244,12 @@ where
         #[cfg(not(feature = "zk"))]
         {
             let basis = current_state.basis;
+            let eor_y_ring = CyclotomicRing::<F, D>::zero();
             let eor_verifier = ExtensionOpeningReductionVerifier::<F, L, D>::new(
                 tail_point.len(),
                 input_claim,
                 eta,
-                vec![(&y_rings[0], tail_point.to_vec())],
+                vec![(&eor_y_ring, tail_point.to_vec())],
                 Box::new(
                     move |rho: &[L]| -> Result<CyclotomicRing<F, D>, AkitaError> {
                         let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
@@ -310,27 +307,13 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(feature = "zk")]
-    let y_masks = zk_base_mask_lcs::<L>(y_rings.len() * D, zk_hiding_cursor);
-
     #[cfg(not(feature = "zk"))]
-    let internal_claims = y_rings
-        .iter()
-        .zip(prepared_points.iter())
-        .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(
-                y_ring,
-                &prepared_point.packed_inner_point,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(feature = "zk")]
     {
+        let y_masks = zk_base_mask_lcs::<L>(D, zk_hiding_cursor);
         let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
-            &y_rings[0],
+            &CyclotomicRing::<F, D>::zero(),
             y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
             &prepared_points[0].packed_inner_point,
         )?;
@@ -352,12 +335,6 @@ where
             zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
         }
     }
-    // When `reduction_check` is `Some`, the non-zk EOR final relation is enforced
-    // inside the sumcheck driver via `expected_output_claim`.
-    #[cfg(not(feature = "zk"))]
-    if reduction_check.is_none() && internal_claims[0] != current_state.opening {
-        return Err(AkitaError::InvalidProof);
-    }
 
     let ring_opening_points = prepared_points
         .iter()
@@ -367,7 +344,6 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let num_claims = y_rings.len();
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
@@ -411,6 +387,17 @@ where
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
     let (gamma_base, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<L>(&gamma)?;
+    let (y_v_slice, n_d_active) = match m_row_layout {
+        MRowLayout::WithDBlock => (v_typed, lp.d_key.row_len()),
+        MRowLayout::WithoutDBlock => (&[][..], 0usize),
+    };
+    let relation_y = generate_y::<F, D>(
+        y_v_slice,
+        commitment_u,
+        n_d_active,
+        lp.b_key.row_len(),
+        lp.a_key.row_len(),
+    )?;
     let relation_instance = RingRelationInstance::new(
         m_row_layout,
         stage1_challenges.clone(),
@@ -420,7 +407,7 @@ where
         commitment_routing,
         gamma_base,
         row_coefficient_rings,
-        y_rings.clone(),
+        relation_y,
         v_typed.to_vec(),
     )?;
     relation_instance.check_v_shape_for_level(lp)?;
@@ -449,9 +436,26 @@ where
     };
     let relation_claim =
         relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, v_typed, commitment_u)?;
+    #[cfg(not(feature = "zk"))]
+    let trace_wire = if !trace_stage2_enabled(lp, L::EXT_DEGREE, reduction_check.is_some()) {
+        None
+    } else {
+        Some(build_trace_stage2_wire_recursive::<F, L, D>(
+            lp,
+            &relation_instance.segment_layout(lp)?,
+            rs.col_bits,
+            rs.ring_bits,
+            &prepared_points[0],
+            alpha_bits,
+            current_state.opening,
+            gamma_tr,
+        )?)
+    };
+    #[cfg(feature = "zk")]
+    let trace_wire: Option<TraceStage2Wire<F, L, D>> = None;
     #[cfg(feature = "zk")]
     let relation_claim_mask =
-        zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
+        zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, 0, &[])?;
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
     let (batching_coeff, s_claim, stage1_point) = match &proof {
@@ -486,7 +490,10 @@ where
             (L::zero(), L::zero(), stage1_point)
         }
     };
-    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
+    let mut stage2_input_claim = batching_coeff * s_claim + relation_claim;
+    if let Some(trace) = &trace_wire {
+        stage2_input_claim += trace.trace_opening_claim;
+    }
     let stage3_sumcheck_proof = match &proof {
         FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
             setup_contribution_mode,
@@ -526,6 +533,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
+            trace_wire,
         )?,
         FoldProofView::Intermediate(level_proof) => AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
@@ -550,6 +558,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
+            trace_wire,
         )?,
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
@@ -787,7 +796,6 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
                 {
                     return Err(AkitaError::InvalidProof);
@@ -832,18 +840,12 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
-                let computed_next_w_len = w_ring_element_count_with_counts::<F>(
-                    &current_lp,
-                    1,
-                    1,
-                    y_ring_count,
-                    y_ring_count,
-                )?
-                .checked_mul(level_d)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?;
+                let computed_next_w_len =
+                    w_ring_element_count_with_counts::<F>(&current_lp, 1, 1, 1, 1)?
+                        .checked_mul(level_d)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("next witness length overflow".to_string())
+                        })?;
                 if computed_next_w_len != next_w_len {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -864,9 +866,7 @@ where
                 if !is_last {
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.commitment.can_decode_vec(level_d)
-                    || !terminal_proof.y_rings.can_decode_vec(level_d)
-                {
+                if !current_state.commitment.can_decode_vec(level_d) {
                     return Err(AkitaError::InvalidProof);
                 }
                 if level_d == D {
@@ -991,12 +991,7 @@ where
             if terminal.final_witness.shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
-            let y_coeff_len = terminal.y_rings.coeff_len();
-            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
-                return Err(AkitaError::InvalidProof);
-            }
             verify_terminal_root_level::<F, E, C, T, D>(
-                &terminal.y_rings,
                 terminal.extension_opening_reduction.as_ref(),
                 #[cfg(not(feature = "zk"))]
                 &terminal.stage2_sumcheck,
@@ -1035,11 +1030,6 @@ where
             if proof.steps.len() != expected_recursive_levels {
                 return Err(AkitaError::InvalidProof);
             }
-            let y_coeff_len = fold_root.y_rings.coeff_len();
-            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
-                return Err(AkitaError::InvalidProof);
-            }
-
             let terminal_step = proof
                 .steps
                 .last()
@@ -1053,7 +1043,6 @@ where
             }
 
             let root_challenges = verify_intermediate_root_level::<F, E, C, T, D>(
-                &fold_root.y_rings,
                 fold_root.extension_opening_reduction.as_ref(),
                 &fold_root.v,
                 &fold_root.stage1,
@@ -1119,4 +1108,43 @@ where
             Ok(())
         }
     }
+}
+
+#[cfg(not(feature = "zk"))]
+fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
+    lp: &LevelParams,
+    segment: &RingRelationSegmentLayout,
+    col_bits: usize,
+    ring_bits: usize,
+    prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
+    alpha_bits: usize,
+    opening: L,
+    gamma_tr: L,
+) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    L: ExtField<F> + RingSubfieldEncoding<F> + FieldCore + FromPrimitiveInt,
+{
+    let layout = trace_weight_layout_from_segment(lp, segment, col_bits, ring_bits, lp.num_blocks)?;
+    let base_point: Vec<F> = prepared
+        .padded_point
+        .iter()
+        .map(|coord| {
+            coord.degree_one_base().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "challenge field element had no base coordinate".to_string(),
+                )
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(TraceStage2Wire {
+        layout,
+        gamma_tr,
+        trace_opening_claim: trace_input_claim(gamma_tr, opening),
+        opening: trace_stage2_opening_owned_k1(
+            &base_point[..alpha_bits],
+            &prepared.ring_opening_point.b,
+            &prepared.packed_inner_point,
+        )?,
+    })
 }

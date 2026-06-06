@@ -74,6 +74,9 @@ fn new_stage2_test_prover(
         params.col_bits,
         params.ring_bits,
         relation_claim,
+        None,
+        F::zero(),
+        F::zero(),
     )
     .unwrap()
 }

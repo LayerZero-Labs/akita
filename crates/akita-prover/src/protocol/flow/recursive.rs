@@ -266,8 +266,9 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] proof_y_rings: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: L,
+    trace_opening: L,
+    trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
@@ -318,12 +319,7 @@ where
         commitment_u,
     )?;
     #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        &instance.v,
-        commitment_u,
-    )?;
+    let relation_claim_public = relation_claim;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -336,6 +332,22 @@ where
         b,
         alpha,
     } = rs;
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_compact =
+        if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
+            None
+        } else if let Some(prepared) = trace_prepared {
+            Some(build_recursive_stage2_trace_compact::<F, L, D>(
+                lp,
+                &instance,
+                prepared,
+                col_bits,
+                ring_bits,
+                live_x_cols,
+            )?)
+        } else {
+            None
+        };
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
@@ -378,9 +390,15 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact.clone(),
+            gamma_tr,
+            trace_opening_claim,
         );
         let mut stage2_prover = stage2_prover_result?;
-        let stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
+        let mut stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
+        if trace_compact.is_some() {
+            stage2_public_input += trace_opening_claim;
+        }
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
                 stage2_public_input,
@@ -416,6 +434,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact,
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
             .prove::<F, T, _>(transcript, |tr| {
@@ -455,10 +476,7 @@ where
         SetupContributionMode::Direct => None,
     };
 
-    #[cfg(not(feature = "zk"))]
-    let proof_y_rings = y_rings;
     let mut level_proof = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-        proof_y_rings,
         extension_opening_reduction,
         instance.v,
         stage1_proof,
@@ -527,8 +545,9 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: L,
+    trace_opening: L,
+    trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
@@ -573,8 +592,7 @@ where
     let relation_claim =
         relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, &[], commitment_u)?;
     #[cfg(feature = "zk")]
-    let relation_claim_public =
-        relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, &[], commitment_u)?;
+    let relation_claim_public = relation_claim;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -587,6 +605,22 @@ where
         b,
         alpha: _,
     } = rs;
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_compact =
+        if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
+            None
+        } else if let Some(prepared) = trace_prepared {
+            Some(build_recursive_stage2_trace_compact::<F, L, D>(
+                lp,
+                &instance,
+                prepared,
+                col_bits,
+                ring_bits,
+                live_x_cols,
+            )?)
+        } else {
+            None
+        };
 
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
     // contribution to every round polynomial regardless of `stage1_point`, so
@@ -609,6 +643,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact.clone(),
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -634,6 +671,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact,
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
             .prove::<F, T, _>(transcript, |tr| {
@@ -641,11 +681,7 @@ where
             })?;
         (stage2_sumcheck, _sumcheck_challenges)
     };
-    let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-        #[cfg(not(feature = "zk"))]
-        y_rings,
-        #[cfg(feature = "zk")]
-        y_rings_masked,
+    let proof = TerminalLevelProof::new_with_extension_opening_reduction(
         extension_opening_reduction,
         #[cfg(not(feature = "zk"))]
         stage2_sumcheck,
@@ -958,9 +994,7 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
     #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
+    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     let internal_claims = y_rings
         .iter()
         .zip(prepared_points.iter())
@@ -1025,9 +1059,12 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        y_rings,
+        #[cfg(not(feature = "zk"))]
+        gamma_tr,
         #[cfg(feature = "zk")]
-        y_rings_masked,
+        L::zero(),
+        internal_claims[0],
+        Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
         zk_hiding,
         setup_contribution_mode,
@@ -1163,14 +1200,12 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
     #[cfg(feature = "zk")]
     for y_ring in &y_rings_masked {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
+    #[cfg(not(feature = "zk"))]
+    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     let internal_claims = y_rings
         .iter()
         .zip(prepared_points.iter())
@@ -1234,9 +1269,12 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        y_rings,
+        #[cfg(not(feature = "zk"))]
+        gamma_tr,
         #[cfg(feature = "zk")]
-        y_rings_masked,
+        L::zero(),
+        internal_claims[0],
+        Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
         &mut current_state.zk_hiding,
     )

@@ -65,8 +65,8 @@ pub use proof::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
     append_prepared_root_opening_point, checked_total_claims, derive_public_matrix_flat,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape, i8_digits_to_bytes,
-    prepare_recursive_opening_point_ext, prepare_root_opening_point,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape, generate_y,
+    i8_digits_to_bytes, prepare_recursive_opening_point_ext, prepare_root_opening_point,
     prepare_root_opening_point_ext, relation_claim_from_rows, relation_claim_from_rows_extension,
     ring_column_z_first, ring_inner_product_with_extension_weights,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
@@ -104,7 +104,12 @@ pub use schedule::{
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
-    eval_trace_weight_at_point, TraceOpeningAtPoint, TraceWeightLayout,
+    build_trace_stage2_compact, build_trace_weight_table_field_block_weights,
+    build_trace_weight_table_ring_block_weights, eval_trace_stage2_wire_for_degree,
+    eval_trace_weight_at_point, trace_block_weights_k1, trace_input_claim,
+    trace_opening_from_incidence, trace_stage2_enabled, trace_stage2_opening_owned_k1,
+    trace_stage2_opening_owned_ring, trace_stage2_supported, trace_weight_evals_for_witness,
+    trace_weight_layout_from_segment, TraceOpeningAtPoint, TraceStage2OpeningOwned,
+    TraceStage2Wire, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;

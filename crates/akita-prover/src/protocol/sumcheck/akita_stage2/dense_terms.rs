@@ -63,7 +63,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs_signed::<E>(&mut rel, w0_i64, dw_i64, p0, p1);
+                        self.accumulate_witness_relation_at_corner_signed(
+                            &mut rel,
+                            w0_i64,
+                            dw_i64,
+                            j,
+                            p0,
+                            p1,
+                            folding_y_round,
+                            current_y_mask,
+                            current_x_mask,
+                        );
                     }
 
                     let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
@@ -132,7 +142,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs_signed::<E>(&mut rel, w0_i64, dw_i64, p0, p1);
+                        self.accumulate_witness_relation_at_corner_signed(
+                            &mut rel,
+                            w0_i64,
+                            dw_i64,
+                            j,
+                            p0,
+                            p1,
+                            folding_y_round,
+                            current_y_mask,
+                            current_x_mask,
+                        );
                     }
 
                     let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
@@ -212,7 +232,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                        self.accumulate_witness_relation_at_corner(
+                            &mut rel,
+                            w0,
+                            dw,
+                            j,
+                            p0,
+                            p1,
+                            folding_y_round,
+                            current_y_mask,
+                            current_x_mask,
+                        );
                     }
 
                     let e_out = e_second[j_high];
@@ -268,7 +298,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                        self.accumulate_witness_relation_at_corner(
+                            &mut rel,
+                            w0,
+                            dw,
+                            j,
+                            p0,
+                            p1,
+                            folding_y_round,
+                            current_y_mask,
+                            current_x_mask,
+                        );
                     }
 
                     let e_out = e_second[j_high];

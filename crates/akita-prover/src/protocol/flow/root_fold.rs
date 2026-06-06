@@ -90,6 +90,8 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: C,
+    trace_opening: C,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
@@ -177,9 +179,9 @@ where
         zk_hiding,
         instance,
         witness,
-        y_rings,
-        #[cfg(feature = "zk")]
-        y_rings_masked,
+        gamma_tr,
+        trace_opening,
+        prepared_points.first(),
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
@@ -352,14 +354,12 @@ where
             }
             masked
         };
-        #[cfg(not(feature = "zk"))]
-        for y_ring in &y_rings {
-            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-        }
         #[cfg(feature = "zk")]
         for y_ring in &y_rings_masked {
             transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
         }
+        #[cfg(not(feature = "zk"))]
+        let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         let internal_claims = y_rings
             .iter()
             .zip(incidence_summary.public_rows().iter())
@@ -370,6 +370,8 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let trace_opening =
+            trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
         let final_opening = internal_claims
             .iter()
             .zip(incidence_summary.public_rows().iter())
@@ -405,6 +407,11 @@ where
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
+            #[cfg(not(feature = "zk"))]
+            gamma_tr,
+            #[cfg(feature = "zk")]
+            C::zero(),
+            trace_opening,
             row_coefficients,
             row_coefficient_rings,
             extension_opening_reduction,
@@ -489,9 +496,9 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
     #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
+    let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
+    let trace_opening =
+        trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
 
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -560,9 +567,12 @@ where
         zk_hiding,
         instance,
         witness,
-        y_rings,
+        #[cfg(not(feature = "zk"))]
+        gamma_tr,
         #[cfg(feature = "zk")]
-        y_rings_masked,
+        C::zero(),
+        trace_opening,
+        prepared_points.first(),
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
@@ -731,14 +741,12 @@ where
             }
             masked
         };
-        #[cfg(not(feature = "zk"))]
-        for y_ring in &y_rings {
-            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-        }
         #[cfg(feature = "zk")]
         for y_ring in &y_rings_masked {
             transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
         }
+        #[cfg(not(feature = "zk"))]
+        let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         let internal_claims = y_rings
             .iter()
             .zip(incidence_summary.public_rows().iter())
@@ -749,6 +757,8 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let trace_opening =
+            trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
         let final_opening = internal_claims
             .iter()
             .zip(incidence_summary.public_rows().iter())
@@ -782,6 +792,11 @@ where
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
+            #[cfg(not(feature = "zk"))]
+            gamma_tr,
+            #[cfg(feature = "zk")]
+            C::zero(),
+            trace_opening,
             row_coefficients,
             row_coefficient_rings,
             extension_opening_reduction,
@@ -859,13 +874,9 @@ where
         masked
     };
     #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
+    let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
+    let trace_opening =
+        trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
 
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -930,9 +941,12 @@ where
         final_log_basis,
         instance,
         witness,
-        y_rings,
+        #[cfg(not(feature = "zk"))]
+        gamma_tr,
         #[cfg(feature = "zk")]
-        y_rings_masked,
+        C::zero(),
+        trace_opening,
+        prepared_points.first(),
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -956,6 +970,8 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: C,
+    trace_opening: C,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
@@ -1036,9 +1052,9 @@ where
         final_log_basis,
         instance,
         witness,
-        y_rings,
-        #[cfg(feature = "zk")]
-        y_rings_masked,
+        gamma_tr,
+        trace_opening,
+        prepared_points.first(),
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -1076,8 +1092,9 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: C,
+    trace_opening: C,
+    trace_prepared: Option<&PreparedRootOpeningPoint<F, D>>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
@@ -1133,12 +1150,7 @@ where
         commitment_rows,
     )?;
     #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &instance.v,
-        commitment_rows,
-    )?;
+    let relation_claim_public = relation_claim;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -1151,6 +1163,21 @@ where
         b,
         alpha,
     } = rs;
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, false) {
+        None
+    } else if let Some(prepared) = trace_prepared {
+        Some(build_root_stage2_trace_compact::<F, C, D>(
+            lp,
+            &instance,
+            prepared,
+            col_bits,
+            ring_bits,
+            live_x_cols,
+        )?)
+    } else {
+        None
+    };
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
@@ -1194,9 +1221,15 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact.clone(),
+            gamma_tr,
+            trace_opening_claim,
         );
         let mut stage2_prover = stage2_prover_result?;
-        let stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
+        let mut stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
+        if trace_compact.is_some() {
+            stage2_public_input += trace_opening_claim;
+        }
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
                 stage2_public_input,
@@ -1232,6 +1265,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact,
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
             .prove::<F, T, _>(transcript, |tr| {
@@ -1279,10 +1315,6 @@ where
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        #[cfg(feature = "zk")]
-        y_rings: y_rings_masked,
-        #[cfg(not(feature = "zk"))]
-        y_rings,
         extension_opening_reduction: None,
         v: instance.v,
         stage1: stage1_proof,
@@ -1332,8 +1364,9 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     final_log_basis: u32,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    gamma_tr: C,
+    trace_opening: C,
+    trace_prepared: Option<&PreparedRootOpeningPoint<F, D>>,
     row_coefficients: Vec<C>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
@@ -1382,8 +1415,7 @@ where
     let relation_claim =
         relation_claim_from_rows_extension::<F, C, D>(&rs.tau1, rs.alpha, &[], commitment_rows)?;
     #[cfg(feature = "zk")]
-    let relation_claim_public =
-        relation_claim_from_rows_extension::<F, C, D>(&rs.tau1, rs.alpha, &[], commitment_rows)?;
+    let relation_claim_public = relation_claim;
 
     let RingSwitchOutput {
         w_evals_compact,
@@ -1397,6 +1429,21 @@ where
         b,
         alpha: _,
     } = rs;
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, false) {
+        None
+    } else if let Some(prepared) = trace_prepared {
+        Some(build_root_stage2_trace_compact::<F, C, D>(
+            lp,
+            &instance,
+            prepared,
+            col_bits,
+            ring_bits,
+            live_x_cols,
+        )?)
+    } else {
+        None
+    };
 
     let stage1_point = vec![C::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
@@ -1416,6 +1463,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact.clone(),
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -1441,6 +1491,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace_compact,
+            gamma_tr,
+            trace_opening_claim,
         )?;
         let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
             .prove::<F, T, _>(transcript, |tr| {
@@ -1449,18 +1502,12 @@ where
         stage2_sumcheck
     };
 
-    Ok(
-        TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-            #[cfg(not(feature = "zk"))]
-            y_rings,
-            #[cfg(feature = "zk")]
-            y_rings_masked,
-            None,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
-            final_witness,
-        ),
-    )
+    Ok(TerminalLevelProof::new_with_extension_opening_reduction(
+        None,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
+        final_witness,
+    ))
 }

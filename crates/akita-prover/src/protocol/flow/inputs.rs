@@ -286,7 +286,6 @@ where
     let RootLevelRawOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        y_rings,
         extension_opening_reduction,
         v,
         stage1,
@@ -310,7 +309,6 @@ where
     #[cfg(feature = "zk")]
     let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
     let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
-        y_rings,
         extension_opening_reduction,
         v,
         stage1,

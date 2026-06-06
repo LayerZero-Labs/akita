@@ -775,7 +775,6 @@ mod tests {
         let b = 1usize << lp.log_basis;
 
         let proof = AkitaLevelProof {
-            y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
@@ -866,7 +865,6 @@ mod tests {
             ));
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
-                vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 None,
                 #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
@@ -944,7 +942,6 @@ mod tests {
             .into_compact();
             let num_points = 5;
             let root_proof = AkitaBatchedRootProof::new_two_stage::<D>(
-                vec![CyclotomicRing::<F, D>::zero(); num_points],
                 vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                 dummy_stage1_proof(rounds, b),
                 #[cfg(not(feature = "zk"))]

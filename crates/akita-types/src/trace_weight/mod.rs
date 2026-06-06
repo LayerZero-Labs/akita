@@ -7,6 +7,7 @@
 mod build;
 mod eval;
 mod layout;
+mod stage2;
 
 #[cfg(test)]
 mod tests;
@@ -16,6 +17,13 @@ pub use build::{
 };
 pub use eval::{eval_trace_weight_at_point, TraceOpeningAtPoint};
 pub use layout::TraceWeightLayout;
+pub use stage2::{
+    build_trace_stage2_compact, eval_trace_stage2_wire_for_degree, trace_block_weights_k1,
+    trace_input_claim, trace_opening_from_incidence, trace_stage2_enabled,
+    trace_stage2_opening_owned_k1, trace_stage2_opening_owned_ring, trace_stage2_supported,
+    trace_weight_evals_for_witness, trace_weight_layout_from_segment, TraceStage2OpeningOwned,
+    TraceStage2Wire,
+};
 
 #[cfg(test)]
 pub(crate) use test_only::trace_weight_mle_eval;

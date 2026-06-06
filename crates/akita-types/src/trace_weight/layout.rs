@@ -37,10 +37,6 @@ impl TraceWeightLayout {
         col * self.ring_len() + ring_coord
     }
 
-    pub(crate) fn plane_bits(&self) -> usize {
-        self.num_digits_open.trailing_zeros() as usize
-    }
-
     pub(crate) fn validate_ring_dimension<const D: usize>(&self) -> Result<(), AkitaError> {
         if self.ring_bits != D.trailing_zeros() as usize {
             return Err(AkitaError::InvalidInput(
@@ -63,27 +59,5 @@ impl TraceWeightLayout {
             ));
         }
         Ok(())
-    }
-
-    pub(crate) fn validate_closed_form_eval_point(
-        &self,
-        ring_point_len: usize,
-        col_point_len: usize,
-    ) -> Result<usize, AkitaError> {
-        if ring_point_len != self.ring_bits || col_point_len != self.col_bits {
-            return Err(AkitaError::InvalidSize {
-                expected: self.col_bits + self.ring_bits,
-                actual: col_point_len + ring_point_len,
-            });
-        }
-        self.validate_opening_digit_segment()?;
-        let plane_bits = self.plane_bits();
-        if !self.num_digits_open.is_power_of_two() || plane_bits + self.r_vars > self.col_bits {
-            return Err(AkitaError::InvalidInput(
-                "trace-weight closed-form eval requires power-of-two open digits and aligned column split"
-                    .to_string(),
-            ));
-        }
-        Ok(plane_bits)
     }
 }

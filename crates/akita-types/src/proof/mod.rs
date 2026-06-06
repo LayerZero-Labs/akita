@@ -52,7 +52,7 @@ pub use levels::{
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
 };
-pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
     ring_column_z_first, ring_relation_segment_layout_for_opening_shape, RingRelationInstance,
     RingRelationSegmentLayout,

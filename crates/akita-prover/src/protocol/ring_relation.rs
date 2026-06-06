@@ -34,7 +34,8 @@ use std::time::Instant;
 mod relation_quotient;
 mod repeated_b;
 
-pub use relation_quotient::{compute_relation_quotient, generate_y};
+pub use akita_types::generate_y;
+pub use relation_quotient::compute_relation_quotient;
 
 /// Worst-case `||z||_inf` of the folded witness `z = Σ c_i · s_i`, matching the
 /// planner's folded-witness bound `β` (the input to `num_digits_fold`):

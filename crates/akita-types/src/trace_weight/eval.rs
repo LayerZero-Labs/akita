@@ -1,6 +1,4 @@
-use akita_algebra::offset_eq::eval_offset_eq_tensor;
 use akita_algebra::CyclotomicRing;
-use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
 
@@ -11,10 +9,10 @@ use super::layout::TraceWeightLayout;
 
 /// Opening weights consumed by [`eval_trace_weight_at_point`].
 pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    /// `K = 1`: scalar block weights and inner opening coordinates in the base field.
+    /// `K = 1`: scalar block weights and the basis-correct packed inner opening.
     Field {
         block_weights: &'a [F],
-        inner_open: &'a [F],
+        inner_opening_ring: &'a CyclotomicRing<F, D>,
     },
     /// `K > 1`: embedded block rings and ψ-packed inner point.
     Ring {
@@ -24,82 +22,39 @@ pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
-const MAX_COORDS: usize = 32;
-const MAX_FACTOR_WIDTH: usize = 32;
-
-#[inline]
-fn eq_mle_base_point<F, E>(point: &[E], base_coords: &[F]) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F> + FieldCore,
-{
-    if base_coords.len() > MAX_COORDS {
-        return Err(AkitaError::InvalidInput(
-            "opening coordinate count exceeds stack bound".to_string(),
-        ));
-    }
-    let mut lifted = [E::zero(); MAX_COORDS];
-    for (dst, &src) in lifted[..base_coords.len()]
-        .iter_mut()
-        .zip(base_coords.iter())
-    {
-        *dst = E::lift_base(src);
-    }
-    EqPolynomial::mle(point, &lifted[..base_coords.len()])
-}
-
-fn lift_gadget_row<F, E>(gadget_scalars: &[F]) -> Result<[E; MAX_FACTOR_WIDTH], AkitaError>
+fn lift_gadget_row<F, E>(gadget_scalars: &[F]) -> Vec<E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if gadget_scalars.len() > MAX_FACTOR_WIDTH {
-        return Err(AkitaError::InvalidInput(
-            "trace-weight gadget width exceeds stack bound".to_string(),
-        ));
-    }
-    let mut out = [E::zero(); MAX_FACTOR_WIDTH];
-    for (dst, &src) in out[..gadget_scalars.len()]
-        .iter_mut()
-        .zip(gadget_scalars.iter())
-    {
-        *dst = E::lift_base(src);
-    }
-    Ok(out)
+    gadget_scalars.iter().copied().map(E::lift_base).collect()
 }
 
-/// Column factor `eq_seg · gadget` for the opening-digit segment (`K > 1`).
-///
-/// Block Lagrange weights live in the inner sum; a neutral all-ones block row keeps
-/// [`eval_offset_eq_tensor`] aligned on `r_vars` without contributing `eq_block`.
-fn opening_digit_gadget_factor<E: FieldCore>(
+fn validate_eval_point(
     layout: &TraceWeightLayout,
-    col_point: &[E],
-    gadget_row: &[E],
-) -> Result<E, AkitaError> {
-    if layout.num_blocks > MAX_FACTOR_WIDTH {
-        return Err(AkitaError::InvalidInput(
-            "block count exceeds stack bound".to_string(),
-        ));
+    ring_point_len: usize,
+    col_point_len: usize,
+) -> Result<(), AkitaError> {
+    if ring_point_len != layout.ring_bits || col_point_len != layout.col_bits {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.col_bits + layout.ring_bits,
+            actual: col_point_len + ring_point_len,
+        });
     }
-    let neutral_block = [E::one(); MAX_FACTOR_WIDTH];
-    let factors = [&neutral_block[..layout.num_blocks], gadget_row];
-    eval_offset_eq_tensor(col_point, layout.opening_digit_offset, E::one(), &factors)
+    layout.validate_opening_digit_segment()
 }
 
-/// Column factor `eq_seg · eq_block · gadget` for the opening-digit segment (`K = 1`).
-fn opening_digit_col_factor_k1<E: FieldCore>(
-    layout: &TraceWeightLayout,
-    col_point: &[E],
-    block_row: &[E],
-    gadget_row: &[E],
-) -> Result<E, AkitaError> {
-    eval_offset_eq_tensor(
-        col_point,
-        layout.opening_digit_offset,
-        E::one(),
-        &[block_row, gadget_row],
-    )
+#[inline]
+fn eq_weight_at_index<E: FieldCore>(point: &[E], index: usize) -> E {
+    let mut weight = E::one();
+    for (bit, &coord) in point.iter().enumerate() {
+        if ((index >> bit) & 1) == 1 {
+            weight *= coord;
+        } else {
+            weight *= E::one() - coord;
+        }
+    }
+    weight
 }
 
 /// Evaluate the trace-weight MLE at `(ring_point, col_point)`.
@@ -120,14 +75,20 @@ where
     match opening {
         TraceOpeningAtPoint::Field {
             block_weights,
-            inner_open,
+            inner_opening_ring,
         } => {
             if K != 1 {
                 return Err(AkitaError::InvalidInput(
                     "field opening weights require K = 1".to_string(),
                 ));
             }
-            eval_at_point_k1::<F, E, D>(layout, ring_point, col_point, block_weights, inner_open)
+            eval_at_point_k1::<F, E, D>(
+                layout,
+                ring_point,
+                col_point,
+                block_weights,
+                inner_opening_ring,
+            )
         }
         TraceOpeningAtPoint::Ring {
             block_rings,
@@ -156,39 +117,35 @@ fn eval_at_point_k1<F, E, const D: usize>(
     ring_point: &[E],
     col_point: &[E],
     block_weights: &[F],
-    inner_open: &[F],
+    inner_opening_ring: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FromPrimitiveInt + FieldCore,
 {
-    if inner_open.len() != layout.ring_bits || block_weights.len() != layout.num_blocks {
+    if block_weights.len() != layout.num_blocks {
         return Err(AkitaError::InvalidInput(
             "field opening weights do not match layout".to_string(),
         ));
     }
-    layout.validate_closed_form_eval_point(ring_point.len(), col_point.len())?;
+    validate_eval_point(layout, ring_point.len(), col_point.len())?;
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
-    let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars)?;
-    let mut block_row = [E::zero(); MAX_FACTOR_WIDTH];
-    if block_weights.len() > MAX_FACTOR_WIDTH {
-        return Err(AkitaError::InvalidInput(
-            "block weight count exceeds stack bound".to_string(),
-        ));
+    let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
+    let mut col_factor = E::zero();
+    for (block, &block_weight) in block_weights.iter().enumerate() {
+        for (plane, &gadget) in gadget_row.iter().enumerate() {
+            let col = layout.opening_digit_col_index(block, plane);
+            col_factor += eq_weight_at_index(col_point, col) * E::lift_base(block_weight) * gadget;
+        }
     }
-    for (dst, &src) in block_row[..block_weights.len()]
-        .iter_mut()
-        .zip(block_weights.iter())
-    {
-        *dst = E::lift_base(src);
-    }
-    let col_factor = opening_digit_col_factor_k1(
-        layout,
-        col_point,
-        &block_row[..block_weights.len()],
-        &gadget_row[..gadget_scalars.len()],
-    )?;
-    let inner_factor = eq_mle_base_point::<F, E>(ring_point, inner_open)?;
+    let ring_eq = lagrange_weights(ring_point)?;
+    let inner_factor = inner_opening_ring
+        .coefficients()
+        .iter()
+        .zip(ring_eq.iter())
+        .fold(E::zero(), |acc, (&coeff, &weight)| {
+            acc + E::lift_base(coeff) * weight
+        });
     Ok(col_factor * inner_factor)
 }
 
@@ -208,25 +165,23 @@ where
             "ring opening weights do not match layout".to_string(),
         ));
     }
-    layout.validate_closed_form_eval_point(ring_point.len(), col_point.len())?;
-
-    let col_block = &col_point[..layout.r_vars];
-    let block_eq = lagrange_weights(col_block)?;
+    validate_eval_point(layout, ring_point.len(), col_point.len())?;
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
-    let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars)?;
-    let col_factor =
-        opening_digit_gadget_factor(layout, col_point, &gadget_row[..gadget_scalars.len()])?;
+    let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
 
     let ring_eq = lagrange_weights(ring_point)?;
-    let mut block_inner = E::zero();
+    let mut out = E::zero();
     for (block, block_ring) in block_rings.iter().enumerate().take(layout.num_blocks) {
-        block_inner += block_eq[block]
-            * trace_open_ring_mle_dot::<F, E, D>(
-                block_ring,
-                &ring_eq,
-                packed_inner_point,
-                layout.ring_bits,
-            )?;
+        let block_inner = trace_open_ring_mle_dot::<F, E, D>(
+            block_ring,
+            &ring_eq,
+            packed_inner_point,
+            layout.ring_bits,
+        )?;
+        for (plane, &gadget) in gadget_row.iter().enumerate() {
+            let col = layout.opening_digit_col_index(block, plane);
+            out += eq_weight_at_index(col_point, col) * gadget * block_inner;
+        }
     }
-    Ok(col_factor * block_inner)
+    Ok(out)
 }

@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_instance_rejects_y_row_mismatch() {
+    fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
@@ -449,9 +449,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("missing y row must be rejected");
+        .expect_err("empty y must be rejected");
         assert!(
-            format!("{err:?}").contains("y rows shorter than public row count"),
+            format!("{err:?}")
+                .contains("ring relation y must contain at least the consistency row"),
             "unexpected error: {err:?}"
         );
     }

@@ -77,7 +77,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 step_shapes: actual_steps,
             },
         ) => {
-            assert_eq!(expected_root.y_ring_coeffs, actual_root.y_ring_coeffs);
             assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
             assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
             assert_eq!(

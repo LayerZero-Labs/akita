@@ -16,6 +16,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
+        trace_compact: Option<Vec<E>>,
+        gamma_tr: E,
+        trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
@@ -68,23 +71,39 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: m_evals_x.len(),
             });
         }
+        if let Some(trace) = &trace_compact {
+            if trace.len() != witness_len {
+                return Err(AkitaError::InvalidSize {
+                    expected: witness_len,
+                    actual: trace.len(),
+                });
+            }
+        }
+
+        let has_trace = trace_compact.is_some();
+        let mut input_claim = batching_coeff * s_claim + relation_claim;
+        if has_trace {
+            input_claim += trace_opening_claim;
+        }
 
         Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
             b,
             batching_coeff,
             s_claim,
-            input_claim: batching_coeff * s_claim + relation_claim,
+            input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
+            trace_compact,
+            gamma_tr,
             live_x_cols,
             col_bits,
             num_vars,
             relation_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
+            prefix_r_stage1: (can_use_stage2_two_round_prefix(ring_bits, b) && !has_trace)
                 .then(|| stage1_point.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
@@ -159,14 +178,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.rounds_completed >= self.ring_bits()
+        self.trace_compact.is_none()
+            && self.rounds_completed >= self.ring_bits()
             && self.x_rounds_completed() + 1 < self.col_bits
             && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
     }
 
     #[inline]
     pub(crate) fn can_use_two_round_prefix(&self) -> bool {
-        self.prefix_r_stage1.is_some()
+        self.prefix_r_stage1.is_some() && self.trace_compact.is_none()
     }
 
     #[inline]

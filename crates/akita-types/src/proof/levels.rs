@@ -136,8 +136,6 @@ impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
 /// One recursive Akita level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaLevelProof<F: FieldCore, L: FieldCore> {
-    /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
-    pub y_ring: FlatRingVec<F>,
     /// Optional extension-opening reduction payload. `None` for degree-one
     /// openings and proof paths that do not use extension-opening reduction.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
@@ -155,13 +153,11 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Construct from typed ring elements for the current level and its
     /// inline two-stage norm-check payloads.
     pub fn new<const D: usize>(
-        y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         stage2: AkitaStage2Proof<F, L>,
     ) -> Self {
         Self {
-            y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
             extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
@@ -173,7 +169,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Construct a level proof for the two-stage norm-check.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage<const D: usize>(
-        y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
@@ -182,7 +177,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         next_w_eval: L,
     ) -> Self {
         Self::new::<D>(
-            y_ring,
             v,
             stage1,
             AkitaStage2Proof {
@@ -200,12 +194,8 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Construct a level proof for a multi-row public opening relation.
-    ///
-    /// The singleton recursive path is the `y_rings.len() == 1`
-    /// specialization.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage_many<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
@@ -214,7 +204,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         next_w_eval: L,
     ) -> Self {
         Self::new_two_stage_many_with_extension_opening_reduction::<D>(
-            y_rings,
             None,
             v,
             stage1,
@@ -231,7 +220,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// extension-opening reduction payloads already produced.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage_many_with_extension_opening_reduction<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
@@ -241,7 +229,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         next_w_eval: L,
     ) -> Self {
         Self {
-            y_ring: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
@@ -258,37 +245,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             },
             stage3_sumcheck_proof: None,
         }
-    }
-
-    /// Reconstruct typed `y_ring`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn y_ring_typed<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        self.y_ring.to_single()
-    }
-
-    /// Reconstruct typed `y_ring`, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored `y_ring` does not
-    /// encode exactly one ring element at dimension `D`.
-    pub fn try_y_ring_typed<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        self.y_ring.try_to_single()
-    }
-
-    /// Reconstruct typed public opening rings.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored payload is not
-    /// well-formed for ring dimension `D`.
-    pub fn try_y_rings_typed<const D: usize>(
-        &self,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.y_ring.try_to_vec()
     }
 
     /// Reconstruct typed `v`.
@@ -353,7 +309,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Derive the [`LevelProofShape`] for this level proof.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
-            self.y_ring.coeff_len(),
             self.extension_opening_reduction.as_ref(),
             &self.v,
             &self.stage1,
@@ -374,10 +329,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// D-row block, so `v` is not serialized at the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
-    /// Public output ring(s). At a non-root terminal step this carries
-    /// exactly one ring; at the root terminal (1-fold case) it carries one
-    /// ring per opening point.
-    pub y_rings: FlatRingVec<F>,
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     /// Stage-2 fused sumcheck proof.
@@ -395,15 +346,13 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
     ///
     /// Pass `extension_opening_reduction = None` for opening shapes that do
     /// not use extension-opening reduction.
-    pub fn new_with_extension_opening_reduction<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
+    pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck: SumcheckProof<L>,
         #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
         final_witness: CleartextWitnessProof<F>,
     ) -> Self {
         Self {
-            y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction,
             #[cfg(not(feature = "zk"))]
             stage2_sumcheck,
@@ -413,22 +362,9 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         }
     }
 
-    /// Reconstruct typed public opening rings.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored payload is not
-    /// well-formed for ring dimension `D`.
-    pub fn try_y_rings_typed<const D: usize>(
-        &self,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.y_rings.try_to_vec()
-    }
-
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
     pub fn shape(&self) -> TerminalLevelProofShape {
         TerminalLevelProofShape {
-            y_rings_coeffs: self.y_rings.coeff_len(),
             extension_opening_reduction: self
                 .extension_opening_reduction
                 .as_ref()
@@ -451,8 +387,6 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
 /// Fused batched-root payload for the two-stage folding protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
-    /// Per-point batched public outputs `(y_j)_j`, stored as a flat ring vector.
-    pub y_rings: FlatRingVec<F>,
     /// Optional extension-opening reduction payload. `None` until the
     /// extension-opening reduction cutover is wired into the root path.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
@@ -498,13 +432,11 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
 impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// Construct from typed ring elements for the batched root level.
     pub fn new<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         stage2: AkitaStage2Proof<F, L>,
     ) -> Self {
         Self::Fold(AkitaBatchedFoldRoot {
-            y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
@@ -516,7 +448,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// Construct a batched root proof for the two-stage norm-check.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
@@ -525,7 +456,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         next_w_eval: L,
     ) -> Self {
         Self::new_two_stage_with_extension_opening_reduction::<D>(
-            y_rings,
             None,
             v,
             stage1,
@@ -543,7 +473,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// extension-opening reduction payloads already produced.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage_with_extension_opening_reduction<const D: usize>(
-        y_rings: Vec<CyclotomicRing<F, D>>,
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
@@ -554,7 +483,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         next_w_eval: L,
     ) -> Self {
         Self::new::<D>(
-            y_rings,
             v,
             stage1,
             AkitaStage2Proof {
@@ -682,18 +610,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         matches!(self, Self::Terminal(_))
     }
 
-    /// Borrow the stored root per-point `y_rings` payload (Fold only).
-    ///
-    /// # Panics
-    ///
-    /// Panics on terminal-root and zero-fold batched proofs.
-    pub fn y_rings(&self) -> &FlatRingVec<F> {
-        &self
-            .as_fold()
-            .expect("y_rings() called on a non-fold root proof")
-            .y_rings
-    }
-
     /// Borrow the stored root `v` ring vector (Fold only).
     ///
     /// # Panics
@@ -736,7 +652,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
     /// Derive the [`LevelProofShape`] for this fold root.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
-            self.y_rings.coeff_len(),
             self.extension_opening_reduction.as_ref(),
             &self.v,
             &self.stage1,

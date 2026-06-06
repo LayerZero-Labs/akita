@@ -10,8 +10,9 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    relation_claim_from_rows_extension, AkitaExpandedSetup, CleartextWitnessProof, PackedDigits,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    eval_trace_stage2_wire_for_degree, relation_claim_from_rows_extension, AkitaExpandedSetup,
+    CleartextWitnessProof, PackedDigits, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingSubfieldEncoding, TraceStage2Wire,
 };
 use std::marker::PhantomData;
 
@@ -203,6 +204,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
+    trace: Option<TraceStage2Wire<F, E, D>>,
     _marker: PhantomData<([F; D], E)>,
 }
 
@@ -231,6 +233,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
+        trace: Option<TraceStage2Wire<F, E, D>>,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -277,6 +280,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            trace,
             _marker: PhantomData,
         })
     }
@@ -304,6 +308,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
+        trace: Option<TraceStage2Wire<F, E, D>>,
     ) -> Result<Self, AkitaError> {
         Self::new(
             batching_coeff,
@@ -329,6 +334,7 @@ where
             alpha,
             col_bits,
             ring_bits,
+            trace,
         )
     }
 
@@ -355,6 +361,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
+        trace: Option<TraceStage2Wire<F, E, D>>,
     ) -> Result<Self, AkitaError> {
         Self::new(
             batching_coeff,
@@ -381,6 +388,7 @@ where
             alpha,
             col_bits,
             ring_bits,
+            trace,
         )
     }
 
@@ -426,7 +434,11 @@ where
     }
 
     fn input_claim(&self) -> E {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        let mut claim = self.batching_coeff * self.s_claim + self.relation_claim;
+        if let Some(trace) = &self.trace {
+            claim += trace.trace_opening_claim;
+        }
+        claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -443,16 +455,23 @@ where
             self.row_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * row_val;
+        let trace_oracle = if let Some(trace) = &self.trace {
+            let trace_weight =
+                eval_trace_stage2_wire_for_degree(trace, y_challenges, x_challenges)?;
+            trace.gamma_tr * w_eval * trace_weight
+        } else {
+            E::zero()
+        };
 
         // Terminal levels run with `batching_coeff = 0`, which zeros the
         // virtual half regardless of `stage1_point` / `w_eval`. Skip the
         // EqPolynomial eval and the `w * (w + 1)` round in that case.
         if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle);
+            return Ok(relation_oracle + trace_oracle);
         }
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
     }
 }
 

@@ -75,6 +75,8 @@ pub const CHALLENGE_TENSOR_FOLD_RIGHT: &[u8] = b"ak/c/s1fr";
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
 /// Challenge for γ-batching evaluation claims at the same point.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
+/// Challenge batching the fused opening-digit trace term in stage 2.
+pub const CHALLENGE_TRACE_BATCH: &[u8] = b"ak/c/tr";
 
 /// Binds the next-level witness at this fold step. Intermediate folds absorb
 /// the Ajtai commitment `u'` to the next-level witness `w` (`next_w_commitment`);
@@ -119,6 +121,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_TENSOR_FOLD_RIGHT,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
+    CHALLENGE_TRACE_BATCH,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_TERMINAL_E_HAT,
     ABSORB_TERMINAL_W_REMAINDER,
