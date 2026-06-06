@@ -8,7 +8,6 @@ pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
-pub mod trace_weight;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
@@ -16,6 +15,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
+pub mod trace_weight;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
@@ -37,12 +37,8 @@ pub use extension_opening_reduction::{
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
-    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, RingSubfieldEncoding,
-    SubfieldParams,
-};
-pub use trace_weight::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
-    eval_trace_weight_at_point, TraceOpeningAtPoint, TraceWeightLayout,
+    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
+    RingSubfieldEncoding, SubfieldParams,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_incidence, digest_serializable, setup_seed_digest,
@@ -107,4 +103,8 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
+pub use trace_weight::{
+    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
+    eval_trace_weight_at_point, TraceOpeningAtPoint, TraceWeightLayout,
+};
 pub use transcript::AppendToTranscript;

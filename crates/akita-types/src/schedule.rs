@@ -272,8 +272,8 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
+    // Public-output M rows bind via the fused trace term; omit from r width.
+    let r_rows = lp.m_row_count_for(num_points, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,

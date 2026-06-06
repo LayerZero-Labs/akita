@@ -1131,7 +1131,6 @@ where
         rs.alpha,
         &instance.v,
         commitment_rows,
-        &y_rings,
     )?;
     #[cfg(feature = "zk")]
     let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
@@ -1139,7 +1138,6 @@ where
         rs.alpha,
         &instance.v,
         commitment_rows,
-        &y_rings_masked,
     )?;
     let RingSwitchOutput {
         w_evals_compact,
@@ -1381,21 +1379,11 @@ where
     // Terminal layout: the D-block is omitted, so the relation claim sums no
     // `v` rows. `instance.v` is constructed as an empty vector under
     // `MRowLayout::WithoutDBlock`; pass `&[]` here for symmetry with the verifier.
-    let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &[],
-        commitment_rows,
-        &y_rings,
-    )?;
+    let relation_claim =
+        relation_claim_from_rows_extension::<F, C, D>(&rs.tau1, rs.alpha, &[], commitment_rows)?;
     #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &[],
-        commitment_rows,
-        &y_rings_masked,
-    )?;
+    let relation_claim_public =
+        relation_claim_from_rows_extension::<F, C, D>(&rs.tau1, rs.alpha, &[], commitment_rows)?;
 
     let RingSwitchOutput {
         w_evals_compact,

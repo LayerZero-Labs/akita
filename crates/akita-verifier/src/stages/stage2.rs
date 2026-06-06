@@ -227,7 +227,6 @@ where
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
@@ -258,7 +257,7 @@ where
         }
         let relation_claim = match relation_claim_override {
             Some(claim) => claim,
-            None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)?,
+            None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
         };
         Ok(Self {
             batching_coeff,
@@ -301,7 +300,6 @@ where
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
@@ -327,7 +325,6 @@ where
             tau1,
             v,
             u,
-            y_rings,
             relation_claim_override,
             alpha,
             col_bits,
@@ -354,7 +351,6 @@ where
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
@@ -381,7 +377,6 @@ where
             tau1,
             v,
             u,
-            y_rings,
             relation_claim_override,
             alpha,
             col_bits,

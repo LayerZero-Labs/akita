@@ -872,7 +872,6 @@ where
         rs.alpha,
         v_typed,
         commitment_rows,
-        y_rings,
     )?;
     #[cfg(feature = "zk")]
     let relation_claim_mask =
@@ -943,7 +942,6 @@ where
                 &rs.tau1,
                 v_typed,
                 commitment_rows,
-                y_rings,
                 Some(relation_claim),
                 rs.alpha,
                 rs.col_bits,
@@ -970,7 +968,6 @@ where
                 &rs.tau1,
                 v_typed,
                 commitment_rows,
-                y_rings,
                 Some(relation_claim),
                 rs.alpha,
                 rs.col_bits,

@@ -2,11 +2,11 @@ use super::{
     build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
     eval_trace_weight_at_point, trace_weight_mle_eval, TraceOpeningAtPoint, TraceWeightLayout,
 };
-use akita_algebra::CyclotomicRing;
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
     reduce_inner_opening_to_ring_element, BasisMode,
 };
+use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128OffsetA7F7, RandomSampling};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -120,7 +120,8 @@ fn closed_form_matches_dense_table_with_opening_digit_offset() {
     for _ in 0..16 {
         let (inner_open, b_open) = random_opening_points(&mut rng, &layout);
         let inner_opening_ring =
-            reduce_inner_opening_to_ring_element::<F, D8>(&inner_open, BasisMode::Lagrange).unwrap();
+            reduce_inner_opening_to_ring_element::<F, D8>(&inner_open, BasisMode::Lagrange)
+                .unwrap();
         let block_weights = lagrange_weights(&b_open).unwrap();
         let table = build_trace_weight_table_field_block_weights::<F, F, D8>(
             &layout,
@@ -217,9 +218,7 @@ mod ring_block_weights {
         (D / E::EXT_DEGREE).trailing_zeros() as usize
     }
 
-    fn packed_inner_point<F, E, const D: usize>(
-        trace_inner_open: &[E],
-    ) -> CyclotomicRing<F, D>
+    fn packed_inner_point<F, E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<F, D>
     where
         F: akita_field::FieldCore + akita_field::FromPrimitiveInt,
         E: akita_field::ExtField<F> + crate::RingSubfieldEncoding<F> + akita_field::FieldCore,
@@ -252,7 +251,10 @@ mod ring_block_weights {
         (trace_inner_open, b_open)
     }
 
-    fn random_folded_block<F: akita_field::FieldCore + akita_field::RandomSampling, const D: usize>(
+    fn random_folded_block<
+        F: akita_field::FieldCore + akita_field::RandomSampling,
+        const D: usize,
+    >(
         rng: &mut StdRng,
     ) -> CyclotomicRing<F, D> {
         let coeffs: Vec<F> = (0..D).map(|_| F::random(rng)).collect();

@@ -447,13 +447,8 @@ where
             )?
         }
     };
-    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        v_typed,
-        commitment_u,
-        &y_rings,
-    )?;
+    let relation_claim =
+        relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, v_typed, commitment_u)?;
     #[cfg(feature = "zk")]
     let relation_claim_mask =
         zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
@@ -527,7 +522,6 @@ where
             &rs.tau1,
             v_typed,
             commitment_u,
-            &y_rings,
             Some(relation_claim),
             rs.alpha,
             rs.col_bits,
@@ -552,7 +546,6 @@ where
             &rs.tau1,
             v_typed,
             commitment_u,
-            &y_rings,
             Some(relation_claim),
             rs.alpha,
             rs.col_bits,

@@ -316,7 +316,6 @@ where
         rs.alpha,
         &instance.v,
         commitment_u,
-        &y_rings,
     )?;
     #[cfg(feature = "zk")]
     let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
@@ -324,7 +323,6 @@ where
         rs.alpha,
         &instance.v,
         commitment_u,
-        &proof_y_rings,
     )?;
     let RingSwitchOutput {
         w_evals_compact,
@@ -572,21 +570,11 @@ where
 
     // Terminal layout drops the D-block: the relation claim no longer sums
     // any `v` rows, so pass an empty slice for the v parameter.
-    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        &[],
-        commitment_u,
-        &y_rings,
-    )?;
+    let relation_claim =
+        relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, &[], commitment_u)?;
     #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        &[],
-        commitment_u,
-        &y_rings_masked,
-    )?;
+    let relation_claim_public =
+        relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, &[], commitment_u)?;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,

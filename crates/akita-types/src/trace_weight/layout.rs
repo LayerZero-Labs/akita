@@ -24,7 +24,9 @@ impl TraceWeightLayout {
     pub fn table_len(&self) -> Result<usize, AkitaError> {
         1usize
             .checked_shl((self.col_bits + self.ring_bits) as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("trace-weight table length overflow".to_string()))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace-weight table length overflow".to_string())
+            })
     }
 
     pub fn opening_digit_col_index(&self, block: usize, plane: usize) -> usize {
@@ -52,7 +54,9 @@ impl TraceWeightLayout {
         let end = self
             .opening_digit_offset
             .checked_add(self.opening_digit_col_count())
-            .ok_or_else(|| AkitaError::InvalidInput("opening-digit segment overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("opening-digit segment overflow".to_string())
+            })?;
         if end > 1usize << self.col_bits {
             return Err(AkitaError::InvalidInput(
                 "opening-digit segment exceeds column hypercube".to_string(),

@@ -586,4 +586,41 @@ where
     Ok(result)
 }
 
-pub use akita_types::generate_y;
+/// Build the RHS vector `y` matching the M row layout:
+/// consistency (zero) | D (`v`) | B (`commitment_rows`) | A (zeros).
+///
+/// Public-output rows bind through the fused trace term, not `y`.
+///
+/// # Errors
+///
+/// Returns an error if the supplied row slices do not match the expected row
+/// counts for the level layout.
+pub fn generate_y<F, const D: usize>(
+    v: &[CyclotomicRing<F, D>],
+    commitment_rows: &[CyclotomicRing<F, D>],
+    n_d: usize,
+    n_b: usize,
+    n_a: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore,
+{
+    if v.len() != n_d {
+        return Err(AkitaError::InvalidSize {
+            expected: n_d,
+            actual: v.len(),
+        });
+    }
+    if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
+        return Err(AkitaError::InvalidSize {
+            expected: n_b,
+            actual: commitment_rows.len(),
+        });
+    }
+    let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + n_a);
+    out.push(CyclotomicRing::<F, D>::zero());
+    out.extend_from_slice(v);
+    out.extend_from_slice(commitment_rows);
+    out.extend(std::iter::repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    Ok(out)
+}

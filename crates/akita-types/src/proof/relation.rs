@@ -8,8 +8,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
 /// Compute the stage-2 relation claim from the public M-row data.
 ///
 /// This evaluates `sum_i eq(tau1, i) * y_alpha[i]` where `y_alpha` follows
-/// the M row layout: consistency zero row, public `y_rings`, D rows `v`, B
-/// rows `u`, then A zero rows.
+/// the M row layout: consistency zero row, D rows `v`, B rows `u`, then A zero
+/// rows. Public openings bind through the fused trace term, not M rows.
 ///
 /// # Errors
 ///
@@ -21,19 +21,11 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     alpha: F,
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
-    y_rings: &[CyclotomicRing<F, D>],
 ) -> Result<F, AkitaError> {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = F::zero();
     let mut row_idx = 1usize;
 
-    for y_ring in y_rings {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
-        row_idx += 1;
-    }
     for r in v {
         if row_idx >= eq_tau1.len() {
             return Ok(acc);
@@ -61,7 +53,6 @@ pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
     alpha: E,
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
-    y_rings: &[CyclotomicRing<F, D>],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -72,13 +63,6 @@ where
     let mut acc = E::zero();
     let mut row_idx = 1usize;
 
-    for y_ring in y_rings {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(y_ring, &alpha_pows);
-        row_idx += 1;
-    }
     for r in v {
         if row_idx >= eq_tau1.len() {
             return Ok(acc);
@@ -126,21 +110,14 @@ mod tests {
             F::from_u64(7),
             F::from_u64(8),
         ])];
-        let y = [CyclotomicRing::from_coefficients([
-            F::from_u64(9),
-            F::from_u64(10),
-            F::from_u64(11),
-            F::from_u64(12),
-        ])];
 
-        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y).unwrap();
+        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u).unwrap();
         let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
         let lifted = relation_claim_from_rows_extension::<F, E, D>(
             &lifted_tau1,
             E::lift_base(alpha),
             &v,
             &u,
-            &y,
         )
         .unwrap();
 

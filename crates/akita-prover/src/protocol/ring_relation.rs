@@ -29,7 +29,6 @@ use akita_types::{ClaimIncidenceSummary, CommitmentRouting, LevelParams, RingRel
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::ring_relation_witness::RingRelationWitness;
-use std::iter::repeat_n;
 use std::time::Instant;
 
 mod relation_quotient;
@@ -586,7 +585,7 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
-        // `[consistency | public_outputs | commitment_rows | A-zeros]`.
+        // `[consistency | commitment_rows | A-zeros]` (no D-block).
         let (y_v_slice, n_d_active) = match m_row_layout {
             MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
@@ -594,7 +593,6 @@ impl RingRelationProver {
         let y = generate_y::<F, D>(
             y_v_slice,
             &commitment_rows,
-            y_rings,
             n_d_active,
             lp.b_key.row_len(),
             lp.a_key.row_len(),
@@ -816,7 +814,6 @@ impl RingRelationProver {
         let y = generate_y::<F, D>(
             y_v_slice,
             commitment,
-            y_rings,
             n_d_active,
             lp.b_key.row_len(),
             lp.a_key.row_len(),

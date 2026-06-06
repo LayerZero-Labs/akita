@@ -5,9 +5,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use std::marker::PhantomData;
 
 use crate::field_reduction::trace_open_ring_mle_dot;
-use crate::{
-    gadget_row_scalars, lagrange_weights, RingSubfieldEncoding,
-};
+use crate::{gadget_row_scalars, lagrange_weights, RingSubfieldEncoding};
 
 use super::layout::TraceWeightLayout;
 
@@ -41,7 +39,10 @@ where
         ));
     }
     let mut lifted = [E::zero(); MAX_COORDS];
-    for (dst, &src) in lifted[..base_coords.len()].iter_mut().zip(base_coords.iter()) {
+    for (dst, &src) in lifted[..base_coords.len()]
+        .iter_mut()
+        .zip(base_coords.iter())
+    {
         *dst = E::lift_base(src);
     }
     EqPolynomial::mle(point, &lifted[..base_coords.len()])
@@ -58,7 +59,10 @@ where
         ));
     }
     let mut out = [E::zero(); MAX_FACTOR_WIDTH];
-    for (dst, &src) in out[..gadget_scalars.len()].iter_mut().zip(gadget_scalars.iter()) {
+    for (dst, &src) in out[..gadget_scalars.len()]
+        .iter_mut()
+        .zip(gadget_scalars.iter())
+    {
         *dst = E::lift_base(src);
     }
     Ok(out)
@@ -79,16 +83,8 @@ fn opening_digit_gadget_factor<E: FieldCore>(
         ));
     }
     let neutral_block = [E::one(); MAX_FACTOR_WIDTH];
-    let factors = [
-        &neutral_block[..layout.num_blocks],
-        gadget_row,
-    ];
-    eval_offset_eq_tensor(
-        col_point,
-        layout.opening_digit_offset,
-        E::one(),
-        &factors,
-    )
+    let factors = [&neutral_block[..layout.num_blocks], gadget_row];
+    eval_offset_eq_tensor(col_point, layout.opening_digit_offset, E::one(), &factors)
 }
 
 /// Column factor `eq_seg · eq_block · gadget` for the opening-digit segment (`K = 1`).
@@ -180,7 +176,10 @@ where
             "block weight count exceeds stack bound".to_string(),
         ));
     }
-    for (dst, &src) in block_row[..block_weights.len()].iter_mut().zip(block_weights.iter()) {
+    for (dst, &src) in block_row[..block_weights.len()]
+        .iter_mut()
+        .zip(block_weights.iter())
+    {
         *dst = E::lift_base(src);
     }
     let col_factor = opening_digit_col_factor_k1(
@@ -215,11 +214,8 @@ where
     let block_eq = lagrange_weights(col_block)?;
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars)?;
-    let col_factor = opening_digit_gadget_factor(
-        layout,
-        col_point,
-        &gadget_row[..gadget_scalars.len()],
-    )?;
+    let col_factor =
+        opening_digit_gadget_factor(layout, col_point, &gadget_row[..gadget_scalars.len()])?;
 
     let ring_eq = lagrange_weights(ring_point)?;
     let mut block_inner = E::zero();

@@ -1162,7 +1162,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 alpha,
                 &instance.v,
                 &commitment_rows,
-                &y_rings,
             )
             .expect("relation claim");
             assert_eq!(got, expected, "row {row}");
