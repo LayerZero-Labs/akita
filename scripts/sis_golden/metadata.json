@@ -1,5 +1,117 @@
 {
-  "description": "q32, D=32, collision_l2_sq=16384, ranks 1..4.",
+  "description": "21 work items \u00d7 ranks [1, 5, 20] = 63 golden cells across q32/q64/q128.",
   "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",
-  "lattice_estimator_sha": "85110c8010aaace222e4c57ff5bd9c611bdb36c1"
+  "lattice_estimator_sha": "85110c8010aaace222e4c57ff5bd9c611bdb36c1",
+  "golden_ranks": [
+    1,
+    5,
+    20
+  ],
+  "work_items": [
+    {
+      "family": "q32",
+      "d": 32,
+      "collision": 16384
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "collision": 65536
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "collision": 262144
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "collision": 16384
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "collision": 65536
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "collision": 1048576
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "collision": 16384
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "collision": 65536
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "collision": 16384
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "collision": 65536
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "collision": 16384
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "collision": 65536
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "collision": 16384
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "collision": 65536
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "collision": 16384
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "collision": 16384
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "collision": 16384
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "collision": 65536
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "collision": 16384
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "collision": 16384
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "collision": 16384
+    }
+  ]
 }

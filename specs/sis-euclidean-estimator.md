@@ -106,20 +106,20 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 
 ### Acceptance Criteria (S5a)
 
-- [ ] lattice-estimator reliability PR open upstream
+- [x] lattice-estimator reliability PR open upstream
   ([malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213));
   Akita vendors its branch commit until merge, then repoints to `malb`.
 - [x] `.gitmodules` records `third_party/lattice-estimator` at the vendored PR-branch
   commit; SHA also recorded in golden metadata and generated table provenance headers.
 - [x] `scripts/gen_sis_table.py` hardened: deterministic output order, `--jobs`
   subprocess shards, provenance header with submodule SHA, `SIGALRM` removed.
-- [ ] Akita golden CSV checked in under `scripts/sis_golden/` (≥50 cells: three families,
+- [x] Akita golden CSV checked in under `scripts/sis_golden/` (≥50 cells: three families,
   `d ∈ {32,64,128,256}`, ranks `{1,5,20}`, buckets including known degenerate knees).
   Metadata records submodule SHA used to produce it.
-- [ ] `scripts/sis_golden/check.py` (or equivalent) replays golden cells through the pinned
+- [x] `scripts/sis_golden/check.py` (or equivalent) replays golden cells through the pinned
   submodule + generator and fails on drift. Manual/Sage workflow documented; **not** on the
   normal Rust CI path unless we add a hash-only gate on committed golden bytes.
-- [ ] Full canonical regen completes in bounded wall time on a 16-core machine using
+- [x] Full canonical regen completes in bounded wall time on a 16-core machine using
   `--jobs` (family × `d` shards). Target: overnight acceptable; no hung cells.
 
 ### S5b Handoff Criteria
@@ -274,8 +274,8 @@ on this for correctness.
 - Spec revision (this file) and parent cross-links.
 - S3 op-norm rejection (already on branch).
 - S5a: `third_party/lattice-estimator` vendored at the open LE PR branch commit;
-  hardened `scripts/gen_sis_table.py`; initial `scripts/sis_golden/` grid + check;
-  `AGENTS.md` pointer.
+  hardened `scripts/gen_sis_table.py`; 63-cell `scripts/sis_golden/` grid + check +
+  refresh runbook; `AGENTS.md` pointer.
 
 #### Follow-up — S5b (separate PR)
 
