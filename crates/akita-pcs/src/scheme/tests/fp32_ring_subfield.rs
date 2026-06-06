@@ -631,6 +631,122 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 }
 
 #[test]
+fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
+    type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallL = <SmallCfg as CommitmentConfig>::ChallengeField;
+    const SMALL_D: usize = SmallCfg::D;
+    const NUM_VARS: usize = 5;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let len = 1usize << NUM_VARS;
+    let evals_a = (0..len)
+        .map(|idx| SmallF::from_u64((idx as u64) + 3))
+        .collect::<Vec<_>>();
+    let evals_b = (0..len)
+        .map(|idx| SmallF::from_u64((2 * idx as u64) + 7))
+        .collect::<Vec<_>>();
+    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            SmallE::new([
+                SmallF::from_u64((idx + 2) as u64),
+                SmallF::from_u64((idx + 4) as u64),
+                SmallF::from_u64((idx + 6) as u64),
+                SmallF::from_u64((idx + 8) as u64),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let weights = lagrange_weights(&point).unwrap();
+    let opening_a = evals_a
+        .iter()
+        .zip(weights.iter())
+        .fold(SmallE::zero(), |acc, (&coeff, &weight)| {
+            acc + weight * SmallE::lift_base(coeff)
+        });
+    let opening_b = evals_b
+        .iter()
+        .zip(weights.iter())
+        .fold(SmallE::zero(), |acc, (&coeff, &weight)| {
+            acc + weight * SmallE::lift_base(coeff)
+        });
+
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let poly_refs = [&poly_a, &poly_b];
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        &poly_refs,
+    )
+    .unwrap();
+    let commitments = [commitment];
+    let openings = [opening_a, opening_b];
+
+    let mut prover_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
+    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        vec![(
+            &point[..],
+            CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            },
+        )],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .unwrap();
+
+    let mut tampered = proof.clone();
+    let reduction = match &mut tampered.root {
+        akita_types::AkitaBatchedRootProof::Fold(fold) => fold.extension_opening_reduction.as_mut(),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
+            terminal.extension_opening_reduction.as_mut()
+        }
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
+            panic!("root-direct proof has no folded root extension-opening reduction")
+        }
+    }
+    .expect("fixture should carry extension-opening reduction");
+    *reduction
+        .partials
+        .first_mut()
+        .expect("reduction partials must be nonempty") += SmallL::one();
+
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &tampered,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &point[..],
+            CommittedOpenings {
+                openings: &openings[..],
+                commitment: &commitments[0],
+            },
+        )],
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    );
+    assert!(
+        matches!(result, Err(AkitaError::InvalidProof)),
+        "tampered EOR partial must reject with InvalidProof, got {result:?}"
+    );
+}
+
+#[test]
 fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;

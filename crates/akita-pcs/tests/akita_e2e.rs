@@ -337,6 +337,63 @@ fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FFi
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
+#[cfg(not(feature = "zk"))]
+fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::FlatRingVec<FField>) {
+    let mut coeffs = flat.coeffs().to_vec();
+    let first = coeffs
+        .first_mut()
+        .expect("tamper target must contain at least one coefficient");
+    *first += FField::one();
+    *flat = akita_types::FlatRingVec::from_coeffs(coeffs);
+}
+
+#[cfg(not(feature = "zk"))]
+fn mutate_terminal_e_hat_digit<FField: FieldCore>(
+    witness: &mut akita_types::CleartextWitnessProof<FField>,
+    layout: akita_types::TerminalWitnessSegmentLayout,
+) {
+    let akita_types::CleartextWitnessProof::PackedDigits(packed) = witness else {
+        panic!("trace tamper fixture should use packed terminal digits");
+    };
+    let mut digits = (0..packed.num_elems)
+        .map(|idx| packed.digit_at(idx).expect("packed digit index"))
+        .collect::<Vec<_>>();
+    let digit = digits
+        .get_mut(layout.e_hat_digit_offset)
+        .expect("terminal e_hat offset must be in range");
+    *digit = if *digit == -1 { 0 } else { -1 };
+    *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+}
+
+#[cfg(not(feature = "zk"))]
+fn terminal_witness_mut<FField: FieldCore, L: FieldCore>(
+    proof: &mut AkitaBatchedProof<FField, L>,
+) -> &mut akita_types::CleartextWitnessProof<FField> {
+    match &mut proof.root {
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => &mut terminal.final_witness,
+        akita_types::AkitaBatchedRootProof::Fold(_) => proof
+            .steps
+            .last_mut()
+            .and_then(akita_types::AkitaProofStep::as_terminal_mut)
+            .map(|terminal| &mut terminal.final_witness)
+            .expect("fold-rooted proof must end in a terminal step"),
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
+            panic!("terminal tamper test requires a folded terminal proof")
+        }
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn assert_invalid_proof<T: core::fmt::Debug>(
+    case: &str,
+    result: Result<T, akita_field::AkitaError>,
+) {
+    assert!(
+        matches!(result, Err(akita_field::AkitaError::InvalidProof)),
+        "{case} must reject with InvalidProof, got {result:?}"
+    );
+}
+
 #[test]
 fn full_d64_prove_verify() {
     init_rayon_pool();
@@ -439,6 +496,166 @@ fn full_d64_prove_verify() {
             levels = total_fold_levels,
             "full-d64/nv{FULL_TEST_NV} e2e"
         );
+    });
+}
+
+#[cfg(not(feature = "zk"))]
+#[test]
+fn trace_internalization_rejects_tampered_root_fold_handle() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64Full;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/root-trace-tamper");
+        let mut malformed = proof.clone();
+        let root = malformed
+            .root
+            .as_fold_mut()
+            .expect("fixture should use a folded root");
+        bump_flat_ring_vec(&mut root.v);
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/root-trace-tamper");
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert_invalid_proof("tampered root fold handle", result);
+    });
+}
+
+#[cfg(not(feature = "zk"))]
+#[test]
+fn trace_internalization_rejects_tampered_recursive_fold_handle() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64OneHot;
+        const D: usize = Cfg::D;
+        const NV: usize = 20;
+
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(NV, 2).expect("incidence");
+        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<F, D>> = (0..2)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x3141_5926 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let point = random_point(NV);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &point, &layout))
+            .collect();
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(NV);
+
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2, 1)
+                .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let verifier_setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            &poly_refs,
+        )
+        .unwrap();
+        let commitments = [commitment];
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            prove_input(&point[..], &poly_refs[..], &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .unwrap();
+
+        let mut malformed = proof.clone();
+        let recursive = malformed
+            .steps
+            .iter_mut()
+            .find_map(akita_types::AkitaProofStep::as_intermediate_mut)
+            .expect("fixture should include an intermediate recursive fold");
+        bump_flat_ring_vec(&mut recursive.stage2.next_w_commitment);
+
+        let mut verifier_transcript =
+            AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert_invalid_proof("tampered recursive fold handle", result);
+    });
+}
+
+#[cfg(not(feature = "zk"))]
+#[test]
+fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64Full;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
+            .expect("runtime schedule");
+        let terminal_params = schedule
+            .fold_steps()
+            .last()
+            .expect("folded fixture should have a terminal fold")
+            .params
+            .clone();
+        let terminal_layout =
+            akita_types::terminal_witness_segment_layout(&terminal_params, 1, 1, F::modulus_bits())
+                .expect("terminal layout");
+
+        let mut malformed = proof.clone();
+        mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed), terminal_layout);
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/terminal-trace-tamper");
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert_invalid_proof("tampered terminal e_hat digit", result);
     });
 }
 
