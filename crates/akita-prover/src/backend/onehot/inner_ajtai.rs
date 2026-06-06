@@ -74,7 +74,7 @@ pub(super) fn inner_ajtai_wide_single_chunk<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
@@ -97,7 +97,7 @@ pub(super) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];

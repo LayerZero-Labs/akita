@@ -359,11 +359,11 @@ fn hex_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
     use crate::{append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript};
-    use akita_field::{Fp2, Fp32, Fp64, NegOneNr};
+    use akita_field::{Fp32, Fp64, FpExt2, NegOneNr};
 
     type F = Fp64<4294967197>;
     type Base = Fp32<251>;
-    type BaseFp2 = Fp2<Base, NegOneNr>;
+    type BaseFpExt2 = FpExt2<Base, NegOneNr>;
 
     #[test]
     fn logs_absorbs_and_squeezes() {
@@ -435,9 +435,14 @@ mod tests {
     fn known_label_check_accepts_extension_limb_labels() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<Base>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        let x = BaseFp2::new(Base::from_u64(1), Base::from_u64(2));
-        append_ext_field::<Base, BaseFp2, _>(&mut transcript, labels::ABSORB_EVALUATION_CLAIMS, &x);
-        let _ = sample_ext_challenge::<Base, BaseFp2, _>(&mut transcript, labels::CHALLENGE_TAU0);
+        let x = BaseFpExt2::new(Base::from_u64(1), Base::from_u64(2));
+        append_ext_field::<Base, BaseFpExt2, _>(
+            &mut transcript,
+            labels::ABSORB_EVALUATION_CLAIMS,
+            &x,
+        );
+        let _ =
+            sample_ext_challenge::<Base, BaseFpExt2, _>(&mut transcript, labels::CHALLENGE_TAU0);
 
         transcript.assert_smell_checks();
     }

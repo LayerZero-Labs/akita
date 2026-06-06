@@ -1,6 +1,6 @@
 use akita_algebra::poly::Poly;
 use akita_algebra::{CyclotomicRing, VectorModule};
-use akita_field::{Fp2, Fp32, Fp64, Prime128Offset275, TowerBasisFp4};
+use akita_field::{Fp32, Fp64, FpExt2, Prime128Offset275, TowerBasisFpExt4};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError};
 
 use super::fixtures::{NR, NR4};
@@ -38,7 +38,7 @@ fn serialization_round_trip_fp128() {
 #[test]
 fn serialization_round_trip_ext() {
     type F = Fp32<251>;
-    type F2 = Fp2<F, NR>;
+    type F2 = FpExt2<F, NR>;
     let val = F2::new(F::from_u64(3), F::from_u64(7));
     let mut buf = Vec::new();
     val.serialize_compressed(&mut buf).unwrap();
@@ -47,10 +47,10 @@ fn serialization_round_trip_ext() {
 }
 
 #[test]
-fn serialization_round_trip_fp4() {
+fn serialization_round_trip_fp_ext4() {
     type F = Fp32<251>;
-    type F2 = Fp2<F, NR>;
-    type F4 = TowerBasisFp4<F, NR, NR4>;
+    type F2 = FpExt2<F, NR>;
+    type F4 = TowerBasisFpExt4<F, NR, NR4>;
 
     let val = F4::new(
         F2::new(F::from_u64(5), F::from_u64(1)),
