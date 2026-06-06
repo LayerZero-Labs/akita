@@ -873,11 +873,11 @@ mod tests {
     use super::*;
     use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, RingSubfieldFp4};
+    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, RingSubfieldFpExt4};
 
     type F = Fp32<251>;
-    type E = Fp2<F, NegOneNr>;
-    type L = RingSubfieldFp4<F>;
+    type E = FpExt2<F, NegOneNr>;
+    type L = RingSubfieldFpExt4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

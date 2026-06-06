@@ -5,7 +5,7 @@
 
 use super::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFp4};
+use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4};
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 

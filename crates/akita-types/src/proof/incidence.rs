@@ -605,7 +605,7 @@ where
 mod tests {
     use super::super::CommittedOpenings;
     use super::*;
-    use akita_field::{Fp2, Fp64, NegOneNr};
+    use akita_field::{Fp64, FpExt2, NegOneNr};
     use akita_transcript::{labels, AkitaTranscript, Transcript};
 
     type TranscriptField = Fp64<4294967197>;
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn extension_row_coefficients_sample_for_non_singleton_rows() {
-        type E = Fp2<TranscriptField, NegOneNr>;
+        type E = FpExt2<TranscriptField, NegOneNr>;
         let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");
         let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
