@@ -25,7 +25,7 @@ containing `summary.json` and the rendered comment/report.
 
 Workspace members under `crates/`:
 
-- `akita-field` — field traits, prime/extension fields, wide/packed helpers, FFT, parallel macros
+- `akita-field` — field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros
 - `akita-serialization` — serialization/validation/compression traits
 - `akita-algebra` — modules/vectors, NTTs, cyclotomic rings, sparse challenges, polynomials
 - `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks

@@ -270,7 +270,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// w.r.t. `Mul`, and otherwise falling back to the per-term
     /// [`Self::eval_state_at_suffix`].
     ///
-    /// On the exact path (e.g. the fp32 `RingSubfieldFp4<Fp32>` campaign field)
+    /// On the exact path (e.g. the fp32 `RingSubfieldFpExt4<Fp32>` campaign field)
     /// each product is widened into `E::ProductAccum` and the
     /// `state.len() == E::EXT_DEGREE` terms are summed before a single
     /// `reduce_product_accum`. The per-coefficient reduction is additive over
@@ -280,7 +280,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     ///
     /// Fields whose wide accumulator is lossy versus `Mul` leave
     /// `DELAYED_PRODUCT_SUM_IS_EXACT` at `false` and take the per-term path, so
-    /// the emitted factor, and the proof, stay unchanged. `Fp2<Fp64>` opts into
+    /// the emitted factor, and the proof, stay unchanged. `FpExt2<Fp64>` opts into
     /// the exact path only because its accumulator keeps the carry above bit
     /// 128 explicitly.
     ///

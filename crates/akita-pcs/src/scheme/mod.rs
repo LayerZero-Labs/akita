@@ -1,10 +1,10 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::{HasOptimizedFold, HasWide};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    HasUnreducedOps, PseudoMersenneField, RandomSampling,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,

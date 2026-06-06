@@ -7,7 +7,7 @@ mod traits;
 mod wide;
 
 use crate::{AdditiveGroup, CanonicalField, FieldCore, One, RandomSampling, RingCore, Zero};
-use akita_field::fields::wide::ReduceTo;
+use akita_field::unreduced::ReduceTo;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

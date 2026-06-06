@@ -64,7 +64,7 @@ fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     let sis_family = akita_types::SisModulusFamily::Q32;
     // Commit ring dimension must equal the static `D` the scheme dispatches
     // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
-    // fixtures pin `D = 32`. `ring_subfield = 2` below is `RingSubfieldFp4`'s
+    // fixtures pin `D = 32`. `ring_subfield = 2` below is `RingSubfieldFpExt4`'s
     // embedding norm bound (a claim-field property), not `D / d`, so the
     // collision buckets are independent of this dimension.
     let d: usize = 32;
@@ -237,7 +237,7 @@ fn fp32_root_terminal_schedule(
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
+    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
     const D: usize = 32;
@@ -340,7 +340,7 @@ impl Fp32RingSubfieldOuterFallbackCfg {
 
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
+    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
     const D: usize = 32;

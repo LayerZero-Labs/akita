@@ -23,9 +23,8 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
-use akita_field::fields::wide::{HasOptimizedFold, HasWide};
-use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,

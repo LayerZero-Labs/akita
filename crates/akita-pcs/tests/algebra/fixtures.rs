@@ -2,8 +2,8 @@ use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_field::{
-    CanonicalField, FieldCore, Fp2, Fp2Config, Fp32, Invertible, PseudoMersenneField,
-    TowerBasisFp4Config,
+    CanonicalField, FieldCore, Fp32, FpExt2, FpExt2Config, Invertible, PseudoMersenneField,
+    TowerBasisFpExt4Config,
 };
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
@@ -79,15 +79,15 @@ pub(super) fn check_solinas_prime<
 }
 
 pub(super) struct NR;
-impl Fp2Config<Fp32<251>> for NR {
+impl FpExt2Config<Fp32<251>> for NR {
     fn non_residue() -> Fp32<251> {
         -Fp32::<251>::one()
     }
 }
 
 pub(super) struct NR4;
-impl TowerBasisFp4Config<Fp32<251>, NR> for NR4 {
-    fn non_residue() -> Fp2<Fp32<251>, NR> {
-        Fp2::new(Fp32::<251>::zero(), Fp32::<251>::one())
+impl TowerBasisFpExt4Config<Fp32<251>, NR> for NR4 {
+    fn non_residue() -> FpExt2<Fp32<251>, NR> {
+        FpExt2::new(Fp32::<251>::zero(), Fp32::<251>::one())
     }
 }
