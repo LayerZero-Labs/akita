@@ -90,7 +90,7 @@ impl LevelParams {
     /// is a terminal `Direct(PackedDigits)`: that step does not commit
     /// anything, so it has no Ajtai keys, no block geometry, and no
     /// digit depths. The only field consumers downstream actually read is
-    /// `log_basis` (used by `prove_recursive_suffix_with_policy` as
+    /// `log_basis` (used by `prove_recursive_suffix` as
     /// `final_log_basis` for the terminal fold's witness packing); every
     /// other field is left at the zero/empty defaults to make accidental
     /// use surface as obviously-degenerate output. Do not feed this stub

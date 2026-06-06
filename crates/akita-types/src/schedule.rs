@@ -510,60 +510,6 @@ pub fn root_direct_schedule(
     })
 }
 
-/// Scale a per-polynomial root layout to a batched root layout **without**
-/// the SIS-floor audit on the scaled B/D keys.
-///
-/// Multiplies the outer (B) and prover (D) matrix widths by `num_claims`,
-/// leaving ranks, buckets, and geometry unchanged. Use this only for
-/// synthetic test fixtures (or other intermediate constructions) whose
-/// `(family, ring_dimension)` is intentionally outside the audited
-/// SIS-floor tables. Production-facing expansion goes through the strict,
-/// `try_new`-audited path inside
-/// `akita_planner::generated::GeneratedFoldStep::expand_to_level_params`.
-///
-/// # Errors
-///
-/// Returns an error only on `num_claims == 0` or arithmetic overflow
-/// in the scaled widths; rank/width SIS-floor mismatches do **not**
-/// surface here.
-pub fn scale_batched_root_layout_unchecked(
-    root_lp: &LevelParams,
-    num_claims: usize,
-) -> Result<LevelParams, AkitaError> {
-    if num_claims == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_batched_polys must be at least 1".to_string(),
-        ));
-    }
-    let d = root_lp.ring_dimension;
-    let b_col_len = root_lp
-        .b_key
-        .col_len()
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?;
-    let d_col_len = root_lp
-        .d_key
-        .col_len()
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
-    let mut scaled = root_lp.clone();
-    scaled.b_key = crate::AjtaiKeyParams::new_unchecked(
-        scaled.b_key.sis_family(),
-        scaled.b_key.row_len(),
-        b_col_len,
-        scaled.b_key.collision_inf(),
-        d,
-    );
-    scaled.d_key = crate::AjtaiKeyParams::new_unchecked(
-        scaled.d_key.sis_family(),
-        scaled.d_key.row_len(),
-        d_col_len,
-        scaled.d_key.collision_inf(),
-        d,
-    );
-    Ok(scaled)
-}
-
 /// Return the number of fold levels in a runtime schedule.
 pub fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
     schedule

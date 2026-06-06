@@ -135,7 +135,7 @@ ratchet start point for this PR, not accepted long-term targets.
 | 2725 | `crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs` | Stage-1 range precomputation, compact coefficient accumulation, prover state, rounds, and tests. |
 | 2668 | `crates/akita-field/src/fields/ext.rs` | Extension-field families: `Fp2`, power/tower `Fp4`, ring-subfield `Fp4`, ring-subfield `Fp8`, multiplication backends, and tests. |
 | 2243 | `crates/akita-sumcheck/src/extension_opening_reduction.rs` | Tensor helpers, dense reduction prover, sparse/batched witness handling, verifier, sumcheck wrapper, validation, and tests. |
-| 2137 | `crates/akita-scheme/src/tests.rs` | Scheme test suites: batched root/direct, standard verify failures, one-hot roundtrips, FP32 ring-subfield configs, and shared fixtures. |
+| 2137 | `crates/akita-pcs/src/scheme/tests/` | Scheme test suites: batched root/direct, standard verify failures, one-hot roundtrips, FP32 ring-subfield configs, and shared fixtures. |
 | 2057 | `crates/akita-verifier/src/protocol/levels.rs` | Verifier replay phases: ZK hiding, root level, recursive level, terminal level, dispatch, and shared validation helpers. |
 | 1921 | `crates/akita-field/src/fields/fp128.rs` | 128-bit prime field core, arithmetic trait impls, named prime configs, FFT config impls, and tests. |
 | 1857 | `crates/akita-config/src/proof_optimized.rs` | Schedule/layout helpers, matrix-envelope helpers, and per-field config modules. |
@@ -213,7 +213,7 @@ risk.
 Targets:
 
 - `crates/akita-pcs/tests/algebra.rs`
-- `crates/akita-scheme/src/tests.rs`
+- `crates/akita-pcs/src/scheme/tests/`
 - `crates/akita-types/src/field_reduction.rs`
 - `crates/akita-algebra/src/ring/cyclotomic.rs`
 - `crates/akita-config/src/proof_optimized.rs`
@@ -223,7 +223,7 @@ Implementation order:
 1. Split `crates/akita-pcs/tests/algebra.rs` into a `tests/algebra/` module tree
    with shared fixtures separated from scenario groups such as field arithmetic,
    NTT/CRT, cyclotomic ring behavior, and serialization.
-2. Split `crates/akita-scheme/src/tests.rs` into `src/tests/mod.rs` plus
+2. Split `crates/akita-pcs/src/scheme/tests/` into `src/scheme/tests/mod.rs` plus
    scenario files for root/direct openings, standard verifier failures,
    one-hot roundtrips, FP32 ring-subfield configs, recursive paths, and shared
    fixtures.
@@ -243,7 +243,7 @@ Minimum verification:
 - `cargo fmt -q`
 - `scripts/check-rust-file-lines.sh`
 - `cargo test -p akita-pcs --test algebra`
-- `cargo test -p akita-scheme`
+- `cargo test -p akita-pcs --lib`
 - `cargo test -p akita-types field_reduction`
 - `cargo test -p akita-algebra cyclotomic`
 - `cargo test -p akita-config`

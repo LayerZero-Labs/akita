@@ -16,7 +16,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -26,10 +26,10 @@ use akita_prover::{
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    scheduled_next_level_params, BasisMode, BlockOrder, LevelParams, SetupContributionMode,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    LevelParams, SetupContributionMode,
 };
-use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
+use akita_verifier::verify_batched;
 use clap::{Parser, ValueEnum};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -200,35 +200,13 @@ fn verify_with_setup_mode(
     claims: akita_types::VerifierClaims<'_, Claim, akita_types::RingCommitment<F, D>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
-    verify_batched_with_policy::<F, Claim, Challenge, _, D, _, _, _, _, _>(
+    verify_batched::<Cfg, _, D>(
         proof,
         verifier_setup,
         transcript,
         claims,
         BasisMode::Lagrange,
-        |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-        |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
-        Cfg::get_params_for_batched_commitment,
-        |transcript, incidence_summary, schedule, basis| {
-            bind_transcript_instance_descriptor::<F, _, D, Cfg>(
-                &verifier_setup.expanded,
-                incidence_summary,
-                schedule,
-                basis,
-                transcript,
-            )
-        },
         setup_contribution_mode,
-        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
-            verify_root_direct_commitments_with_params::<F, D>(
-                witnesses,
-                setup,
-                commitments,
-                incidence_summary,
-                params,
-                direct_commitment_payload,
-            )
-        },
     )
     .map_err(|err| format!("{setup_contribution_mode:?}-mode verifier rejected proof: {err}"))
 }

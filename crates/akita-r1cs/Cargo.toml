@@ -21,7 +21,7 @@ tracing = "0.1"
 
 [features]
 default = []
-zk = ["akita-field/zk"]
+zk = []
 
 [lints.rust]
 missing_docs = "warn"
