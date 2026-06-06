@@ -313,7 +313,7 @@ mod tests {
         };
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let fold_beta = fold_witness_beta(2, 1, challenge, witness).unwrap();
-        let collision_linf = 8u128 * 54 * fold_beta * 1;
+        let collision_linf = 8u128 * challenge.l1_norm * fold_beta;
         let expected_l2_sq = l2_sq_from_linf(64, collision_linf).unwrap();
         assert_eq!(
             committed_fold_collision_l2_sq(SisModulusFamily::Q32, 64, challenge, witness, 2, 1, 1,)
