@@ -27,14 +27,14 @@ fn scale_batched_root_layout_unchecked(
         scaled.b_key.sis_family(),
         scaled.b_key.row_len(),
         b_col_len,
-        scaled.b_key.collision_inf(),
+        scaled.b_key.collision_l2_sq(),
         d,
     );
     scaled.d_key = akita_types::AjtaiKeyParams::new_unchecked(
         scaled.d_key.sis_family(),
         scaled.d_key.row_len(),
         d_col_len,
-        scaled.d_key.collision_inf(),
+        scaled.d_key.collision_l2_sq(),
         d,
     );
     Ok(scaled)

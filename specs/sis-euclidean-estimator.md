@@ -1,10 +1,10 @@
-# Spec: Euclidean SIS Table Regen via lattice-estimator (S5a)
+# Spec: Euclidean SIS Table Regen via lattice-estimator (S5a + S5b)
 
 | Field       | Value |
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
-| Revised     | 2026-06-06 (vendor LE PR branch; S5a in #155) |
+| Revised     | 2026-06-06 (S5a done; S5b in scope for #155) |
 | Status      | proposed |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
 
@@ -40,16 +40,17 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
    Euclidean SIS estimation is reliable, bounded-time, and safe to run in parallel sweeps.
    Upstream PRs must stand on their own merit (correctness, robustness, docs); they must
    not mention Akita, carry Akita-only tests, or exist solely to unblock our table regen.
-2. **Akita (S5a, same PR as spec):** pin `third_party/lattice-estimator` at the open
+2. **Akita (S5a, #155):** pin `third_party/lattice-estimator` at the open
    lattice-estimator reliability PR branch commit, harden `scripts/gen_sis_table.py`
    (provenance header, `--jobs`, no `SIGALRM` hang guard), and check in Akita-local golden
-   CSV plus a regen/check script.
-3. **Akita (S5b, separate slice):** stitch emitted rows into
-   `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_l2_sq`, wire
-   L2 A-role pricing (see parent spec).
+   CSV plus a regen/check script. *(Done.)*
+3. **Akita (S5b, same PR #155):** stitch emitted rows into
+   `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_inf` →
+   `collision_l2_sq` (`u64`, power-of-two ladder), and wire L2 A-role / B/D pricing from
+   `norm_bound.rs` (see parent spec). Remove committed-fold L∞ rank-pricing paths.
 
-Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **S11**
-(schedule regen under L2 pricing).
+**S5a + S5b** in #155 deliver the offline estimator pin and the runtime L2 SIS floor cutover.
+**S11** (shipped schedule regen + drift under L2 pricing) remains a follow-up after S6.
 
 ### Invariants
 
@@ -100,7 +101,8 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 - Changing the 128-bit target, BDGL16 model, or representative moduli without a spec
   amendment.
 - Runtime on-demand SIS estimation in the planner DP.
-- Replacing the parent L2 protocol spec or implementing S6–S13 in this slice.
+- Replacing the parent L2 protocol spec or implementing S6–S12 in this slice.
+- **S11** shipped-schedule regen (depends on S5b tables plus S6 proof shape).
 
 ## Evaluation
 
@@ -122,11 +124,19 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 - [x] Full canonical regen completes in bounded wall time on a 16-core machine using
   `--jobs` (family × `d` shards). Target: overnight acceptable; no hung cells.
 
-### S5b Handoff Criteria
+### Acceptance Criteria (S5b, in #155)
 
-- [ ] Stitched `generated_sis_table.rs` uses power-of-two keys and updated provenance;
-  `cargo test -p akita-types` and `assert_schedule_stays_within_audited_sis_widths` pass.
-- [ ] `collision_l2_sq` rename and A-role L2 pricing wired per parent spec.
+- [x] Stitched `generated_sis_table.rs` uses power-of-two `collision_l2_sq` keys (`u128`,
+  ladder `2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`), updated provenance (BDGL16 Euclidean, no
+  `lgsa`), and ranks `1..=20` (`scripts/stitch_generated_sis_table.py`).
+- [x] `collision_inf` renamed to `collision_l2_sq` on `AjtaiKeyParams`, `min_secure_rank`,
+  `ceil_supported_collision`, and descriptor bytes (`u128` LE).
+- [x] A-role pricing uses `beta_l2_squared` / operator-norm cap `Gamma`; B/D roles use
+  `l2_sq_from_linf`. No production path calls `committed_fold_collision_s` or prices the
+  A-role via `8·ω·β·ν`.
+- [x] `cargo test -p akita-types` passes; shipped planner tables regened via
+  `gen_schedule_tables` so `assert_schedule_stays_within_audited_sis_widths` and
+  `generated_schedule_tables_match_find_schedule` pass under L2 floors.
 
 ### Testing Strategy
 
@@ -136,8 +146,8 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
   brute force on golden cells, plus a bounded window around each returned `max_width`).
 - **Degenerate knees:** Golden includes cells where `δ` is just above 1; every cell must
   finish in bounded time and match committed bits ±0.01 (exact `-inf` where documented).
-- **Parent tests unchanged until S5b:** `akita-types` on `main` keeps passing when only
-  S5a lands (no partial table renames).
+- **S5b is in #155:** the branch intentionally breaks the old L∞ table and renames
+  collision fields; golden CSV stays on the offline grid, not the full stitched table.
 
 ### Performance
 
@@ -160,7 +170,7 @@ scripts/sis_golden/
   check.py                         replay + drift gate (manual / optional CI hash)
 
 crates/akita-types/src/sis/
-  generated_sis_table.rs           consumer (S5b stitch, not S5a)
+  generated_sis_table.rs           consumer (S5b stitch)
 ```
 
 **Estimator surface used** (everything else ignored):
@@ -269,26 +279,25 @@ in Euclidean SIS length bound (cf. existing large-`q` overflow issues elsewhere)
 Defer if PR 1 is already large; Akita `--jobs` uses subprocess sharding and does not depend
 on this for correctness.
 
-#### Akita PR #155 — spec + S3 + S5a (single PR)
+#### Akita PR #155 — spec + S3 + S5a + S5b (single PR)
 
 - Spec revision (this file) and parent cross-links.
-- S3 op-norm rejection (already on branch).
-- S5a: `third_party/lattice-estimator` vendored at the open LE PR branch commit;
-  hardened `scripts/gen_sis_table.py`; 63-cell `scripts/sis_golden/` grid + check +
-  refresh runbook; `AGENTS.md` pointer.
+- S3 op-norm rejection (on branch).
+- S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
+- S5b *(in progress):* L2 `generated_sis_table.rs` stitch, `collision_l2_sq` rename,
+  L2 rank pricing wired from `norm_bound.rs`.
 
-#### Follow-up — S5b (separate PR)
+#### Follow-up — S11 (separate PR)
 
-L2 table stitch, rename, A-role pricing (parent spec).
+Shipped schedule regen + drift guards under L2 tables (needs S6 proof shape).
 
 ### Slice ordering
 
 | Slice | Deliverable | Depends on |
 |-------|-------------|------------|
-| **PR #155** | spec + S3 + S5a (vendored LE PR branch) | LE PR 1 branch exists |
+| **PR #155** | spec + S3 + S5a + S5b | LE PR 1 branch exists |
 | **LE PR 1** | upstream reliability ([malb#213](https://github.com/malb/lattice-estimator/pull/213)) | — |
 | **LE PR 2** | spawn pool (optional) | — |
-| **S5b** | L2 tables + rename + pricing | PR #155, S4 |
 | **S11** | schedule regen + drift | S5b, S6 |
 
 ### Submodule pin

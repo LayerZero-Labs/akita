@@ -125,7 +125,6 @@ impl GeneratedFoldStep {
             fold_shape,
             is_root,
             policy.onehot_chunk_size,
-            policy.ring_subfield_norm_bound,
             r_vars,
             num_claims,
         )

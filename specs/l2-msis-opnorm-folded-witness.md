@@ -1109,13 +1109,13 @@ Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
 (`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
 pure, not-yet-wired building blocks on `main`.
 
-Follow-up implementation is split across branch `quang/s3-s5-sis-estimator-spec`
-(spec-first) and later PRs:
+Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later slices:
 
 - **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
   lattice-estimator reliability fixes, vendored LE PR branch submodule, hardened
-  `scripts/gen_sis_table.py`, and Akita golden (in #155 with spec).
-- **S5b**: L2 table regen, `collision_l2_sq` rename, wire A-role pricing (blocked on S5a).
+  `scripts/gen_sis_table.py`, and Akita golden. *(Done in #155.)*
+- **S5b** (same #155): L2 table regen + stitch, `collision_l2_sq` rename, wire A-role
+  and B/D L2 pricing from `norm_bound.rs`. *(In progress.)*
 - **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
   production D=64 shell/threshold; see below).
 - **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
@@ -1155,8 +1155,8 @@ WAVE 0  (independent, start now, parallel)
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
 
 WAVE 1
-  S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)
-  S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)
+  S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)  DONE
+  S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)                         #155
   S3  threshold + transcript rejection       (S1, S2 for production policy)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
 
@@ -1226,18 +1226,19 @@ Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
 **Do not** change `proof_optimized` D=64 production presets until S2 certifies the
 accepted-support lower bound.
 
-**S5a — Euclidean SIS table regen (lattice-estimator).** *(in #155)*
+**S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*
 [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).
 Vendor the open lattice-estimator reliability PR branch as `third_party/lattice-estimator`,
 harden `scripts/gen_sis_table.py`, and check in Akita-local golden CSV under
 `scripts/sis_golden/`. Repoint to `malb/lattice-estimator` after upstream merge. No Rust
-estimator crate. This slice does not change protocol code on its own.
+estimator crate.
 
-**S5b — L2 SIS tables + key rename.** *(S4, S5a)*
+**S5b — L2 SIS tables + key rename.** *(S4, S5a; in #155)*
 `crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.
 Regenerate L2 bucket ladders (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) + secure-rank floors;
-rename `collision_inf` to `collision_l2_sq` across `AjtaiKeyParams`, `min_secure_rank`,
-`ceil_supported_collision`, and descriptor bytes; wire A-role `8·Γ·ν·‖z‖₂` pricing from S4.
+rename `collision_inf` to `collision_l2_sq` (`u64`, power-of-two ladder) across
+`AjtaiKeyParams`, `min_secure_rank`, `ceil_supported_collision`, and descriptor bytes; wire
+A-role `beta_l2 = Gamma·B·s_l2_max` and B/D `l2_sq_from_linf` pricing from S4.
 Remove the old committed-fold L∞ rank-pricing paths. Regen remains Sage +
 `scripts/gen_sis_table.py` against the pinned submodule.
 

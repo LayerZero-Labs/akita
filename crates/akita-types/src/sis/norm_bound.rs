@@ -96,61 +96,35 @@ impl FoldWitnessNorms {
     }
 }
 
-/// A-role committed-level weak-binding SIS collision bucket, computed from
-/// already-derived per-level fold norms.
+/// A-role committed-level per-ring-row squared Euclidean collision bucket.
 ///
-/// Every Ajtai-committed level (the dense root and all recursive fold levels)
-/// is priced at the *fold-response* norm — the only norm the weak-binding
-/// extractor certifies for the kernel vector `z_A = c̄'(c̄·s) − c̄(c̄'·s')`:
+/// Prices the fold response at `beta_l2^2 = (Gamma · B · s_l2_max)^2`, with
+/// `Gamma` the operator-norm cap, `B = num_claims · 2^r_vars`, and
+/// `s_l2_max^2` from [`s_l2_max_squared`].
 ///
-/// ```text
-/// collision_A = 2 · κ̄ · β̄ · ν
-///   κ̄ = ||c − c'||_1 = 2·ω           (challenge difference; ω = ||c||_1)
-///   β̄ = 2 · β^resp                   (extractor bound ||z^(ℓ,i) − z^0||_inf ≤ 2·β^resp)
-///   β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
-/// ```
-///
-/// so `collision_A = 8 · ω · fold_witness_beta · ν`, where `fold_witness_beta`
-/// is exactly [`fold_witness_beta`]. The `num_claims · 2^r_vars` factor is the
-/// fold arity an *anchored* per-block price would unsoundly drop: dividing the
-/// fold response by the ring unit `c̄` does not recover `||s||_inf`, and the
-/// range / booleanity checks bind the honest committed table, not the extracted
-/// quotient. One-hotness only shrinks `β^resp` (it sets `||s||_inf = 1`); it
-/// does not remove the fold arity, so it is folded into `witness`, not into a
-/// regime switch.
-///
-/// Returns `None` on norm overflow or when the collision exceeds every audited
-/// bucket for `(sis_family, d)`.
+/// Returns `None` on overflow or when the collision exceeds every audited bucket
+/// for `(sis_family, d)`.
 #[must_use]
-pub fn committed_fold_collision_s(
+pub fn committed_fold_collision_l2_sq(
     sis_family: SisModulusFamily,
     d: u32,
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
+    gamma: u128,
+    is_onehot: bool,
+    ring_dimension: usize,
+    log_basis: u32,
     r_vars: usize,
     num_claims: usize,
-    ring_subfield_norm_bound: u32,
-) -> Option<u32> {
-    let fold_beta = fold_witness_beta(r_vars, num_claims, challenge, witness).ok()?;
-    // 2·κ̄·β̄·ν = 2·(2·ω)·(2·fold_beta)·ν = 8·ω·fold_beta·ν.
-    let collision = 8u128
-        .checked_mul(challenge.l1_norm)?
-        .checked_mul(fold_beta)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    ceil_supported_collision(sis_family, d, u32::try_from(collision).ok()?)
+) -> Option<u128> {
+    let s_l2_sq = s_l2_max_squared(is_onehot, ring_dimension as u128, log_basis).ok()?;
+    let beta_sq = beta_l2_squared(r_vars, num_claims, gamma, s_l2_sq).ok()?;
+    ceil_supported_collision(sis_family, d, beta_sq)
 }
 
 /// A-role (committed witness `s`) rounded-up SIS collision bucket for one
-/// committed fold level, per the corrected Hachi Lemma 7 weak-binding bound.
+/// committed fold level under the L2 MSIS model.
 ///
-/// Builds the level's effective challenge `(||c||_inf, ||c||_1)` and witness
-/// `(||s||_inf, ||s||_1)` norms — one-hot roots commit a sparse witness
-/// (`||s||_inf = 1`), dense roots and every recursive level commit balanced
-/// digits (`||s||_inf = b/2`) — then prices the A collision at the fold response
-/// via [`committed_fold_collision_s`]. `r_vars` is the level's fold-arity
-/// exponent (`num_blocks = 2^r_vars`); `num_claims` is the batch factor, which
-/// is `> 1` only at a batched root and `1` at a singleton root and every
-/// recursive level.
+/// `r_vars` is the level's fold-arity exponent (`num_blocks = 2^r_vars`);
+/// `num_claims` is the batch factor (`> 1` only at a batched root).
 ///
 /// Returns `None` on norm overflow or when the collision exceeds every audited
 /// bucket for `(sis_family, d)`.
@@ -163,39 +137,35 @@ pub fn rounded_up_collision_norm_s(
     fold_shape: TensorChallengeShape,
     is_root: bool,
     onehot_chunk_size: usize,
-    ring_subfield_norm_bound: u32,
     r_vars: usize,
     num_claims: usize,
-) -> Option<u32> {
+) -> Option<u128> {
+    let _ = onehot_chunk_size;
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge = FoldChallengeNorms {
-        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
-        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
-    };
-    committed_fold_collision_s(
+    let gamma = u128::from(fold_shape.effective_operator_norm_cap(stage1_config));
+    committed_fold_collision_l2_sq(
         sis_family,
         d as u32,
-        challenge,
-        witness,
+        gamma,
+        is_onehot,
+        d,
+        decomposition.log_basis,
         r_vars,
         num_claims,
-        ring_subfield_norm_bound,
     )
 }
 
-/// B-role (`t̂`) rounded-up SIS collision bucket. The collision is the direct
-/// difference of two balanced-digit openings (no challenge multiplication).
-/// Each balanced digit lies in `[−b/2, b/2 − 1]` with `b = 2^lb`, so the
-/// largest difference of two such digits is
-/// `(b/2 − 1) − (−b/2) = b − 1 = 2^lb − 1`.
+/// B-role (`t̂`) rounded-up SIS collision bucket via `||v||_2^2 <= d·||v||_inf^2`.
+///
+/// The natural coefficient-`L∞` opening-digit collision is `2^lb − 1`.
 pub fn rounded_up_collision_norm_t(
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
-) -> Option<u32> {
-    let collision = 1u32.checked_shl(log_basis)?.checked_sub(1)?;
-    ceil_supported_collision(sis_family, d as u32, collision)
+) -> Option<u128> {
+    let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
+    let l2_sq = l2_sq_from_linf(d as u128, linf).ok()?;
+    ceil_supported_collision(sis_family, d as u32, l2_sq)
 }
 
 /// D-role (`ŵ`) rounded-up SIS collision bucket. Identical bound to the B role.
@@ -203,7 +173,7 @@ pub fn rounded_up_collision_norm_w(
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
-) -> Option<u32> {
+) -> Option<u128> {
     rounded_up_collision_norm_t(sis_family, d, log_basis)
 }
 

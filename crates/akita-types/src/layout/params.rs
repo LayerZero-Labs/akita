@@ -400,21 +400,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 inner_width,
-                self.a_key.collision_inf,
+                self.a_key.collision_l2_sq,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 outer_width,
-                self.b_key.collision_inf,
+                self.b_key.collision_l2_sq,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 d_matrix_width,
-                self.d_key.collision_inf,
+                self.d_key.collision_l2_sq,
                 d,
             ),
             num_blocks,
@@ -434,13 +434,13 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_inf`
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_l2_sq`
     /// is not a layout field** — it is the SIS-floor bucket the rank
     /// (`row_len`) was sized against — so it is preserved from `self`,
     /// matching the placement of `row_len` and `sis_family`. Pulling
-    /// `collision_inf` from `other` would lose the audited bucket when
+    /// `collision_l2_sq` from `other` would lose the audited bucket when
     /// the layout argument was constructed via
-    /// [`LevelParams::params_only`] (which leaves `collision_inf = 0`)
+    /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
     /// or threaded through [`Self::with_decomp`], and would let the SIS
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
@@ -452,21 +452,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
-                self.a_key.collision_inf,
+                self.a_key.collision_l2_sq,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
-                self.b_key.collision_inf,
+                self.b_key.collision_l2_sq,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
-                self.d_key.collision_inf,
+                self.d_key.collision_l2_sq,
                 d,
             ),
             num_blocks: other.num_blocks,

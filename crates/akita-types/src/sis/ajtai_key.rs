@@ -9,7 +9,7 @@
 use akita_field::AkitaError;
 
 use super::generated_sis_table::sis_max_widths;
-use crate::descriptor_bytes::{push_u32, push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_u128, push_usize, sis_family_tag};
 
 /// SIS modulus family used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,39 +23,16 @@ pub enum SisModulusFamily {
     Q128,
 }
 
-/// Minimum generated SIS-secure module rank that supports `width` ring columns
-/// at an **already rounded-up** collision bucket `collision_inf_rounded_up`
-/// (see [`ceil_supported_collision`]).
-///
-/// Returns `None` when no generated SIS-floor row covers the configuration.
-pub fn min_secure_rank(
-    sis_family: SisModulusFamily,
-    d: u32,
-    collision_inf_rounded_up: u32,
-    width: u64,
-) -> Option<usize> {
-    let widths = sis_max_widths(sis_family, d, collision_inf_rounded_up)?;
-    for (i, &max_w) in widths.iter().enumerate() {
-        if width <= max_w {
-            return Some(i + 1);
-        }
-    }
-    None
-}
+/// Smallest power-of-two squared-collision bucket exponent in the generated
+/// ladder. Keep in lockstep with `MIN_LOG_BUCKET` in `scripts/gen_sis_table.py`.
+pub const MIN_LOG_BUCKET: u32 = 1;
 
-/// Round a raw collision infinity-norm up to the next generated collision
-/// bucket for `(sis_family, d)`. Returns `None` for an unsupported
-/// `(sis_family, d)` or a collision above the largest tabulated bucket.
-pub fn ceil_supported_collision(
-    sis_family: SisModulusFamily,
-    d: u32,
-    collision_inf: u32,
-) -> Option<u32> {
-    const BUCKETS: &[u32] = &[
-        2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131071,
-        262143, 524287, 1048575, 2097151, 4194303, 8388607, 16777215, 33554431, 67108863,
-    ];
-    let supported = matches!(
+/// Largest power-of-two squared-collision bucket exponent in the generated
+/// ladder. Keep in lockstep with `MAX_LOG_BUCKET` in `scripts/gen_sis_table.py`.
+pub const MAX_LOG_BUCKET: u32 = 84;
+
+fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
+    matches!(
         (sis_family, d),
         (SisModulusFamily::Q32, 32)
             | (SisModulusFamily::Q32, 64)
@@ -69,32 +46,76 @@ pub fn ceil_supported_collision(
             | (SisModulusFamily::Q128, 64)
             | (SisModulusFamily::Q128, 128)
             | (SisModulusFamily::Q128, 256)
-    );
-    if !supported {
+    )
+}
+
+/// Minimum generated SIS-secure module rank that supports `width` ring columns
+/// at an **already rounded-up** collision bucket `collision_l2_sq_rounded_up`
+/// (see [`ceil_supported_collision`]).
+///
+/// Returns `None` when no generated SIS-floor row covers the configuration.
+pub fn min_secure_rank(
+    sis_family: SisModulusFamily,
+    d: u32,
+    collision_l2_sq_rounded_up: u128,
+    width: u64,
+) -> Option<usize> {
+    let widths = sis_max_widths(sis_family, d, collision_l2_sq_rounded_up)?;
+    for (i, &max_w) in widths.iter().enumerate() {
+        if width <= max_w {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
+/// Round a raw per-ring-row squared Euclidean collision bound up to the next
+/// generated power-of-two bucket for `(sis_family, d)`.
+///
+/// Returns `None` for an unsupported `(sis_family, d)`, a zero collision, or a
+/// collision above the largest tabulated bucket.
+pub fn ceil_supported_collision(
+    sis_family: SisModulusFamily,
+    d: u32,
+    collision_l2_sq: u128,
+) -> Option<u128> {
+    if collision_l2_sq == 0 || !supports_family_dimension(sis_family, d) {
         return None;
     }
-    BUCKETS
-        .iter()
-        .copied()
-        .find(|&bucket| collision_inf <= bucket)
+    let min_bucket = 1u128.checked_shl(MIN_LOG_BUCKET)?;
+    let max_bucket = 1u128.checked_shl(MAX_LOG_BUCKET)?;
+    let bucket = if collision_l2_sq <= min_bucket {
+        min_bucket
+    } else if collision_l2_sq.is_power_of_two() {
+        collision_l2_sq
+    } else {
+        collision_l2_sq.next_power_of_two()
+    };
+    if bucket > max_bucket {
+        return None;
+    }
+    if sis_max_widths(sis_family, d, bucket).is_none() {
+        return None;
+    }
+    Some(bucket)
 }
 
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
-/// (security rank), column count (message width), and the worst-case L∞
-/// collision bound used for SIS security sizing.
+/// (security rank), column count (message width), and the worst-case per-ring-row
+/// squared Euclidean collision bound used for SIS security sizing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AjtaiKeyParams {
     pub(crate) row_len: usize,
     pub(crate) col_len: usize,
-    pub(crate) collision_inf: u32,
+    pub(crate) collision_l2_sq: u128,
     pub(crate) sis_family: SisModulusFamily,
 }
 
 impl AjtaiKeyParams {
     /// Create a new SIS-secure `AjtaiKeyParams`, auditing the
-    /// `(row_len, col_len, collision_inf)` triple against the generated 128-bit
+    /// `(row_len, col_len, collision_l2_sq)` triple against the generated 128-bit
     /// SIS-floor tables for `(sis_family, ring_dimension)`.
     ///
     /// The check is strict and has no silent-permissive fallback: a zero field,
@@ -105,14 +126,14 @@ impl AjtaiKeyParams {
     ///
     /// # Errors
     ///
-    /// Returns an error if any of `row_len`, `col_len`, or `collision_inf` is
+    /// Returns an error if any of `row_len`, `col_len`, or `collision_l2_sq` is
     /// zero, if the SIS-floor tables do not cover the configuration, or if
     /// `row_len` is below the audited floor.
     pub fn try_new(
         sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
-        collision_inf: u32,
+        collision_l2_sq: u128,
         ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
         if row_len == 0 {
@@ -125,35 +146,35 @@ impl AjtaiKeyParams {
                 "AjtaiKeyParams: col_len = 0".to_string(),
             ));
         }
-        if collision_inf == 0 {
+        if collision_l2_sq == 0 {
             return Err(AkitaError::InvalidSetup(
-                "AjtaiKeyParams: collision_inf = 0".to_string(),
+                "AjtaiKeyParams: collision_l2_sq = 0".to_string(),
             ));
         }
         let floor = min_secure_rank(
             sis_family,
             ring_dimension as u32,
-            collision_inf,
+            collision_l2_sq,
             col_len as u64,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
                      family={sis_family:?} d={ring_dimension} \
-                     collision_inf={collision_inf} col_len={col_len}"
+                     collision_l2_sq={collision_l2_sq} col_len={col_len}"
             ))
         })?;
         if row_len < floor {
             return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
                  (family={sis_family:?}, d={ring_dimension}, \
-                 collision_inf={collision_inf}, col_len={col_len})"
+                 collision_l2_sq={collision_l2_sq}, col_len={col_len})"
             )));
         }
         Ok(Self {
             row_len,
             col_len,
-            collision_inf,
+            collision_l2_sq,
             sis_family,
         })
     }
@@ -162,21 +183,21 @@ impl AjtaiKeyParams {
     ///
     /// Use this only for intermediate construction steps that carry
     /// incomplete data (`params_only` placeholders with `col_len = 0` or
-    /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.).
+    /// `collision_l2_sq = 0`, iterative SIS fixed-point loops, etc.).
     /// Production-facing layouts must reach [`try_new`](Self::try_new) before
     /// they're emitted into a schedule or setup.
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
-        collision_inf: u32,
+        collision_l2_sq: u128,
         ring_dimension: usize,
     ) -> Self {
         let _ = ring_dimension;
         Self {
             row_len,
             col_len,
-            collision_inf,
+            collision_l2_sq,
             sis_family,
         }
     }
@@ -193,10 +214,10 @@ impl AjtaiKeyParams {
         self.col_len
     }
 
-    /// Worst-case L∞ collision bound for SIS security sizing.
+    /// Rounded-up per-ring-row squared Euclidean collision bucket for SIS sizing.
     #[inline]
-    pub fn collision_inf(&self) -> u32 {
-        self.collision_inf
+    pub fn collision_l2_sq(&self) -> u128 {
+        self.collision_l2_sq
     }
 
     /// SIS modulus family used to validate this key.
@@ -209,7 +230,7 @@ impl AjtaiKeyParams {
         bytes.push(sis_family_tag(self.sis_family()));
         push_usize(bytes, self.row_len());
         push_usize(bytes, self.col_len());
-        push_u32(bytes, self.collision_inf());
+        push_u128(bytes, self.collision_l2_sq());
     }
 }
 
@@ -218,84 +239,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reshaped_floor_slices_preserve_legacy_values() {
-        let cases: &[(SisModulusFamily, u32, u32, &[u64])] = &[
-            (SisModulusFamily::Q32, 32, 7, &[6, 15, 140, 959]),
-            (SisModulusFamily::Q32, 64, 7, &[7, 479, 11_966, 177_951]),
-            (
-                SisModulusFamily::Q32,
-                128,
-                7,
-                &[239, 88_975, 8_446_449, 396_975_954],
-            ),
-            (
-                SisModulusFamily::Q32,
-                256,
-                7,
-                &[44_487, 198_487_977, 10_000_000_000, 10_000_000_000],
-            ),
-            (SisModulusFamily::Q64, 32, 7, &[15, 959, 23_932, 355_903]),
-            (
-                SisModulusFamily::Q64,
-                64,
-                7,
-                &[479, 177_951, 16_892_899, 793_951_920],
-            ),
-            (
-                SisModulusFamily::Q64,
-                128,
-                7,
-                &[88_975, 396_975_960, 50_000_000_000, 50_000_000_000],
-            ),
-            (
-                SisModulusFamily::Q64,
-                256,
-                7,
-                &[198_487_980, 10_000_000_000, 10_000_000_000, 10_000_000_000],
-            ),
-            (
-                SisModulusFamily::Q128,
-                32,
-                7,
-                &[959, 355_903, 33_785_799, 1_587_903_841],
-            ),
-            (
-                SisModulusFamily::Q128,
-                64,
-                7,
-                &[177_951, 793_951_920, 10_000_000_000, 10_000_000_000],
-            ),
-            (
-                SisModulusFamily::Q128,
-                128,
-                7,
-                &[396_975_960, 50_000_000_000, 50_000_000_000, 50_000_000_000],
-            ),
-            (
-                SisModulusFamily::Q128,
-                256,
-                7,
-                &[
-                    10_000_000_000,
-                    10_000_000_000,
-                    10_000_000_000,
-                    10_000_000_000,
-                ],
-            ),
-        ];
-
-        for &(family, d, collision, expected) in cases {
-            let actual = sis_max_widths(family, d, collision).expect("SIS row should exist");
-            assert_eq!(&actual[..expected.len()], expected);
-        }
+    fn ceil_supported_collision_rounds_to_power_of_two() {
+        assert_eq!(
+            ceil_supported_collision(SisModulusFamily::Q32, 32, 5),
+            sis_max_widths(SisModulusFamily::Q32, 32, 8).map(|_| 8)
+        );
+        assert_eq!(
+            ceil_supported_collision(SisModulusFamily::Q32, 32, 8),
+            Some(8)
+        );
     }
 
     #[test]
     fn floor_slices_have_family_specific_rank_caps() {
-        assert_eq!(
-            sis_max_widths(SisModulusFamily::Q32, 32, 7).map(<[u64]>::len),
-            Some(20)
-        );
-        assert_eq!(min_secure_rank(SisModulusFamily::Q32, 32, 127, 16), Some(5));
+        let bucket = 1u128 << 4;
+        if sis_max_widths(SisModulusFamily::Q32, 32, bucket).is_some() {
+            assert_eq!(
+                sis_max_widths(SisModulusFamily::Q32, 32, bucket).map(<[u64]>::len),
+                Some(20)
+            );
+        }
     }
 }

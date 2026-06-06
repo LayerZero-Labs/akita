@@ -427,12 +427,12 @@ mod fp128_policy_tests {
             for (level_idx, fold) in schedule.fold_steps().enumerate() {
                 let lp = &fold.params;
                 let a_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_l2_sq())
                         .unwrap_or_else(|| {
                             panic!(
                                 "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
                                 lp.log_basis,
-                                lp.a_key.collision_inf(),
+                                lp.a_key.collision_l2_sq(),
                             )
                         });
                 let a_rank = min_secure_rank(
@@ -458,12 +458,12 @@ mod fp128_policy_tests {
                 );
 
                 let b_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_l2_sq())
                         .unwrap_or_else(|| {
                             panic!(
                                 "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
                                 lp.log_basis,
-                                lp.b_key.collision_inf(),
+                                lp.b_key.collision_l2_sq(),
                             )
                         });
                 let b_rank = min_secure_rank(
@@ -489,12 +489,12 @@ mod fp128_policy_tests {
                 );
 
                 let d_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_l2_sq())
                         .unwrap_or_else(|| {
                             panic!(
                                 "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
                                 lp.log_basis,
-                                lp.d_key.collision_inf(),
+                                lp.d_key.collision_l2_sq(),
                             )
                         });
                 let d_rank = min_secure_rank(
@@ -566,7 +566,7 @@ mod fp128_policy_tests {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_inf() >= root.params.b_key.collision_inf() * 2,
+            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
             "A-role collision should include the psi norm bound"
         );
     }
