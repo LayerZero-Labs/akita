@@ -2,9 +2,9 @@
 
 use super::eq_poly::EqPolynomial;
 use crate::{cfg_fold_reduce, FieldCore, FromPrimitiveInt, Zero};
-use akita_field::fields::wide::{HasOptimizedFold, HasWide, ReduceTo};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasWide, ReduceTo};
 use akita_field::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,

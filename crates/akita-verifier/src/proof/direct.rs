@@ -132,11 +132,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, NegOneNr};
+    use akita_field::{Fp32, FpExt2, NegOneNr};
     use akita_types::FlatRingVec;
 
     type F = Fp32<251>;
-    type E = Fp2<F, NegOneNr>;
+    type E = FpExt2<F, NegOneNr>;
 
     #[test]
     fn cleartext_witness_opening_matches_extension_claim() {

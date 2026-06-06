@@ -39,9 +39,8 @@ use super::two_round_prefix::{
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::fields::wide::HasOptimizedFold;
-use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,

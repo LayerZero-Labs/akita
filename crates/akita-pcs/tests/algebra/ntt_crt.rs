@@ -10,7 +10,8 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
-use akita_field::{Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275};
+use akita_field::packed::HasPacking;
+use akita_field::{Fp128, Fp32, Fp64, Prime128Offset159, Prime128Offset275};
 
 #[test]
 fn limbq_from_to_u128_round_trip() {
