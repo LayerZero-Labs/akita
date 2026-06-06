@@ -78,7 +78,7 @@ pub fn optimal_m_r_split(
     sis_family: SisModulusFamily,
     d: u32,
     num_claims: usize,
-    gamma: u128,
+    ring_subfield_norm_bound: u32,
     fold_challenge: FoldChallengeNorms,
     fold_witness: FoldWitnessNorms,
     log_commit_bound: u32,
@@ -114,9 +114,14 @@ pub fn optimal_m_r_split(
         // The committed-level A collision is fold-priced, so it grows with `r`
         // (and `num_claims`); recompute its bucket per split rather than reusing
         // one fixed bucket.
-        let is_onehot = fold_witness.infinity_norm() == 1;
         let Some(a_collision) = committed_fold_collision_l2_sq(
-            sis_family, d, gamma, is_onehot, d as usize, log_basis, r, num_claims,
+            sis_family,
+            d,
+            fold_challenge,
+            fold_witness,
+            r,
+            num_claims,
+            ring_subfield_norm_bound,
         ) else {
             continue;
         };
@@ -177,7 +182,7 @@ mod tests {
             SisModulusFamily::Q32,
             64,
             1,
-            54,
+            1,
             fold_challenge,
             fold_witness,
             128,
@@ -190,7 +195,7 @@ mod tests {
             SisModulusFamily::Q32,
             64,
             4,
-            54,
+            1,
             fold_challenge,
             fold_witness,
             128,

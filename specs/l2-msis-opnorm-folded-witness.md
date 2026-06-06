@@ -144,14 +144,17 @@ The primary protocol surfaces are:
 
 ### Acceptance Criteria
 
-- [ ] The public repo specs and security docs use the same Euclidean Module-SIS
-      norm, operator-norm challenge distribution, and folded-witness bound that
-      the Rust planner and verifier enforce.
-- [ ] `akita_types::sis` exposes one committed-fold A-role L2 collision or
-      witness-bound API, and the old committed-fold `collision_inf` API is
-      removed from all production call sites.
-- [ ] D=64 operator-norm accepted exact-shell challenges are implemented with
-      transcript-deterministic rejection sampling and pinned domain bytes.
+- [x] *(#155 partial)* Specs and `norm_bound.rs` agree on Euclidean MSIS lookup,
+      Lemma 7 on fold response `z` (`8·ω·β_inf·ν` → `l2_sq_from_linf`), and
+      `β_inf = fold_witness_beta`. Full public security-doc cutover completes with
+      S6+ certificate wording.
+- [x] *(#155, S5b)* `akita_types::sis` exposes `committed_fold_collision_l2_sq` /
+      `rounded_up_collision_norm_s`; `collision_inf` is removed from production
+      call sites (`collision_l2_sq` on `AjtaiKeyParams`).
+- [x] *(#155, S3 infra)* Exact-shell operator-norm rejection sampling,
+      `operator_norm_cap`, and descriptor binding are implemented. Production
+      D=64 keeps `(30, 12)` with `T = 54` (no rejection) until S2 certifies
+      `(31, 11), T = 16`.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
 - [ ] The prover computes `sum centered_coeff^2` from the actual
@@ -170,9 +173,9 @@ The primary protocol surfaces are:
 - [ ] The certified squared-sum statement is over the recomposed `z` and `ell_j`,
       and a test ties it to the committed decompositions `z_hat` and `ell_hat_j`
       via gadget recomposition (a tampered `z_hat` or `ell_hat_j` fails the check).
-- [ ] B-role and D-role collisions are converted into the unified L2 table by
-      `||v||_2 <= sqrt(d)·||v||_inf`, and a test pins the conversion against the
-      generated tables.
+- [x] *(#155, S5b)* B-role and D-role collisions use `l2_sq_from_linf` on `2^lb − 1`
+      (`rounded_up_collision_norm_t/w`). Dedicated table-conversion test remains a
+      follow-up; pricing path is wired.
 - [ ] Sumcheck 1 (`sum_x z_aug(x)^2 = B_l2`) runs in the stage-1 phase and
       sumcheck 2 (`z_aug = G' · w_next`) in the stage-2 phase, with sumcheck 2's
       `w_next(rho')` output joining the recursive-witness opening (batched or
@@ -188,10 +191,11 @@ The primary protocol surfaces are:
 - [ ] Proof shape, proof-size formula, shape deserialization, and compressed
       proof validation account for the new certificate payload (canonical byte
       layout of `ell_hat_j` pinned by a serialization test).
-- [ ] Runtime planner fallback, generated table expansion, and shipped generated
-      tables all size ranks and folded-witness digits under the L2 model.
+- [x] *(#155, S5b)* Runtime DP, `expand_to_level_params`, and shipped generated
+      schedule tables size A-role ranks from `collision_l2_sq`; `num_digits_fold`
+      still uses `β_inf`. Certificate-tier `B_l2` sizing waits for S6.
 - [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
-      and `cargo test` pass on the cutover branch.
+      and `cargo test` pass on the cutover branch *(CI gate for merge)*.
 - [ ] End-to-end prover/verifier tests fail if any one of the committed folded
       witness, L2 certificate, next-witness commitment, or ring-relation rows is
       tampered independently.
@@ -289,7 +293,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Backsolved source second moment (calibration only):
   `mu2_implied = z_rms^2 / (rho2 * B)`.
   This is not a direct measurement of `sum_i ||s_i||_2^2`.
-- Deterministic triangle reference:
+- Exploratory triangle reference (calibration only, **not** production sizing):
   `det_rms = Gamma * B * sqrt(mu2_implied)`.
 - Honest second-moment reference (fitted from the same sample):
   `honest_rms = sqrt(rho2 * B * mu2_implied)`.
@@ -398,13 +402,15 @@ the corresponding `fp32` dense band at similar recursive depths.
 
 Two candidate models were checked against the same logs.
 
-**Deterministic triangle bound**
+**Exploratory triangle bound (calibration only, not production sizing)**
 
 ```text
 ||z||_2 <= Gamma * sum_i ||s_i||_2
 ```
 
-With `mu2_implied` backsolved from each sample, the fitted deterministic RMS is
+This decoupled `Gamma · B · ‖s‖_2` envelope is **not** Lemma 7 and must not
+appear in planner or MSIS table code. With `mu2_implied` backsolved from each
+sample, the fitted exploratory RMS is
 `det_rms = Gamma * B * sqrt(mu2_implied)`.
 The observed ratio `z_rms / det_rms` depends primarily on `B`:
 
@@ -494,104 +500,95 @@ do not by themselves justify adding D32 back to production schedules.
 
 ## Design
 
-### Current Model
+### Notation
 
-Today the folded witness bound is:
+| Symbol | Meaning |
+|--------|---------|
+| `s` | Committed witness (A-role, Ajtai) |
+| `z` | Fold response / folded witness: `z = Σ_i c_i · s_i` |
+| `ẑ` | Decomposed digits of `z` at the next level |
+| `β_inf` | Deterministic `‖z‖_inf` envelope ([`fold_witness_beta`]) |
+| `ν` | `ring_subfield_norm_bound` |
 
-```text
-beta_inf =
-  num_claims · 2^r_vars ·
-  min(||c||_inf · ||s||_1, ||c||_1 · ||s||_inf).
-```
+Do not confuse `z` with `ŵ` (D-role opening witness).
 
-The committed A-role collision is then priced as:
+### Security object (Lemma 7, L2 instantiation)
 
-```text
-collision_A_inf = 8 · ||c||_1 · beta_inf · nu.
-```
-
-That model is implemented in `crates/akita-types/src/sis/norm_bound.rs`,
-threaded through `LevelParams::num_digits_fold`, and checked on the prover side
-by `validate_decompose_fold` against
-`DecomposeFoldWitness.centered_inf_norm`.
-
-The L2 cutover replaces this coordinate envelope with a certified Euclidean
-bound on the actual folded response.
-
-### L2 Bound Model
-
-Let a level fold `B = num_claims · 2^r_vars` block responses.
-For each accepted challenge `c_i`, let `gamma(c_i)` be the negacyclic
-convolution operator norm.
-If every accepted challenge satisfies `gamma(c_i) <= Gamma`, then:
+Weak binding prices the **fold response** `z`, not committed `s`:
 
 ```text
-||sum_i c_i * s_i||_2
-  <= sum_i ||c_i * s_i||_2
-  <= Gamma · sum_i ||s_i||_2.
+‖z_A‖_2  ≤  8 · op_norm(c) · ‖z‖_2 · ν
 ```
 
-A deterministic per-level bound is therefore:
+with `op_norm(c)` realized as `ω = ‖c‖_1` for sizing today.
+
+### Layer 1 — L2 MSIS table lookup (shipped)
+
+Convert the Lemma-7 collision into the Euclidean SIS floor per ring row:
 
 ```text
-beta_l2 = Gamma · B · s_l2_max.
+collision_A_inf = 8 · ω · β_inf · ν,
+collision_l2_sq   = ceil_bucket(d · collision_A_inf^2).
 ```
 
-Here `s_l2_max` is the per-block committed-witness Euclidean bound, the L2
-analogue of the existing `FoldWitnessNorms` (`||s||_inf`, `||s||_1`):
+`committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` in
+`crates/akita-types/src/sis/norm_bound.rs` implement this path.
+
+### Layer 2 — Deterministic `‖z‖_2` envelope (shipped, pre-certificate)
+
+No realized `‖z‖_2` certificate in production yet. The planner bounds
+`‖z‖_inf` by `β_inf` and converts to L2 for the estimator:
 
 ```text
-s_l2_max = sqrt(D) · (b/2)   dense balanced digits (||s||_inf = b/2),
-s_l2_max = 1                 a one-hot block (a single unit coefficient).
+β_inf = fold_witness_beta(...)
+      = num_claims · 2^r_vars ·
+        min(||c||_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf),
+
+‖z‖_inf  ≤  β_inf,
+‖z‖_2   ≤  √d · β_inf   (hence collision_l2_sq = ceil(d · (8ωβ_inf ν)²)).
 ```
 
-It should be derived once and shared by the planner and the prover abort, the
-way `fold_witness_beta` and the prover's `beta_linf_fold_bound` share
-`ring_product_infinity_norm_bound` today.
+`β_inf` is shared with `num_digits_fold` and prover
+`validate_decompose_fold` (`DecomposeFoldWitness.centered_inf_norm`).
 
-For a vector of `W` folded ring rows, the conservative square bound is:
+Operator-norm rejection (`gamma(c) <= Gamma`) is a separate challenge-family
+contract. No Lemma-7 factor (`8`, `ν`, fold arity, or `β_inf`) may be dropped
+or replaced by a decoupled `Gamma · B · ‖s‖_2` triangle bound.
+
+B-role and D-role collisions stay at `2^lb − 1` with the same
+`‖v‖_2^2 ≤ d · ‖v‖_inf^2` conversion.
+
+### Future realized-certificate tier (S6+, not wired in #155)
+
+The sumcheck certifies the **fold response** `z`, not committed `s`:
 
 ```text
-L2_BOUND_SQUARED = W · beta_l2^2.
+Z_SQUARED = sum_{row, coeff} z[row][coeff]^2
+Z_SQUARED + ell_0^2 + ell_1^2 + ell_2^2 + ell_3^2 = B_l2
 ```
 
-This deterministic bound is safe but loose (the calibration below puts the
-triangle bound roughly 13x to 100x above the realized square sum).
-It is the bound used directly when no realized certificate is emitted (the
-field-capacity fallback in the Invariants).
-
-When a certificate is emitted, the prover instead commits to a tighter chosen
-bucket `B_l2` from the L2 MSIS ladder with
+When a certificate is emitted, the prover chooses a bucket `B_l2` from the L2
+MSIS ladder with `Z_SQUARED <= B_l2`. The deterministic ceiling (field-capacity
+gate and fallback when no certificate is emitted) is
 
 ```text
-Z_SQUARED <= B_l2 <= L2_BOUND_SQUARED,
-Z_SQUARED = sum_{row, coeff} z[row][coeff]^2,
+Z_SQUARED <= L2_BOUND_SQUARED
 ```
 
-and proves `Z_SQUARED <= B_l2`, so the A-role is sized against `B_l2` rather than
-the loose deterministic `L2_BOUND_SQUARED`.
-The two tiers are the same security model: deterministic `L2_BOUND_SQUARED` is
-always sound from the operator-norm contract plus the digit-range check, and
-`B_l2` is the certificate-tightened version used only where the field can hold
-it.
-
-For exact-shell D=64 `(31, 11)`, each challenge also has fixed coefficient
-energy:
+derived from the same `β_inf` / digit-range contract as `num_digits_fold`:
+each coefficient of `z` is bounded by `balanced_digit_max(lb, num_digits_fold)`,
+so
 
 ```text
-||c||_2^2 = 31 + 4 · 11 = 75.
+L2_BOUND_SQUARED = coeffs · balanced_digit_max(lb, num_digits_fold)^2
 ```
 
-For one-hot or monomial witness blocks, multiplication by the selected monomial
-turns the row into a signed shift of `c`, so the sharper per-product fact is:
+(plus the four-square slack terms in the equality). This bounds **`z`**, never
+`‖s‖_2` or any per-block `s_l2_max` surrogate.
 
-```text
-||c * s||_2^2 = 75.
-```
-
-The planner may use this sharper one-hot bound only when the protocol actually
-certifies the corresponding one-hot witness contract at that level.
-Dense balanced digit levels should start with the operator-norm bound above.
+Until that path ships, A-role table lookup uses only Lemma 7 plus
+`l2_sq_from_linf` on `8 · ω · β_inf · ν` (Layer 1–2 above). No
+`Gamma · B · ‖s‖_2` triangle bound is used for security sizing.
 
 ### Four-Square Slack Certificate
 
@@ -1004,13 +1001,12 @@ At minimum:
   `||z||_inf <= eta` with the Euclidean norm used by the implementation.
 - State the accepted challenge distribution and its min-entropy after rejection.
 - Define `gamma(c)` as the negacyclic convolution operator norm.
-- Prove the folded response L2 bound from `gamma(c)` and the committed witness
-  norm.
+- State that A-role sizing uses the existing Lemma 7 bound converted by
+  `||v||_2^2 <= d · ||v||_inf^2` (no alternate weak-binding derivation).
 - State the four-square slack certificate and why the finite-field equality is
-  exact over the integers.
-- Re-derive the weak-binding theorem with L2 parameters and no hidden
-  coefficient-`L∞` bucket.
-- Explain the full cutover and remove superseded L∞ schedule/pricing language.
+  exact over the integers (certificate tier, S6+).
+- Explain the full cutover and remove superseded L∞ **estimator** language while
+  keeping the Lemma 7 collision formula.
 
 ## Architecture
 
@@ -1133,8 +1129,8 @@ Each gates specific slices, noted in parentheses.
   **Frozen on `main` until S2 certifies:** keep `ExactShell { count_mag1: 30, count_mag2: 12 }`
   with no `operator_norm_threshold` field. Do not land `(31, 11), T = 16` in
   `proof_optimized` presets until the S2 accepted-support lower bound is a checked artifact.
-- L2 bound policy for dense, one-hot, tensor, and terminal levels (the
-  `s_l2_max` source per level). (S4)
+- Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
+  level (not `‖s‖_2` surrogates). (S4, S8)
 - Certificate placement: whether sumcheck 2's `w_next(rho')` claim is batched
   into the stage-2 point or kept adjacent at the same point (the certified
   relation is identical either way). (S9)
@@ -1151,7 +1147,7 @@ Each gates specific slices, noted in parentheses.
 WAVE 0  (independent, start now, parallel)
   S1  op-norm predicate gamma_D(c) <= T     [akita-challenges, pure]   DONE
   S7  four-square decomposition helper      [pure algorithm]           DONE
-  S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]   DONE
+  S4  L2 norm primitives (Lemma 7 + l2_sq_from_linf)  [akita-types::sis]  DONE
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
 
 WAVE 1
@@ -1199,15 +1195,14 @@ Gates the production policy in S3.
 
 **S4 — L2 norm primitives.** *(independent, DONE)*
 `crates/akita-types/src/sis/norm_bound.rs`.
-Adds the squared-domain `s_l2_max_squared` (`D·(b/2)^2` dense, `1` one-hot),
-`beta_l2_squared = (Gamma·B·s_l2_max)^2`, `l2_bound_squared = W·beta_l2^2`, and
+Adds `committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` (Lemma 7 on
+fold response `z` via `β_inf = fold_witness_beta`, then `l2_sq_from_linf`), and
 the B/D `l2_sq_from_linf` (`||v||_2^2 <= d·||v||_inf^2`) conversion. Squared
 domain keeps every value an exact `u128` integer (`sqrt(D)` is irrational for
 `D ∈ {32, 128}`); the real square root is taken only at bucket/slack selection
-(S8). These are pure and not yet wired into rank pricing (first consumers: S5,
-S8, S11).
-Retain `fold_witness_beta` for digit sizing (`num_digits_fold`); it no longer
-prices the A-role rank.
+(S8). `fold_witness_beta` prices both `num_digits_fold` and the A-role collision
+through `β_inf`. Realized `Z_SQUARED` certificates are implemented in S8, not
+here.
 
 **S7 — Four-square decomposition helper.** *(independent, DONE)*
 `crates/akita-types/src/sis/four_square.rs`.
@@ -1238,7 +1233,8 @@ estimator crate.
 Regenerate L2 bucket ladders (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) + secure-rank floors;
 rename `collision_inf` to `collision_l2_sq` (`u64`, power-of-two ladder) across
 `AjtaiKeyParams`, `min_secure_rank`, `ceil_supported_collision`, and descriptor bytes; wire
-A-role `beta_l2 = Gamma·B·s_l2_max` and B/D `l2_sq_from_linf` pricing from S4.
+A-role Lemma-7 conversion (`8·ω·beta_inf·ν` via `l2_sq_from_linf`) and B/D
+`l2_sq_from_linf` pricing from S4.
 Remove the old committed-fold L∞ rank-pricing paths. Regen remains Sage +
 `scripts/gen_sis_table.py` against the pinned submodule.
 

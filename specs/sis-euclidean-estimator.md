@@ -285,8 +285,10 @@ on this for correctness.
 - Spec revision (this file) and parent cross-links.
 - S3 op-norm rejection (on branch).
 - S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
-- S5b *(in progress):* L2 `generated_sis_table.rs` stitch, `collision_l2_sq` rename,
-  L2 rank pricing wired from `norm_bound.rs`.
+- S5b *(done):* L2 `generated_sis_table.rs` stitch, `collision_l2_sq` rename,
+  Lemma 7 (`8·ω·β_inf·ν` → `l2_sq_from_linf`) rank pricing, planner schedule regen.
+  Submodule pinned to `malb/lattice-estimator` @ `27a581b` (`dbdc0b96`); re-run
+  `scripts/sis_golden/check.py` in a Sage env when bumping the pin.
 
 #### Follow-up — S11 (separate PR)
 

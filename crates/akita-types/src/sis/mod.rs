@@ -8,7 +8,7 @@
 //! leaf primitives together explicitly:
 //!
 //! ```ignore
-//! let norm_s  = norm_bound::rounded_up_collision_norm_s(family, d, decomp, &stage1, shape, is_root, k, r_vars, num_claims)?;
+//! let norm_s  = norm_bound::rounded_up_collision_norm_s(family, d, decomp, &stage1, shape, is_root, k, nu, r_vars, num_claims)?;
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
 //!     block_len, decomposition_digits::num_digits_s_commit(decomp, is_root))?;
 //! let n_a     = ajtai_key::min_secure_rank(family, d as u32, norm_s, width_s as u64)?;
@@ -33,8 +33,7 @@ pub use decomposition_digits::{
 };
 pub use four_square::four_squares;
 pub use norm_bound::{
-    beta_l2_squared, committed_fold_collision_l2_sq, fold_witness_beta, l2_bound_squared,
-    l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_w, s_l2_max_squared, FoldChallengeNorms,
-    FoldWitnessNorms,
+    committed_fold_collision_l2_sq, fold_witness_beta, l2_sq_from_linf,
+    ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessNorms,
 };

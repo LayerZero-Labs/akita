@@ -72,10 +72,10 @@ fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     };
     // Match the verifier-reachable derivation for this fixture's
     // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
-    // `bd_raw = 7`, `a_collision_raw = 7 * 1 * 2 = 14` → bucket `15`,
-    // `bd_collision_raw = 7` → bucket `7`.
-    let a_bucket: u32 = 15;
-    let bd_bucket: u32 = 7;
+    // B/D: `l2_sq_from_linf(32, 7) = 1568` → bucket `2048`.
+    // A: `collision_linf = 14` → `l2_sq_from_linf(32, 14) = 6272` → bucket `8192`.
+    let a_bucket: u128 = 8192;
+    let bd_bucket: u128 = 2048;
     let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
     params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
     params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);

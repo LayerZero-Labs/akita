@@ -89,14 +89,12 @@ pub fn ceil_supported_collision(
     } else if collision_l2_sq.is_power_of_two() {
         collision_l2_sq
     } else {
-        collision_l2_sq.next_power_of_two()
+        collision_l2_sq.checked_next_power_of_two()?
     };
     if bucket > max_bucket {
         return None;
     }
-    if sis_max_widths(sis_family, d, bucket).is_none() {
-        return None;
-    }
+    sis_max_widths(sis_family, d, bucket)?;
     Some(bucket)
 }
 

@@ -78,8 +78,9 @@ impl ChallengeShape {
     /// Effective per-logical-block operator-norm cap `Gamma` for this shape.
     ///
     /// This is the operator-norm analogue of [`Self::effective_l1_mass`]: the
-    /// cap that governs the L2 folded-witness and weak-binding bounds (the
-    /// `8·Gamma·nu·||z||_2` kernel price). A flat fold applies one sampled
+    /// cap used by operator-norm rejection (`gamma(c) <= Gamma`). A-role SIS
+    /// sizing still uses Lemma 7 (`8·ω·fold_witness_beta·ν`) with `ω` from
+    /// [`Self::effective_l1_mass`]. A flat fold applies one sampled
     /// challenge per block, so its cap is the family's
     /// [`SparseChallengeConfig::operator_norm_cap`]. A tensor fold materializes
     /// the product `α_p · β_q`, which is *not* itself operator-norm rejected;

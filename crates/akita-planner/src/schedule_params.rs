@@ -93,6 +93,7 @@ fn derive_candidate_level_params(
             TensorChallengeShape::Flat,
             false,
             policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
             r,
             1,
         ) else {
@@ -499,13 +500,11 @@ fn compute_root_direct_level_params(
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
-        let gamma =
-            u128::from(TensorChallengeShape::Flat.effective_operator_norm_cap(&stage1_config));
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
             sis_family,
             d as u32,
             num_claims,
-            gamma,
+            policy.ring_subfield_norm_bound,
             fold_challenge,
             fold_witness,
             decomp.log_commit_bound,
@@ -538,6 +537,7 @@ fn compute_root_direct_level_params(
         fold_challenge_shape,
         true,
         policy.onehot_chunk_size,
+        policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
     ) else {
@@ -719,6 +719,7 @@ pub fn find_schedule(
                 fold_challenge_shape,
                 true,
                 policy.onehot_chunk_size,
+                policy.ring_subfield_norm_bound,
                 r_vars,
                 t_vectors,
             ) else {
