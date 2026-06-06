@@ -47,7 +47,8 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
 3. **Akita (S5b, same PR #155):** stitch emitted rows into
    `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_inf` →
    `collision_l2_sq` (`u64`, power-of-two ladder), and wire L2 A-role / B/D pricing from
-   `norm_bound.rs` (see parent spec). Remove committed-fold L∞ rank-pricing paths.
+   `norm_bound.rs` (Lemma 7 plus `l2_sq_from_linf`; see parent spec). Drop only the
+   L∞ **estimator** table keys, not the `8·ω·fold_witness_beta·ν` collision formula.
 
 **S5a + S5b** in #155 deliver the offline estimator pin and the runtime L2 SIS floor cutover.
 **S11** (shipped schedule regen + drift under L2 pricing) remains a follow-up after S6.
@@ -108,9 +109,9 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
 
 ### Acceptance Criteria (S5a)
 
-- [x] lattice-estimator reliability PR open upstream
+- [x] lattice-estimator reliability PR merged upstream
   ([malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213));
-  Akita vendors its branch commit until merge, then repoints to `malb`.
+  Akita submodule repointed to `malb/lattice-estimator@main` at merge commit `27a581b`.
 - [x] `.gitmodules` records `third_party/lattice-estimator` at the vendored PR-branch
   commit; SHA also recorded in golden metadata and generated table provenance headers.
 - [x] `scripts/gen_sis_table.py` hardened: deterministic output order, `--jobs`
@@ -131,9 +132,9 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
   `lgsa`), and ranks `1..=20` (`scripts/stitch_generated_sis_table.py`).
 - [x] `collision_inf` renamed to `collision_l2_sq` on `AjtaiKeyParams`, `min_secure_rank`,
   `ceil_supported_collision`, and descriptor bytes (`u128` LE).
-- [x] A-role pricing uses `beta_l2_squared` / operator-norm cap `Gamma`; B/D roles use
-  `l2_sq_from_linf`. No production path calls `committed_fold_collision_s` or prices the
-  A-role via `8·ω·β·ν`.
+- [x] A-role pricing uses Lemma 7 (`8·ω·fold_witness_beta·ν`) converted by
+  `l2_sq_from_linf` into `collision_l2_sq`; B/D roles use `l2_sq_from_linf` on
+  `2^lb - 1`. No production path drops the `8` or `ν` factors.
 - [x] `cargo test -p akita-types` passes; shipped planner tables regened via
   `gen_schedule_tables` so `assert_schedule_stays_within_audited_sis_widths` and
   `generated_schedule_tables_match_find_schedule` pass under L2 floors.
@@ -302,18 +303,17 @@ Shipped schedule regen + drift guards under L2 tables (needs S6 proof shape).
 
 ### Submodule pin
 
-**Current (vendored from LE PR branch):**
+**Current (malb main, post-#213 merge):**
 
 | Field | Value |
 |-------|-------|
-| Remote | `https://github.com/quangvdao/lattice-estimator.git` |
-| Branch | `fix/sis-euclidean-reliability` |
-| Commit | `85110c8010aaace222e4c57ff5bd9c611bdb36c1` |
-| Upstream PR | [malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213) |
+| Remote | `https://github.com/malb/lattice-estimator.git` |
+| Branch | `main` |
+| Commit | `27a581bb8e9d49f5e9e2db315bd48ac769d5f5f5` |
+| Upstream PR | [malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213) (merged 2026-06-06) |
 
-**After malb merge:** repoint `.gitmodules` to `https://github.com/malb/lattice-estimator`
-and bump `third_party/lattice-estimator` to the merge commit on `main`. Refresh golden CSV
-and table provenance headers in the same bump PR.
+Historical vendored PR branch: `quangvdao/lattice-estimator@fix/sis-euclidean-reliability`
+at `85110c8010aaace222e4c57ff5bd9c611bdb36c1` (ancestor of the merge commit).
 
 Historical baseline before reliability work: `2bfb768`.
 

@@ -1,7 +1,7 @@
 {
   "description": "21 work items \u00d7 ranks [1, 5, 20] = 63 golden cells across q32/q64/q128.",
-  "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",
-  "lattice_estimator_sha": "85110c8010aaace222e4c57ff5bd9c611bdb36c1",
+  "lattice_estimator_remote": "https://github.com/malb/lattice-estimator.git",
+  "lattice_estimator_sha": "27a581bb8e9d49f5e9e2db315bd48ac769d5f5f5",
   "golden_ranks": [
     1,
     5,
