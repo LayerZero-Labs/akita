@@ -200,6 +200,96 @@ The only obligation carried into step 2 of Execution is the `K > 1` weighting de
 - **ZK.** The `y_ring` hiding masks (`zk_base_mask_lcs(y_rings.len() * D, …)`, `recursive.rs:316-317`) and the `relation_claim_mask` `y`-contribution are removed; the fused trace term gets its own deferred ZK relation analogous to the stage-2 final relation (`stage2.rs:464-533`). The hiding-witness cursor accounting must still close (`zk_hiding_cursor == hiding_witness.len()`).
 - **End-to-end roundtrip.** All batched / recursive / terminal / zero-fold e2e tests pass for every active profile (`fp128_d128`, the `fp32`/`fp64` extension profiles, dense + onehot, ZK and non-ZK).
 
+### Soundness derivation gate
+
+The old protocol proves two facts about the same folded opening:
+
+```text
+public-output M row:  Y = sum_j b_j · e_folded_j
+external trace check: TraceOpen(Y) = target
+```
+
+where `target` is the incoming opening in the non-EOR path. The new protocol
+does not expose `Y`; instead it proves the single linear statement
+
+```text
+sum_{(y,x)} W(y,x) · TraceWeight_target(y,x) = target
+```
+
+inside stage 2, batched by a fresh transcript challenge `gamma_tr`.
+
+The stage-2 sum-check input becomes
+
+```text
+relation_claim_without_public_rows + gamma_tr · target
+```
+
+and the corner oracle becomes
+
+```text
+W · alpha_eval · M_without_public + gamma_tr · W · TraceWeight_target
+```
+
+plus the unchanged range term. Let `Delta_rel` be the prover's error in the
+ordinary relation term after removing public-output rows, and let
+`Delta_tr` be its error in the trace projection of the committed `e_hat`
+segment. A prover that passes the stage-2 input check with an incorrect trace
+target satisfies
+
+```text
+Delta_rel + gamma_tr · Delta_tr = 0.
+```
+
+For any fixed transcript prefix and committed witness with `Delta_tr != 0`,
+there is at most one value of `gamma_tr` that cancels the error. Thus the fused
+check adds at most one `1 / |challenge field|` batching failure term, in
+addition to the existing sum-check low-degree soundness error. If `Delta_tr = 0`,
+the committed `e_hat` segment already projects to the target; the remaining
+condition is the ordinary relation soundness for `M_without_public`.
+
+The extractor therefore obtains the same witness as before, except that the
+opening relation is extracted from the committed `e_hat` digits directly:
+
+```text
+TraceOpen(sum_j b_j · e_folded_j) = target.
+```
+
+Because stage 1 still range-checks the committed digit witness and stage 2
+still binds the final oracle value of the same witness table, dropping the
+public-output row does not introduce a new witness degree of freedom. The
+removed `Y` was an auxiliary linear image of `e_hat`; the fused term queries
+that image through a public multilinear functional instead of receiving it as
+wire data.
+
+For EOR paths the target is not the raw protocol-point opening. The EOR
+sum-check final oracle already includes the transparent tail equality factor:
+
+```text
+root:      final_claim =
+             sum_claim row_coeff[claim]
+               · witness_claim(rho)
+               · factor_by_point[claim_to_point[claim]]
+
+recursive: final_claim = final_witness(rho) · final_factor.
+```
+
+The no-y-ring fused trace term must therefore bind `final_claim` directly. It
+does this by using the protocol point derived from `rho` for the packed inner
+opening and scaling the public trace weights by the same EOR tail factor(s):
+
+```text
+root trace weights:      row_coeff[claim] · factor_by_point[point] · b_claim,j
+recursive trace weights: final_factor · b_j
+trace input claim:       gamma_tr · final_claim
+```
+
+Equivalently, one could divide by a nonzero factor and bind the unscaled
+protocol-point opening, but the scaled-weight formulation avoids an inversion
+and also handles the root multipoint sum uniformly. This is the acceptance gate
+for the non-ZK EOR implementation: the verifier must no longer reconstruct an
+EOR output from `y_ring`; it must use the EOR final claim as the fused trace
+target.
+
 ### Non-Goals
 
 - Changing the ring-switch challenge `alpha`, the `tau0`/`tau1` row batching, the digit-decomposition bases, or the stage-1 range check.
@@ -215,7 +305,7 @@ The only obligation carried into step 2 of Execution is the `K > 1` weighting de
 
 - [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
 - [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_y` and the verifier `RingRelationInstance` construction.
-- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` via a fused stage-2 term with batching scalar `gamma_tr`, and no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
+- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term with batching scalar `gamma_tr`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
 - [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables regenerated with `regen_diff` reflecting the new (smaller) sizing.
 - [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
 - [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal + `gamma_tr` sample).
@@ -271,7 +361,7 @@ The saving is modest (single-digit to low-double-digit KB total), but the discus
 
 Recommended order, soundness first:
 
-1. **Soundness derivation (gating).** Write the special-soundness/extraction argument for: dropping the public-output `M` row, and adding the fused term `gamma_tr · w(r) · trace_weight_v(r)` with input contribution `gamma_tr · opening` under the normalized trace convention. Confirm the extractor still recovers a witness whose folded opening projects to `opening`, and bound the added soundness error. Do this before code.
+1. **Soundness derivation (gating).** Write the special-soundness/extraction argument for: dropping the public-output `M` row, and adding the fused term `gamma_tr · w(r) · trace_weight_v(r)` with input contribution `gamma_tr · opening` under the normalized non-EOR trace convention, or `gamma_tr · final_claim` with EOR-scaled trace weights. Confirm the extractor still recovers a witness whose folded opening projects to the selected target, and bound the added soundness error. Do this before code.
 2. **Weighting derivation + unit anchor.** Derive `trace_weight_v(x, y)` for `K = 1` against the `e_hat` segment and current `build_w_coeffs` ordering, then `K in {2,4,8}` via `SubfieldParams::h_exponents`. The closed-form final-point evaluations are already worked out in *Verifier final-point evaluation*; the unit test should check the round table's final-point contraction against them. Land the algebraic unit test against `field_reduction` before wiring the sum-check.
 3. **Verifier non-ZK.** Add `gamma_tr`, the trace addend in `AkitaStage2Verifier::{input_claim, expected_output_claim}`, and remove the `y_ring` absorb + external check across recursive/root/terminal.
 4. **Prover non-ZK.** Build `trace_weight`, add the term to stage-2 per-round evals, drop `y_rings` from the RHS / proof structs.

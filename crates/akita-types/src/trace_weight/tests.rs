@@ -249,9 +249,11 @@ fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
 mod ring_block_weights {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector};
-    use akita_field::{AkitaError, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
+    use akita_field::{AkitaError, Ext2, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
     use std::marker::PhantomData;
 
+    type F2 = Fp32<251>;
+    type E2 = Ext2<F2>;
     type F4 = Fp32<251>;
     type E4 = RingSubfieldFpExt4<F4>;
     type F8 = Fp32<251>;
@@ -426,6 +428,16 @@ mod ring_block_weights {
             let actual = trace_weight_witness_dot(&witness, &table);
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn closed_form_matches_dense_table_ring_block_weights_k2() {
+        run_closed_form_matches_dense_table::<F2, E2, 4, 2>();
+    }
+
+    #[test]
+    fn witness_dot_matches_ring_subfield_inner_product_ring_block_weights_k2() {
+        run_witness_dot_matches_ring_subfield_inner_product::<F2, E2, 4, 2>();
     }
 
     #[test]
