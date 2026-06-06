@@ -268,6 +268,7 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
     trace_opening: L,
+    #[cfg(feature = "zk")] trace_opening_public: L,
     trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
@@ -334,6 +335,8 @@ where
         alpha,
     } = rs;
     let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    #[cfg(feature = "zk")]
+    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
     let trace_compact =
         if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
             None
@@ -399,7 +402,7 @@ where
         let mut stage2_prover = stage2_prover_result?;
         let mut stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
         if trace_compact.is_some() {
-            stage2_public_input += trace_opening_claim;
+            stage2_public_input += trace_opening_public_claim;
         }
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -507,6 +510,8 @@ where
             sumcheck_challenges,
             opening: w_eval,
             #[cfg(feature = "zk")]
+            opening_public: w_eval_masked,
+            #[cfg(feature = "zk")]
             zk_hiding,
         },
     })
@@ -549,6 +554,7 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
     trace_opening: L,
+    #[cfg(feature = "zk")] trace_opening_public: L,
     trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -609,6 +615,8 @@ where
         alpha: _,
     } = rs;
     let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    #[cfg(feature = "zk")]
+    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
     let trace_compact =
         if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
             None
@@ -651,9 +659,13 @@ where
             gamma_tr,
             trace_opening_claim,
         )?;
+        let mut stage2_public_input = relation_claim_public;
+        if trace_compact.is_some() {
+            stage2_public_input += trace_opening_public_claim;
+        }
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
-                relation_claim_public,
+                stage2_public_input,
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
                 stage2_round_pads,
@@ -700,6 +712,8 @@ pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: Field
     pub(in crate::protocol::flow) proof: ExtensionOpeningReductionProof<L>,
     pub(in crate::protocol::flow) rho: Vec<L>,
     pub(in crate::protocol::flow) final_claim: L,
+    #[cfg(feature = "zk")]
+    pub(in crate::protocol::flow) final_claim_public: L,
     pub(in crate::protocol::flow) final_factor: L,
 }
 
@@ -823,6 +837,9 @@ where
         |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
     )?;
+    #[cfg(feature = "zk")]
+    let final_claim_public =
+        masked_sumcheck_final_claim(input_claim, &sumcheck_proof_masked, &rho)?;
     let (final_witness, final_factor_from_table) =
         prover.final_witness_and_factor_evals().ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -848,6 +865,8 @@ where
         },
         rho,
         final_claim,
+        #[cfg(feature = "zk")]
+        final_claim_public,
         final_factor,
     })
 }
@@ -914,6 +933,8 @@ where
         hint,
         sumcheck_challenges,
         opening: expected_opening,
+        #[cfg(feature = "zk")]
+        opening_public,
         log_basis: _,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -980,24 +1001,11 @@ where
         }
         (y_rings, folded)
     };
-    #[cfg(feature = "zk")]
-    let y_rings_masked = y_rings
-        .iter()
-        .map(|y_ring| {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-            Ok(*y_ring + y_garbage)
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(not(feature = "zk"))]
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
     let (trace_opening, trace_scale) = match &reduction {
@@ -1036,6 +1044,7 @@ where
                     internal_claims[0],
                     reduction.final_factor,
                 )?;
+                (reduction.final_claim, reduction.final_factor)
             }
             None => {
                 if internal_claims[0] != expected_opening {
@@ -1043,9 +1052,14 @@ where
                         "recursive opening does not match carried claim".to_string(),
                     ));
                 }
+                (internal_claims[0], L::one())
             }
         }
-        (internal_claims[0], L::one())
+    };
+    #[cfg(feature = "zk")]
+    let trace_opening_public = match &reduction {
+        Some(reduction) => reduction.final_claim_public,
+        None => opening_public,
     };
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
@@ -1085,11 +1099,10 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        #[cfg(not(feature = "zk"))]
         gamma_tr,
-        #[cfg(feature = "zk")]
-        L::zero(),
         trace_opening,
+        #[cfg(feature = "zk")]
+        trace_opening_public,
         trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
@@ -1213,25 +1226,11 @@ where
         }
         (y_rings, folded)
     };
-    #[cfg(feature = "zk")]
-    let y_rings_masked = y_rings
-        .iter()
-        .map(|y_ring| {
-            let (_, y_garbage) = current_state.zk_hiding.take_ring::<D>()?;
-            Ok(*y_ring + y_garbage)
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(not(feature = "zk"))]
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
     let (trace_opening, trace_scale) = match &reduction {
@@ -1270,6 +1269,7 @@ where
                     internal_claims[0],
                     reduction.final_factor,
                 )?;
+                (reduction.final_claim, reduction.final_factor)
             }
             None => {
                 if internal_claims[0] != expected_opening {
@@ -1277,9 +1277,14 @@ where
                         "recursive opening does not match carried claim".to_string(),
                     ));
                 }
+                (internal_claims[0], L::one())
             }
         }
-        (internal_claims[0], L::one())
+    };
+    #[cfg(feature = "zk")]
+    let trace_opening_public = match &reduction {
+        Some(reduction) => reduction.final_claim_public,
+        None => current_state.opening_public,
     };
 
     let ring_opening_points = prepared_points
@@ -1318,11 +1323,10 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        #[cfg(not(feature = "zk"))]
         gamma_tr,
-        #[cfg(feature = "zk")]
-        L::zero(),
         trace_opening,
+        #[cfg(feature = "zk")]
+        trace_opening_public,
         trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]

@@ -71,15 +71,7 @@ pub fn trace_stage2_enabled(
     has_extension_opening_reduction: bool,
 ) -> bool {
     let _ = (lp, has_extension_opening_reduction);
-    #[cfg(feature = "zk")]
-    {
-        let _ = extension_degree;
-        false
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        trace_stage2_supported(extension_degree)
-    }
+    trace_stage2_supported(extension_degree)
 }
 
 /// Lagrange block weights for the degree-one closed-form trace evaluator.

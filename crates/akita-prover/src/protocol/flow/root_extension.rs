@@ -15,6 +15,8 @@ pub(in crate::protocol::flow) struct RootExtensionOpeningReduction<C: FieldCore>
     pub(in crate::protocol::flow) proof: ExtensionOpeningReductionProof<C>,
     pub(in crate::protocol::flow) rho: Vec<C>,
     pub(in crate::protocol::flow) final_claim: C,
+    #[cfg(feature = "zk")]
+    pub(in crate::protocol::flow) final_claim_public: C,
     pub(in crate::protocol::flow) factors_by_point: Vec<C>,
 }
 
@@ -377,6 +379,9 @@ where
         |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
     )?;
+    #[cfg(feature = "zk")]
+    let final_claim_public =
+        masked_sumcheck_final_claim(input_claim, &sumcheck_proof_masked, &rho)?;
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(
             "root extension-opening reduction has not reached a final point".to_string(),
@@ -416,6 +421,8 @@ where
         },
         rho,
         final_claim,
+        #[cfg(feature = "zk")]
+        final_claim_public,
         factors_by_point,
     })
 }

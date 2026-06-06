@@ -36,11 +36,10 @@ use akita_sumcheck::{
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
-#[cfg(not(feature = "zk"))]
-use akita_transcript::labels::CHALLENGE_TRACE_BATCH;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_TRACE_BATCH,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -76,8 +75,6 @@ use akita_types::{
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
-#[cfg(feature = "zk")]
-use std::array::from_fn;
 use std::sync::Arc;
 
 mod inputs;
@@ -141,6 +138,7 @@ where
     build_trace_stage2_compact(&layout, &opening, live_x_cols)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_root_stage2_trace_compact<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
@@ -188,6 +186,9 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub sumcheck_challenges: Vec<L>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
     pub opening: L,
+    /// Transcript-visible masked handle for `opening`.
+    #[cfg(feature = "zk")]
+    pub opening_public: L,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -246,13 +247,6 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         L: ExtField<F>,
     {
         Ok(L::from_base_slice(self.take_values(L::EXT_DEGREE)?))
-    }
-
-    fn take_ring<const D: usize>(&mut self) -> Result<(usize, CyclotomicRing<F, D>), AkitaError> {
-        let start = self.cursor;
-        let coeffs = self.take_values(D)?;
-        let ring = CyclotomicRing::from_coefficients(from_fn(|idx| coeffs[idx]));
-        Ok((start, ring))
     }
 
     fn into_proof(self, commitment: ZkHidingCommitment<F>) -> Result<ZkHidingProof<F>, AkitaError> {
@@ -359,6 +353,27 @@ impl<F: FieldCore> ZkHidingProverState<F> {
             self.take_compressed_rounds(rounds, akita_types::EXTENSION_OPENING_REDUCTION_DEGREE)?;
         Ok((partial_masks, round_pads))
     }
+}
+
+#[cfg(feature = "zk")]
+fn masked_sumcheck_final_claim<E: FieldCore>(
+    input_claim: E,
+    proof: &SumcheckProofMasked<E>,
+    challenges: &[E],
+) -> Result<E, AkitaError> {
+    if proof.masked_round_polys.len() != challenges.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: challenges.len(),
+            actual: proof.masked_round_polys.len(),
+        });
+    }
+    Ok(proof
+        .masked_round_polys
+        .iter()
+        .zip(challenges)
+        .fold(input_claim, |claim, (poly, r)| {
+            poly.eval_from_hint(&claim, r)
+        }))
 }
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -645,7 +660,7 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     root_commit_params: &LevelParams,
     num_vars: usize,
     num_claims: usize,
-    num_root_points: usize,
+    _num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -673,9 +688,6 @@ where
             &mut rng,
         );
     }
-    // Root-level ring masks: one D-coefficient ring per requested opening point.
-    // Later added to `y_rings` before the root ring-switch / sumcheck flow.
-    hiding_witness.extend((0..num_root_points * D).map(|_| F::random(&mut rng)));
     if let Some(root_step) = fold_steps.first() {
         // Terminal folds skip Stage 1 and consume only Stage 2 pads.
         let root_has_stage1 = fold_steps.len() > 1;
@@ -704,9 +716,6 @@ where
                     &mut rng,
                 );
             }
-            // Recursive-level ring mask: added to that level's `y_ring` before
-            // ring-switching so the current ring-relation value is hidden.
-            hiding_witness.extend((0..D).map(|_| F::random(&mut rng)));
             // Terminal recursive folds skip Stage 1 and consume only Stage 2 pads.
             let include_stage1 = step_idx + 1 < fold_steps.len();
             append_zk_level_pad_slots::<F, L>(

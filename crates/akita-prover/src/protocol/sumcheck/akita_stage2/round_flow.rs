@@ -99,6 +99,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         trace.truncate(half);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fold_trace_for_w_update(
         trace: &mut Vec<E>,
         live_x_cols: usize,

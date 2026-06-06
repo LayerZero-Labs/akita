@@ -249,6 +249,7 @@ mod y_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_witness_relation_at_trace_indices(
         &self,
         rel: &mut [E; 3],
@@ -268,6 +269,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_witness_relation_at_trace_indices_signed(
         &self,
         rel: &mut [E::MulU64Accum; 6],
@@ -287,6 +289,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_witness_relation_at_corner(
         &self,
         rel: &mut [E; 3],
@@ -308,6 +311,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_witness_relation_at_corner_signed(
         &self,
         rel: &mut [E::MulU64Accum; 6],

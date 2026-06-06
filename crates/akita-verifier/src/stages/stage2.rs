@@ -193,6 +193,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     #[cfg(feature = "zk")]
     #[allow(dead_code)]
     relation_claim_mask: ZkR1csLinearCombination<E>,
+    #[cfg(feature = "zk")]
+    trace_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
     alpha_evals_y: Vec<E>,
@@ -219,6 +221,7 @@ where
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
@@ -269,6 +272,8 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             witness_oracle,
             stage1_point,
             alpha_evals_y,
@@ -293,6 +298,7 @@ where
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
         cleartext_witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
         stage1_point: Vec<E>,
@@ -317,6 +323,8 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             Stage2WitnessOracle::Cleartext {
                 witness: cleartext_witness,
                 physical_w_len,
@@ -346,6 +354,7 @@ where
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
         w_eval: E,
         #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
         stage1_point: Vec<E>,
@@ -370,6 +379,8 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             Stage2WitnessOracle::ClaimedEval {
                 eval: w_eval,
                 #[cfg(feature = "zk")]
@@ -490,6 +501,7 @@ where
         let mut input_mask = ZkR1csLinearCombination::zero();
         input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
         input_mask.add_scaled(E::one(), &self.relation_claim_mask);
+        input_mask.add_scaled(E::one(), &self.trace_claim_mask);
         Ok(input_mask)
     }
 
@@ -516,6 +528,13 @@ where
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = self.row_eval(x_challenges)?;
+        let trace_val = if let Some(trace) = &self.trace {
+            let trace_weight =
+                eval_trace_stage2_wire_for_degree(trace, y_challenges, x_challenges)?;
+            trace.gamma_tr * trace_weight
+        } else {
+            E::zero()
+        };
 
         // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
         //
@@ -540,7 +559,7 @@ where
         };
         let mut scaled_virtual = ZkR1csLinearCombination::zero();
         scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_lc);
-        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val;
+        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val + trace_val;
         relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim)?;
         Ok(())
     }

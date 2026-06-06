@@ -1,13 +1,9 @@
 use super::*;
-#[cfg(not(feature = "zk"))]
-use akita_transcript::labels::CHALLENGE_TRACE_BATCH;
-use akita_types::TraceStage2Wire;
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
-#[cfg(not(feature = "zk"))]
 use akita_types::{
     trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_recursive,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
-    RingSubfieldEncoding,
+    RingSubfieldEncoding, TraceStage2Wire,
 };
 
 /// Verify one intermediate recursive fold level.
@@ -166,11 +162,8 @@ where
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    // The zk EOR final relation consumes the shared y-ring opening masks, so it
-    // stays in this outer flow rather than inside the sumcheck driver. It carries
-    // `(final_claim_lc, factor)` for that deferred relation.
     #[cfg(feature = "zk")]
-    let mut zk_eor_final: Option<(ZkR1csLinearCombination<L>, L)> = None;
+    let mut zk_eor_final: Option<(ZkMaskedClaim<L>, L)> = None;
     #[cfg(not(feature = "zk"))]
     let mut eor_trace_final: Option<(L, L)> = None;
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
@@ -268,7 +261,6 @@ where
                     input_claim_mask,
                     transcript,
                     |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                    zk_relations,
                     zk_hiding_cursor,
                 )?;
             let factor =
@@ -293,34 +285,7 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    #[cfg(not(feature = "zk"))]
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
-    #[cfg(feature = "zk")]
-    {
-        let y_masks = zk_base_mask_lcs::<L>(D, zk_hiding_cursor);
-        let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
-            &CyclotomicRing::<F, D>::zero(),
-            y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
-            &prepared_points[0].packed_inner_point,
-        )?;
-        if let Some((final_claim, factor)) = &zk_eor_final {
-            let mut residual = final_claim.clone();
-            residual.add_scaled(-*factor, &y_opening);
-            zk_push_linear_zero(
-                zk_relations,
-                "recursive extension-opening reduction output",
-                residual,
-            )?;
-        } else {
-            let true_opening = ZkRelationAccumulator::unmask_lc(
-                current_state.opening,
-                &current_state.opening_mask,
-            );
-            let mut residual = y_opening;
-            residual.add_scaled(-L::one(), &true_opening);
-            zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
-        }
-    }
 
     let ring_opening_points = prepared_points
         .iter()
@@ -422,14 +387,29 @@ where
     };
     let relation_claim =
         relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, v_typed, commitment_u)?;
-    #[cfg(not(feature = "zk"))]
+    #[cfg(feature = "zk")]
+    let mut trace_claim_mask = ZkR1csLinearCombination::<L>::zero();
     let trace_wire = if !trace_stage2_enabled(lp, L::EXT_DEGREE, reduction_check.is_some()) {
         None
     } else {
+        #[cfg(not(feature = "zk"))]
         let (trace_opening, trace_scale) = eor_trace_final
             .as_ref()
             .copied()
             .unwrap_or((current_state.opening, L::one()));
+        #[cfg(feature = "zk")]
+        let (trace_opening, trace_scale, trace_opening_mask) =
+            if let Some((final_claim, factor)) = &zk_eor_final {
+                (final_claim.public, *factor, final_claim.mask.clone())
+            } else {
+                (
+                    current_state.opening,
+                    L::one(),
+                    current_state.opening_mask.clone(),
+                )
+            };
+        #[cfg(feature = "zk")]
+        trace_claim_mask.add_scaled(gamma_tr, &trace_opening_mask);
         Some(build_trace_stage2_wire_recursive::<F, L, D>(
             lp,
             &relation_instance.segment_layout(lp)?,
@@ -442,10 +422,7 @@ where
         )?)
     };
     #[cfg(feature = "zk")]
-    let trace_wire: Option<TraceStage2Wire<F, L, D>> = None;
-    #[cfg(feature = "zk")]
-    let relation_claim_mask =
-        zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, 0, &[])?;
+    let relation_claim_mask = ZkR1csLinearCombination::<L>::zero();
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
     let (batching_coeff, s_claim, stage1_point) = match &proof {
@@ -508,6 +485,8 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             &terminal_proof.final_witness,
             w_len,
             stage1_point,
@@ -532,6 +511,8 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             level_proof.stage2.next_w_eval(),
             #[cfg(feature = "zk")]
             zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
@@ -1100,7 +1081,7 @@ where
     }
 }
 
-#[cfg(not(feature = "zk"))]
+#[allow(clippy::too_many_arguments)]
 fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     lp: &LevelParams,
     segment: &RingRelationSegmentLayout,
