@@ -15,6 +15,14 @@ pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
     pub inner_opening_ring: CyclotomicRing<F, D>,
 }
 
+/// One ring-valued trace term for a contiguous range of logical trace blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceRingBlockOpening<F: FieldCore, const D: usize> {
+    pub block_offset: usize,
+    pub block_rings: Vec<CyclotomicRing<F, D>>,
+    pub packed_inner_point: CyclotomicRing<F, D>,
+}
+
 /// Opening weights consumed by [`eval_trace_weight_at_point`].
 pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
     /// `K = 1`: scalar block weights with one packed inner opening per term.
@@ -23,8 +31,7 @@ pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
     },
     /// `K > 1`: embedded block rings and ψ-packed inner point.
     Ring {
-        block_rings: &'a [CyclotomicRing<F, D>],
-        packed_inner_point: &'a CyclotomicRing<F, D>,
+        terms: &'a [TraceRingBlockOpening<F, D>],
         _ext: PhantomData<E>,
     },
 }
@@ -88,23 +95,13 @@ where
             }
             eval_at_point_k1::<F, E, D>(layout, ring_point, col_point, terms)
         }
-        TraceOpeningAtPoint::Ring {
-            block_rings,
-            packed_inner_point,
-            ..
-        } => {
+        TraceOpeningAtPoint::Ring { terms, .. } => {
             if K == 1 {
                 return Err(AkitaError::InvalidInput(
                     "ring opening weights require K > 1".to_string(),
                 ));
             }
-            eval_at_point_k_extension::<F, E, D>(
-                layout,
-                ring_point,
-                col_point,
-                block_rings,
-                packed_inner_point,
-            )
+            eval_at_point_k_extension::<F, E, D>(layout, ring_point, col_point, terms)
         }
     }
 }
@@ -171,16 +168,15 @@ fn eval_at_point_k_extension<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     ring_point: &[E],
     col_point: &[E],
-    block_rings: &[CyclotomicRing<F, D>],
-    packed_inner_point: &CyclotomicRing<F, D>,
+    terms: &[TraceRingBlockOpening<F, D>],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
 {
-    if block_rings.len() != layout.num_blocks {
+    if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "ring opening weights do not match layout".to_string(),
+            "ring opening terms must be non-empty".to_string(),
         ));
     }
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
@@ -189,16 +185,30 @@ where
 
     let ring_eq = lagrange_weights(ring_point)?;
     let mut out = E::zero();
-    for (block, block_ring) in block_rings.iter().enumerate().take(layout.num_blocks) {
-        let block_inner = trace_open_ring_mle_dot::<F, E, D>(
-            block_ring,
-            &ring_eq,
-            packed_inner_point,
-            layout.ring_bits,
-        )?;
-        for (plane, &gadget) in gadget_row.iter().enumerate() {
-            let col = layout.opening_digit_col_index(block, plane);
-            out += eq_weight_at_index(col_point, col) * gadget * block_inner;
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_rings.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "ring opening term exceeds layout block count".to_string(),
+            ));
+        }
+        for (local_block, block_ring) in term.block_rings.iter().enumerate() {
+            let block = term.block_offset + local_block;
+            let block_inner = trace_open_ring_mle_dot::<F, E, D>(
+                block_ring,
+                &ring_eq,
+                &term.packed_inner_point,
+                layout.ring_bits,
+            )?;
+            for (plane, &gadget) in gadget_row.iter().enumerate() {
+                let col = layout.opening_digit_col_index(block, plane);
+                out += eq_weight_at_index(col_point, col) * gadget * block_inner;
+            }
         }
     }
     Ok(out)

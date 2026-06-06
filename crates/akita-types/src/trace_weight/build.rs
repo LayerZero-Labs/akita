@@ -4,7 +4,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use crate::field_reduction::trace_open_ring_row;
 use crate::{gadget_row_scalars, RingSubfieldEncoding};
 
-use super::eval::TraceFieldBlockOpening;
+use super::eval::{TraceFieldBlockOpening, TraceRingBlockOpening};
 use super::layout::TraceWeightLayout;
 
 /// Write `gadget[plane] · block_rows[block][ring_coord]` into the witness table.
@@ -112,9 +112,26 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    if block_rings.len() != layout.num_blocks {
+    let term = TraceRingBlockOpening {
+        block_offset: 0,
+        block_rings: block_rings.to_vec(),
+        packed_inner_point: *packed_inner_point,
+    };
+    build_trace_weight_table_ring_terms(layout, &[term])
+}
+
+/// Build the full Boolean trace-weight table for ring (`K > 1`) terms.
+pub fn build_trace_weight_table_ring_terms<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    terms: &[TraceRingBlockOpening<F, D>],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "block ring count does not match num_blocks".to_string(),
+            "ring trace terms must be non-empty".to_string(),
         ));
     }
     layout.validate_ring_dimension::<D>()?;
@@ -124,10 +141,32 @@ where
     let ring_len = layout.ring_len();
     let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
 
-    for (block, block_ring) in block_rings.iter().enumerate() {
-        let row = trace_open_ring_row::<F, E, D>(block_ring, packed_inner_point, layout.ring_bits)?;
-        let row_base = block * ring_len;
-        block_rows[row_base..row_base + ring_len].copy_from_slice(&row);
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_rings.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "ring trace term exceeds layout block count".to_string(),
+            ));
+        }
+        for (local_block, block_ring) in term.block_rings.iter().enumerate() {
+            let row = trace_open_ring_row::<F, E, D>(
+                block_ring,
+                &term.packed_inner_point,
+                layout.ring_bits,
+            )?;
+            let row_base = (term.block_offset + local_block) * ring_len;
+            for (dst, value) in block_rows[row_base..row_base + ring_len]
+                .iter_mut()
+                .zip(row)
+            {
+                *dst += value;
+            }
+        }
     }
 
     let mut table = vec![E::zero(); layout.table_len()?];

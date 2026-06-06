@@ -1,7 +1,8 @@
 use super::{
     build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
-    build_trace_weight_table_ring_block_weights, eval_trace_weight_at_point, trace_weight_mle_eval,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceWeightLayout,
+    build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
+    eval_trace_weight_at_point, trace_weight_mle_eval, TraceFieldBlockOpening, TraceOpeningAtPoint,
+    TraceRingBlockOpening, TraceWeightLayout,
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
@@ -249,7 +250,7 @@ fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
 mod ring_block_weights {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector};
-    use akita_field::{AkitaError, Ext2, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
+    use akita_field::{AkitaError, Ext2, Fp32, LiftBase, RingSubfieldFpExt4, RingSubfieldFpExt8};
     use std::marker::PhantomData;
 
     type F2 = Fp32<251>;
@@ -269,6 +270,18 @@ mod ring_block_weights {
             num_blocks: 2,
             num_digits_open: 2,
             r_vars: 1,
+            log_basis: LOG_BASIS,
+        }
+    }
+
+    fn ring_block_weights_multi_term_layout<const D: usize>() -> TraceWeightLayout {
+        TraceWeightLayout {
+            ring_bits: D.trailing_zeros() as usize,
+            col_bits: 3,
+            opening_digit_offset: 0,
+            num_blocks: 4,
+            num_digits_open: 2,
+            r_vars: 2,
             log_basis: LOG_BASIS,
         }
     }
@@ -360,13 +373,17 @@ mod ring_block_weights {
             let ring_point = random_extension_point(&mut rng, layout.ring_bits);
             let col_point = random_extension_point(&mut rng, layout.col_bits);
             let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let term = TraceRingBlockOpening {
+                block_offset: 0,
+                block_rings: block_rings.clone(),
+                packed_inner_point: packed_inner,
+            };
             let closed = eval_trace_weight_at_point::<F, E, D, K>(
                 &layout,
                 &ring_point,
                 &col_point,
                 TraceOpeningAtPoint::Ring {
-                    block_rings: &block_rings,
-                    packed_inner_point: &packed_inner,
+                    terms: std::slice::from_ref(&term),
                     _ext: PhantomData,
                 },
             )
@@ -422,6 +439,80 @@ mod ring_block_weights {
                 for ring_coord in 0..(1usize << layout.ring_bits) {
                     let idx = layout.witness_index(col, ring_coord);
                     witness[idx] = E::lift_base(folded.coefficients()[ring_coord]);
+                }
+            }
+
+            let actual = trace_weight_witness_dot(&witness, &table);
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn multiple_ring_terms_match_dense_table_and_witness_dot_k4() {
+        let layout = ring_block_weights_multi_term_layout::<8>();
+        let mut rng = StdRng::seed_from_u64(0x7ACE_3004);
+
+        for _ in 0..8 {
+            let inner_0 = random_extension_point(&mut rng, trace_inner_open_len::<F4, E4, 8>());
+            let inner_1 = random_extension_point(&mut rng, trace_inner_open_len::<F4, E4, 8>());
+            let packed_0 = packed_inner_point::<F4, E4, 8>(&inner_0);
+            let packed_1 = packed_inner_point::<F4, E4, 8>(&inner_1);
+            let block_rings_0 =
+                block_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1)).unwrap();
+            let block_rings_1 =
+                block_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1)).unwrap();
+            let terms = vec![
+                TraceRingBlockOpening {
+                    block_offset: 0,
+                    block_rings: block_rings_0,
+                    packed_inner_point: packed_0,
+                },
+                TraceRingBlockOpening {
+                    block_offset: 2,
+                    block_rings: block_rings_1,
+                    packed_inner_point: packed_1,
+                },
+            ];
+            let table = build_trace_weight_table_ring_terms::<F4, E4, 8>(&layout, &terms).unwrap();
+
+            let ring_point = random_extension_point(&mut rng, layout.ring_bits);
+            let col_point = random_extension_point(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let closed = eval_trace_weight_at_point::<F4, E4, 8, 4>(
+                &layout,
+                &ring_point,
+                &col_point,
+                TraceOpeningAtPoint::Ring {
+                    terms: &terms,
+                    _ext: PhantomData,
+                },
+            )
+            .unwrap();
+            assert_eq!(dense, closed);
+
+            let folded_blocks: Vec<CyclotomicRing<F4, 8>> = (0..layout.num_blocks)
+                .map(|_| random_folded_block::<F4, 8>(&mut rng))
+                .collect();
+            let expected = terms.iter().fold(E4::zero(), |acc, term| {
+                let combined = term.block_rings.iter().enumerate().fold(
+                    CyclotomicRing::<F4, 8>::zero(),
+                    |sum, (local_block, block_ring)| {
+                        sum + folded_blocks[term.block_offset + local_block] * *block_ring
+                    },
+                );
+                acc + recover_ring_subfield_inner_product::<F4, E4, 8>(
+                    &combined,
+                    &term.packed_inner_point,
+                )
+                .unwrap()
+            });
+
+            let mut witness = vec![E4::zero(); layout.table_len().unwrap()];
+            for (block, folded) in folded_blocks.iter().enumerate() {
+                let col = layout.opening_digit_col_index(block, 0);
+                for ring_coord in 0..(1usize << layout.ring_bits) {
+                    let idx = layout.witness_index(col, ring_coord);
+                    witness[idx] = E4::lift_base(folded.coefficients()[ring_coord]);
                 }
             }
 
