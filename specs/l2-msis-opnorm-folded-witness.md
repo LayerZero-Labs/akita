@@ -1113,8 +1113,8 @@ Follow-up implementation is split across branch `quang/s3-s5-sis-estimator-spec`
 (spec-first) and later PRs:
 
 - **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
-  lattice-estimator reliability fixes + pinned submodule + hardened
-  `scripts/gen_sis_table.py` + Akita golden (spec in flight; implementation after LE PR 1).
+  lattice-estimator reliability fixes, vendored LE PR branch submodule, hardened
+  `scripts/gen_sis_table.py`, and Akita golden (in #155 with spec).
 - **S5b**: L2 table regen, `collision_l2_sq` rename, wire A-role pricing (blocked on S5a).
 - **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
   production D=64 shell/threshold; see below).
@@ -1226,12 +1226,12 @@ Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
 **Do not** change `proof_optimized` D=64 production presets until S2 certifies the
 accepted-support lower bound.
 
-**S5a — Euclidean SIS table regen (lattice-estimator).** *(spec-approved before code)*
+**S5a — Euclidean SIS table regen (lattice-estimator).** *(in #155)*
 [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).
-Land general reliability fixes in `malb/lattice-estimator`, pin
-`third_party/lattice-estimator`, harden `scripts/gen_sis_table.py`, and check in Akita-local
-golden CSV under `scripts/sis_golden/`. No Rust estimator crate. This slice does not change
-protocol code on its own.
+Vendor the open lattice-estimator reliability PR branch as `third_party/lattice-estimator`,
+harden `scripts/gen_sis_table.py`, and check in Akita-local golden CSV under
+`scripts/sis_golden/`. Repoint to `malb/lattice-estimator` after upstream merge. No Rust
+estimator crate. This slice does not change protocol code on its own.
 
 **S5b — L2 SIS tables + key rename.** *(S4, S5a)*
 `crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.

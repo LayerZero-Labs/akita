@@ -4,7 +4,7 @@
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
-| Revised     | 2026-06-05 (upstream-first; supersedes Rust-port draft) |
+| Revised     | 2026-06-06 (vendor LE PR branch; S5a in #155) |
 | Status      | proposed |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
 
@@ -23,9 +23,10 @@ That path is fragile: the checkout is unpinned, degenerate Euclidean instances c
 parallel sweeps can crash under Sage + `fork`, and the bucket ladder in the generator can
 drift from the checked-in Rust table.
 
-**Strategy (revised):** fix and harden lattice-estimator upstream with **general**
-reliability and performance improvements, pin it as a git submodule in Akita, and keep
-`scripts/gen_sis_table.py` as the canonical offline regen driver.
+**Strategy (revised):** land general reliability fixes in lattice-estimator upstream,
+**vendor the open upstream PR branch directly** as `third_party/lattice-estimator` until
+`malb/lattice-estimator` merges the fix, then repoint the submodule URL to `malb` and bump
+the SHA. Keep `scripts/gen_sis_table.py` as the canonical offline regen driver.
 No in-repo Rust reimplementation of `cost_euclidean`.
 Akita-specific golden data and width-search regression live **only in this repo**.
 
@@ -39,9 +40,10 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
    Euclidean SIS estimation is reliable, bounded-time, and safe to run in parallel sweeps.
    Upstream PRs must stand on their own merit (correctness, robustness, docs); they must
    not mention Akita, carry Akita-only tests, or exist solely to unblock our table regen.
-2. **Akita (S5a):** pin `malb/lattice-estimator` under `third_party/lattice-estimator`,
-   harden `scripts/gen_sis_table.py` (provenance header, `--jobs`, remove interim hacks once
-   upstream fixes land), and check in Akita-local golden CSV plus a regen/check script.
+2. **Akita (S5a, same PR as spec):** pin `third_party/lattice-estimator` at the open
+   lattice-estimator reliability PR branch commit, harden `scripts/gen_sis_table.py`
+   (provenance header, `--jobs`, no `SIGALRM` hang guard), and check in Akita-local golden
+   CSV plus a regen/check script.
 3. **Akita (S5b, separate slice):** stitch emitted rows into
    `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_l2_sq`, wire
    L2 A-role pricing (see parent spec).
@@ -52,20 +54,17 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 ### Invariants
 
 - **Pinned reference, not ambient checkout.** Regen uses `third_party/lattice-estimator` at
-  a recorded submodule commit. Generated table headers and golden metadata record that SHA.
+  a recorded submodule commit on the vendored lattice-estimator PR branch until upstream
+  merges; then the submodule URL moves to `malb/lattice-estimator` at the merge commit.
+  Generated table headers and golden metadata record remote URL + SHA.
   Normal Rust CI and prover/verifier builds do **not** require Sage or an initialized
   submodule.
 - **Single source of truth.** Security bits come from lattice-estimator
   `SIS.lattice(..., norm=2, red_cost_model=BDGL16)` on the `cost_euclidean` path.
   Akita does not maintain a parallel numeric core.
-- **Conservative degenerate policy (Akita generator only).** When upstream cannot produce a
-  finite cost in bounded time (historically: `_beta_find_root` bracket failure falling
-  through to diverging `_beta_simple` at `δ → 1`), `scripts/gen_sis_table.py` treats the
-  cell as **insecure** (`log2(rop) = −∞` for width-search purposes). That can only
-  under-report secure width (force slightly higher SIS rank), never over-report it.
-  After upstream lands a general bounded-time fix, the generator drops the interim
-  `SIGALRM` wall-clock guard and relies on the upstream behavior; golden refresh verifies
-  no drift on the Akita grid.
+- **Bounded-time estimation.** The vendored lattice-estimator fix completes Euclidean SIS
+  calls in bounded time (including degenerate `δ → 1` knees). `scripts/gen_sis_table.py`
+  maps `rop = ∞` to `+∞` security bits and does not use a wall-clock `SIGALRM` guard.
 - **Monotone width search.** For fixed `(n, q, collision_l2_sq, rank)`, security bits are
   non-increasing in commitment width `w` outside a possible degenerate `-inf` prefix at very
   small `w`. The hybrid search in `gen_sis_table.py` assumes this; Akita golden checks
@@ -107,14 +106,13 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 
 ### Acceptance Criteria (S5a)
 
-- [ ] lattice-estimator general fixes merged upstream (see Execution; baseline pin moves
-  from `2bfb768` to the release containing them).
-- [ ] `.gitmodules` records `third_party/lattice-estimator` →
-  `https://github.com/malb/lattice-estimator`; submodule SHA recorded in this spec,
-  `scripts/README` or regen docs, and generated table provenance headers.
-- [ ] `scripts/gen_sis_table.py` hardened: deterministic output order, `--jobs` for parallel
-  regen via **subprocess** shards (not in-process Sage fork), provenance header with
-  submodule SHA; `SIGALRM` timeout removed once upstream fix is pinned.
+- [ ] lattice-estimator reliability PR open upstream
+  ([malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213));
+  Akita vendors its branch commit until merge, then repoints to `malb`.
+- [x] `.gitmodules` records `third_party/lattice-estimator` at the vendored PR-branch
+  commit; SHA also recorded in golden metadata and generated table provenance headers.
+- [x] `scripts/gen_sis_table.py` hardened: deterministic output order, `--jobs`
+  subprocess shards, provenance header with submodule SHA, `SIGALRM` removed.
 - [ ] Akita golden CSV checked in under `scripts/sis_golden/` (≥50 cells: three families,
   `d ∈ {32,64,128,256}`, ranks `{1,5,20}`, buckets including known degenerate knees).
   Metadata records submodule SHA used to produce it.
@@ -154,7 +152,7 @@ Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **
 ### Architecture
 
 ```text
-third_party/lattice-estimator/     pinned submodule (malb/lattice-estimator)
+third_party/lattice-estimator/     pinned submodule (LE PR branch until malb merge)
 
 scripts/gen_sis_table.py           canonical regen driver (Sage)
 scripts/sis_golden/
@@ -271,14 +269,15 @@ in Euclidean SIS length bound (cf. existing large-`q` overflow issues elsewhere)
 Defer if PR 1 is already large; Akita `--jobs` uses subprocess sharding and does not depend
 on this for correctness.
 
-#### Akita PR A — S5a implementation (after upstream PR 1 merges)
+#### Akita PR #155 — spec + S3 + S5a (single PR)
 
-- Add `third_party/lattice-estimator` submodule at merged release SHA.
-- Harden `scripts/gen_sis_table.py` (`--jobs`, provenance, drop `SIGALRM`).
-- Add `scripts/sis_golden/{golden.csv,check.py,README.md}`.
-- Docs / `AGENTS.md` pointer.
+- Spec revision (this file) and parent cross-links.
+- S3 op-norm rejection (already on branch).
+- S5a: `third_party/lattice-estimator` vendored at the open LE PR branch commit;
+  hardened `scripts/gen_sis_table.py`; initial `scripts/sis_golden/` grid + check;
+  `AGENTS.md` pointer.
 
-#### Akita PR B — S5b (unchanged dependency)
+#### Follow-up — S5b (separate PR)
 
 L2 table stitch, rename, A-role pricing (parent spec).
 
@@ -286,28 +285,34 @@ L2 table stitch, rename, A-role pricing (parent spec).
 
 | Slice | Deliverable | Depends on |
 |-------|-------------|------------|
-| **Spec** (this PR) | revised `sis-euclidean-estimator.md` + parent cross-links | — |
-| **LE PR 1** | upstream reliability | — |
+| **PR #155** | spec + S3 + S5a (vendored LE PR branch) | LE PR 1 branch exists |
+| **LE PR 1** | upstream reliability ([malb#213](https://github.com/malb/lattice-estimator/pull/213)) | — |
 | **LE PR 2** | spawn pool (optional) | — |
-| **S5a** | submodule + gen script + Akita golden | LE PR 1 merged |
-| **S5b** | L2 tables + rename + pricing | S5a, S4 |
+| **S5b** | L2 tables + rename + pricing | PR #155, S4 |
 | **S11** | schedule regen + drift | S5b, S6 |
 
-### Baseline pin
+### Submodule pin
 
-Initial submodule pin: `2bfb768` (`2bfb7682e73e814f31720d7c1d71f4367fa80712`).
-S5a implementation moves the pin to the first upstream release containing PR 1.
+**Current (vendored from LE PR branch):**
 
-Interim (before upstream merge): `gen_sis_table.py` keeps `SIGALRM` / sorted entries /
-local fork of fixes in a **LayerZero fork branch** only for development; do not commit
-Akita-local patches into `third_party/` long term.
+| Field | Value |
+|-------|-------|
+| Remote | `https://github.com/quangvdao/lattice-estimator.git` |
+| Branch | `fix/sis-euclidean-reliability` |
+| Commit | `85110c8010aaace222e4c57ff5bd9c611bdb36c1` |
+| Upstream PR | [malb/lattice-estimator#213](https://github.com/malb/lattice-estimator/pull/213) |
+
+**After malb merge:** repoint `.gitmodules` to `https://github.com/malb/lattice-estimator`
+and bump `third_party/lattice-estimator` to the merge commit on `main`. Refresh golden CSV
+and table provenance headers in the same bump PR.
+
+Historical baseline before reliability work: `2bfb768`.
 
 ### Risks
 
-- **Upstream review latency:** S5a implementation blocked until LE PR 1 merges; interim
-  SIGALRM + fork branch unblocks local golden work only.
-- **Numeric drift at knees:** Golden CSV in Akita catches drift on bump; conservative
-  `-inf` policy limits secure-width over-estimation.
+- **Submodule repoint on merge:** When malb#213 lands, bump URL + SHA and refresh golden.
+- **Numeric drift at knees:** Golden CSV catches drift on bump; review diffs when moving
+  from vendored branch to malb `main`.
 - **Regen wall time:** Subprocess `--jobs` + ladder truncation; no Rust speedup.
 
 ## References
