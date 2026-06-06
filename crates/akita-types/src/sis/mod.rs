@@ -23,6 +23,7 @@ pub mod ajtai_key;
 pub mod decomposition_digits;
 pub mod four_square;
 mod generated_sis_table;
+pub mod l2_certificate;
 pub mod norm_bound;
 
 pub use ajtai_key::{ceil_supported_collision, min_secure_rank, AjtaiKeyParams, SisModulusFamily};
@@ -32,6 +33,10 @@ pub use decomposition_digits::{
     num_digits_fold, num_digits_for_bound, num_digits_open, num_digits_s_commit,
 };
 pub use four_square::four_squares;
+pub use l2_certificate::{
+    certificate_mode, select_b_l2, stage1_claims, stage2_claims, validate_realized_bucket,
+    L2CertMode, L2GateInputs, Stage1Claim, Stage2Claim,
+};
 pub use norm_bound::{
     beta_l2_squared, committed_fold_collision_s, fold_witness_beta, l2_bound_squared,
     l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
