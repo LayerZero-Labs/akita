@@ -8,20 +8,18 @@ use akita_field::{
 };
 
 use crate::{
-    block_rings_at_opening, build_trace_weight_table_field_block_weights,
+    block_rings_at_opening, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_block_weights, eval_trace_weight_at_point, lagrange_weights,
     ClaimIncidenceSummary, LevelParams, RingRelationSegmentLayout, RingSubfieldEncoding,
-    TraceOpeningAtPoint, TraceWeightLayout,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceWeightLayout,
 };
 
 /// Owned public trace-opening data used by the fused stage-2 trace term.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceStage2OpeningOwned<F: FieldCore, E: FieldCore, const D: usize> {
-    /// Degree-one path: scalar block weights and base-field inner coordinates.
+    /// Degree-one path: scalar block-weight terms with their packed inner openings.
     Field {
-        block_weights: Vec<F>,
-        inner_open: Vec<F>,
-        inner_opening_ring: CyclotomicRing<F, D>,
+        terms: Vec<TraceFieldBlockOpening<F, D>>,
     },
     /// Extension path: ring block weights and psi-packed inner point.
     Ring {
@@ -34,14 +32,7 @@ pub enum TraceStage2OpeningOwned<F: FieldCore, E: FieldCore, const D: usize> {
 impl<F: FieldCore, E: FieldCore, const D: usize> TraceStage2OpeningOwned<F, E, D> {
     fn as_trace_opening(&self) -> TraceOpeningAtPoint<'_, F, E, D> {
         match self {
-            Self::Field {
-                block_weights,
-                inner_opening_ring,
-                ..
-            } => TraceOpeningAtPoint::Field {
-                block_weights,
-                inner_opening_ring,
-            },
+            Self::Field { terms } => TraceOpeningAtPoint::Field { terms },
             Self::Ring {
                 block_rings,
                 packed_inner_point,
@@ -130,7 +121,6 @@ pub fn trace_weight_layout_from_segment(
 
 /// Build a degree-one owned trace opening from explicit factors.
 pub fn trace_stage2_opening_owned_k1<F, E, const D: usize>(
-    inner_open: &[F],
     block_weights: &[F],
     inner_opening_ring: &CyclotomicRing<F, D>,
 ) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
@@ -138,10 +128,28 @@ where
     F: FieldCore,
     E: FieldCore,
 {
-    Ok(TraceStage2OpeningOwned::Field {
+    trace_stage2_opening_owned_field_terms(&[TraceFieldBlockOpening {
+        block_offset: 0,
         block_weights: block_weights.to_vec(),
-        inner_open: inner_open.to_vec(),
         inner_opening_ring: *inner_opening_ring,
+    }])
+}
+
+/// Build a degree-one owned trace opening from explicit block-offset terms.
+pub fn trace_stage2_opening_owned_field_terms<F, E, const D: usize>(
+    terms: &[TraceFieldBlockOpening<F, D>],
+) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore,
+{
+    if terms.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "field trace terms must be non-empty".to_string(),
+        ));
+    }
+    Ok(TraceStage2OpeningOwned::Field {
+        terms: terms.to_vec(),
     })
 }
 
@@ -208,15 +216,9 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let table = match opening {
-        TraceStage2OpeningOwned::Field {
-            block_weights,
-            inner_opening_ring,
-            ..
-        } => build_trace_weight_table_field_block_weights::<F, E, D>(
-            layout,
-            block_weights,
-            inner_opening_ring,
-        )?,
+        TraceStage2OpeningOwned::Field { terms } => {
+            build_trace_weight_table_field_terms::<F, E, D>(layout, terms)?
+        }
         TraceStage2OpeningOwned::Ring {
             block_rings,
             packed_inner_point,
@@ -284,7 +286,7 @@ where
             actual: openings.len(),
         });
     }
-    Ok(incidence
+    incidence
         .public_rows()
         .iter()
         .flat_map(|row| row.claim_indices())
@@ -294,13 +296,16 @@ where
                 .ok_or(AkitaError::InvalidProof)?;
             let opening = *openings.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
             Ok(acc + coefficient.mul_base(opening))
-        })?)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{reduce_inner_opening_to_ring_element, BasisMode};
+    use crate::{
+        build_trace_weight_table_field_block_weights, reduce_inner_opening_to_ring_element,
+        BasisMode,
+    };
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -344,8 +349,7 @@ mod tests {
         let inner_ring =
             reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
         let opening =
-            trace_stage2_opening_owned_k1::<F, F, D>(&inner_open, &block_weights, &inner_ring)
-                .unwrap();
+            trace_stage2_opening_owned_k1::<F, F, D>(&block_weights, &inner_ring).unwrap();
         let wire = TraceStage2Wire {
             layout,
             opening,

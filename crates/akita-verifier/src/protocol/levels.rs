@@ -35,16 +35,19 @@ use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
+#[cfg(not(feature = "zk"))]
+use akita_transcript::labels::CHALLENGE_TRACE_BATCH;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TRACE_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 #[cfg(feature = "zk")]
 use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, ABSORB_ZK_HIDING_COMMITMENT};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::check_tensor_extension_opening_claim;
+use akita_types::TraceStage2Wire;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
@@ -65,8 +68,8 @@ use akita_types::{
 use akita_types::{tensor_equality_factor_eval_at_point, EXTENSION_OPENING_REDUCTION_DEGREE};
 #[cfg(not(feature = "zk"))]
 use akita_types::{
-    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_k1,
-    trace_weight_layout_from_segment, TraceStage2Wire,
+    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_field_terms,
+    trace_weight_layout_from_segment, TraceFieldBlockOpening,
 };
 #[cfg(not(feature = "zk"))]
 use extension_opening_reduction::ExtensionOpeningReductionVerifier;
@@ -884,43 +887,42 @@ where
             rs.ring_bits,
             num_trace_blocks,
         )?;
-        let row = incidence_summary
-            .public_rows()
-            .first()
-            .ok_or(AkitaError::InvalidProof)?;
-        let prepared = &prepared_points[row.point_idx()];
-        let base_point: Vec<F> = prepared
-            .padded_point
-            .iter()
-            .map(|coord| {
-                coord.degree_one_base().ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "challenge field element had no base coordinate".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()?;
         let trace_opening = batched_openings_per_row
             .iter()
             .fold(C::zero(), |acc, opening| acc + *opening);
-        let mut block_weights = Vec::with_capacity(num_trace_blocks);
-        for &coefficient in &row_coefficients {
+        let mut terms = Vec::with_capacity(incidence_summary.num_claims());
+        for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
+            let point_idx = *incidence_summary
+                .claim_to_point()
+                .get(claim_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = prepared_points
+                .get(point_idx)
+                .ok_or(AkitaError::InvalidProof)?;
             let coefficient = coefficient.degree_one_base().ok_or_else(|| {
                 AkitaError::InvalidInput("trace row coefficient had no base coordinate".to_string())
             })?;
-            for &weight in &prepared.ring_opening_point.b {
-                block_weights.push(coefficient * weight);
-            }
+            let block_offset = claim_idx
+                .checked_mul(batched_lp.num_blocks)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("trace block offset overflow".to_string())
+                })?;
+            terms.push(TraceFieldBlockOpening {
+                block_offset,
+                block_weights: prepared
+                    .ring_opening_point
+                    .b
+                    .iter()
+                    .map(|&weight| coefficient * weight)
+                    .collect(),
+                inner_opening_ring: prepared.packed_inner_point,
+            });
         }
         Some(TraceStage2Wire {
             layout,
             gamma_tr,
             trace_opening_claim: trace_input_claim(gamma_tr, trace_opening),
-            opening: trace_stage2_opening_owned_k1(
-                &base_point[..alpha_bits],
-                &block_weights,
-                &prepared.packed_inner_point,
-            )?,
+            opening: trace_stage2_opening_owned_field_terms(&terms)?,
         })
     };
     #[cfg(feature = "zk")]

@@ -7,12 +7,19 @@ use crate::{gadget_row_scalars, lagrange_weights, RingSubfieldEncoding};
 
 use super::layout::TraceWeightLayout;
 
+/// One scalar-block trace term for a contiguous range of logical trace blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
+    pub block_offset: usize,
+    pub block_weights: Vec<F>,
+    pub inner_opening_ring: CyclotomicRing<F, D>,
+}
+
 /// Opening weights consumed by [`eval_trace_weight_at_point`].
 pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    /// `K = 1`: scalar block weights and the basis-correct packed inner opening.
+    /// `K = 1`: scalar block weights with one packed inner opening per term.
     Field {
-        block_weights: &'a [F],
-        inner_opening_ring: &'a CyclotomicRing<F, D>,
+        terms: &'a [TraceFieldBlockOpening<F, D>],
     },
     /// `K > 1`: embedded block rings and ψ-packed inner point.
     Ring {
@@ -73,22 +80,13 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
 {
     match opening {
-        TraceOpeningAtPoint::Field {
-            block_weights,
-            inner_opening_ring,
-        } => {
+        TraceOpeningAtPoint::Field { terms } => {
             if K != 1 {
                 return Err(AkitaError::InvalidInput(
                     "field opening weights require K = 1".to_string(),
                 ));
             }
-            eval_at_point_k1::<F, E, D>(
-                layout,
-                ring_point,
-                col_point,
-                block_weights,
-                inner_opening_ring,
-            )
+            eval_at_point_k1::<F, E, D>(layout, ring_point, col_point, terms)
         }
         TraceOpeningAtPoint::Ring {
             block_rings,
@@ -116,37 +114,57 @@ fn eval_at_point_k1<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     ring_point: &[E],
     col_point: &[E],
-    block_weights: &[F],
-    inner_opening_ring: &CyclotomicRing<F, D>,
+    terms: &[TraceFieldBlockOpening<F, D>],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FromPrimitiveInt + FieldCore,
 {
-    if block_weights.len() != layout.num_blocks {
+    if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "field opening weights do not match layout".to_string(),
+            "field opening terms must be non-empty".to_string(),
         ));
     }
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
-    let mut col_factor = E::zero();
-    for (block, &block_weight) in block_weights.iter().enumerate() {
-        for (plane, &gadget) in gadget_row.iter().enumerate() {
-            let col = layout.opening_digit_col_index(block, plane);
-            col_factor += eq_weight_at_index(col_point, col) * E::lift_base(block_weight) * gadget;
-        }
-    }
     let ring_eq = lagrange_weights(ring_point)?;
-    let inner_factor = inner_opening_ring
-        .coefficients()
-        .iter()
-        .zip(ring_eq.iter())
-        .fold(E::zero(), |acc, (&coeff, &weight)| {
-            acc + E::lift_base(coeff) * weight
-        });
-    Ok(col_factor * inner_factor)
+    let mut out = E::zero();
+
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_weights.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "field opening term exceeds layout block count".to_string(),
+            ));
+        }
+
+        let mut col_factor = E::zero();
+        for (local_block, &block_weight) in term.block_weights.iter().enumerate() {
+            let block = term.block_offset + local_block;
+            for (plane, &gadget) in gadget_row.iter().enumerate() {
+                let col = layout.opening_digit_col_index(block, plane);
+                col_factor +=
+                    eq_weight_at_index(col_point, col) * E::lift_base(block_weight) * gadget;
+            }
+        }
+        let inner_factor = term
+            .inner_opening_ring
+            .coefficients()
+            .iter()
+            .zip(ring_eq.iter())
+            .fold(E::zero(), |acc, (&coeff, &weight)| {
+                acc + E::lift_base(coeff) * weight
+            });
+        out += col_factor * inner_factor;
+    }
+
+    Ok(out)
 }
 
 fn eval_at_point_k_extension<F, E, const D: usize>(

@@ -1,11 +1,13 @@
 use super::*;
+#[cfg(not(feature = "zk"))]
 use akita_transcript::labels::CHALLENGE_TRACE_BATCH;
+use akita_types::TraceStage2Wire;
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 #[cfg(not(feature = "zk"))]
 use akita_types::{
     trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_k1,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TraceStage2Wire,
+    RingSubfieldEncoding,
 };
 
 /// Verify one intermediate recursive fold level.
@@ -446,7 +448,6 @@ where
             rs.col_bits,
             rs.ring_bits,
             &prepared_points[0],
-            alpha_bits,
             current_state.opening,
             gamma_tr,
         )?)
@@ -1117,7 +1118,6 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
-    alpha_bits: usize,
     opening: L,
     gamma_tr: L,
 ) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
@@ -1126,23 +1126,11 @@ where
     L: ExtField<F> + RingSubfieldEncoding<F> + FieldCore + FromPrimitiveInt,
 {
     let layout = trace_weight_layout_from_segment(lp, segment, col_bits, ring_bits, lp.num_blocks)?;
-    let base_point: Vec<F> = prepared
-        .padded_point
-        .iter()
-        .map(|coord| {
-            coord.degree_one_base().ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "challenge field element had no base coordinate".to_string(),
-                )
-            })
-        })
-        .collect::<Result<_, _>>()?;
     Ok(TraceStage2Wire {
         layout,
         gamma_tr,
         trace_opening_claim: trace_input_claim(gamma_tr, opening),
         opening: trace_stage2_opening_owned_k1(
-            &base_point[..alpha_bits],
             &prepared.ring_opening_point.b,
             &prepared.packed_inner_point,
         )?,

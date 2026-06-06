@@ -105,11 +105,12 @@ pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs}
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
     build_trace_stage2_compact, build_trace_weight_table_field_block_weights,
-    build_trace_weight_table_ring_block_weights, eval_trace_stage2_wire_for_degree,
-    eval_trace_weight_at_point, trace_block_weights_k1, trace_input_claim,
-    trace_opening_from_incidence, trace_stage2_enabled, trace_stage2_opening_owned_k1,
+    build_trace_weight_table_field_terms, build_trace_weight_table_ring_block_weights,
+    eval_trace_stage2_wire_for_degree, eval_trace_weight_at_point, trace_block_weights_k1,
+    trace_input_claim, trace_opening_from_incidence, trace_stage2_enabled,
+    trace_stage2_opening_owned_field_terms, trace_stage2_opening_owned_k1,
     trace_stage2_opening_owned_ring, trace_stage2_supported, trace_weight_evals_for_witness,
-    trace_weight_layout_from_segment, TraceOpeningAtPoint, TraceStage2OpeningOwned,
-    TraceStage2Wire, TraceWeightLayout,
+    trace_weight_layout_from_segment, TraceFieldBlockOpening, TraceOpeningAtPoint,
+    TraceStage2OpeningOwned, TraceStage2Wire, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;

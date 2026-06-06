@@ -1,6 +1,7 @@
 use super::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
-    eval_trace_weight_at_point, trace_weight_mle_eval, TraceOpeningAtPoint, TraceWeightLayout,
+    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_ring_block_weights, eval_trace_weight_at_point, trace_weight_mle_eval,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceWeightLayout,
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
@@ -97,13 +98,17 @@ fn closed_form_matches_dense_table_field_block_weights() {
         let ring_point = random_point(&mut rng, layout.ring_bits);
         let col_point = random_point(&mut rng, layout.col_bits);
         let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+        let term = TraceFieldBlockOpening {
+            block_offset: 0,
+            block_weights: block_weights.clone(),
+            inner_opening_ring,
+        };
         let closed = eval_trace_weight_at_point::<F, F, D, 1>(
             &layout,
             &ring_point,
             &col_point,
             TraceOpeningAtPoint::Field {
-                block_weights: &block_weights,
-                inner_open: &inner_open,
+                terms: std::slice::from_ref(&term),
             },
         )
         .unwrap();
@@ -133,14 +138,70 @@ fn closed_form_matches_dense_table_with_opening_digit_offset() {
         let ring_point = random_point(&mut rng, layout.ring_bits);
         let col_point = random_point(&mut rng, layout.col_bits);
         let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+        let term = TraceFieldBlockOpening {
+            block_offset: 0,
+            block_weights: block_weights.clone(),
+            inner_opening_ring,
+        };
         let closed = eval_trace_weight_at_point::<F, F, D8, 1>(
             &layout,
             &ring_point,
             &col_point,
             TraceOpeningAtPoint::Field {
-                block_weights: &block_weights,
-                inner_open: &inner_open,
+                terms: std::slice::from_ref(&term),
             },
+        )
+        .unwrap();
+        assert_eq!(dense, closed);
+    }
+}
+
+#[test]
+fn closed_form_matches_dense_table_multiple_field_terms() {
+    let layout = TraceWeightLayout {
+        ring_bits: 7,
+        col_bits: 3,
+        opening_digit_offset: 0,
+        num_blocks: 4,
+        num_digits_open: 2,
+        r_vars: 2,
+        log_basis: LOG_BASIS,
+    };
+    let mut rng = StdRng::seed_from_u64(0x7ACE_0005);
+
+    for _ in 0..16 {
+        let inner_open_0 = random_point(&mut rng, layout.ring_bits);
+        let inner_open_1 = random_point(&mut rng, layout.ring_bits);
+        let inner_ring_0 =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_open_0, BasisMode::Lagrange)
+                .unwrap();
+        let inner_ring_1 =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_open_1, BasisMode::Lagrange)
+                .unwrap();
+        let block_weights_0 = lagrange_weights(&random_point(&mut rng, 1)).unwrap();
+        let block_weights_1 = lagrange_weights(&random_point(&mut rng, 1)).unwrap();
+        let terms = vec![
+            TraceFieldBlockOpening {
+                block_offset: 0,
+                block_weights: block_weights_0,
+                inner_opening_ring: inner_ring_0,
+            },
+            TraceFieldBlockOpening {
+                block_offset: 2,
+                block_weights: block_weights_1,
+                inner_opening_ring: inner_ring_1,
+            },
+        ];
+        let table = build_trace_weight_table_field_terms::<F, F, D>(&layout, &terms).unwrap();
+
+        let ring_point = random_point(&mut rng, layout.ring_bits);
+        let col_point = random_point(&mut rng, layout.col_bits);
+        let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+        let closed = eval_trace_weight_at_point::<F, F, D, 1>(
+            &layout,
+            &ring_point,
+            &col_point,
+            TraceOpeningAtPoint::Field { terms: &terms },
         )
         .unwrap();
         assert_eq!(dense, closed);

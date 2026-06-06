@@ -4,6 +4,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use crate::field_reduction::trace_open_ring_row;
 use crate::{gadget_row_scalars, RingSubfieldEncoding};
 
+use super::eval::TraceFieldBlockOpening;
 use super::layout::TraceWeightLayout;
 
 /// Write `gadget[plane] · block_rows[block][ring_coord]` into the witness table.
@@ -43,24 +44,54 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FromPrimitiveInt,
 {
-    if block_weights.len() != layout.num_blocks {
+    let term = TraceFieldBlockOpening {
+        block_offset: 0,
+        block_weights: block_weights.to_vec(),
+        inner_opening_ring: *inner_opening_ring,
+    };
+    build_trace_weight_table_field_terms(layout, &[term])
+}
+
+/// Build the full Boolean trace-weight table for scalar (`K = 1`) terms.
+pub fn build_trace_weight_table_field_terms<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    terms: &[TraceFieldBlockOpening<F, D>],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FromPrimitiveInt,
+{
+    if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "block weight count does not match num_blocks".to_string(),
+            "field trace terms must be non-empty".to_string(),
         ));
     }
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
 
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
-    let inner_coeffs = inner_opening_ring.coefficients();
     let ring_len = layout.ring_len();
     let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
 
-    for (block, block_weight) in block_weights.iter().enumerate() {
-        let block_weight_e = E::lift_base(*block_weight);
-        let row_base = block * ring_len;
-        for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
-            block_rows[row_base + ring_coord] = block_weight_e * E::lift_base(*coeff);
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_weights.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "field trace term exceeds layout block count".to_string(),
+            ));
+        }
+        let inner_coeffs = term.inner_opening_ring.coefficients();
+        for (local_block, block_weight) in term.block_weights.iter().enumerate() {
+            let block_weight_e = E::lift_base(*block_weight);
+            let row_base = (term.block_offset + local_block) * ring_len;
+            for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
+                block_rows[row_base + ring_coord] += block_weight_e * E::lift_base(*coeff);
+            }
         }
     }
 

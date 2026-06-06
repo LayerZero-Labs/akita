@@ -638,12 +638,12 @@ fn run_zk_dense_cursor_binding_negatives() {
             let last = proof.zk_hiding.hiding_witness.len() - 1;
             proof.zk_hiding.hiding_witness[last] += F::one();
         });
-        assert_rejects("root y_rings", &|proof| {
+        assert_rejects("root v", &|proof| {
             let root = proof
                 .root
                 .as_fold_mut()
                 .expect("fixture should use a folded root");
-            root.y_rings = bumped_flat_ring_vec(&root.y_rings);
+            root.v = bumped_flat_ring_vec(&root.v);
         });
         assert_rejects("stage1 s_claim", &|proof| {
             let root = proof
@@ -871,12 +871,7 @@ fn run_zk_dense_batched_shape_cases() {
             "same-point batched ZK proof should consume hiding masks"
         );
         match &proof.root {
-            AkitaBatchedRootProof::Fold(root) => {
-                assert_eq!(root.y_rings.coeff_len() / D, 1);
-            }
-            AkitaBatchedRootProof::Terminal(root) => {
-                assert_eq!(root.y_rings.coeff_len() / D, 1);
-            }
+            AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {}
             AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("same-point fixture should use a folded or terminal ZK proof")
             }
@@ -956,12 +951,7 @@ fn run_zk_dense_batched_shape_cases() {
         )
         .expect("multipoint zk batched prove");
         match &proof.root {
-            AkitaBatchedRootProof::Fold(root) => {
-                assert_eq!(root.y_rings.coeff_len() / D, NUM_POINTS);
-            }
-            AkitaBatchedRootProof::Terminal(root) => {
-                assert_eq!(root.y_rings.coeff_len() / D, NUM_POINTS);
-            }
+            AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {}
             AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("multipoint fixture should use a folded or terminal ZK proof")
             }
@@ -1142,7 +1132,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                     .commitment_routing()
                     .claim_poly_in_commitment_group(),
                 &gamma,
-                instance.num_public_rows(),
+                0,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
@@ -1189,7 +1179,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 .commitment_routing()
                 .claim_poly_in_commitment_group(),
             &gamma,
-            instance.num_public_rows(),
+            0,
             MRowLayout::WithDBlock,
         )
         .expect("m evals");

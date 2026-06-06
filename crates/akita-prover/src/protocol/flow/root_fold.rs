@@ -1,77 +1,5 @@
 use super::*;
 
-fn evaluate_root_claims_at_prepared_points<F, P, const D: usize>(
-    polys: &[&P],
-    claim_to_point: &[usize],
-    prepared_points: &[PreparedRootOpeningPoint<F, D>],
-    block_len: usize,
-) -> Result<RootClaimEvaluations<F, D>, AkitaError>
-where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
-{
-    let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
-    let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-    let mut e_folded_by_poly = Vec::with_capacity(polys.len());
-    for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
-        let prepared_point = &prepared_points[point_idx];
-        let (y_ring, e_folded) = evaluate_poly_at_multiplier_point(
-            *poly,
-            &prepared_point.ring_multiplier_point,
-            block_len,
-        )?;
-        per_claim_y_rings.push(y_ring);
-        e_folded_by_poly.push(e_folded);
-    }
-    Ok((per_claim_y_rings, e_folded_by_poly))
-}
-
-fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F, D>,
-) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings().ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
-    })?;
-    let a = point.a_rings().ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
-    })?;
-    Ok((b, a))
-}
-
-fn evaluate_poly_at_multiplier_point<F, P, const D: usize>(
-    poly: &P,
-    point: &RingMultiplierOpeningPoint<F, D>,
-    block_len: usize,
-) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
-where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
-{
-    if let Some(base_point) = point.as_base() {
-        return Ok(poly.evaluate_and_fold(&base_point.b, &base_point.a, block_len));
-    }
-
-    let (b, a) = multiplier_ring_weights(point)?;
-    Ok(poly.evaluate_and_fold_ring(b, a, block_len))
-}
-
-pub(in crate::protocol::flow) fn evaluate_recursive_witness_at_multiplier_point<F, const D: usize>(
-    witness: &RecursiveWitnessView<'_, F, D>,
-    point: &RingMultiplierOpeningPoint<F, D>,
-    block_len: usize,
-    num_blocks: usize,
-) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if let Some(base_point) = point.as_base() {
-        return Ok(witness.evaluate_and_fold(&base_point.b, &base_point.a, block_len, num_blocks));
-    }
-
-    let (b, a) = multiplier_ring_weights(point)?;
-    Ok(witness.evaluate_and_fold_ring(b, a, block_len, num_blocks))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
@@ -89,7 +17,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    #[cfg(feature = "zk")] _y_rings_masked: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
     trace_opening: C,
     row_coefficients: Vec<C>,
@@ -181,7 +109,7 @@ where
         witness,
         gamma_tr,
         trace_opening,
-        prepared_points.first(),
+        Some(prepared_points.as_slice()),
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
@@ -572,7 +500,7 @@ where
         #[cfg(feature = "zk")]
         C::zero(),
         trace_opening,
-        prepared_points.first(),
+        Some(prepared_points.as_slice()),
         row_coefficients,
         setup_contribution_mode,
         commit_w_for_next,
@@ -865,7 +793,7 @@ where
         &row_coefficient_rings,
     )?;
     #[cfg(feature = "zk")]
-    let y_rings_masked = {
+    let _y_rings_masked = {
         let mut masked = y_rings.clone();
         for y_ring in &mut masked {
             let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
@@ -946,7 +874,7 @@ where
         #[cfg(feature = "zk")]
         C::zero(),
         trace_opening,
-        prepared_points.first(),
+        Some(prepared_points.as_slice()),
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -969,7 +897,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
+    #[cfg(feature = "zk")] _y_rings_masked: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
     trace_opening: C,
     row_coefficients: Vec<C>,
@@ -1054,7 +982,7 @@ where
         witness,
         gamma_tr,
         trace_opening,
-        prepared_points.first(),
+        Some(prepared_points.as_slice()),
         row_coefficients,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -1094,7 +1022,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     witness: RingRelationWitness<F, D>,
     gamma_tr: C,
     trace_opening: C,
-    trace_prepared: Option<&PreparedRootOpeningPoint<F, D>>,
+    trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
@@ -1166,11 +1094,11 @@ where
     let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
     let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, false) {
         None
-    } else if let Some(prepared) = trace_prepared {
+    } else if let Some(prepared_points) = trace_prepared_points {
         Some(build_root_stage2_trace_compact::<F, C, D>(
             lp,
             &instance,
-            prepared,
+            prepared_points,
             col_bits,
             ring_bits,
             live_x_cols,
@@ -1366,7 +1294,7 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     witness: RingRelationWitness<F, D>,
     gamma_tr: C,
     trace_opening: C,
-    trace_prepared: Option<&PreparedRootOpeningPoint<F, D>>,
+    trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
     row_coefficients: Vec<C>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
@@ -1432,11 +1360,11 @@ where
     let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
     let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, false) {
         None
-    } else if let Some(prepared) = trace_prepared {
+    } else if let Some(prepared_points) = trace_prepared_points {
         Some(build_root_stage2_trace_compact::<F, C, D>(
             lp,
             &instance,
-            prepared,
+            prepared_points,
             col_bits,
             ring_bits,
             live_x_cols,
