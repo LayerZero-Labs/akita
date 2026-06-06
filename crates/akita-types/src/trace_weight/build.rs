@@ -1,0 +1,105 @@
+use akita_algebra::CyclotomicRing;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+
+use crate::field_reduction::trace_open_ring_row;
+use crate::{gadget_row_scalars, RingSubfieldEncoding};
+
+use super::layout::TraceWeightLayout;
+
+/// Write `gadget[plane] · block_rows[block][ring_coord]` into the witness table.
+fn fill_opening_digit_table<F, E>(
+    layout: &TraceWeightLayout,
+    gadget_scalars: &[F],
+    block_rows: &[E],
+    table: &mut [E],
+) where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + FromPrimitiveInt,
+{
+    let ring_len = layout.ring_len();
+    debug_assert_eq!(block_rows.len(), layout.num_blocks * ring_len);
+    for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
+        let gadget = E::lift_base(*gadget_scalar);
+        for block in 0..layout.num_blocks {
+            let col = layout.opening_digit_col_index(block, plane);
+            let row_base = block * ring_len;
+            for ring_coord in 0..ring_len {
+                let idx = layout.witness_index(col, ring_coord);
+                table[idx] = gadget * block_rows[row_base + ring_coord];
+            }
+        }
+    }
+}
+
+/// Build the full Boolean trace-weight table for scalar (`K = 1`) block weights.
+///
+/// `block_weights` should be `lagrange_weights(b_open)`.
+pub fn build_trace_weight_table_field_block_weights<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    block_weights: &[F],
+    inner_opening_ring: &CyclotomicRing<F, D>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FromPrimitiveInt,
+{
+    if block_weights.len() != layout.num_blocks {
+        return Err(AkitaError::InvalidInput(
+            "block weight count does not match num_blocks".to_string(),
+        ));
+    }
+    layout.validate_ring_dimension::<D>()?;
+    layout.validate_opening_digit_segment()?;
+
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let inner_coeffs = inner_opening_ring.coefficients();
+    let ring_len = layout.ring_len();
+    let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
+
+    for (block, block_weight) in block_weights.iter().enumerate() {
+        let block_weight_e = E::lift_base(*block_weight);
+        let row_base = block * ring_len;
+        for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
+            block_rows[row_base + ring_coord] = block_weight_e * E::lift_base(*coeff);
+        }
+    }
+
+    let mut table = vec![E::zero(); layout.table_len()?];
+    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
+    Ok(table)
+}
+
+/// Build the full Boolean trace-weight table for ring (`K > 1`) block weights.
+///
+/// `block_rings` should come from [`crate::block_rings_at_opening`].
+pub fn build_trace_weight_table_ring_block_weights<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    block_rings: &[CyclotomicRing<F, D>],
+    packed_inner_point: &CyclotomicRing<F, D>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    if block_rings.len() != layout.num_blocks {
+        return Err(AkitaError::InvalidInput(
+            "block ring count does not match num_blocks".to_string(),
+        ));
+    }
+    layout.validate_ring_dimension::<D>()?;
+    layout.validate_opening_digit_segment()?;
+
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let ring_len = layout.ring_len();
+    let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
+
+    for (block, block_ring) in block_rings.iter().enumerate() {
+        let row = trace_open_ring_row::<F, E, D>(block_ring, packed_inner_point, layout.ring_bits)?;
+        let row_base = block * ring_len;
+        block_rows[row_base..row_base + ring_len].copy_from_slice(&row);
+    }
+
+    let mut table = vec![E::zero(); layout.table_len()?];
+    fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
+    Ok(table)
+}

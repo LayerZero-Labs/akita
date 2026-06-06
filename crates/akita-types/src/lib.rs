@@ -8,6 +8,7 @@ pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
+pub mod trace_weight;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
@@ -36,8 +37,12 @@ pub use extension_opening_reduction::{
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
-    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
-    RingSubfieldEncoding, SubfieldParams,
+    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, RingSubfieldEncoding,
+    SubfieldParams,
+};
+pub use trace_weight::{
+    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
+    eval_trace_weight_at_point, TraceOpeningAtPoint, TraceWeightLayout,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_incidence, digest_serializable, setup_seed_digest,
@@ -45,10 +50,10 @@ pub use instance_descriptor::{
     SetupSection,
 };
 pub use layout::{
-    basis_weights, direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
-    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    basis_weights, block_rings_at_opening, direct_witness_bytes,
+    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
+    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
+    proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     root_extension_opening_partials, sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix,
     LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
 };

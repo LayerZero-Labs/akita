@@ -549,21 +549,146 @@ where
                 )
             })?;
             let traced = trace_h::<F, D, $k>(params, &trace_input);
-            let scale_inv = F::from_u64(params.packed_len() as u64)
-                .inverse()
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("trace scale is not invertible".to_string())
-                })?;
-            let coeffs = traced.coefficients();
-            let step = D / (2 * $k);
-            let mut coords = Vec::with_capacity($k);
-            coords.push(coeffs[0] * scale_inv);
-            let mut j = 1usize;
-            while j < $k {
-                coords.push(coeffs[j * step] * scale_inv);
-                j += 1;
+            decode_traced_to_extension::<F, E, D, $k>(params, &traced)
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(
+            "unsupported ring-subfield extension degree".to_string(),
+        )),
+    }
+}
+
+#[inline]
+fn decode_traced_to_extension<F, E, const D: usize, const K: usize>(
+    params: SubfieldParams<D, K>,
+    traced: &CyclotomicRing<F, D>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F>,
+{
+    let scale_inv = F::from_u64(params.packed_len() as u64)
+        .inverse()
+        .ok_or_else(|| AkitaError::InvalidInput("trace scale is not invertible".to_string()))?;
+    let coeffs = traced.coefficients();
+    if K == 1 {
+        return Ok(E::from_base_slice(&[coeffs[0] * scale_inv]));
+    }
+    let step = D / (2 * K);
+    let mut coords = Vec::with_capacity(K);
+    coords.push(coeffs[0] * scale_inv);
+    let mut j = 1usize;
+    while j < K {
+        coords.push(coeffs[j * step] * scale_inv);
+        j += 1;
+    }
+    Ok(E::from_base_slice(&coords))
+}
+
+/// `TraceOpen(ring · X^c)` for every ring coordinate `c`, sharing `sigma_{-1}(packed)`.
+pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    packed_inner_point: &CyclotomicRing<F, D>,
+    ring_bits: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F>,
+{
+    let ring_len = 1usize
+        .checked_shl(ring_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
+    let trace_partner = packed_inner_point.sigma_m1();
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "claim-field degree must divide the ring dimension".to_string(),
+                )
+            })?;
+            if $k == 1 {
+                let mut row = Vec::with_capacity(ring_len);
+                for coord in 0..ring_len {
+                    let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                    row.push(E::from_base_slice(&[trace_input.coefficients()[0]]));
+                }
+                return Ok(row);
             }
-            Ok(E::from_base_slice(&coords))
+            let mut row = Vec::with_capacity(ring_len);
+            for coord in 0..ring_len {
+                let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                let traced = trace_h::<F, D, $k>(params, &trace_input);
+                row.push(decode_traced_to_extension::<F, E, D, $k>(params, &traced)?);
+            }
+            Ok(row)
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(
+            "unsupported ring-subfield extension degree".to_string(),
+        )),
+    }
+}
+
+/// `Σ_c eq_coords[c] · TraceOpen(ring · X^c)` with one `sigma_{-1}(packed)` and one trace setup.
+pub(crate) fn trace_open_ring_mle_dot<F, E, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    eq_coords: &[E],
+    packed_inner_point: &CyclotomicRing<F, D>,
+    ring_bits: usize,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F>,
+{
+    let ring_len = 1usize
+        .checked_shl(ring_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-open eq length overflow".to_string()))?;
+    if eq_coords.len() != ring_len {
+        return Err(AkitaError::InvalidSize {
+            expected: ring_len,
+            actual: eq_coords.len(),
+        });
+    }
+    let trace_partner = packed_inner_point.sigma_m1();
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "claim-field degree must divide the ring dimension".to_string(),
+                )
+            })?;
+            let mut acc = E::zero();
+            if $k == 1 {
+                for (coord, eq_w) in eq_coords.iter().enumerate() {
+                    if eq_w.is_zero() {
+                        continue;
+                    }
+                    let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                    acc += *eq_w * E::lift_base(trace_input.coefficients()[0]);
+                }
+                return Ok(acc);
+            }
+            for (coord, eq_w) in eq_coords.iter().enumerate() {
+                if eq_w.is_zero() {
+                    continue;
+                }
+                let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                let traced = trace_h::<F, D, $k>(params, &trace_input);
+                acc += *eq_w * decode_traced_to_extension::<F, E, D, $k>(params, &traced)?;
+            }
+            Ok(acc)
         }};
     }
 

@@ -1,0 +1,387 @@
+use super::{
+    build_trace_weight_table_field_block_weights, build_trace_weight_table_ring_block_weights,
+    eval_trace_weight_at_point, trace_weight_mle_eval, TraceOpeningAtPoint, TraceWeightLayout,
+};
+use akita_algebra::CyclotomicRing;
+use crate::{
+    block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
+    reduce_inner_opening_to_ring_element, BasisMode,
+};
+use akita_field::{Prime128OffsetA7F7, RandomSampling};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
+
+type F = Prime128OffsetA7F7;
+const D: usize = 128;
+const LOG_BASIS: u32 = 3;
+
+fn field_block_weights_layout() -> TraceWeightLayout {
+    TraceWeightLayout {
+        ring_bits: 7,
+        col_bits: 2,
+        opening_digit_offset: 0,
+        num_blocks: 2,
+        num_digits_open: 2,
+        r_vars: 1,
+        log_basis: LOG_BASIS,
+    }
+}
+
+fn field_block_weights_layout_with_offset() -> TraceWeightLayout {
+    TraceWeightLayout {
+        ring_bits: 3,
+        col_bits: 3,
+        opening_digit_offset: 4,
+        num_blocks: 2,
+        num_digits_open: 2,
+        r_vars: 1,
+        log_basis: LOG_BASIS,
+    }
+}
+
+fn random_point(rng: &mut StdRng, len: usize) -> Vec<F> {
+    (0..len).map(|_| F::random(rng)).collect()
+}
+
+fn random_opening_points(rng: &mut StdRng, layout: &TraceWeightLayout) -> (Vec<F>, Vec<F>) {
+    let inner_open = random_point(rng, layout.ring_bits);
+    let b_open = random_point(rng, layout.r_vars);
+    (inner_open, b_open)
+}
+
+fn random_folded_block(rng: &mut StdRng) -> CyclotomicRing<F, D> {
+    let coeffs: Vec<F> = (0..D).map(|_| F::random(rng)).collect();
+    CyclotomicRing::from_coefficients(
+        coeffs
+            .try_into()
+            .unwrap_or_else(|_| panic!("D={D} coefficient vector length mismatch")),
+    )
+}
+
+fn weighted_folded_block_sum(
+    folded_blocks: &[CyclotomicRing<F, D>],
+    block_weights: &[F],
+) -> CyclotomicRing<F, D> {
+    folded_blocks
+        .iter()
+        .zip(block_weights.iter())
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (block, weight)| {
+            acc + block.scale(weight)
+        })
+}
+
+fn trace_weight_witness_dot<E: akita_field::FieldCore>(witness: &[E], trace_weight: &[E]) -> E {
+    witness
+        .iter()
+        .zip(trace_weight.iter())
+        .fold(E::zero(), |acc, (w, weight)| acc + *w * *weight)
+}
+
+#[test]
+fn closed_form_matches_dense_table_field_block_weights() {
+    let layout = field_block_weights_layout();
+    let mut rng = StdRng::seed_from_u64(0x7ACE_0001);
+
+    for _ in 0..16 {
+        let (inner_open, b_open) = random_opening_points(&mut rng, &layout);
+        let inner_opening_ring =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
+        let block_weights = lagrange_weights(&b_open).unwrap();
+        let table = build_trace_weight_table_field_block_weights::<F, F, D>(
+            &layout,
+            &block_weights,
+            &inner_opening_ring,
+        )
+        .unwrap();
+
+        let ring_point = random_point(&mut rng, layout.ring_bits);
+        let col_point = random_point(&mut rng, layout.col_bits);
+        let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+        let closed = eval_trace_weight_at_point::<F, F, D, 1>(
+            &layout,
+            &ring_point,
+            &col_point,
+            TraceOpeningAtPoint::Field {
+                block_weights: &block_weights,
+                inner_open: &inner_open,
+            },
+        )
+        .unwrap();
+        assert_eq!(dense, closed);
+    }
+}
+
+#[test]
+fn closed_form_matches_dense_table_with_opening_digit_offset() {
+    const D8: usize = 8;
+    let layout = field_block_weights_layout_with_offset();
+    let mut rng = StdRng::seed_from_u64(0x7ACE_0004);
+
+    for _ in 0..16 {
+        let (inner_open, b_open) = random_opening_points(&mut rng, &layout);
+        let inner_opening_ring =
+            reduce_inner_opening_to_ring_element::<F, D8>(&inner_open, BasisMode::Lagrange).unwrap();
+        let block_weights = lagrange_weights(&b_open).unwrap();
+        let table = build_trace_weight_table_field_block_weights::<F, F, D8>(
+            &layout,
+            &block_weights,
+            &inner_opening_ring,
+        )
+        .unwrap();
+
+        let ring_point = random_point(&mut rng, layout.ring_bits);
+        let col_point = random_point(&mut rng, layout.col_bits);
+        let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+        let closed = eval_trace_weight_at_point::<F, F, D8, 1>(
+            &layout,
+            &ring_point,
+            &col_point,
+            TraceOpeningAtPoint::Field {
+                block_weights: &block_weights,
+                inner_open: &inner_open,
+            },
+        )
+        .unwrap();
+        assert_eq!(dense, closed);
+    }
+}
+
+#[test]
+fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
+    let layout = field_block_weights_layout();
+    let mut rng = StdRng::seed_from_u64(0x7ACE_0002);
+
+    for _ in 0..16 {
+        let (inner_open, b_open) = random_opening_points(&mut rng, &layout);
+        let inner_opening_ring =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
+        let block_weights = lagrange_weights(&b_open).unwrap();
+        let table = build_trace_weight_table_field_block_weights::<F, F, D>(
+            &layout,
+            &block_weights,
+            &inner_opening_ring,
+        )
+        .unwrap();
+
+        let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.num_blocks)
+            .map(|_| random_folded_block(&mut rng))
+            .collect();
+        let combined = weighted_folded_block_sum(&folded_blocks, &block_weights);
+        let expected =
+            recover_ring_subfield_inner_product::<F, F, D>(&combined, &inner_opening_ring).unwrap();
+
+        let mut witness = vec![F::zero(); layout.table_len().unwrap()];
+        for (block, folded) in folded_blocks.iter().enumerate() {
+            let col = layout.opening_digit_col_index(block, 0);
+            for ring_coord in 0..(1usize << layout.ring_bits) {
+                let idx = layout.witness_index(col, ring_coord);
+                witness[idx] = folded.coefficients()[ring_coord];
+            }
+        }
+
+        let actual = trace_weight_witness_dot(&witness, &table);
+        assert_eq!(actual, expected);
+    }
+}
+
+mod ring_block_weights {
+    use super::*;
+    use crate::{basis_weights, embed_ring_subfield_vector};
+    use akita_field::{AkitaError, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
+    use std::marker::PhantomData;
+
+    type F4 = Fp32<251>;
+    type E4 = RingSubfieldFpExt4<F4>;
+    type F8 = Fp32<251>;
+    type E8 = RingSubfieldFpExt8<F8>;
+
+    const LOG_BASIS: u32 = 3;
+
+    fn ring_block_weights_layout<const D: usize>() -> TraceWeightLayout {
+        TraceWeightLayout {
+            ring_bits: D.trailing_zeros() as usize,
+            col_bits: 2,
+            opening_digit_offset: 0,
+            num_blocks: 2,
+            num_digits_open: 2,
+            r_vars: 1,
+            log_basis: LOG_BASIS,
+        }
+    }
+
+    fn trace_inner_open_len<F, E, const D: usize>() -> usize
+    where
+        F: akita_field::FieldCore,
+        E: akita_field::ExtField<F>,
+    {
+        (D / E::EXT_DEGREE).trailing_zeros() as usize
+    }
+
+    fn packed_inner_point<F, E, const D: usize>(
+        trace_inner_open: &[E],
+    ) -> CyclotomicRing<F, D>
+    where
+        F: akita_field::FieldCore + akita_field::FromPrimitiveInt,
+        E: akita_field::ExtField<F> + crate::RingSubfieldEncoding<F> + akita_field::FieldCore,
+    {
+        let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
+        embed_ring_subfield_vector(
+            &weights,
+            AkitaError::InvalidInput("trace inner opening is not embeddable".to_string()),
+        )
+        .unwrap()
+    }
+
+    fn random_extension_point<E: akita_field::RandomSampling>(
+        rng: &mut StdRng,
+        len: usize,
+    ) -> Vec<E> {
+        (0..len).map(|_| E::random(rng)).collect()
+    }
+
+    fn random_opening_points<F, E, const D: usize>(
+        rng: &mut StdRng,
+        layout: &TraceWeightLayout,
+    ) -> (Vec<E>, Vec<E>)
+    where
+        F: akita_field::FieldCore,
+        E: akita_field::ExtField<F> + akita_field::RandomSampling,
+    {
+        let trace_inner_open = random_extension_point(rng, trace_inner_open_len::<F, E, D>());
+        let b_open = random_extension_point(rng, layout.r_vars);
+        (trace_inner_open, b_open)
+    }
+
+    fn random_folded_block<F: akita_field::FieldCore + akita_field::RandomSampling, const D: usize>(
+        rng: &mut StdRng,
+    ) -> CyclotomicRing<F, D> {
+        let coeffs: Vec<F> = (0..D).map(|_| F::random(rng)).collect();
+        CyclotomicRing::from_coefficients(
+            coeffs
+                .try_into()
+                .unwrap_or_else(|_| panic!("D={D} coefficient vector length mismatch")),
+        )
+    }
+
+    fn run_closed_form_matches_dense_table<F, E, const D: usize, const K: usize>()
+    where
+        F: akita_field::FieldCore
+            + akita_field::CanonicalField
+            + akita_field::FromPrimitiveInt
+            + akita_field::Invertible
+            + akita_field::RandomSampling,
+        E: crate::RingSubfieldEncoding<F>
+            + akita_field::ExtField<F>
+            + akita_field::FieldCore
+            + akita_field::FromPrimitiveInt
+            + akita_field::RandomSampling,
+    {
+        let layout = ring_block_weights_layout::<D>();
+        let mut rng = StdRng::seed_from_u64(0x7ACE_1000 + D as u64);
+
+        for _ in 0..8 {
+            let (trace_inner_open, b_open) = random_opening_points::<F, E, D>(&mut rng, &layout);
+            let packed_inner = packed_inner_point::<F, E, D>(
+                &trace_inner_open[..trace_inner_open_len::<F, E, D>()],
+            );
+            let block_rings = block_rings_at_opening::<F, E, D>(&b_open).unwrap();
+            let table = build_trace_weight_table_ring_block_weights::<F, E, D>(
+                &layout,
+                &block_rings,
+                &packed_inner,
+            )
+            .unwrap();
+
+            let ring_point = random_extension_point(&mut rng, layout.ring_bits);
+            let col_point = random_extension_point(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let closed = eval_trace_weight_at_point::<F, E, D, K>(
+                &layout,
+                &ring_point,
+                &col_point,
+                TraceOpeningAtPoint::Ring {
+                    block_rings: &block_rings,
+                    packed_inner_point: &packed_inner,
+                    _ext: PhantomData,
+                },
+            )
+            .unwrap();
+            assert_eq!(dense, closed);
+        }
+    }
+
+    fn run_witness_dot_matches_ring_subfield_inner_product<F, E, const D: usize, const K: usize>()
+    where
+        F: akita_field::FieldCore
+            + akita_field::CanonicalField
+            + akita_field::FromPrimitiveInt
+            + akita_field::Invertible
+            + akita_field::RandomSampling,
+        E: crate::RingSubfieldEncoding<F>
+            + akita_field::ExtField<F>
+            + akita_field::FieldCore
+            + akita_field::FromPrimitiveInt
+            + akita_field::RandomSampling,
+    {
+        let layout = ring_block_weights_layout::<D>();
+        let mut rng = StdRng::seed_from_u64(0x7ACE_2000 + D as u64);
+
+        for _ in 0..8 {
+            let (trace_inner_open, b_open) = random_opening_points::<F, E, D>(&mut rng, &layout);
+            let packed_inner = packed_inner_point::<F, E, D>(
+                &trace_inner_open[..trace_inner_open_len::<F, E, D>()],
+            );
+            let block_rings = block_rings_at_opening::<F, E, D>(&b_open).unwrap();
+            let table = build_trace_weight_table_ring_block_weights::<F, E, D>(
+                &layout,
+                &block_rings,
+                &packed_inner,
+            )
+            .unwrap();
+
+            let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.num_blocks)
+                .map(|_| random_folded_block::<F, D>(&mut rng))
+                .collect();
+            let combined = folded_blocks
+                .iter()
+                .zip(block_rings.iter())
+                .fold(CyclotomicRing::<F, D>::zero(), |acc, (block, weight)| {
+                    acc + *block * *weight
+                });
+            let expected =
+                recover_ring_subfield_inner_product::<F, E, D>(&combined, &packed_inner).unwrap();
+
+            let mut witness = vec![E::zero(); layout.table_len().unwrap()];
+            for (block, folded) in folded_blocks.iter().enumerate() {
+                let col = layout.opening_digit_col_index(block, 0);
+                for ring_coord in 0..(1usize << layout.ring_bits) {
+                    let idx = layout.witness_index(col, ring_coord);
+                    witness[idx] = E::lift_base(folded.coefficients()[ring_coord]);
+                }
+            }
+
+            let actual = trace_weight_witness_dot(&witness, &table);
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn closed_form_matches_dense_table_ring_block_weights_k4() {
+        run_closed_form_matches_dense_table::<F4, E4, 8, 4>();
+    }
+
+    #[test]
+    fn witness_dot_matches_ring_subfield_inner_product_ring_block_weights_k4() {
+        run_witness_dot_matches_ring_subfield_inner_product::<F4, E4, 8, 4>();
+    }
+
+    #[test]
+    fn closed_form_matches_dense_table_ring_block_weights_k8() {
+        run_closed_form_matches_dense_table::<F8, E8, 16, 8>();
+    }
+
+    #[test]
+    fn witness_dot_matches_ring_subfield_inner_product_ring_block_weights_k8() {
+        run_witness_dot_matches_ring_subfield_inner_product::<F8, E8, 16, 8>();
+    }
+}
