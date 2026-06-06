@@ -28,7 +28,7 @@ rand = "0.8"
 [features]
 default = []
 parallel = ["dep:rayon", "akita-field/parallel"]
-zk = ["akita-field/zk"]
+zk = []
 
 [lints]
 workspace = true

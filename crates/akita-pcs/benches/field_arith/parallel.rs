@@ -4,9 +4,10 @@ use std::env;
 use std::thread;
 
 #[cfg(feature = "parallel")]
+use akita_field::packed::{PackedField, PackedValue};
+#[cfg(feature = "parallel")]
 use akita_field::{
-    CanonicalField, PackedField, PackedValue, Prime128Offset275, Prime31Offset19, Prime64Offset59,
-    RandomSampling,
+    CanonicalField, Prime128Offset275, Prime31Offset19, Prime64Offset59, RandomSampling,
 };
 #[cfg(feature = "parallel")]
 use criterion::{black_box, Criterion, Throughput};

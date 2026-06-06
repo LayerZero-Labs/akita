@@ -6,8 +6,8 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, Invertible, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend,
+    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, Invertible, RingSubfieldFpExt4,
+    RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend,
 };
 use akita_serialization::Valid;
 
@@ -52,9 +52,9 @@ where
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for RingSubfieldFp4<F>
+impl<F> RingSubfieldEncoding<F> for RingSubfieldFpExt4<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt4MulBackend,
 {
     #[inline]
     fn to_ring_subfield_coords(&self) -> Vec<F> {
@@ -62,9 +62,9 @@ where
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for RingSubfieldFp8<F>
+impl<F> RingSubfieldEncoding<F> for RingSubfieldFpExt8<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt8MulBackend,
 {
     #[inline]
     fn to_ring_subfield_coords(&self) -> Vec<F> {

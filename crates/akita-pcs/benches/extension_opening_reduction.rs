@@ -1,10 +1,8 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, HasOptimizedFold, HasUnreducedOps,
-    TranscriptChallenge,
-};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };

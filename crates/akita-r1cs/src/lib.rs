@@ -763,7 +763,9 @@ mod tests {
         zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkR1csVariable, ZkR1csWitness,
         ZkRelationAccumulator,
     };
-    use akita_field::{AkitaError, ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
+    use akita_field::{
+        AkitaError, ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFpExt4,
+    };
 
     type F = Prime128Offset275;
 
@@ -873,7 +875,7 @@ mod tests {
     #[test]
     fn row_masks_transpose_extension_limb_masks() {
         type Base = Prime32Offset99;
-        type E = RingSubfieldFp4<Base>;
+        type E = RingSubfieldFpExt4<Base>;
 
         let mut cursor = 0usize;
         let column_masks = (0..<E as ExtField<Base>>::EXT_DEGREE)
