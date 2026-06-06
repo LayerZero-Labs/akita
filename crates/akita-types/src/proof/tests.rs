@@ -126,6 +126,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
             1,
         )),
         v_coeffs: 1,
+        l2_b_l2: false,
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
@@ -156,6 +157,7 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     0usize.serialize_compressed(&mut bytes).unwrap(); // y_ring_coeffs
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
     0usize.serialize_compressed(&mut bytes).unwrap(); // v_coeffs
+    false.serialize_compressed(&mut bytes).unwrap(); // l2_b_l2
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
         .unwrap(); // stage1_stages

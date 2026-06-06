@@ -94,6 +94,11 @@ pub struct LevelProofShape {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
+    /// Whether the realized L2 certificate bucket `l2_b_l2` is present.
+    ///
+    /// Mirrors the public `certificate_mode == Realized` decision; drives
+    /// reading the `u128` bucket from the proof bytes after `v`.
+    pub l2_b_l2: bool,
     /// Stage-1 tree stage shapes in root-to-leaf order.
     pub stage1_stages: Vec<AkitaStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
@@ -177,6 +182,7 @@ fn eq_factored_sumcheck_proof_masked_shape<F: FieldCore>(
     (masks.masked_round_polys.len(), degree)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     y_coeffs: usize,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
@@ -184,12 +190,14 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     stage1: &AkitaStage1Proof<L>,
     stage2: &AkitaStage2Proof<F, L>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
+    l2_b_l2: Option<u128>,
 ) -> LevelProofShape {
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),
         v_coeffs: v.coeff_len(),
+        l2_b_l2: l2_b_l2.is_some(),
         stage1_stages: stage1
             .stages
             .iter()
@@ -344,6 +352,7 @@ impl AkitaSerialize for LevelProofShape {
                 .serialize_with_mode(&mut writer, compress)?;
         }
         self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.l2_b_l2.serialize_with_mode(&mut writer, compress)?;
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck_proof
@@ -373,6 +382,7 @@ impl AkitaSerialize for LevelProofShape {
         self.y_ring_coeffs.serialized_size(compress)
             + reduction_size
             + self.v_coeffs.serialized_size(compress)
+            + self.l2_b_l2.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + true.serialized_size(compress)
@@ -403,6 +413,7 @@ impl AkitaDeserialize for LevelProofShape {
             None
         };
         let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let l2_b_l2 = bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let stage1_stages = deserialize_shape_vec(&mut reader, compress, validate)?;
         let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
         let has_stage3_sumcheck =
@@ -420,6 +431,7 @@ impl AkitaDeserialize for LevelProofShape {
             y_ring_coeffs,
             extension_opening_reduction,
             v_coeffs,
+            l2_b_l2,
             stage1_stages,
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,

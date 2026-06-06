@@ -791,6 +791,7 @@ mod tests {
                 next_w_eval_masked: F::zero(),
             },
             stage3_sumcheck_proof: None,
+            l2_b_l2: None,
         };
         Ok(proof.serialized_size(Compress::No))
     }

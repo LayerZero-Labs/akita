@@ -305,6 +305,7 @@ mod tests {
             },
             stage3_sumcheck_proof: stage3_setup_ring_len
                 .map(|setup_ring_len| dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len)),
+            l2_b_l2: None,
         };
         Ok(proof.serialized_size(Compress::No))
     }

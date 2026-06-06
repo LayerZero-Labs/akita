@@ -149,6 +149,13 @@ pub struct AkitaLevelProof<F: FieldCore, L: FieldCore> {
     pub stage2: AkitaStage2Proof<F, L>,
     /// Optional stage-3 setup product-sumcheck proof.
     pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+    /// Realized L2 certificate bucket `B_l2 = Σ z_aug[i]^2`.
+    ///
+    /// Present exactly when the public `certificate_mode` for this level is
+    /// `Realized`. Headerless serialization places it after `v` and before
+    /// `stage1`, so the verifier reads and transcript-binds the bucket before
+    /// parsing the realized stage-1 payload.
+    pub l2_b_l2: Option<u128>,
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
@@ -167,6 +174,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
+            l2_b_l2: None,
         }
     }
 
@@ -257,6 +265,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 next_w_eval_masked: next_w_eval,
             },
             stage3_sumcheck_proof: None,
+            l2_b_l2: None,
         }
     }
 
@@ -359,7 +368,16 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             &self.stage1,
             &self.stage2,
             self.stage3_sumcheck_proof.as_ref(),
+            self.l2_b_l2,
         )
+    }
+
+    /// Attach the realized L2 certificate bucket `B_l2`, returning the updated
+    /// proof. `None` leaves the level on the deterministic path.
+    #[must_use]
+    pub fn with_l2_b_l2(mut self, l2_b_l2: Option<u128>) -> Self {
+        self.l2_b_l2 = l2_b_l2;
+        self
     }
 }
 
@@ -464,6 +482,12 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     pub stage2: AkitaStage2Proof<F, L>,
     /// Optional stage-3 setup product-sumcheck proof.
     pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+    /// Realized L2 certificate bucket `B_l2 = Σ z_aug[i]^2` for the root level.
+    ///
+    /// Present exactly when the public `certificate_mode` for the root is
+    /// `Realized`; serialized after `v` and before `stage1`, mirroring
+    /// [`AkitaLevelProof::l2_b_l2`].
+    pub l2_b_l2: Option<u128>,
 }
 
 /// Root proof payload for fused batched openings.
@@ -510,6 +534,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
+            l2_b_l2: None,
         })
     }
 
@@ -591,6 +616,16 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     ) -> Self {
         if let Self::Fold(fold) = &mut self {
             fold.extension_opening_reduction = extension_opening_reduction;
+        }
+        self
+    }
+
+    /// Attach the realized L2 certificate bucket `B_l2` to a folded root proof.
+    /// A no-op on terminal-root and zero-fold variants.
+    #[must_use]
+    pub fn with_l2_b_l2(mut self, l2_b_l2: Option<u128>) -> Self {
+        if let Self::Fold(fold) = &mut self {
+            fold.l2_b_l2 = l2_b_l2;
         }
         self
     }
@@ -742,6 +777,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
             &self.stage1,
             &self.stage2,
             self.stage3_sumcheck_proof.as_ref(),
+            self.l2_b_l2,
         )
     }
 }

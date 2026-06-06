@@ -162,6 +162,9 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             compress,
         )?;
         self.v.serialize_with_mode(&mut writer, compress)?;
+        if let Some(b_l2) = self.l2_b_l2 {
+            b_l2.serialize_with_mode(&mut writer, compress)?;
+        }
         for stage in &self.stage1.stages {
             #[cfg(not(feature = "zk"))]
             stage
@@ -200,7 +203,10 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 self.extension_opening_reduction.as_ref(),
                 compress,
             )
-            + self.v.serialized_size(compress);
+            + self.v.serialized_size(compress)
+            + self
+                .l2_b_l2
+                .map_or(0, |b_l2| b_l2.serialized_size(compress));
         base + self
             .stage1
             .stages
@@ -302,6 +308,16 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let l2_b_l2 = if ctx.l2_b_l2 {
+            Some(u128::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)
+        } else {
+            None
+        };
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -384,6 +400,7 @@ impl<
             stage1,
             stage2,
             stage3_sumcheck_proof,
+            l2_b_l2,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -593,6 +610,9 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             compress,
         )?;
         self.v.serialize_with_mode(&mut writer, compress)?;
+        if let Some(b_l2) = self.l2_b_l2 {
+            b_l2.serialize_with_mode(&mut writer, compress)?;
+        }
         for stage in &self.stage1.stages {
             #[cfg(not(feature = "zk"))]
             stage
@@ -633,6 +653,9 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 compress,
             )
             + self.v.serialized_size(compress)
+            + self
+                .l2_b_l2
+                .map_or(0, |b_l2| b_l2.serialized_size(compress))
             + self
                 .stage1
                 .stages
@@ -729,6 +752,16 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let l2_b_l2 = if ctx.l2_b_l2 {
+            Some(u128::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)
+        } else {
+            None
+        };
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -811,6 +844,7 @@ impl<
             stage1,
             stage2,
             stage3_sumcheck_proof,
+            l2_b_l2,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
