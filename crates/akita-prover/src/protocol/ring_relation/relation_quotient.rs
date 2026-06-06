@@ -268,7 +268,6 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     num_polys_per_commitment_group: &[usize],
-    num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
@@ -308,21 +307,22 @@ where
         }
         poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
     }
-    if num_public_outputs == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    if ring_multiplier_points.len() != num_public_outputs
+    let num_z_segments = ring_multiplier_points.len();
+    if num_z_segments == 0
         || claim_to_point.len().checked_mul(blocks_per_claim) != Some(e_folded.len())
         || row_coefficient_rings.len() != claim_to_point.len()
         || claim_to_commitment_group.len() != claim_to_point.len()
         || claim_poly_in_commitment_group.len() != claim_to_point.len()
-        || claim_to_point
-            .iter()
-            .any(|&point_idx| point_idx >= num_public_outputs)
     {
         return Err(AkitaError::InvalidProof);
     }
     let num_points = num_polys_per_commitment_group.len();
+    if claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= num_points)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let expected_inner_rows = total_poly_slots
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
@@ -369,19 +369,20 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout)?;
+    // Public-output M rows are enforced by the fused trace term, not M itself.
+    const NUM_PUBLIC_M_ROWS: usize = 0;
+    let num_rows = lp.m_row_count_for(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Row layout: consistency (1) | public (num_public_outputs) |
-    //             D (n_d_active) | B (commitment_row_count) | A (n_a)
-    let d_start = 1 + num_public_outputs;
+    // Row layout: consistency (1) | D (n_d_active) | B (commitment_row_count) | A (n_a)
+    let d_start = 1 + NUM_PUBLIC_M_ROWS;
     let b_start = d_start + n_d_active;
     let a_start = b_start + commitment_row_count;
 
     if inner_width == 0
         || z_folded_centered.len()
-            != num_public_outputs
+            != num_z_segments
                 .checked_mul(inner_width)
                 .ok_or(AkitaError::InvalidProof)?
     {
@@ -585,46 +586,4 @@ where
     Ok(result)
 }
 
-/// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | public outputs | D (`v`) | B (`commitment_rows`) | A (zeros).
-///
-/// # Errors
-///
-/// Returns an error if the supplied row slices do not match the expected row
-/// counts for the level layout.
-pub fn generate_y<F, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    commitment_rows: &[CyclotomicRing<F, D>],
-    public_outputs: &[CyclotomicRing<F, D>],
-    n_d: usize,
-    n_b: usize,
-    n_a: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore,
-{
-    if v.len() != n_d {
-        return Err(AkitaError::InvalidSize {
-            expected: n_d,
-            actual: v.len(),
-        });
-    }
-    if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
-        return Err(AkitaError::InvalidSize {
-            expected: n_b,
-            actual: commitment_rows.len(),
-        });
-    }
-    if public_outputs.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "generate_y requires at least one public output".to_string(),
-        ));
-    }
-    let mut out = Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
-    out.push(CyclotomicRing::<F, D>::zero());
-    out.extend_from_slice(public_outputs);
-    out.extend_from_slice(v);
-    out.extend_from_slice(commitment_rows);
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
-    Ok(out)
-}
+pub use akita_types::generate_y;

@@ -301,8 +301,9 @@ where
     }
 
     let m_row_layout = relation.m_row_layout();
-    let num_public_rows = relation.num_public_rows();
-    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    // Public-output M rows are enforced by the fused trace term, not M itself.
+    let num_public_m_rows = 0usize;
+    let rows = lp.m_row_count_for(num_points, num_public_m_rows, m_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -328,7 +329,7 @@ where
         num_points,
         rows,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        num_public_rows,
+        num_public_rows: num_public_m_rows,
     })
 }
 

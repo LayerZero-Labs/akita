@@ -46,8 +46,9 @@ pub fn build_w_evals_compact(
 /// `opening_points` holds the distinct ring-level opening points used by the
 /// batch, `claim_to_point` maps each flattened claim index to its opening-point
 /// index, and `gamma` provides the per-claim random linear-combination
-/// coefficients. The matrix carries one public y-row per distinct opening
-/// point (`num_public_rows = opening_points.len()`).
+/// coefficients. `num_public_rows` is the count of public-output M rows (zero
+/// after y-ring trace internalization; public openings bind via the fused trace
+/// term instead).
 ///
 /// # Errors
 ///
@@ -334,8 +335,12 @@ where
             let d_phys_col = blk * depth_open + dig;
             let point_idx = claim_to_point[claim_idx];
             let b_eval = public_b_evals[claim_idx][block_idx];
-            let mut acc = (public_weights[point_idx] * b_eval + consistency_weight * c_alphas[blk])
-                * g1_open[dig];
+            let public_contrib = if num_public_rows == 0 {
+                E::zero()
+            } else {
+                public_weights[point_idx] * b_eval
+            };
+            let mut acc = (public_contrib + consistency_weight * c_alphas[blk]) * g1_open[dig];
             // Terminal layout: `n_d_active == 0`, so this loop is empty and
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {

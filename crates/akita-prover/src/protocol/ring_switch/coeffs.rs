@@ -78,7 +78,6 @@ where
         z_folded_rings.centered_inf_norm,
         instance.y(),
         routing.num_polys_per_commitment_group(),
-        instance.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
         instance.m_row_layout(),
