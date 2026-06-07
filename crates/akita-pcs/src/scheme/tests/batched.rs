@@ -255,7 +255,9 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         dense_opening(&evals_b, &opening_point),
     ];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
+    const TRANSCRIPT_LABEL: &[u8] = b"test/batched-prove";
+
+    let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         &CpuBackend,
@@ -279,7 +281,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -300,7 +302,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let mut wrong_openings = openings;
     wrong_openings[1] += F::one();
     let wrong_opening_groups = [&wrong_openings[..]];
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let wrong_opening_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -335,7 +337,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     oversized_openings.push(F::zero());
     let oversized_opening_groups = [&oversized_openings[..]];
 
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
         &verifier_setup,
