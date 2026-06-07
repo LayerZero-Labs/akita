@@ -188,11 +188,10 @@ pub(crate) fn accumulate_trace_relation_coeffs<E: FieldCore>(
     rel: &mut [E; 3],
     w0: E,
     dw: E,
-    gamma_tr: E,
     t0: E,
     t1: E,
 ) {
-    accumulate_relation_coeffs(rel, w0, dw, gamma_tr * t0, gamma_tr * t1);
+    accumulate_relation_coeffs(rel, w0, dw, t0, t1);
 }
 
 #[inline]
@@ -200,11 +199,10 @@ pub(crate) fn accumulate_trace_relation_coeffs_signed<E: FieldCore + HasUnreduce
     rel: &mut [E::MulU64Accum; 6],
     w0: i64,
     dw: i64,
-    gamma_tr: E,
     t0: E,
     t1: E,
 ) {
-    accumulate_relation_coeffs_signed(rel, w0, dw, gamma_tr * t0, gamma_tr * t1);
+    accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
 }
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
@@ -224,7 +222,6 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     alpha_compact: Vec<E>,
     m_compact: Vec<E>,
     trace_compact: Option<Vec<E>>,
-    gamma_tr: E,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -264,7 +261,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if let Some(trace) = &self.trace_compact {
             let t0 = trace.get(trace_idx0).copied().unwrap_or_else(E::zero);
             let t1 = trace.get(trace_idx1).copied().unwrap_or_else(E::zero);
-            accumulate_trace_relation_coeffs(rel, w0, dw, self.gamma_tr, t0, t1);
+            accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
         }
     }
 
@@ -284,7 +281,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if let Some(trace) = &self.trace_compact {
             let t0 = trace.get(trace_idx0).copied().unwrap_or_else(E::zero);
             let t1 = trace.get(trace_idx1).copied().unwrap_or_else(E::zero);
-            accumulate_trace_relation_coeffs_signed(rel, w0, dw, self.gamma_tr, t0, t1);
+            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
         }
     }
 
@@ -306,7 +303,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if let Some(trace) = &self.trace_compact {
             let t0 = trace.get(2 * j).copied().unwrap_or_else(E::zero);
             let t1 = trace.get(2 * j + 1).copied().unwrap_or_else(E::zero);
-            accumulate_trace_relation_coeffs(rel, w0, dw, self.gamma_tr, t0, t1);
+            accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
         }
     }
 
@@ -328,7 +325,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         if let Some(trace) = &self.trace_compact {
             let t0 = trace.get(2 * j).copied().unwrap_or_else(E::zero);
             let t1 = trace.get(2 * j + 1).copied().unwrap_or_else(E::zero);
-            accumulate_trace_relation_coeffs_signed(rel, w0, dw, self.gamma_tr, t0, t1);
+            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
         }
     }
 }

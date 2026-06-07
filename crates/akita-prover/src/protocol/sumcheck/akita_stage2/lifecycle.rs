@@ -17,7 +17,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         ring_bits: usize,
         relation_claim: E,
         trace_compact: Option<Vec<E>>,
-        gamma_tr: E,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -96,7 +95,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             trace_compact,
-            gamma_tr,
             live_x_cols,
             col_bits,
             num_vars,

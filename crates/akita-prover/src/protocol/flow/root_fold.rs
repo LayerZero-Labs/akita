@@ -1063,6 +1063,7 @@ where
             prepared_points,
             &row_coefficients,
             trace_claim_scales,
+            gamma_tr,
             col_bits,
             ring_bits,
             live_x_cols,
@@ -1114,7 +1115,6 @@ where
             ring_bits,
             relation_claim,
             trace_compact.clone(),
-            gamma_tr,
             trace_opening_claim,
         );
         let mut stage2_prover = stage2_prover_result?;
@@ -1158,7 +1158,6 @@ where
             ring_bits,
             relation_claim,
             trace_compact,
-            gamma_tr,
             trace_opening_claim,
         )?;
         let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
@@ -1337,6 +1336,7 @@ where
             prepared_points,
             &row_coefficients,
             trace_claim_scales,
+            gamma_tr,
             col_bits,
             ring_bits,
             live_x_cols,
@@ -1364,7 +1364,6 @@ where
             ring_bits,
             relation_claim,
             trace_compact.clone(),
-            gamma_tr,
             trace_opening_claim,
         )?;
         let mut stage2_public_input = relation_claim_public;
@@ -1396,7 +1395,6 @@ where
             ring_bits,
             relation_claim,
             trace_compact,
-            gamma_tr,
             trace_opening_claim,
         )?;
         let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover

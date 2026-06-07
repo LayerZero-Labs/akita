@@ -67,7 +67,7 @@ use akita_types::{
     Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 use akita_types::{
-    build_trace_stage2_compact, trace_input_claim, trace_opening_from_incidence,
+    build_trace_stage2_compact_scaled, trace_input_claim, trace_opening_from_incidence,
     trace_stage2_enabled, trace_stage2_opening_owned_recursive,
     trace_stage2_opening_owned_root_terms, trace_weight_layout_from_segment,
 };
@@ -120,11 +120,13 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     Ok((segment, layout))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_recursive_stage2_trace_compact<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
     trace_scale: E,
+    output_scale: E,
     col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
@@ -135,7 +137,7 @@ where
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let opening = trace_stage2_opening_owned_recursive::<F, E, D>(prepared, trace_scale)?;
-    build_trace_stage2_compact(&layout, &opening, live_x_cols)
+    build_trace_stage2_compact_scaled(&layout, &opening, live_x_cols, output_scale)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,6 +147,7 @@ fn build_root_stage2_trace_compact<F, E, const D: usize>(
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
+    output_scale: E,
     col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
@@ -167,7 +170,7 @@ where
         row_coefficients,
         trace_claim_scales,
     )?;
-    build_trace_stage2_compact(&layout, &opening, live_x_cols)
+    build_trace_stage2_compact_scaled(&layout, &opening, live_x_cols, output_scale)
 }
 
 /// Runtime state carried between recursive prove levels.

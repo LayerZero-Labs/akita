@@ -76,7 +76,6 @@ fn new_stage2_test_prover(
         relation_claim,
         None,
         F::zero(),
-        F::zero(),
     )
     .unwrap()
 }

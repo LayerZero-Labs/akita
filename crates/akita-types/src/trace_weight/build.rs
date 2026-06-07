@@ -62,6 +62,7 @@ fn add_ring_row_to_compact<F, E>(
     block: usize,
     row: &[E],
     live_x_cols: usize,
+    output_scale: E,
     compact: &mut [E],
 ) where
     F: FieldCore + CanonicalField,
@@ -74,7 +75,7 @@ fn add_ring_row_to_compact<F, E>(
         if col >= live_x_cols {
             continue;
         }
-        let gadget = E::lift_base(*gadget_scalar);
+        let gadget = output_scale * E::lift_base(*gadget_scalar);
         let dst_base = col * ring_len;
         for (dst, value) in compact[dst_base..dst_base + ring_len].iter_mut().zip(row) {
             *dst += gadget * *value;
@@ -150,11 +151,12 @@ where
     Ok(table)
 }
 
-/// Build only the live compact witness slice for scalar (`K = 1`) terms.
-pub(crate) fn build_trace_weight_compact_field_terms<F, E, const D: usize>(
+/// Build the live compact scalar (`K = 1`) witness slice and scale every output.
+pub(crate) fn build_trace_weight_compact_field_terms_scaled<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     terms: &[TraceFieldBlockOpening<F, D>],
     live_x_cols: usize,
+    output_scale: E,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
@@ -188,7 +190,7 @@ where
         let inner_coeffs = term.inner_opening_ring.coefficients();
         for (local_block, block_weight) in term.block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
-            let block_weight_e = E::lift_base(*block_weight);
+            let block_weight_e = output_scale * E::lift_base(*block_weight);
             for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
                 let col = layout.opening_digit_col_index(block, plane);
                 if col >= live_x_cols {
@@ -280,11 +282,12 @@ where
     Ok(table)
 }
 
-/// Build only the live compact witness slice for ring (`K > 1`) terms.
-pub(crate) fn build_trace_weight_compact_ring_terms<F, E, const D: usize>(
+/// Build the live compact ring (`K > 1`) witness slice and scale every output.
+pub(crate) fn build_trace_weight_compact_ring_terms_scaled<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     terms: &[TraceRingBlockOpening<F, D>],
     live_x_cols: usize,
+    output_scale: E,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
@@ -330,6 +333,7 @@ where
                 block,
                 &row,
                 live_x_cols,
+                output_scale,
                 &mut compact,
             );
         }
