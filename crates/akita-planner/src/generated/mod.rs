@@ -56,14 +56,6 @@ pub struct GeneratedScheduleTable {
 
 pub mod expand;
 #[cfg(not(feature = "zk"))]
-pub mod fp128_d32_full;
-#[cfg(feature = "zk")]
-pub mod fp128_d32_full_zk;
-#[cfg(not(feature = "zk"))]
-pub mod fp128_d32_onehot;
-#[cfg(feature = "zk")]
-pub mod fp128_d32_onehot_zk;
-#[cfg(not(feature = "zk"))]
 pub mod fp128_d128_full;
 #[cfg(feature = "zk")]
 pub mod fp128_d128_full_zk;
@@ -71,6 +63,14 @@ pub mod fp128_d128_full_zk;
 pub mod fp128_d128_onehot;
 #[cfg(feature = "zk")]
 pub mod fp128_d128_onehot_zk;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d32_full;
+#[cfg(feature = "zk")]
+pub mod fp128_d32_full_zk;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d32_onehot;
+#[cfg(feature = "zk")]
+pub mod fp128_d32_onehot_zk;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d64_onehot;
 #[cfg(not(feature = "zk"))]
