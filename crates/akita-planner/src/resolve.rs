@@ -29,11 +29,25 @@ use akita_types::{
 
 use crate::find_schedule;
 use crate::generated::{
-    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d32_full_table, fp128_d32_onehot_table,
-    fp128_d64_onehot_table, fp128_d64_onehot_tensor_table, fp32_d128_onehot_table,
-    fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table, fp64_d256_onehot_table,
-    table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedStep, SisModulusFamily,
+    // @generated schedule table imports begin
+    fp128_d128_full_table,
+    fp128_d128_onehot_table,
+    fp128_d32_full_table,
+    fp128_d32_onehot_table,
+    fp128_d64_onehot_table,
+    fp128_d64_onehot_tensor_table,
+    fp32_d128_onehot_table,
+    fp32_d256_onehot_table,
+    fp64_d128_onehot_table,
+    fp64_d128_table,
+    fp64_d256_onehot_table,
+    // @generated schedule table imports end
+    table_entry,
+    GeneratedScheduleKey,
+    GeneratedScheduleTable,
+    GeneratedScheduleTableEntry,
+    GeneratedStep,
+    SisModulusFamily,
 };
 use crate::PlannerPolicy;
 

@@ -10,11 +10,17 @@
 //! live in `akita_config::generated_families::ALL_GENERATED_FAMILIES`,
 //! which the drift-guard test also consumes — adding a new generated
 //! family in one place picks it up in both the emitter and the guard.
+//!
+//! After writing the per-family table modules, the emitter also refreshes
+//! the `// @generated schedule module wiring` block in `mod.rs` and the
+//! matching import list in `resolve.rs`, sorted the same way `rustfmt`
+//! orders module declarations. It then runs `cargo fmt -p akita-planner`.
 
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_planner::generated::GeneratedScheduleKey;
@@ -163,6 +169,150 @@ fn emit_module(family: &GeneratedFamily) -> Result<String, String> {
     Ok(out)
 }
 
+const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
+const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+const RESOLVE_IMPORTS_BEGIN: &str = "// @generated schedule table imports begin";
+const RESOLVE_IMPORTS_END: &str = "// @generated schedule table imports end";
+
+fn sorted_families() -> Vec<&'static GeneratedFamily> {
+    let mut families: Vec<&'static GeneratedFamily> = ALL_GENERATED_FAMILIES.iter().collect();
+    families.sort_by_key(|family| family.module_name);
+    families
+}
+
+fn sis_family_for_module(module_name: &str) -> Result<&'static str, String> {
+    match module_name.split('_').next() {
+        Some("fp128") => Ok("SisModulusFamily::Q128"),
+        Some("fp64") => Ok("SisModulusFamily::Q64"),
+        Some("fp32") => Ok("SisModulusFamily::Q32"),
+        _ => Err(format!(
+            "unsupported generated schedule module prefix: {module_name}"
+        )),
+    }
+}
+
+fn zk_const_name(const_name: &str) -> Result<&str, String> {
+    const_name.strip_suffix("_SCHEDULES").ok_or_else(|| {
+        format!("generated schedule const name should end in _SCHEDULES: {const_name}")
+    })
+}
+
+fn table_fn_name(module_name: &str) -> String {
+    format!("{module_name}_table")
+}
+
+fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = String::new();
+    for family in families {
+        let module_name = family.module_name;
+        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+        writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
+        writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
+        writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
+    let fn_name = table_fn_name(family.module_name);
+    let sis_family = sis_family_for_module(family.module_name)?;
+    let module_name = family.module_name;
+    let zk_module = format!("{module_name}_zk");
+    let const_name = family.const_name;
+    let zk_const_base = zk_const_name(family.const_name)?;
+    let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
+    Ok(format!(
+        "pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n    }}\n}}\n"
+    ))
+}
+
+fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = emit_module_declarations(families)?;
+    for family in families {
+        out.push_str(&emit_table_accessor(family)?);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn emit_resolve_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let imports = families
+        .iter()
+        .map(|family| table_fn_name(family.module_name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!("{imports},\n    "))
+}
+
+fn replace_between_markers(
+    content: &str,
+    begin: &str,
+    end: &str,
+    replacement: &str,
+) -> Result<String, String> {
+    let start = content
+        .find(begin)
+        .ok_or_else(|| format!("missing generated marker `{begin}`"))?
+        + begin.len();
+    let end_pos = content
+        .find(end)
+        .ok_or_else(|| format!("missing generated marker `{end}`"))?;
+    if end_pos < start {
+        return Err(format!(
+            "generated markers `{begin}` and `{end}` are out of order"
+        ));
+    }
+    let mut out = String::new();
+    out.push_str(&content[..start]);
+    out.push('\n');
+    out.push_str(replacement.trim_end());
+    out.push('\n');
+    out.push_str(&content[end_pos..]);
+    Ok(out)
+}
+
+fn refresh_generated_wiring(base_dir: &Path) -> Result<(), String> {
+    let families = sorted_families();
+    let mod_path = base_dir.join("mod.rs");
+    let mod_src =
+        fs::read_to_string(&mod_path).map_err(|e| format!("read {}: {e}", mod_path.display()))?;
+    let mod_wiring = emit_mod_wiring(&families)?;
+    let mod_src = replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?;
+    fs::write(&mod_path, mod_src).map_err(|e| format!("write {}: {e}", mod_path.display()))?;
+    println!("updated {}", mod_path.display());
+
+    let resolve_path = base_dir
+        .parent()
+        .ok_or_else(|| "generated schedule dir has no parent".to_string())?
+        .join("resolve.rs");
+    let resolve_src = fs::read_to_string(&resolve_path)
+        .map_err(|e| format!("read {}: {e}", resolve_path.display()))?;
+    let imports = emit_resolve_imports(&families)?;
+    let resolve_src = replace_between_markers(
+        &resolve_src,
+        RESOLVE_IMPORTS_BEGIN,
+        RESOLVE_IMPORTS_END,
+        &imports,
+    )?;
+    fs::write(&resolve_path, resolve_src)
+        .map_err(|e| format!("write {}: {e}", resolve_path.display()))?;
+    println!("updated {}", resolve_path.display());
+    Ok(())
+}
+
+fn run_planner_fmt() -> Result<(), String> {
+    let status = Command::new("cargo")
+        .args(["fmt", "-p", "akita-planner"])
+        .status()
+        .map_err(|e| format!("spawn cargo fmt: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("cargo fmt -p akita-planner failed with {status}"))
+    }
+}
+
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
@@ -193,5 +343,7 @@ fn main() -> Result<(), String> {
         println!("wrote {}", dest.display());
     }
 
+    refresh_generated_wiring(&base_dir)?;
+    run_planner_fmt()?;
     Ok(())
 }
