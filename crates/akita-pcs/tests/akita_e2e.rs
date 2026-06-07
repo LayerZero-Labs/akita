@@ -602,7 +602,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             .iter_mut()
             .find_map(akita_types::AkitaProofStep::as_intermediate_mut)
             .expect("fixture should include an intermediate recursive fold");
-        bump_flat_ring_vec(&mut recursive.stage2.next_w_commitment);
+        bump_flat_ring_vec(&mut recursive.v);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
