@@ -9,7 +9,7 @@
 
 ## Summary
 
-Every Akita fold level ships the §3.1 ring opening value `y_ring` (`Y` in the paper) on the wire, and the verifier reads it both to form the ring-switch relation claim `V_alpha` and to run a separate public trace check `Tr_H(y_ring · sigma_{-1}(v)) = (d/k) · opening` that ties the ring value back to the incoming extension-field claim.
+Every Akita fold level ships the §3.1 ring opening value `y_ring` (`Y` in the paper) on the wire, and the verifier reads it both to form the ring-switch relation claim `V_alpha` and to run a separate public trace check `Tr_H(y_ring · sigma_{-1}(packed_inner_point)) = (D/K) · opening` that ties the ring value back to the incoming extension-field claim.
 This is one base-field ring element per intermediate level, plus `P` at the root and one at the terminal.
 The opening value is fully determined by the already-committed fold witness: today the public-output row recomposes the committed `e_hat` digits into per-block `e_folded` rings and checks `y_ring = sum_j b_j · e_folded_j`.
 This spec removes `y_ring` from the proof entirely by internalizing the trace projection as one extra fused term in the stage-2 sum-check, enforcing the same normalized trace functional that `recover_ring_subfield_inner_product(y_ring, packed_inner_point)` computes directly against the committed witness.
@@ -373,25 +373,49 @@ Risks to resolve first: the exact `M`-row bookkeeping when the public-output row
 
 ## Notation
 
-Locked naming for this cutover (full rationale and cross-scheme survey:
-`~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`).
+Authoritative symbol map for this cutover and the fused trace term.
+Older specs may still say `w_hat` or use bare `v` in trace formulas; this
+section supersedes those fragments for trace-internalization work.
+Full rationale and cross-scheme survey:
+`~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`.
 
-| Object | Paper | Code (this spec) |
-|--------|-------|------------------|
-| Opening/evaluation point | `\mathbf{r}` | opening point / `prepared_point` |
-| Eval/opening claim value | `v`, `\bar{v}`, `v'` | `opening`, `input_claim` |
-| Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | `RingRelationInstance::v`, `ABSORB_PROVER_V` |
-| Packed inner trace weight | `\check{r}_{\mathrm{in}}` | `packed_inner_point` |
-| Sum-check Boolean ring index | `y \in \{0,1\}^{\mathrm{ring\_bits}}` | `ring_bits`, `y_challenges` |
-| Sum-check Boolean column index | `x \in \{0,1\}^{\mathrm{col\_bits}}` | `col_bits`, `x_challenges` |
-| Sum-check random point | `(r_y, r_x)` or `\mathbf{r}_1` | stage-2 challenges |
+### Locked symbols (paper ↔ Rust)
 
-**Eval claim `y` → `v` (Path A, locked).**
-Greyhound/Hachi write `f(\mathbf{r}) = y` because they are univariate ring-eval schemes with no fused 2D stage-2 hypercube.
-Akita is multilinear: the stage-2 oracle sums over Boolean `(y, x)` where `y` indexes the ring coefficient and `x` indexes the witness column (see the fused-term design above).
-Reserving `y` for that ring axis requires renaming the public eval/opening claim to scalar `v \in E` (Thaler/Spartan convention: point `\mathbf{r}`, value `v`, variables `x`/`y`).
-Disambiguate from the opening commitment by type: scalar `v` vs vector `\mathbf{v}`.
-In this spec, `opening` means the eval claim (`v` in paper notation); it is not `y_{\mathrm{ring}}` / `Y` (the on-wire ring witness this spec removes).
+| Object | Paper | Rust | Never confuse with |
+|--------|-------|------|-------------------|
+| Opening/evaluation point | `\mathbf{r}` | `opening_point`, `prepared_point` | `packed_inner_point` |
+| Eval/opening claim (scalar) | `v`, `\bar{v}`, `v'` | `opening`, `openings`, `input_claim` | `.v` (commitment vector) |
+| Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | `.v`, `RingRelationInstance::v`, `ABSORB_PROVER_V` | scalar `opening` |
+| Packed inner trace weight | `\check{r}_{\mathrm{in}}` | `packed_inner_point` | commitment `.v` |
+| Relation RHS vector | `y` in `Mz = y + \cdots` | `RingRelationInstance::y`, `generate_y` | `y_ring` / `Y`, stage-2 `y` axis |
+| Removed folded ring output | `Y`, `y_{\mathrm{ring}}` | *(dropped on wire)* | commitment `.v`, scalar `opening` |
+| Sum-check Boolean ring index | `y \in \{0,1\}^{\mathrm{ring\_bits}}` | `ring_bits`, `alpha_evals_y` | eval claim `opening` |
+| Sum-check Boolean column index | `x \in \{0,1\}^{\mathrm{col\_bits}}` | `col_bits`, `x_challenges` | |
+| Sum-check random point | `(r_y, r_x)` | stage-2 challenges | opening point `\mathbf{r}` |
+| Ajtai witness commitment | `\mathbf{u}'` | `commitment`, `next_w_commitment` | opening commitment `.v` |
+
+**Path A (locked).** Greyhound/Hachi write `f(\mathbf{r}) = y` because they are
+univariate ring-eval schemes with no fused 2D stage-2 hypercube.
+Akita reserves `y` for the stage-2 ring axis (see fused-term design above), so
+the public eval claim is scalar `v \in E` in paper notation (Thaler/Spartan:
+point `\mathbf{r}`, value `v`).
+Rust keeps **`opening`** for that scalar and **`v` / `.v`** only for the
+commitment vector `\mathbf{v} = D\hat{\mathbf{e}}`; do not rename eval claims to
+`v` in code.
+
+In trace formulas, write **`packed_inner_point`** (paper `\check{r}_{\mathrm{in}}`)
+for the public ψ-packed inner opening block.
+Do not use bare `v` for that role; it collides with both paper eval-claim `v`
+and commitment `\mathbf{v}`.
+
+### Trace-term Rust names (this PR)
+
+| Role | Rust |
+|------|------|
+| Public block weights + inner packed points for `TraceWeight` | `TracePublicWeights`, `TraceStage2Wire::public_weights` |
+| Scalar bound by the fused trace term | `trace_eval_target` (equals `opening` on ordinary paths, `final_claim` on EOR) |
+| `gamma_tr` times the trace target | `trace_opening_claim` via `trace_input_claim(gamma_tr, eval_target)` |
+| Batched root eval target from incidence | `batched_eval_target_from_incidence` |
 
 ## References
 

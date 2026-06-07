@@ -22,8 +22,8 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// The ψ-packed inner block of the opening point (paper `řᵢₙ`), the public
-    /// trace weight paired against the packed witness `Y` in `Tr_H(Y · σ₋₁(·))`.
+    /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
+    /// Public fixed weight in `TraceOpen(Y) = recover_ring_subfield_inner_product(Y, packed_inner_point)`.
     pub packed_inner_point: CyclotomicRing<F, D>,
 }
 
@@ -39,8 +39,8 @@ pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: us
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// The ψ-packed inner block of the opening point (paper `řᵢₙ`), the public
-    /// trace weight paired against the packed witness `Y` in `Tr_H(Y · σ₋₁(·))`.
+    /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
+    /// Public fixed weight in `TraceOpen(Y) = recover_ring_subfield_inner_product(Y, packed_inner_point)`.
     pub packed_inner_point: CyclotomicRing<F, D>,
 }
 

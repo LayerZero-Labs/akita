@@ -214,8 +214,9 @@ pub fn trace_h<F: FieldCore, const D: usize, const K: usize>(
 /// The resulting embedding `psi : (R_q^H)^{D/K} -> R_q` is invertible whenever
 /// `2` is a unit in `F` (i.e., for any odd prime characteristic), and is the
 /// production-side packing used by the trace inner-product relation
-/// `Tr_H(psi(s) * sigma_{-1}(psi(v))) = (D/K) * embed_subfield(<s, v>)`,
-/// where the right-hand side is built with [`embed_subfield`].
+/// `Tr_H(psi(s) * sigma_{-1}(psi(r_in))) = (D/K) * embed_subfield(<s, s>)`,
+/// where `r_in` is the subfield coordinate vector and the right-hand side is
+/// built with [`embed_subfield`].
 ///
 /// Both `D` and `K` are compile-time constants, so all loop bounds in this
 /// function are const-bounded and unroll. The implementation splits into two
