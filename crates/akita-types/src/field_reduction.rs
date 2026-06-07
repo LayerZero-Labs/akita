@@ -652,21 +652,19 @@ where
     CyclotomicRing::from_coefficients(from_fn(|idx| E::lift_base(ring.coefficients()[idx])))
 }
 
-fn weighted_negacyclic_shift_sum<F, E, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
+fn weighted_negacyclic_shift_sum<E, const D: usize>(
+    ring: &CyclotomicRing<E, D>,
     eq_coords: &[E],
 ) -> CyclotomicRing<E, D>
 where
-    F: FieldCore,
-    E: ExtField<F>,
+    E: FieldCore,
 {
-    let lifted = lift_ring_to_extension::<F, E, D>(ring);
     let mut out = CyclotomicRing::<E, D>::zero();
     for (coord, weight) in eq_coords.iter().copied().enumerate() {
         if weight.is_zero() {
             continue;
         }
-        lifted.shift_scale_accumulate_into(&mut out, coord, weight);
+        ring.shift_scale_accumulate_into(&mut out, coord, weight);
     }
     out
 }
@@ -704,9 +702,16 @@ where
     Ok(out)
 }
 
-/// `Σ_c eq_coords[c] · TraceOpen(ring · X^c)` with one `sigma_{-1}(packed)` and one trace setup.
-pub(crate) fn trace_open_ring_mle_dot<F, E, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
+/// `Σ_c eq_coords[c] · TraceOpen(folded · X^c)` for a pre-folded extension ring.
+///
+/// `folded` is the block-weighted, lifted fold-block ring for one trace term:
+/// `Σ_block col_factor(block) · lift(block_ring)`. Because the whole trace-open
+/// pipeline (shift sum, ring product, `Tr_H`, decode) is `E`-linear in the ring
+/// argument, summing the per-block trace opens equals one trace open of the
+/// folded ring. The caller therefore pays a single `Tr_H` of one ring product
+/// per term instead of one per fold block.
+pub(crate) fn trace_open_folded_ring_mle_dot<F, E, const D: usize>(
+    folded: &CyclotomicRing<E, D>,
     eq_coords: &[E],
     packed_inner_point: &CyclotomicRing<F, D>,
     ring_bits: usize,
@@ -740,7 +745,7 @@ where
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            let shifted = weighted_negacyclic_shift_sum::<F, E, D>(ring, eq_coords);
+            let shifted = weighted_negacyclic_shift_sum::<E, D>(folded, eq_coords);
             let trace_partner = lift_ring_to_extension::<F, E, D>(&packed_inner_point.sigma_m1());
             let trace_input = shifted * trace_partner;
             decode_extension_linear_trace::<F, E, D, $k>(params, &trace_input)

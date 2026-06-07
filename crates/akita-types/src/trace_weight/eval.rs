@@ -2,7 +2,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
 
-use crate::field_reduction::trace_open_ring_mle_dot;
+use crate::field_reduction::trace_open_folded_ring_mle_dot;
 use crate::{gadget_row_scalars, lagrange_weights, RingSubfieldEncoding};
 
 use super::layout::TraceWeightLayout;
@@ -197,19 +197,35 @@ where
                 "ring opening term exceeds layout block count".to_string(),
             ));
         }
+        // The trace-open pipeline is E-linear in the fold-block ring, so fold
+        // every block of this term into one ring element first (weighted by its
+        // column factor) and take a single `Tr_H` of one ring product, instead
+        // of one ring trace per fold block.
+        let mut folded = CyclotomicRing::<E, D>::zero();
         for (local_block, block_ring) in term.block_rings.iter().enumerate() {
             let block = term.block_offset + local_block;
-            let block_inner = trace_open_ring_mle_dot::<F, E, D>(
-                block_ring,
-                &ring_eq,
-                &term.packed_inner_point,
-                layout.ring_bits,
-            )?;
+            let mut col_factor = E::zero();
             for (plane, &gadget) in gadget_row.iter().enumerate() {
                 let col = layout.opening_digit_col_index(block, plane);
-                out += eq_weight_at_index(col_point, col) * gadget * block_inner;
+                col_factor += eq_weight_at_index(col_point, col) * gadget;
+            }
+            if col_factor.is_zero() {
+                continue;
+            }
+            let folded_coeffs = folded.coefficients_mut();
+            for (coeff, &base) in folded_coeffs
+                .iter_mut()
+                .zip(block_ring.coefficients().iter())
+            {
+                *coeff += col_factor * E::lift_base(base);
             }
         }
+        out += trace_open_folded_ring_mle_dot::<F, E, D>(
+            &folded,
+            &ring_eq,
+            &term.packed_inner_point,
+            layout.ring_bits,
+        )?;
     }
     Ok(out)
 }
