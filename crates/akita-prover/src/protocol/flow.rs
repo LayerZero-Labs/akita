@@ -39,7 +39,6 @@ use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
-    CHALLENGE_TRACE_BATCH,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -67,9 +66,9 @@ use akita_types::{
     Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 use akita_types::{
-    batched_eval_target_from_incidence, build_trace_stage2_compact_scaled, trace_input_claim,
-    trace_public_weights_recursive, trace_public_weights_root_terms, trace_stage2_enabled,
-    trace_weight_layout_from_segment,
+    batched_eval_target_from_incidence, build_trace_stage2_compact_scaled,
+    ensure_trace_stage2_supported, trace_input_claim, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_weight_layout_from_segment,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -502,44 +501,6 @@ where
             )
         })
         .collect()
-}
-
-fn combine_root_y_rings<F, const D: usize>(
-    per_claim_y_rings: &[CyclotomicRing<F, D>],
-    incidence: &ClaimIncidenceSummary,
-    row_coefficient_rings: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if per_claim_y_rings.len() != incidence.num_claims()
-        || row_coefficient_rings.len() != incidence.num_claims()
-        || incidence.claim_to_point().len() != incidence.num_claims()
-    {
-        return Err(AkitaError::InvalidInput(
-            "root y-ring batching input lengths do not match".to_string(),
-        ));
-    }
-
-    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); incidence.num_public_rows()];
-    for (row_idx, row) in incidence.public_rows().iter().enumerate() {
-        if row.claim_indices().is_empty() || row.point_idx() >= incidence.num_points() {
-            return Err(AkitaError::InvalidInput(
-                "root y-ring public-row incidence is invalid".to_string(),
-            ));
-        }
-        for &claim_idx in row.claim_indices() {
-            if claim_idx >= per_claim_y_rings.len()
-                || incidence.claim_to_point()[claim_idx] != row.point_idx()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "root y-ring public-row term is inconsistent".to_string(),
-                ));
-            }
-            y_rings[row_idx] += row_coefficient_rings[claim_idx] * per_claim_y_rings[claim_idx];
-        }
-    }
-    Ok(y_rings)
 }
 
 /// Config-free flattened view of batched prover claims.

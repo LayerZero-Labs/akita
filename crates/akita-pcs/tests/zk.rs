@@ -118,7 +118,6 @@ fn plain_root_d_image<const D: usize>(
         vec![hint],
         &mut transcript,
         std::slice::from_ref(commitment),
-        std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
         MRowLayout::WithDBlock,
     )
@@ -1076,7 +1075,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             hints,
             &mut transcript,
             &commitments,
-            &y_rings,
             vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
             MRowLayout::WithDBlock,
         )

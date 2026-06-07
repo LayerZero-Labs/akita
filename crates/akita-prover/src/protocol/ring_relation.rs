@@ -282,13 +282,9 @@ impl RingRelationProver {
     ///
     /// `opening_points` holds the distinct ring-level opening points used by
     /// the batch; `claim_to_point` maps each flattened claim to its
-    /// opening-point index.  The batched CWSS protocol γ-combines all
-    /// polynomials opened at the same point into one ring element, so
-    /// `y_rings` carries one entry per opening point
-    /// (i.e. `y_rings.len() == opening_points.len()`).  For the trivial
-    /// single-claim case use `opening_points = vec![pt]`,
-    /// `claim_to_point = vec![0]`, `polys = &[poly]`,
-    /// `num_polys_per_point = &[1]`, `gamma = vec![F::one()]`.
+    /// opening-point index.  For the trivial single-claim case use
+    /// `opening_points = vec![pt]`, `claim_to_point = vec![0]`,
+    /// `polys = &[poly]`, `num_polys_per_point = &[1]`, `gamma = vec![F::one()]`.
     ///
     /// # Errors
     ///
@@ -318,7 +314,6 @@ impl RingRelationProver {
         hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
@@ -369,11 +364,8 @@ impl RingRelationProver {
                 "batched prover requires at least one polynomial per opening point".to_string(),
             ));
         }
-        // The batched protocol emits one public y-row per packaged public row,
-        // so `y_rings.len()` must equal `opening_points.len()`.
         if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
-            || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
             || incidence_summary.claim_to_point().len() != num_claims
             || incidence_summary.claim_poly_indices().len() != num_claims
@@ -651,7 +643,6 @@ impl RingRelationProver {
         mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         m_row_layout: MRowLayout,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
@@ -664,7 +655,6 @@ impl RingRelationProver {
         if num_claims == 0
             || ring_multiplier_points.len() != num_claims
             || pre_folded_e_by_claim.len() != num_claims
-            || y_rings.len() != num_claims
         {
             return Err(AkitaError::InvalidInput(
                 "recursive multipoint input lengths do not match".to_string(),

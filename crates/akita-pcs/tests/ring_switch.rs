@@ -335,7 +335,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -463,7 +462,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -629,7 +627,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
