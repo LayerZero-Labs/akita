@@ -3,7 +3,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_planner::generated::{
-    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d32_full_table, fp128_d32_onehot_table,
+    fp128_d64_onehot_table,
 };
 use akita_planner::generated::{
     fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
@@ -559,6 +560,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
+    assert_every_table_entry_materializes::<fp128::D32Full>(fp128_d32_full_table());
+    assert_every_table_entry_materializes::<fp128::D32OneHot>(fp128_d32_onehot_table());
     assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
     assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
@@ -597,6 +600,8 @@ fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_batched_roots_restore_scaled_widths() {
+    assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
+    assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());

@@ -56,6 +56,14 @@ pub struct GeneratedScheduleTable {
 
 pub mod expand;
 #[cfg(not(feature = "zk"))]
+pub mod fp128_d32_full;
+#[cfg(feature = "zk")]
+pub mod fp128_d32_full_zk;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d32_onehot;
+#[cfg(feature = "zk")]
+pub mod fp128_d32_onehot_zk;
+#[cfg(not(feature = "zk"))]
 pub mod fp128_d128_full;
 #[cfg(feature = "zk")]
 pub mod fp128_d128_full_zk;
@@ -98,6 +106,36 @@ pub fn table_entry(
     key: GeneratedScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
     table.entries.iter().find(|entry| entry.key == key)
+}
+
+pub fn fp128_d32_full_table() -> GeneratedScheduleTable {
+    #[cfg(feature = "zk")]
+    {
+        GeneratedScheduleTable {
+            sis_family: SisModulusFamily::Q128,
+            entries: fp128_d32_full_zk::FP128_D32_FULL_ZK_SCHEDULES,
+        }
+    }
+    #[cfg(not(feature = "zk"))]
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d32_full::FP128_D32_FULL_SCHEDULES,
+    }
+}
+
+pub fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
+    #[cfg(feature = "zk")]
+    {
+        GeneratedScheduleTable {
+            sis_family: SisModulusFamily::Q128,
+            entries: fp128_d32_onehot_zk::FP128_D32_ONEHOT_ZK_SCHEDULES,
+        }
+    }
+    #[cfg(not(feature = "zk"))]
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
+    }
 }
 
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
