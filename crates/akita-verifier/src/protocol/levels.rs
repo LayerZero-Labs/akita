@@ -37,7 +37,7 @@ use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TRACE_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 #[cfg(feature = "zk")]
 use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, ABSORB_ZK_HIDING_COMMITMENT};
@@ -63,7 +63,7 @@ use akita_types::{
     TerminalWitnessTranscriptParts,
 };
 use akita_types::{
-    trace_input_claim, trace_public_weights_root_terms, trace_stage2_enabled,
+    ensure_trace_stage2_supported, trace_input_claim, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, TraceStage2Wire,
 };
 #[cfg(not(feature = "zk"))]
@@ -632,7 +632,6 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
     let mut batched_openings_per_row: Vec<C> = vec![C::zero(); incidence_summary.num_public_rows()];
     for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
         if row.point_idx() >= prepared_points.len() || row.claim_indices().is_empty() {
@@ -773,7 +772,7 @@ where
     let relation_claim_mask = ZkR1csLinearCombination::<C>::zero();
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<C>::zero();
-    let (batching_coeff, s_claim, stage1_point) = match (&stage_input, stage1) {
+    let (batching_coeff, trace_gamma, s_claim, stage1_point) = match (&stage_input, stage1) {
         (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
@@ -797,23 +796,29 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
             let batching_coeff: C =
                 sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1_proof.s_claim, stage1_point)
+            (
+                batching_coeff,
+                batching_coeff,
+                stage1_proof.s_claim,
+                stage1_point,
+            )
         }
         (RootStageInput::Terminal { .. }, None) => {
-            // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
-            // stage1_point + batching_coeff zero out the virtual half.
+            // Relation-only stage-2: skip stage-1 entirely. The virtual half is
+            // zeroed by `batching_coeff = 0`; the fused trace term still reuses
+            // the stage-2 batching challenge (sampled here, after the terminal
+            // witness is bound) so it is randomized against the committed witness.
+            let trace_gamma: C =
+                sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
             let stage1_point = vec![C::zero(); rs.col_bits + rs.ring_bits];
-            (C::zero(), C::zero(), stage1_point)
+            (C::zero(), trace_gamma, C::zero(), stage1_point)
         }
         _ => return Err(AkitaError::InvalidProof),
     };
-    let trace_wire = if !trace_stage2_enabled(
-        batched_lp,
-        <C as ExtField<F>>::EXT_DEGREE,
-        reduction_check.is_some(),
-    ) {
-        None
-    } else {
+    // The fused trace term is the `γ²` addend of the stage-2 batching challenge.
+    let trace_coeff = trace_gamma * trace_gamma;
+    ensure_trace_stage2_supported(<C as ExtField<F>>::EXT_DEGREE)?;
+    let trace_wire = {
         let segment = relation_instance.segment_layout(batched_lp)?;
         let num_trace_blocks = incidence_summary
             .num_claims()
@@ -875,8 +880,8 @@ where
             .transpose()?;
         Some(TraceStage2Wire {
             layout,
-            gamma_tr,
-            trace_opening_claim: trace_input_claim(gamma_tr, trace_eval_target),
+            trace_coeff,
+            trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),
             public_weights: trace_public_weights_root_terms(
                 batched_lp,
                 incidence_summary,
@@ -891,7 +896,7 @@ where
     #[cfg(feature = "zk")]
     if trace_wire.is_some() {
         if let Some((final_claim, _)) = &zk_eor_final {
-            trace_claim_mask.add_scaled(gamma_tr, &final_claim.mask);
+            trace_claim_mask.add_scaled(trace_coeff, &final_claim.mask);
         }
     }
     let mut stage2_input_claim = batching_coeff * s_claim + relation_claim;

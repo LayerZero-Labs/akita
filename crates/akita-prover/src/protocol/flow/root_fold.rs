@@ -32,8 +32,6 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     commit_w_for_next: CommitW,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    gamma_tr: C,
     trace_eval_target: C,
     #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_claim_scales: Option<Vec<C>>,
@@ -94,7 +92,6 @@ where
         hints,
         transcript,
         commitments,
-        &y_rings,
         row_coefficient_rings,
         MRowLayout::WithDBlock,
     )?;
@@ -124,7 +121,6 @@ where
         zk_hiding,
         instance,
         witness,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
@@ -282,18 +278,12 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (_, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
             root_params.block_len,
         )?;
-        let y_rings = combine_root_y_rings::<F, D>(
-            &per_claim_y_rings,
-            incidence_summary,
-            &row_coefficient_rings,
-        )?;
-        let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         #[cfg(not(feature = "zk"))]
         let trace_eval_target = reduction.final_claim;
         #[cfg(not(feature = "zk"))]
@@ -335,8 +325,6 @@ where
             commit_w_for_next,
             prepared_points,
             e_folded_by_poly,
-            y_rings,
-            gamma_tr,
             trace_eval_target,
             #[cfg(feature = "zk")]
             trace_eval_target_public,
@@ -406,12 +394,6 @@ where
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
 
-    let y_rings = combine_root_y_rings::<F, D>(
-        &per_claim_y_rings,
-        incidence_summary,
-        &row_coefficient_rings,
-    )?;
-    let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
     let trace_eval_target =
         batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
@@ -454,7 +436,6 @@ where
         hints,
         transcript,
         commitments,
-        &y_rings,
         row_coefficient_rings,
         MRowLayout::WithDBlock,
     )?;
@@ -484,7 +465,6 @@ where
         zk_hiding,
         instance,
         witness,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
@@ -630,18 +610,12 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (_, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
             root_params.block_len,
         )?;
-        let y_rings = combine_root_y_rings::<F, D>(
-            &per_claim_y_rings,
-            incidence_summary,
-            &row_coefficient_rings,
-        )?;
-        let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         #[cfg(not(feature = "zk"))]
         let trace_eval_target = reduction.final_claim;
         #[cfg(not(feature = "zk"))]
@@ -681,8 +655,6 @@ where
             final_log_basis,
             prepared_points,
             e_folded_by_poly,
-            y_rings,
-            gamma_tr,
             trace_eval_target,
             #[cfg(feature = "zk")]
             trace_eval_target_public,
@@ -749,12 +721,6 @@ where
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
 
-    let y_rings = combine_root_y_rings::<F, D>(
-        &per_claim_y_rings,
-        incidence_summary,
-        &row_coefficient_rings,
-    )?;
-    let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
     let trace_eval_target =
         batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
@@ -797,7 +763,6 @@ where
         hints,
         transcript,
         commitments,
-        &y_rings,
         row_coefficient_rings,
         MRowLayout::WithoutDBlock,
     )?;
@@ -823,7 +788,6 @@ where
         final_log_basis,
         instance,
         witness,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
@@ -850,8 +814,6 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     final_log_basis: u32,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    gamma_tr: C,
     trace_eval_target: C,
     #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_claim_scales: Option<Vec<C>>,
@@ -909,7 +871,6 @@ where
         hints,
         transcript,
         commitments,
-        &y_rings,
         row_coefficient_rings,
         MRowLayout::WithoutDBlock,
     )?;
@@ -935,7 +896,6 @@ where
         final_log_basis,
         instance,
         witness,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
@@ -978,7 +938,6 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    gamma_tr: C,
     trace_eval_target: C,
     #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
@@ -1051,26 +1010,6 @@ where
         b,
         alpha,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
-    #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
-    let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, trace_claim_scales.is_some()) {
-        None
-    } else if let Some(prepared_points) = trace_prepared_points {
-        Some(build_root_stage2_trace_compact::<F, C, D>(
-            lp,
-            &instance,
-            prepared_points,
-            &row_coefficients,
-            trace_claim_scales,
-            gamma_tr,
-            col_bits,
-            ring_bits,
-            live_x_cols,
-        )?)
-    } else {
-        None
-    };
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
@@ -1099,6 +1038,29 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
     let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+    // The fused trace term is the `γ²` addend of the stage-2 batching challenge
+    // `γ`; it reuses that challenge (sampled after the next-level witness is
+    // bound above) rather than a dedicated one.
+    let trace_coeff = batching_coeff * batching_coeff;
+    let trace_opening_claim = trace_input_claim(trace_coeff, trace_eval_target);
+    #[cfg(feature = "zk")]
+    let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
+    ensure_trace_stage2_supported(C::EXT_DEGREE)?;
+    let trace_compact = if let Some(prepared_points) = trace_prepared_points {
+        Some(build_root_stage2_trace_compact::<F, C, D>(
+            lp,
+            &instance,
+            prepared_points,
+            &row_coefficients,
+            trace_claim_scales,
+            trace_coeff,
+            col_bits,
+            ring_bits,
+            live_x_cols,
+        )?)
+    } else {
+        None
+    };
     #[cfg(feature = "zk")]
     let (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval, w_eval_masked) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -1257,7 +1219,6 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     final_log_basis: u32,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    gamma_tr: C,
     trace_eval_target: C,
     #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
@@ -1324,19 +1285,25 @@ where
         b,
         alpha: _,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
+    // Terminal levels run stage-2 in relation-only mode (`batching_coeff = 0`),
+    // but the fused trace term still reuses the stage-2 batching challenge as
+    // its `γ²` weight. Sample it here, after the terminal witness is bound by
+    // `ring_switch_finalize_terminal_with_gamma`, so it is randomized against
+    // the committed witness.
+    let trace_gamma: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+    let trace_coeff = trace_gamma * trace_gamma;
+    let trace_opening_claim = trace_input_claim(trace_coeff, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
-    let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, trace_claim_scales.is_some()) {
-        None
-    } else if let Some(prepared_points) = trace_prepared_points {
+    let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
+    ensure_trace_stage2_supported(C::EXT_DEGREE)?;
+    let trace_compact = if let Some(prepared_points) = trace_prepared_points {
         Some(build_root_stage2_trace_compact::<F, C, D>(
             lp,
             &instance,
             prepared_points,
             &row_coefficients,
             trace_claim_scales,
-            gamma_tr,
+            trace_coeff,
             col_bits,
             ring_bits,
             live_x_cols,

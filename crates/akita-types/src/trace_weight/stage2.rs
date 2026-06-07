@@ -48,14 +48,18 @@ impl<F: FieldCore, E: FieldCore, const D: usize> TracePublicWeights<F, E, D> {
 pub struct TraceStage2Wire<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
     pub public_weights: TracePublicWeights<F, E, D>,
-    pub gamma_tr: E,
+    /// Batching weight applied to the fused trace term. This is the `γ²` power
+    /// of the stage-2 batching challenge (`CHALLENGE_SUMCHECK_BATCH`); the trace
+    /// term reuses that challenge rather than sampling a dedicated one, so it is
+    /// sampled after the next-level witness is bound to the transcript.
+    pub trace_coeff: E,
     pub trace_opening_claim: E,
 }
 
 /// Scalar contribution added to the stage-2 input claim.
 #[inline]
-pub fn trace_input_claim<E: FieldCore>(gamma_tr: E, eval_target: E) -> E {
-    gamma_tr * eval_target
+pub fn trace_input_claim<E: FieldCore>(trace_coeff: E, eval_target: E) -> E {
+    trace_coeff * eval_target
 }
 
 /// Whether the trace-weight dispatcher has an algebraic implementation for this
@@ -65,15 +69,22 @@ pub fn trace_stage2_supported(extension_degree: usize) -> bool {
     matches!(extension_degree, 1 | 2 | 4 | 8)
 }
 
-/// True when the fused trace term can be enabled for this build.
+/// Reject extension degrees with no trace-weight implementation.
+///
+/// The fused trace term is mandatory: it is what binds the fold opening to the
+/// committed witness in place of the dropped on-wire `y_ring`. A degree with no
+/// algebraic implementation must therefore be rejected rather than silently
+/// skipped, which would leave the opening unbound (a soundness footgun). This
+/// is verifier-reachable, so it returns an error instead of panicking.
 #[inline]
-pub fn trace_stage2_enabled(
-    lp: &LevelParams,
-    extension_degree: usize,
-    has_extension_opening_reduction: bool,
-) -> bool {
-    let _ = (lp, has_extension_opening_reduction);
-    trace_stage2_supported(extension_degree)
+pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), AkitaError> {
+    if trace_stage2_supported(extension_degree) {
+        Ok(())
+    } else {
+        Err(AkitaError::InvalidSetup(format!(
+            "fused stage-2 trace term has no implementation for claim-field extension degree {extension_degree}; cannot bind the fold opening"
+        )))
+    }
 }
 
 /// Lagrange block weights for the degree-one closed-form trace evaluator.
@@ -608,7 +619,7 @@ mod tests {
         let wire = TraceStage2Wire {
             layout,
             public_weights,
-            gamma_tr: F::from_u64(13),
+            trace_coeff: F::from_u64(13),
             trace_opening_claim: F::from_u64(17),
         };
 

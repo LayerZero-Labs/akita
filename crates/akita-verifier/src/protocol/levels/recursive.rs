@@ -1,10 +1,10 @@
 use super::*;
-use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 use akita_types::{
-    trace_input_claim, trace_public_weights_recursive, trace_stage2_enabled,
+    ensure_trace_stage2_supported, trace_input_claim, trace_public_weights_recursive,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
     RingSubfieldEncoding, TraceStage2Wire,
 };
+use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
 /// Verify one intermediate recursive fold level.
 ///
@@ -285,7 +285,6 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
 
     let ring_opening_points = prepared_points
         .iter()
@@ -388,44 +387,10 @@ where
     let relation_claim =
         relation_claim_from_rows_extension::<F, L, D>(&rs.tau1, rs.alpha, v_typed, commitment_u)?;
     #[cfg(feature = "zk")]
-    let mut trace_claim_mask = ZkR1csLinearCombination::<L>::zero();
-    let trace_wire = if !trace_stage2_enabled(lp, L::EXT_DEGREE, reduction_check.is_some()) {
-        None
-    } else {
-        #[cfg(not(feature = "zk"))]
-        let (trace_eval_target, trace_scale) = eor_trace_final
-            .as_ref()
-            .copied()
-            .unwrap_or((current_state.opening, L::one()));
-        #[cfg(feature = "zk")]
-        let (trace_eval_target, trace_scale, trace_eval_target_mask) =
-            if let Some((final_claim, factor)) = &zk_eor_final {
-                (final_claim.public, *factor, final_claim.mask.clone())
-            } else {
-                (
-                    current_state.opening,
-                    L::one(),
-                    current_state.opening_mask.clone(),
-                )
-            };
-        #[cfg(feature = "zk")]
-        trace_claim_mask.add_scaled(gamma_tr, &trace_eval_target_mask);
-        Some(build_trace_stage2_wire_recursive::<F, L, D>(
-            lp,
-            &relation_instance.segment_layout(lp)?,
-            rs.col_bits,
-            rs.ring_bits,
-            &prepared_points[0],
-            trace_eval_target,
-            trace_scale,
-            gamma_tr,
-        )?)
-    };
-    #[cfg(feature = "zk")]
     let relation_claim_mask = ZkR1csLinearCombination::<L>::zero();
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
-    let (batching_coeff, s_claim, stage1_point) = match &proof {
+    let (batching_coeff, trace_gamma, s_claim, stage1_point) = match &proof {
         FoldProofView::Intermediate(level_proof) => {
             let stage1 = &level_proof.stage1;
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
@@ -450,12 +415,55 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
             let batching_coeff: L =
                 sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1.s_claim, stage1_point)
+            (batching_coeff, batching_coeff, stage1.s_claim, stage1_point)
         }
         FoldProofView::Terminal(_) => {
+            // Terminal levels carry no stage-1 virtual claim, so the virtual
+            // batching weight is zero. The fused trace term still reuses the
+            // stage-2 batching challenge (sampled here, after the terminal
+            // witness is bound) so it is randomized against the committed
+            // witness rather than fixed before it.
+            let trace_gamma: L =
+                sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
             let stage1_point = vec![L::zero(); rs.col_bits + rs.ring_bits];
-            (L::zero(), L::zero(), stage1_point)
+            (L::zero(), trace_gamma, L::zero(), stage1_point)
         }
+    };
+    // The fused trace term is the `γ²` addend of the stage-2 batching challenge
+    // `γ` (relation = `γ⁰`, range = `γ¹`), so it adds no dedicated challenge.
+    let trace_coeff = trace_gamma * trace_gamma;
+    #[cfg(feature = "zk")]
+    let mut trace_claim_mask = ZkR1csLinearCombination::<L>::zero();
+    ensure_trace_stage2_supported(L::EXT_DEGREE)?;
+    let trace_wire = {
+        #[cfg(not(feature = "zk"))]
+        let (trace_eval_target, trace_scale) = eor_trace_final
+            .as_ref()
+            .copied()
+            .unwrap_or((current_state.opening, L::one()));
+        #[cfg(feature = "zk")]
+        let (trace_eval_target, trace_scale, trace_eval_target_mask) =
+            if let Some((final_claim, factor)) = &zk_eor_final {
+                (final_claim.public, *factor, final_claim.mask.clone())
+            } else {
+                (
+                    current_state.opening,
+                    L::one(),
+                    current_state.opening_mask.clone(),
+                )
+            };
+        #[cfg(feature = "zk")]
+        trace_claim_mask.add_scaled(trace_coeff, &trace_eval_target_mask);
+        Some(build_trace_stage2_wire_recursive::<F, L, D>(
+            lp,
+            &relation_instance.segment_layout(lp)?,
+            rs.col_bits,
+            rs.ring_bits,
+            &prepared_points[0],
+            trace_eval_target,
+            trace_scale,
+            trace_coeff,
+        )?)
     };
     let mut stage2_input_claim = batching_coeff * s_claim + relation_claim;
     if let Some(trace) = &trace_wire {
@@ -1090,7 +1098,7 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
     trace_eval_target: L,
     trace_scale: L,
-    gamma_tr: L,
+    trace_coeff: L,
 ) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -1099,8 +1107,8 @@ where
     let layout = trace_weight_layout_from_segment(lp, segment, col_bits, ring_bits, lp.num_blocks)?;
     Ok(TraceStage2Wire {
         layout,
-        gamma_tr,
-        trace_opening_claim: trace_input_claim(gamma_tr, trace_eval_target),
+        trace_coeff,
+        trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),
         public_weights: trace_public_weights_recursive(prepared, trace_scale)?,
     })
 }

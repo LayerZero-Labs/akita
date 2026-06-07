@@ -469,7 +469,7 @@ where
         let trace_oracle = if let Some(trace) = &self.trace {
             let trace_weight =
                 eval_trace_stage2_wire_for_degree(trace, y_challenges, x_challenges)?;
-            trace.gamma_tr * w_eval * trace_weight
+            trace.trace_coeff * w_eval * trace_weight
         } else {
             E::zero()
         };
@@ -531,7 +531,7 @@ where
         let trace_val = if let Some(trace) = &self.trace {
             let trace_weight =
                 eval_trace_stage2_wire_for_degree(trace, y_challenges, x_challenges)?;
-            trace.gamma_tr * trace_weight
+            trace.trace_coeff * trace_weight
         } else {
             E::zero()
         };

@@ -266,7 +266,6 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    gamma_tr: L,
     trace_eval_target: L,
     #[cfg(feature = "zk")] trace_eval_target_public: L,
     trace_scale: L,
@@ -334,26 +333,6 @@ where
         b,
         alpha,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
-    #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
-    let trace_compact =
-        if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
-            None
-        } else if let Some(prepared) = trace_prepared {
-            Some(build_recursive_stage2_trace_compact::<F, L, D>(
-                lp,
-                &instance,
-                prepared,
-                trace_scale,
-                gamma_tr,
-                col_bits,
-                ring_bits,
-                live_x_cols,
-            )?)
-        } else {
-            None
-        };
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
@@ -381,6 +360,29 @@ where
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
     let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+    // The fused trace term is the `γ²` addend of the stage-2 batching challenge
+    // `γ` (relation = `γ⁰`, range = `γ¹`); it reuses that challenge rather than
+    // sampling a dedicated one, so it is fixed only after the next-level witness
+    // commitment is bound to the transcript above.
+    let trace_coeff = batching_coeff * batching_coeff;
+    let trace_opening_claim = trace_input_claim(trace_coeff, trace_eval_target);
+    #[cfg(feature = "zk")]
+    let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
+    ensure_trace_stage2_supported(L::EXT_DEGREE)?;
+    let trace_compact = if let Some(prepared) = trace_prepared {
+        Some(build_recursive_stage2_trace_compact::<F, L, D>(
+            lp,
+            &instance,
+            prepared,
+            trace_scale,
+            trace_coeff,
+            col_bits,
+            ring_bits,
+            live_x_cols,
+        )?)
+    } else {
+        None
+    };
     #[cfg(feature = "zk")]
     let (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval, w_eval_masked) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -551,7 +553,6 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    gamma_tr: L,
     trace_eval_target: L,
     #[cfg(feature = "zk")] trace_eval_target_public: L,
     trace_scale: L,
@@ -613,26 +614,30 @@ where
         b,
         alpha: _,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
+    // Terminal levels run stage-2 in relation-only mode (`batching_coeff = 0`),
+    // but the fused trace term still reuses the stage-2 batching challenge as
+    // its `γ²` weight. Sample it here, after the terminal witness is bound by
+    // `ring_switch_finalize_terminal`, so it is randomized against the witness.
+    let trace_gamma: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+    let trace_coeff = trace_gamma * trace_gamma;
+    let trace_opening_claim = trace_input_claim(trace_coeff, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
-    let trace_compact =
-        if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
-            None
-        } else if let Some(prepared) = trace_prepared {
-            Some(build_recursive_stage2_trace_compact::<F, L, D>(
-                lp,
-                &instance,
-                prepared,
-                trace_scale,
-                gamma_tr,
-                col_bits,
-                ring_bits,
-                live_x_cols,
-            )?)
-        } else {
-            None
-        };
+    let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
+    ensure_trace_stage2_supported(L::EXT_DEGREE)?;
+    let trace_compact = if let Some(prepared) = trace_prepared {
+        Some(build_recursive_stage2_trace_compact::<F, L, D>(
+            lp,
+            &instance,
+            prepared,
+            trace_scale,
+            trace_coeff,
+            col_bits,
+            ring_bits,
+            live_x_cols,
+        )?)
+    } else {
+        None
+    };
 
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
     // contribution to every round polynomial regardless of `stage1_point`, so
@@ -1004,7 +1009,6 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
     let (trace_eval_target, trace_scale) = match &reduction {
         Some(reduction) => (reduction.final_claim, reduction.final_factor),
@@ -1080,7 +1084,6 @@ where
         typed_hint,
         transcript,
         commitment_u,
-        &y_rings,
         MRowLayout::WithDBlock,
     )?;
 
@@ -1097,7 +1100,6 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
@@ -1229,7 +1231,6 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
     let (trace_eval_target, trace_scale) = match &reduction {
         Some(reduction) => (reduction.final_claim, reduction.final_factor),
@@ -1304,7 +1305,6 @@ where
         typed_hint,
         transcript,
         commitment_u,
-        &y_rings,
         MRowLayout::WithoutDBlock,
     )?;
 
@@ -1321,7 +1321,6 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        gamma_tr,
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,

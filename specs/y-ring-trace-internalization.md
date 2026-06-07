@@ -43,7 +43,7 @@ Therefore the trace check cannot be expressed as one extra `M`-row evaluated at 
 
 ### Design: the fused trace term
 
-Replace roles (1) and (2) with a single fused stage-2 term, gated by a fresh batching scalar `gamma_tr`, that enforces
+Replace roles (1) and (2) with a single fused stage-2 term, batched as the `γ²` addend of the existing stage-2 sum-check challenge `γ` (`CHALLENGE_SUMCHECK_BATCH`), that enforces
 
 ```text
 TraceOpen( sum_j b_j · e_folded_j ) = opening
@@ -66,7 +66,7 @@ Equivalently, in the paper's raw ring identity,
 Tr_H( Y · sigma_{-1}(packed_inner_point) ) = (D/K) · embed_subfield(opening).
 ```
 
-The implementation should use the normalized `TraceOpen` convention, so the stage-2 input contribution is `gamma_tr · opening`.
+The implementation should use the normalized `TraceOpen` convention, so the stage-2 input contribution is `trace_coeff · opening` with `trace_coeff = γ²`.
 If an implementation instead uses raw trace coordinates, it must multiply both the public input and the trace-weight table by the same `(D/K)` scale.
 
 Concretely, the stage-2 fused oracle gains a third addend over the same Boolean domain as the current stage-2 relation.
@@ -76,10 +76,11 @@ The per-corner oracle is:
 ```text
 gamma     · eq(stage1_point, (y, x)) · W(y, x) · (W(y, x) + 1)      [range, unchanged]
 +           W(y, x) · alpha_eval(y) · M_without_public(x)            [relation, public-output row dropped]
-+ gamma_tr · W(y, x) · TraceWeight(y, x)                           [new: trace projection]
++ gamma^2 · W(y, x) · TraceWeight(y, x)                            [new: trace projection]
 ```
 
-with the matching input-claim contribution `gamma_tr · opening` under the normalized convention above.
+with the matching input-claim contribution `trace_coeff · opening` (`trace_coeff = γ²`) under the normalized convention above.
+No new Fiat-Shamir challenge is introduced: `γ` is sampled after the next-level witness is bound, so the trace sub-claim is correctly randomized against the committed witness.
 `TraceWeight(y, x)` is a fully public multilinear table.
 It is nonzero only on the `e_hat` segment of the committed witness.
 On an `e_hat` column for block `j` and open-digit plane `h`, and on ring coordinate `c`, it equals
@@ -89,7 +90,7 @@ g_open[h] · TraceOpen( b_j · X^c )
 ```
 
 where `g_open[h]` is the open-digit gadget scalar, `b_j` is the public ring multiplier for block `j`, and `X^c` is the ring basis element represented by witness coordinate `c`.
-For a root public row, `b_j` already includes the same per-claim row coefficient used by `combine_root_y_rings`; equivalently the trace weights for all claims in the public row are summed under those row coefficients.
+For a root public row, `b_j` already includes the same per-claim row coefficient used when batching claims at one opening point; equivalently the trace weights for all claims in the public row are summed under those row coefficients.
 
 The sum-check instance is therefore:
 
@@ -97,13 +98,13 @@ The sum-check instance is therefore:
 input_claim =
   gamma · s_claim
 + relation_claim_without_public_rows
-+ gamma_tr · opening
++ trace_coeff · opening    (trace_coeff = gamma^2)
 
 input_claim =
 sum_{(y,x) in {0,1}^{ring_bits} × {0,1}^{col_bits}} [
   gamma · eq(stage1_point, (y,x)) · W(y,x) · (W(y,x) + 1)
 + W(y,x) · alpha_eval(y) · M_without_public(x)
-+ gamma_tr · W(y,x) · TraceWeight(y,x)
++ gamma^2 · W(y,x) · TraceWeight(y,x)
 ].
 ```
 
@@ -114,7 +115,7 @@ At that final point, it checks the oracle value
 ```text
 gamma · eq(stage1_point, (r_y,r_x)) · W(r_y,r_x) · (W(r_y,r_x) + 1)
 + W(r_y,r_x) · alpha_eval(r_y) · M_without_public(r_x)
-+ gamma_tr · W(r_y,r_x) · TraceWeight(r_y,r_x).
++ gamma^2 · W(r_y,r_x) · TraceWeight(r_y,r_x).
 ```
 
 For `K = 1` (the `fp128_d128` production optimum) the `y`-weighting is exactly `packed_inner_point` itself: `TraceOpen(X^c) = packed_inner_point[c]` (no reversal), so the table inherits the tensor structure of the opening point and the verifier's final-point evaluation is a pure product of eq / gadget tensors with no ring arithmetic.
@@ -181,7 +182,7 @@ B = (K / D) · Tr_H( B_blk(r_x_blk) · EQ(r_y) · sigma_{-1}(packed_inner_point)
 ```
 
 The conjugate sum is taken once per level, not once per block, so verifier cost is `O(|H| · D)` independent of `num_blocks · num_digits_open`.
-The term remains a single `E`-valued sum-check addend whose matching input contribution is `gamma_tr · opening` under the normalized convention.
+The term remains a single `E`-valued sum-check addend whose matching input contribution is `trace_coeff · opening` (`trace_coeff = γ²`) under the normalized convention.
 
 **Layout preconditions and relation to `z_first`.**
 The `y`-axis factor `eq(r_y, inner_open)` is always clean.
@@ -195,7 +196,7 @@ The only obligation carried into step 2 of Execution is the `K > 1` weighting de
 - **Proof-size strictly smaller.** Per intermediate level, the proof shrinks by at least `D · base_elem_bytes` (one ring element; `proof_ring_vec_bytes(num_claims=1, D, base_elem_bytes)`, `crates/akita-types/src/proof_size.rs:83`); the root shrinks by at least `P · D · base_elem_bytes`; the terminal by at least `D · base_elem_bytes`. The stage-1 tree and stage-2 degree bound are unchanged. If public-output rows are removed from `M` rather than kept as inert padding, the `r_hat` quotient tail also shrinks because `r` has one fewer row per removed public output; the planner DP and witness-shape checks must treat this as an intentional layout cutover, not as byte-for-byte witness stability.
 - **No new committed data.** `w = (e_hat, t_hat, z_hat, r_hat)` gains no new semantic segment and no committed `y_ring`. In the full row-removal variant, `w` may become smaller because the removed public-output rows no longer contribute quotient digits to `r_hat`.
 - **Soundness preserved.** The new term must bind the committed fold witness to the public `opening` at least as tightly as today's `sum_j b_j · e_folded_j = y_ring` plus external trace check. The extraction in the `batched-root-cwss` theorem must be re-derived for the dropped public-output row and the added fused term; soundness loss must remain bounded by the existing sum-check / field-size terms. This is the gating obligation (see Execution).
-- **Prover/verifier transcript consistency.** Removing the `ABSORB_EVALUATION_CLAIMS` absorb of `y_ring` (`recursive.rs:313-315`) and adding the `gamma_tr` challenge must be mirrored on both sides; `logging-transcript` event-stream equality and wire-before-squeeze checks must stay green (`crates/akita-pcs/tests/transcript_hardening*.rs`).
+- **Prover/verifier transcript consistency.** Removing the `ABSORB_EVALUATION_CLAIMS` absorb of `y_ring` (`recursive.rs:313-315`) and deriving `trace_coeff = γ²` from `CHALLENGE_SUMCHECK_BATCH` sampled after witness binding must be mirrored on both sides; `logging-transcript` event-stream equality and wire-before-squeeze checks must stay green (`crates/akita-pcs/tests/transcript_hardening*.rs`).
 - **K-path parity.** `K = 1` keeps a fully tensor-factored weighting (`O(num_vars)` final-point eval, no ring arithmetic) and is the first implementation target. `K in {2,4,8}` route through the conjugate-sum weighting (one `Tr_H` of a single ring product, `O(|H| · D)`) and also require moving the extension-opening-reduction final binding away from on-wire `y_ring`. The existing trace identity tests in `crates/akita-types/src/field_reduction.rs` (and the `K`-generic dispatcher) remain the algebraic anchor for the weighting derivation.
 - **ZK.** The `y_ring` hiding masks (`zk_base_mask_lcs(y_rings.len() * D, …)`, `recursive.rs:316-317`) and the `relation_claim_mask` `y`-contribution are removed; the fused trace term gets its own deferred ZK relation analogous to the stage-2 final relation (`stage2.rs:464-533`). The hiding-witness cursor accounting must still close (`zk_hiding_cursor == hiding_witness.len()`).
 - **End-to-end roundtrip.** All batched / recursive / terminal / zero-fold e2e tests pass for every active profile (`fp128_d128`, the `fp32`/`fp64` extension profiles, dense + onehot, ZK and non-ZK).
@@ -216,34 +217,33 @@ does not expose `Y`; instead it proves the single linear statement
 sum_{(y,x)} W(y,x) · TraceWeight_target(y,x) = target
 ```
 
-inside stage 2, batched by a fresh transcript challenge `gamma_tr`.
+inside stage 2, batched as the `γ²` addend of the existing stage-2 batching
+challenge `γ` (no new Fiat-Shamir label).
 
 The stage-2 sum-check input becomes
 
 ```text
-relation_claim_without_public_rows + gamma_tr · target
+gamma · s_claim + relation_claim_without_public_rows + trace_coeff · target
 ```
 
-and the corner oracle becomes
+with `trace_coeff = γ²`, and the corner oracle becomes
 
 ```text
-W · alpha_eval · M_without_public + gamma_tr · W · TraceWeight_target
+gamma · eq · W · (W+1) + W · alpha_eval · M_without_public + gamma^2 · W · TraceWeight_target
 ```
 
-plus the unchanged range term. Let `Delta_rel` be the prover's error in the
-ordinary relation term after removing public-output rows, and let
-`Delta_tr` be its error in the trace projection of the committed `e_hat`
-segment. A prover that passes the stage-2 input check with an incorrect trace
-target satisfies
+Let `Delta_rel`, `Delta_range`, and `Delta_tr` be the prover's errors in the
+relation, range, and trace terms respectively. A prover that passes the
+stage-2 input check with an incorrect trace target satisfies
 
 ```text
-Delta_rel + gamma_tr · Delta_tr = 0.
+Delta_rel + gamma · Delta_range + gamma^2 · Delta_tr = 0.
 ```
 
 For any fixed transcript prefix and committed witness with `Delta_tr != 0`,
-there is at most one value of `gamma_tr` that cancels the error. Thus the fused
-check adds at most one `1 / |challenge field|` batching failure term, in
-addition to the existing sum-check low-degree soundness error. If `Delta_tr = 0`,
+this is a degree-2 polynomial in `γ` with at most two roots. Thus the fused
+check adds at most a `2 / |challenge field|` batching failure term on top of
+the existing sum-check low-degree soundness error. If `Delta_tr = 0`,
 the committed `e_hat` segment already projects to the target; the remaining
 condition is the ordinary relation soundness for `M_without_public`.
 
@@ -280,7 +280,7 @@ opening and scaling the public trace weights by the same EOR tail factor(s):
 ```text
 root trace weights:      row_coeff[claim] · factor_by_point[point] · b_claim,j
 recursive trace weights: final_factor · b_j
-trace input claim:       gamma_tr · final_claim
+trace input claim:       trace_coeff · final_claim   (trace_coeff = γ²)
 ```
 
 Equivalently, one could divide by a nonzero factor and bind the unscaled
@@ -305,10 +305,10 @@ target.
 
 - [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
 - [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_y` and the verifier `RingRelationInstance` construction.
-- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term with batching scalar `gamma_tr`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
+- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term batched as `trace_coeff = γ²`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
 - [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables regenerated with `regen_diff` reflecting the new (smaller) sizing.
 - [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
-- [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal + `gamma_tr` sample).
+- [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal and `trace_coeff = γ²` derivation from post-witness `CHALLENGE_SUMCHECK_BATCH`).
 - [ ] A negative test: tampering the committed `e_hat` digits so that `sum_j b_j · e_folded_j` projects to the wrong subfield value is rejected (replaces the role of the current `y_ring` trace-mismatch rejection paths, e.g. `crates/akita-pcs/src/scheme/tests/batched.rs:419-421`).
 - [ ] Profile shows the expected per-level shrink: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile` reports `y_ring_bytes = 0` at every level and total proof size reduced by the predicted amount.
 
@@ -335,8 +335,8 @@ Planner: the proof-size optimum may shift slightly (every level is cheaper); re-
 Affected surfaces:
 
 - `akita-types`: proof structs and shapes (`src/proof/levels.rs`, `src/proof/shapes.rs`, `src/proof/relation.rs`), the RHS layout helpers, `src/proof_size.rs` and `src/layout/proof_size.rs`. The trace primitives in `src/field_reduction.rs` are reused to derive the `y`-weighting (no new primitive; the conjugate set comes from `SubfieldParams::h_exponents`).
-- `akita-prover`: `src/protocol/ring_relation.rs` + `ring_relation/relation_quotient.rs` (drop the public-output row and its quotient contribution; stop placing `y_rings` on the RHS), the stage-2 prover (`src/protocol/sumcheck/akita_stage2/`) to add the `gamma_tr` term and `trace_weight` table, and `src/protocol/ring_switch/finalize.rs` for the claim assembly.
-- `akita-verifier`: `src/protocol/levels.rs` and `levels/recursive.rs` (drop the `y_ring` absorb + external trace check, sample `gamma_tr`, feed the trace term), `src/stages/stage2.rs` (`expected_output_claim`, `input_claim`, and the ZK final relation gain the trace addend), `src/protocol/ring_switch.rs` (relation-claim assembly without the public-output row).
+- `akita-prover`: `src/protocol/ring_relation.rs` + `ring_relation/relation_quotient.rs` (drop the public-output row and its quotient contribution), the stage-2 prover (`src/protocol/sumcheck/akita_stage2/`) to add the `γ²`-batched trace term and `trace_weight` table, and `src/protocol/ring_switch/finalize.rs` for the claim assembly.
+- `akita-verifier`: `src/protocol/levels.rs` and `levels/recursive.rs` (drop the `y_ring` absorb + external trace check, derive `trace_coeff = γ²` after witness binding, feed the trace term), `src/stages/stage2.rs` (`expected_output_claim`, `input_claim`, and the ZK final relation gain the trace addend), `src/protocol/ring_switch.rs` (relation-claim assembly without the public-output row).
 - `akita-planner` / `akita-config`: re-score and regenerate shipped schedule tables.
 
 The fused trace term reuses the existing stage-2 Boolean domain and final witness oracle.
@@ -361,9 +361,9 @@ The saving is modest (single-digit to low-double-digit KB total), but the discus
 
 Recommended order, soundness first:
 
-1. **Soundness derivation (gating).** Write the special-soundness/extraction argument for: dropping the public-output `M` row, and adding the fused term `gamma_tr · w(r) · trace_weight_v(r)` with input contribution `gamma_tr · opening` under the normalized non-EOR trace convention, or `gamma_tr · final_claim` with EOR-scaled trace weights. Confirm the extractor still recovers a witness whose folded opening projects to the selected target, and bound the added soundness error. Do this before code.
+1. **Soundness derivation (gating).** Write the special-soundness/extraction argument for: dropping the public-output `M` row, and adding the fused term `γ² · w(r) · trace_weight_v(r)` with input contribution `trace_coeff · opening` (`trace_coeff = γ²`) under the normalized non-EOR trace convention, or `trace_coeff · final_claim` with EOR-scaled trace weights. Confirm the extractor still recovers a witness whose folded opening projects to the selected target, and bound the added soundness error (`2/|E|` from the degree-2 batching polynomial). Do this before code.
 2. **Weighting derivation + unit anchor.** Derive `trace_weight_v(x, y)` for `K = 1` against the `e_hat` segment and current `build_w_coeffs` ordering, then `K in {2,4,8}` via `SubfieldParams::h_exponents`. The closed-form final-point evaluations are already worked out in *Verifier final-point evaluation*; the unit test should check the round table's final-point contraction against them. Land the algebraic unit test against `field_reduction` before wiring the sum-check.
-3. **Verifier non-ZK.** Add `gamma_tr`, the trace addend in `AkitaStage2Verifier::{input_claim, expected_output_claim}`, and remove the `y_ring` absorb + external check across recursive/root/terminal.
+3. **Verifier non-ZK.** Derive `trace_coeff = γ²`, add the trace addend in `AkitaStage2Verifier::{input_claim, expected_output_claim}`, and remove the `y_ring` absorb + external check across recursive/root/terminal.
 4. **Prover non-ZK.** Build `trace_weight`, add the term to stage-2 per-round evals, drop `y_rings` from the RHS / proof structs.
 5. **Proof structs, shapes, serialization, sizing.** Remove the fields; update `level_proof_bytes`, planner DP, regenerate schedules.
 6. **ZK.** Remove the `y_ring` masks; add the deferred trace relation; close the cursor accounting.
@@ -414,7 +414,7 @@ and commitment `\mathbf{v}`.
 |------|------|
 | Public block weights + inner packed points for `TraceWeight` | `TracePublicWeights`, `TraceStage2Wire::public_weights` |
 | Scalar bound by the fused trace term | `trace_eval_target` (equals `opening` on ordinary paths, `final_claim` on EOR) |
-| `gamma_tr` times the trace target | `trace_opening_claim` via `trace_input_claim(gamma_tr, eval_target)` |
+| `trace_coeff` (`γ²`) times the trace target | `trace_opening_claim` via `trace_input_claim(trace_coeff, eval_target)` |
 | Batched root eval target from incidence | `batched_eval_target_from_incidence` |
 
 ## References
