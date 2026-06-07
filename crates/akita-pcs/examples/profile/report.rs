@@ -185,14 +185,12 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let y_rings_size = 0usize;
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
-    eprintln!("[{label}]     y_rings={y_rings_size} bytes (internalized)");
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
@@ -234,7 +232,6 @@ where
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
@@ -261,8 +258,7 @@ where
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size
@@ -286,7 +282,6 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let y_rings_size = 0usize;
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let stage2_sumcheck_size = {
@@ -319,7 +314,6 @@ where
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
@@ -336,15 +330,13 @@ where
     eprintln!(
         "[{label}]   {header}: total={total} bytes (excl. final_witness={final_witness_size})"
     );
-    eprintln!("[{label}]     y_rings={y_rings_size} bytes (internalized)");
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + stage2_sumcheck_size
             + final_witness_size
@@ -380,7 +372,6 @@ where
         );
         return total;
     };
-    let y_rings_size = 0usize;
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(fold.extension_opening_reduction.as_ref());
     let v_size = fold.v.serialized_size(Compress::No);
@@ -421,7 +412,6 @@ where
         level = 0usize,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
@@ -436,7 +426,6 @@ where
         "proof fold level"
     );
     eprintln!("[{label}]   batched_root: total={total} bytes");
-    eprintln!("[{label}]     y_rings={y_rings_size} bytes (internalized)");
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
@@ -457,8 +446,7 @@ where
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size
