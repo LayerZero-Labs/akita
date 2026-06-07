@@ -230,7 +230,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 }
 
 #[test]
-fn batched_verify_passes_for_consistent_openings() {
+fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
     let num_vars = layout.m_vars + layout.r_vars + alpha;
@@ -281,7 +281,7 @@ fn batched_verify_passes_for_consistent_openings() {
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let opening_groups = [&openings[..]];
-    let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -294,121 +294,31 @@ fn batched_verify_passes_for_consistent_openings() {
         )],
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
-    );
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn batched_verify_rejects_wrong_opening() {
-    let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.m_vars + layout.r_vars + alpha;
-    let len = 1usize << num_vars;
-    let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 11) as u64)).collect();
-    let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 5 + 13) as u64)).collect();
-    let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
-    let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
-            .unwrap();
-    let commitments = [commitment];
-    let hints = vec![hint];
-
-    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 4) as u64)).collect();
-    let mut openings = [
-        dense_opening(&evals_a, &opening_point),
-        dense_opening(&evals_b, &opening_point),
-    ];
-    openings[1] += F::one();
-
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
-    let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        vec![(
-            &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_group[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
-        )],
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
-    .unwrap();
+    .expect("batched verify should accept consistent openings");
 
+    let mut wrong_openings = openings;
+    wrong_openings[1] += F::one();
+    let wrong_opening_groups = [&wrong_openings[..]];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
-    let opening_groups = [&openings[..]];
-    let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+    let wrong_opening_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
             CommittedOpenings {
-                openings: opening_groups[0],
+                openings: wrong_opening_groups[0],
                 commitment: &commitments[0],
             },
         )],
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
-
-    assert!(matches!(result, Err(AkitaError::InvalidProof)));
-}
-
-#[test]
-fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
-    let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.m_vars + layout.r_vars + alpha;
-    let len = 1usize << num_vars;
-    let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 17) as u64)).collect();
-    let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
-    let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
-    let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
-            .unwrap();
-    let commitments = [commitment];
-    let hints = vec![hint];
-
-    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 6) as u64)).collect();
-    let openings = vec![
-        dense_opening(&evals_a, &opening_point),
-        dense_opening(&evals_b, &opening_point),
-    ];
-
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
-    let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        vec![(
-            &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_group[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
-        )],
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .unwrap();
+    assert!(matches!(
+        wrong_opening_result,
+        Err(AkitaError::InvalidProof)
+    ));
 
     let mut oversized_proof = proof.clone();
     {
@@ -421,12 +331,12 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         fold.v = FlatRingVec::from_coeffs(oversized_v_coeffs);
     }
 
-    let mut oversized_openings = openings;
+    let mut oversized_openings = openings.to_vec();
     oversized_openings.push(F::zero());
     let oversized_opening_groups = [&oversized_openings[..]];
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
-    let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+    let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -441,5 +351,5 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         akita_types::SetupContributionMode::Direct,
     );
 
-    assert!(matches!(result, Err(AkitaError::InvalidProof)));
+    assert!(matches!(oversized_result, Err(AkitaError::InvalidProof)));
 }

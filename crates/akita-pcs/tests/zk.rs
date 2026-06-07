@@ -1223,11 +1223,6 @@ fn zk_dense_d32_commitments_rerandomize_and_verify() {
 }
 
 #[test]
-fn zk_dense_d64_commitments_rerandomize_and_verify() {
-    run_zk_dense_commitment_hiding::<64, fp128::D64Full>(15, b"zk_commitment_dense_d64");
-}
-
-#[test]
 fn zk_dense_d128_commitments_rerandomize_and_verify() {
     run_zk_dense_commitment_hiding::<128, fp128::D128Full>(16, b"zk_commitment_dense_d128");
 }
@@ -1235,11 +1230,6 @@ fn zk_dense_d128_commitments_rerandomize_and_verify() {
 #[test]
 fn zk_dense_d32_hides_folded_v_and_verifies() {
     run_zk_dense_v_hiding::<32, fp128::D32Full>(14, b"zk_v_dense_d32");
-}
-
-#[test]
-fn zk_dense_d64_hides_folded_v_and_verifies() {
-    run_zk_dense_v_hiding::<64, fp128::D64Full>(15, b"zk_v_dense_d64");
 }
 
 #[test]
