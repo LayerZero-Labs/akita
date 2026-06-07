@@ -1095,8 +1095,9 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
 
         let alpha = F::from_u64(71);
         let alpha_evals_y = scalar_powers(alpha, D);
+        const NUM_PUBLIC_M_ROWS: usize = 0;
         let rows = lp
-            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::WithDBlock)
+            .m_row_count_for(NUM_POINTS, NUM_PUBLIC_M_ROWS, MRowLayout::WithDBlock)
             .expect("row count");
         let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
         let gamma = vec![F::one(); incidence.num_claims()];
@@ -1132,7 +1133,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                     .commitment_routing()
                     .claim_poly_in_commitment_group(),
                 &gamma,
-                0,
+                NUM_PUBLIC_M_ROWS,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
@@ -1179,7 +1180,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 .commitment_routing()
                 .claim_poly_in_commitment_group(),
             &gamma,
-            0,
+            NUM_PUBLIC_M_ROWS,
             MRowLayout::WithDBlock,
         )
         .expect("m evals");
