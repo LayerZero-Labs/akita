@@ -592,7 +592,7 @@ where
     Ok(E::from_base_slice(&coords))
 }
 
-/// `TraceOpen(ring · X^c)` for every ring coordinate `c`, sharing `sigma_{-1}(packed)`.
+/// `TraceOpen(ring · X^c)` for every ring coordinate `c`, sharing one ring product.
 pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     packed_inner_point: &CyclotomicRing<F, D>,
@@ -606,6 +606,7 @@ where
         .checked_shl(ring_bits as u32)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
     let trace_partner = packed_inner_point.sigma_m1();
+    let trace_product = *ring * trace_partner;
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| {
@@ -616,14 +617,14 @@ where
             if $k == 1 {
                 let mut row = Vec::with_capacity(ring_len);
                 for coord in 0..ring_len {
-                    let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                    let trace_input = trace_product.negacyclic_shift(coord);
                     row.push(E::from_base_slice(&[trace_input.coefficients()[0]]));
                 }
                 return Ok(row);
             }
             let mut row = Vec::with_capacity(ring_len);
             for coord in 0..ring_len {
-                let trace_input = ring.negacyclic_shift(coord) * trace_partner;
+                let trace_input = trace_product.negacyclic_shift(coord);
                 let traced = trace_h::<F, D, $k>(params, &trace_input);
                 row.push(decode_traced_to_extension::<F, E, D, $k>(params, &traced)?);
             }

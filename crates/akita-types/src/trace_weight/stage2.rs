@@ -7,9 +7,9 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible, MulBase,
 };
 
+use super::build::{build_trace_weight_compact_field_terms, build_trace_weight_compact_ring_terms};
 use crate::{
-    block_rings_at_opening, build_trace_weight_table_field_terms,
-    build_trace_weight_table_ring_terms, embed_ring_subfield_scalar, eval_trace_weight_at_point,
+    block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_weight_at_point,
     lagrange_weights, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding,
     TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceWeightLayout,
@@ -370,15 +370,14 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let table = match opening {
+    match opening {
         TraceStage2OpeningOwned::Field { terms } => {
-            build_trace_weight_table_field_terms::<F, E, D>(layout, terms)?
+            build_trace_weight_compact_field_terms::<F, E, D>(layout, terms, live_x_cols)
         }
         TraceStage2OpeningOwned::Ring { terms, .. } => {
-            build_trace_weight_table_ring_terms::<F, E, D>(layout, terms)?
+            build_trace_weight_compact_ring_terms::<F, E, D>(layout, terms, live_x_cols)
         }
-    };
-    trace_weight_evals_for_witness(layout, &table, live_x_cols)
+    }
 }
 
 /// Evaluate the trace-weight table at the verifier's final stage-2 point.
@@ -452,10 +451,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        build_trace_weight_table_field_block_weights, reduce_inner_opening_to_ring_element,
-        BasisMode,
+        build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+        build_trace_weight_table_ring_terms, reduce_inner_opening_to_ring_element, BasisMode,
     };
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{Ext2, Prime128OffsetA7F7};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 8;
@@ -487,6 +486,60 @@ mod tests {
             }
         }
         assert_eq!(compact, expected);
+    }
+
+    fn test_ring(seed: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(seed + 3 * i as u64 + 1)
+        }))
+    }
+
+    #[test]
+    fn stage2_compact_field_matches_dense_slice_for_partial_live_columns() {
+        let layout = layout();
+        let terms = vec![
+            TraceFieldBlockOpening {
+                block_offset: 0,
+                block_weights: vec![F::from_u64(2), F::from_u64(5)],
+                inner_opening_ring: test_ring(10),
+            },
+            TraceFieldBlockOpening {
+                block_offset: 1,
+                block_weights: vec![F::from_u64(7)],
+                inner_opening_ring: test_ring(40),
+            },
+        ];
+        let opening = trace_stage2_opening_owned_field_terms::<F, F, D>(&terms).unwrap();
+        let dense = build_trace_weight_table_field_terms::<F, F, D>(&layout, &terms).unwrap();
+        let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
+        let actual = build_trace_stage2_compact(&layout, &opening, 5).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn stage2_compact_ring_matches_dense_slice_for_partial_live_columns() {
+        type E = Ext2<F>;
+
+        let layout = layout();
+        let terms = vec![
+            TraceRingBlockOpening {
+                block_offset: 0,
+                block_rings: vec![test_ring(3), test_ring(17)],
+                packed_inner_point: test_ring(31),
+            },
+            TraceRingBlockOpening {
+                block_offset: 1,
+                block_rings: vec![test_ring(53)],
+                packed_inner_point: test_ring(71),
+            },
+        ];
+        let opening = trace_stage2_opening_owned_ring_terms::<F, E, D>(&terms).unwrap();
+        let dense = build_trace_weight_table_ring_terms::<F, E, D>(&layout, &terms).unwrap();
+        let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
+        let actual = build_trace_stage2_compact(&layout, &opening, 5).unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

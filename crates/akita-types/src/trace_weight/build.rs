@@ -32,6 +32,56 @@ fn fill_opening_digit_table<F, E>(
     }
 }
 
+fn compact_table_len(layout: &TraceWeightLayout, live_x_cols: usize) -> Result<usize, AkitaError> {
+    let x_len = 1usize
+        .checked_shl(layout.col_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-weight x length overflow".to_string()))?;
+    if live_x_cols > x_len {
+        return Err(AkitaError::InvalidSize {
+            expected: x_len,
+            actual: live_x_cols,
+        });
+    }
+    live_x_cols.checked_mul(layout.ring_len()).ok_or_else(|| {
+        AkitaError::InvalidInput("trace-weight compact table length overflow".to_string())
+    })
+}
+
+fn block_has_live_opening_digit(
+    layout: &TraceWeightLayout,
+    block: usize,
+    live_x_cols: usize,
+) -> bool {
+    (0..layout.num_digits_open)
+        .any(|plane| layout.opening_digit_col_index(block, plane) < live_x_cols)
+}
+
+fn add_ring_row_to_compact<F, E>(
+    layout: &TraceWeightLayout,
+    gadget_scalars: &[F],
+    block: usize,
+    row: &[E],
+    live_x_cols: usize,
+    compact: &mut [E],
+) where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + FromPrimitiveInt,
+{
+    let ring_len = layout.ring_len();
+    debug_assert_eq!(row.len(), ring_len);
+    for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
+        let col = layout.opening_digit_col_index(block, plane);
+        if col >= live_x_cols {
+            continue;
+        }
+        let gadget = E::lift_base(*gadget_scalar);
+        let dst_base = col * ring_len;
+        for (dst, value) in compact[dst_base..dst_base + ring_len].iter_mut().zip(row) {
+            *dst += gadget * *value;
+        }
+    }
+}
+
 /// Build the full Boolean trace-weight table for scalar (`K = 1`) block weights.
 ///
 /// `block_weights` should be `lagrange_weights(b_open)`.
@@ -98,6 +148,62 @@ where
     let mut table = vec![E::zero(); layout.table_len()?];
     fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
     Ok(table)
+}
+
+/// Build only the live compact witness slice for scalar (`K = 1`) terms.
+pub(crate) fn build_trace_weight_compact_field_terms<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    terms: &[TraceFieldBlockOpening<F, D>],
+    live_x_cols: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FromPrimitiveInt,
+{
+    if terms.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "field trace terms must be non-empty".to_string(),
+        ));
+    }
+    layout.validate_ring_dimension::<D>()?;
+    layout.validate_opening_digit_segment()?;
+    let out_len = compact_table_len(layout, live_x_cols)?;
+
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let ring_len = layout.ring_len();
+    let mut compact = vec![E::zero(); out_len];
+
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_weights.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "field trace term exceeds layout block count".to_string(),
+            ));
+        }
+        let inner_coeffs = term.inner_opening_ring.coefficients();
+        for (local_block, block_weight) in term.block_weights.iter().enumerate() {
+            let block = term.block_offset + local_block;
+            let block_weight_e = E::lift_base(*block_weight);
+            for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
+                let col = layout.opening_digit_col_index(block, plane);
+                if col >= live_x_cols {
+                    continue;
+                }
+                let scale = block_weight_e * E::lift_base(*gadget_scalar);
+                let dst_base = col * ring_len;
+                for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
+                    compact[dst_base + ring_coord] += scale * E::lift_base(*coeff);
+                }
+            }
+        }
+    }
+
+    Ok(compact)
 }
 
 /// Build the full Boolean trace-weight table for ring (`K > 1`) block weights.
@@ -172,4 +278,62 @@ where
     let mut table = vec![E::zero(); layout.table_len()?];
     fill_opening_digit_table(layout, &gadget_scalars, &block_rows, &mut table);
     Ok(table)
+}
+
+/// Build only the live compact witness slice for ring (`K > 1`) terms.
+pub(crate) fn build_trace_weight_compact_ring_terms<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    terms: &[TraceRingBlockOpening<F, D>],
+    live_x_cols: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    if terms.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "ring trace terms must be non-empty".to_string(),
+        ));
+    }
+    layout.validate_ring_dimension::<D>()?;
+    layout.validate_opening_digit_segment()?;
+    let out_len = compact_table_len(layout, live_x_cols)?;
+
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let mut compact = vec![E::zero(); out_len];
+
+    for term in terms {
+        let end = term
+            .block_offset
+            .checked_add(term.block_rings.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term block range overflow".to_string())
+            })?;
+        if end > layout.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "ring trace term exceeds layout block count".to_string(),
+            ));
+        }
+        for (local_block, block_ring) in term.block_rings.iter().enumerate() {
+            let block = term.block_offset + local_block;
+            if !block_has_live_opening_digit(layout, block, live_x_cols) {
+                continue;
+            }
+            let row = trace_open_ring_row::<F, E, D>(
+                block_ring,
+                &term.packed_inner_point,
+                layout.ring_bits,
+            )?;
+            add_ring_row_to_compact(
+                layout,
+                &gadget_scalars,
+                block,
+                &row,
+                live_x_cols,
+                &mut compact,
+            );
+        }
+    }
+
+    Ok(compact)
 }
