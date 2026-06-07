@@ -67,9 +67,9 @@ use akita_types::{
     Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 use akita_types::{
-    build_trace_stage2_compact_scaled, trace_input_claim, trace_opening_from_incidence,
-    trace_stage2_enabled, trace_stage2_opening_owned_recursive,
-    trace_stage2_opening_owned_root_terms, trace_weight_layout_from_segment,
+    batched_eval_target_from_incidence, build_trace_stage2_compact_scaled, trace_input_claim,
+    trace_public_weights_recursive, trace_public_weights_root_terms, trace_stage2_enabled,
+    trace_weight_layout_from_segment,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -136,8 +136,8 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
-    let opening = trace_stage2_opening_owned_recursive::<F, E, D>(prepared, trace_scale)?;
-    build_trace_stage2_compact_scaled(&layout, &opening, live_x_cols, output_scale)
+    let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
+    build_trace_stage2_compact_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -163,14 +163,14 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
         trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
-    let opening = trace_stage2_opening_owned_root_terms::<F, E, D>(
+    let public_weights = trace_public_weights_root_terms::<F, E, D>(
         lp,
         instance.incidence(),
         prepared_points,
         row_coefficients,
         trace_claim_scales,
     )?;
-    build_trace_stage2_compact_scaled(&layout, &opening, live_x_cols, output_scale)
+    build_trace_stage2_compact_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
 /// Runtime state carried between recursive prove levels.

@@ -63,7 +63,7 @@ use akita_types::{
     TerminalWitnessTranscriptParts,
 };
 use akita_types::{
-    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_root_terms,
+    trace_input_claim, trace_public_weights_root_terms, trace_stage2_enabled,
     trace_weight_layout_from_segment, TraceStage2Wire,
 };
 #[cfg(not(feature = "zk"))]
@@ -826,21 +826,21 @@ where
             rs.ring_bits,
             num_trace_blocks,
         )?;
-        let ordinary_trace_opening = || {
+        let ordinary_trace_eval_target = || {
             batched_openings_per_row
                 .iter()
                 .fold(C::zero(), |acc, opening| acc + *opening)
         };
         #[cfg(not(feature = "zk"))]
-        let trace_opening = eor_trace_final
+        let trace_eval_target = eor_trace_final
             .as_ref()
             .map(|(final_claim, _)| *final_claim)
-            .unwrap_or_else(ordinary_trace_opening);
+            .unwrap_or_else(ordinary_trace_eval_target);
         #[cfg(feature = "zk")]
-        let trace_opening = zk_eor_final
+        let trace_eval_target = zk_eor_final
             .as_ref()
             .map(|(final_claim, _)| final_claim.public)
-            .unwrap_or_else(ordinary_trace_opening);
+            .unwrap_or_else(ordinary_trace_eval_target);
         #[cfg(not(feature = "zk"))]
         let trace_claim_scales = eor_trace_final
             .as_ref()
@@ -876,8 +876,8 @@ where
         Some(TraceStage2Wire {
             layout,
             gamma_tr,
-            trace_opening_claim: trace_input_claim(gamma_tr, trace_opening),
-            opening: trace_stage2_opening_owned_root_terms(
+            trace_opening_claim: trace_input_claim(gamma_tr, trace_eval_target),
+            public_weights: trace_public_weights_root_terms(
                 batched_lp,
                 incidence_summary,
                 &prepared_points,

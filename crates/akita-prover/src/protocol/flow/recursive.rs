@@ -267,8 +267,8 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
-    trace_opening: L,
-    #[cfg(feature = "zk")] trace_opening_public: L,
+    trace_eval_target: L,
+    #[cfg(feature = "zk")] trace_eval_target_public: L,
     trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
@@ -334,9 +334,9 @@ where
         b,
         alpha,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
+    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
     let trace_compact =
         if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
             None
@@ -402,7 +402,7 @@ where
         let mut stage2_prover = stage2_prover_result?;
         let mut stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
         if trace_compact.is_some() {
-            stage2_public_input += trace_opening_public_claim;
+            stage2_public_input += trace_eval_target_public_claim;
         }
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -552,8 +552,8 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     gamma_tr: L,
-    trace_opening: L,
-    #[cfg(feature = "zk")] trace_opening_public: L,
+    trace_eval_target: L,
+    #[cfg(feature = "zk")] trace_eval_target_public: L,
     trace_scale: L,
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -613,9 +613,9 @@ where
         b,
         alpha: _,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
+    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
     let trace_compact =
         if !trace_stage2_enabled(lp, L::EXT_DEGREE, extension_opening_reduction.is_some()) {
             None
@@ -660,7 +660,7 @@ where
         )?;
         let mut stage2_public_input = relation_claim_public;
         if trace_compact.is_some() {
-            stage2_public_input += trace_opening_public_claim;
+            stage2_public_input += trace_eval_target_public_claim;
         }
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -1006,7 +1006,7 @@ where
     }
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
-    let (trace_opening, trace_scale) = match &reduction {
+    let (trace_eval_target, trace_scale) = match &reduction {
         Some(reduction) => (reduction.final_claim, reduction.final_factor),
         None => {
             let y_ring = y_rings.first().ok_or(AkitaError::InvalidProof)?;
@@ -1024,7 +1024,7 @@ where
         }
     };
     #[cfg(feature = "zk")]
-    let (trace_opening, trace_scale) = {
+    let (trace_eval_target, trace_scale) = {
         let internal_claims = y_rings
             .iter()
             .zip(prepared_points.iter())
@@ -1055,7 +1055,7 @@ where
         }
     };
     #[cfg(feature = "zk")]
-    let trace_opening_public = match &reduction {
+    let trace_eval_target_public = match &reduction {
         Some(reduction) => reduction.final_claim_public,
         None => opening_public,
     };
@@ -1098,9 +1098,9 @@ where
         witness,
         extension_opening_reduction,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]
@@ -1231,7 +1231,7 @@ where
     }
     let gamma_tr: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_TRACE_BATCH);
     #[cfg(not(feature = "zk"))]
-    let (trace_opening, trace_scale) = match &reduction {
+    let (trace_eval_target, trace_scale) = match &reduction {
         Some(reduction) => (reduction.final_claim, reduction.final_factor),
         None => {
             let y_ring = y_rings.first().ok_or(AkitaError::InvalidProof)?;
@@ -1249,7 +1249,7 @@ where
         }
     };
     #[cfg(feature = "zk")]
-    let (trace_opening, trace_scale) = {
+    let (trace_eval_target, trace_scale) = {
         let internal_claims = y_rings
             .iter()
             .zip(prepared_points.iter())
@@ -1280,7 +1280,7 @@ where
         }
     };
     #[cfg(feature = "zk")]
-    let trace_opening_public = match &reduction {
+    let trace_eval_target_public = match &reduction {
         Some(reduction) => reduction.final_claim_public,
         None => current_state.opening_public,
     };
@@ -1322,9 +1322,9 @@ where
         witness,
         extension_opening_reduction,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         trace_scale,
         Some(&prepared_points[0]),
         #[cfg(feature = "zk")]

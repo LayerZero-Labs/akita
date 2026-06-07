@@ -34,8 +34,8 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
-    trace_opening: C,
-    #[cfg(feature = "zk")] trace_opening_public: C,
+    trace_eval_target: C,
+    #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_claim_scales: Option<Vec<C>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
@@ -125,9 +125,9 @@ where
         instance,
         witness,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         Some(prepared_points.as_slice()),
         trace_claim_scales.as_deref(),
         row_coefficients,
@@ -295,16 +295,16 @@ where
         )?;
         let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         #[cfg(not(feature = "zk"))]
-        let trace_opening = reduction.final_claim;
+        let trace_eval_target = reduction.final_claim;
         #[cfg(not(feature = "zk"))]
         let trace_claim_scales = Some(root_trace_claim_scales(
             incidence_summary,
             &reduction.factors_by_point,
         )?);
         #[cfg(feature = "zk")]
-        let trace_opening = reduction.final_claim;
+        let trace_eval_target = reduction.final_claim;
         #[cfg(feature = "zk")]
-        let trace_opening_public = reduction.final_claim_public;
+        let trace_eval_target_public = reduction.final_claim_public;
         #[cfg(feature = "zk")]
         let trace_claim_scales = Some(root_trace_claim_scales(
             incidence_summary,
@@ -337,9 +337,9 @@ where
             e_folded_by_poly,
             y_rings,
             gamma_tr,
-            trace_opening,
+            trace_eval_target,
             #[cfg(feature = "zk")]
-            trace_opening_public,
+            trace_eval_target_public,
             trace_claim_scales,
             row_coefficients,
             row_coefficient_rings,
@@ -412,10 +412,10 @@ where
         &row_coefficient_rings,
     )?;
     let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
-    let trace_opening =
-        trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
+    let trace_eval_target =
+        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
-    let trace_opening_public = trace_opening;
+    let trace_eval_target_public = trace_eval_target;
 
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -485,9 +485,9 @@ where
         instance,
         witness,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         Some(prepared_points.as_slice()),
         None,
         row_coefficients,
@@ -643,16 +643,16 @@ where
         )?;
         let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
         #[cfg(not(feature = "zk"))]
-        let trace_opening = reduction.final_claim;
+        let trace_eval_target = reduction.final_claim;
         #[cfg(not(feature = "zk"))]
         let trace_claim_scales = Some(root_trace_claim_scales(
             incidence_summary,
             &reduction.factors_by_point,
         )?);
         #[cfg(feature = "zk")]
-        let trace_opening = reduction.final_claim;
+        let trace_eval_target = reduction.final_claim;
         #[cfg(feature = "zk")]
-        let trace_opening_public = reduction.final_claim_public;
+        let trace_eval_target_public = reduction.final_claim_public;
         #[cfg(feature = "zk")]
         let trace_claim_scales = Some(root_trace_claim_scales(
             incidence_summary,
@@ -683,9 +683,9 @@ where
             e_folded_by_poly,
             y_rings,
             gamma_tr,
-            trace_opening,
+            trace_eval_target,
             #[cfg(feature = "zk")]
-            trace_opening_public,
+            trace_eval_target_public,
             trace_claim_scales,
             row_coefficients,
             row_coefficient_rings,
@@ -755,10 +755,10 @@ where
         &row_coefficient_rings,
     )?;
     let gamma_tr: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_TRACE_BATCH);
-    let trace_opening =
-        trace_opening_from_incidence(incidence_summary, &row_coefficients, &openings)?;
+    let trace_eval_target =
+        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
-    let trace_opening_public = trace_opening;
+    let trace_eval_target_public = trace_eval_target;
 
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -824,9 +824,9 @@ where
         instance,
         witness,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         Some(prepared_points.as_slice()),
         None,
         row_coefficients,
@@ -852,8 +852,8 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     gamma_tr: C,
-    trace_opening: C,
-    #[cfg(feature = "zk")] trace_opening_public: C,
+    trace_eval_target: C,
+    #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_claim_scales: Option<Vec<C>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
@@ -936,9 +936,9 @@ where
         instance,
         witness,
         gamma_tr,
-        trace_opening,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        trace_opening_public,
+        trace_eval_target_public,
         Some(prepared_points.as_slice()),
         trace_claim_scales.as_deref(),
         row_coefficients,
@@ -979,8 +979,8 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     gamma_tr: C,
-    trace_opening: C,
-    #[cfg(feature = "zk")] trace_opening_public: C,
+    trace_eval_target: C,
+    #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
     trace_claim_scales: Option<&[C]>,
     row_coefficients: Vec<C>,
@@ -1051,9 +1051,9 @@ where
         b,
         alpha,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
+    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
     let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, trace_claim_scales.is_some()) {
         None
     } else if let Some(prepared_points) = trace_prepared_points {
@@ -1120,7 +1120,7 @@ where
         let mut stage2_prover = stage2_prover_result?;
         let mut stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
         if trace_compact.is_some() {
-            stage2_public_input += trace_opening_public_claim;
+            stage2_public_input += trace_eval_target_public_claim;
         }
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
@@ -1258,8 +1258,8 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     gamma_tr: C,
-    trace_opening: C,
-    #[cfg(feature = "zk")] trace_opening_public: C,
+    trace_eval_target: C,
+    #[cfg(feature = "zk")] trace_eval_target_public: C,
     trace_prepared_points: Option<&[PreparedRootOpeningPoint<F, D>]>,
     trace_claim_scales: Option<&[C]>,
     row_coefficients: Vec<C>,
@@ -1324,9 +1324,9 @@ where
         b,
         alpha: _,
     } = rs;
-    let trace_opening_claim = trace_input_claim(gamma_tr, trace_opening);
+    let trace_opening_claim = trace_input_claim(gamma_tr, trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_opening_public_claim = trace_input_claim(gamma_tr, trace_opening_public);
+    let trace_eval_target_public_claim = trace_input_claim(gamma_tr, trace_eval_target_public);
     let trace_compact = if !trace_stage2_enabled(lp, C::EXT_DEGREE, trace_claim_scales.is_some()) {
         None
     } else if let Some(prepared_points) = trace_prepared_points {
@@ -1368,7 +1368,7 @@ where
         )?;
         let mut stage2_public_input = relation_claim_public;
         if trace_compact.is_some() {
-            stage2_public_input += trace_opening_public_claim;
+            stage2_public_input += trace_eval_target_public_claim;
         }
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(

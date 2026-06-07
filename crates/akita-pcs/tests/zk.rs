@@ -125,26 +125,26 @@ fn plain_root_d_image<const D: usize>(
     .expect("debug ring relation");
 
     let RingRelationWitness { e_hat, .. } = witness;
-    let plain_v = CpuBackend
+    let plain_commitment_v = CpuBackend
         .digit_rows::<D>(
             prepared,
             layout.d_key.row_len(),
             e_hat.flat_digits(),
             layout.log_basis,
         )
-        .expect("plain v rows");
+        .expect("plain commitment v rows");
     assert_ne!(
-        instance.v, plain_v,
+        instance.v, plain_commitment_v,
         "debug zk v should include fresh D-blinding"
     );
-    plain_v
+    plain_commitment_v
 }
 
 fn assert_folded_v_hiding<const D: usize>(
     nv: usize,
     proof: &AkitaBatchedProof<F, F>,
     second_proof: &AkitaBatchedProof<F, F>,
-    plain_root_v: &[CyclotomicRing<F, D>],
+    expected_root_commitment_v: &[CyclotomicRing<F, D>],
 ) {
     let root = proof
         .root
@@ -160,7 +160,7 @@ fn assert_folded_v_hiding<const D: usize>(
     );
     assert_ne!(
         root.v.to_vec::<D>(),
-        plain_root_v,
+        expected_root_commitment_v,
         "zk root v should not expose the plain D * e_hat image at D={D}, nv={nv}"
     );
 
@@ -725,7 +725,7 @@ where
         )
         .expect("first zk commit");
 
-        let plain_root_v = plain_root_d_image::<D>(
+        let expected_root_commitment_v = plain_root_d_image::<D>(
             &prepared,
             &poly,
             &point,
@@ -762,7 +762,7 @@ where
             akita_types::SetupContributionMode::Direct,
         )
         .expect("second zk prove");
-        assert_folded_v_hiding::<D>(nv, &proof, &second_proof, &plain_root_v);
+        assert_folded_v_hiding::<D>(nv, &proof, &second_proof, &expected_root_commitment_v);
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();

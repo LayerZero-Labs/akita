@@ -17,9 +17,9 @@ use crate::{
     TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceWeightLayout,
 };
 
-/// Owned public trace-opening data used by the fused stage-2 trace term.
+/// Owned public trace-weight factors used by the fused stage-2 trace term.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TraceStage2OpeningOwned<F: FieldCore, E: FieldCore, const D: usize> {
+pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
     /// Degree-one path: scalar block-weight terms with their packed inner openings.
     Field {
         terms: Vec<TraceFieldBlockOpening<F, D>>,
@@ -31,8 +31,8 @@ pub enum TraceStage2OpeningOwned<F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
-impl<F: FieldCore, E: FieldCore, const D: usize> TraceStage2OpeningOwned<F, E, D> {
-    fn as_trace_opening(&self) -> TraceOpeningAtPoint<'_, F, E, D> {
+impl<F: FieldCore, E: FieldCore, const D: usize> TracePublicWeights<F, E, D> {
+    fn as_trace_weights(&self) -> TraceOpeningAtPoint<'_, F, E, D> {
         match self {
             Self::Field { terms } => TraceOpeningAtPoint::Field { terms },
             Self::Ring { terms, .. } => TraceOpeningAtPoint::Ring {
@@ -47,15 +47,15 @@ impl<F: FieldCore, E: FieldCore, const D: usize> TraceStage2OpeningOwned<F, E, D
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceStage2Wire<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
-    pub opening: TraceStage2OpeningOwned<F, E, D>,
+    pub public_weights: TracePublicWeights<F, E, D>,
     pub gamma_tr: E,
     pub trace_opening_claim: E,
 }
 
 /// Scalar contribution added to the stage-2 input claim.
 #[inline]
-pub fn trace_input_claim<E: FieldCore>(gamma_tr: E, opening: E) -> E {
-    gamma_tr * opening
+pub fn trace_input_claim<E: FieldCore>(gamma_tr: E, eval_target: E) -> E {
+    gamma_tr * eval_target
 }
 
 /// Whether the trace-weight dispatcher has an algebraic implementation for this
@@ -117,26 +117,26 @@ pub fn trace_weight_layout_from_segment(
     Ok(layout)
 }
 
-/// Build a degree-one owned trace opening from explicit factors.
-pub fn trace_stage2_opening_owned_k1<F, E, const D: usize>(
+/// Build degree-one public trace weights from explicit factors.
+pub fn trace_public_weights_k1<F, E, const D: usize>(
     block_weights: &[F],
     inner_opening_ring: &CyclotomicRing<F, D>,
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore,
     E: FieldCore,
 {
-    trace_stage2_opening_owned_field_terms(&[TraceFieldBlockOpening {
+    trace_public_weights_field_terms(&[TraceFieldBlockOpening {
         block_offset: 0,
         block_weights: block_weights.to_vec(),
         inner_opening_ring: *inner_opening_ring,
     }])
 }
 
-/// Build a degree-one owned trace opening from explicit block-offset terms.
-pub fn trace_stage2_opening_owned_field_terms<F, E, const D: usize>(
+/// Build degree-one public trace weights from explicit block-offset terms.
+pub fn trace_public_weights_field_terms<F, E, const D: usize>(
     terms: &[TraceFieldBlockOpening<F, D>],
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore,
     E: FieldCore,
@@ -146,31 +146,31 @@ where
             "field trace terms must be non-empty".to_string(),
         ));
     }
-    Ok(TraceStage2OpeningOwned::Field {
+    Ok(TracePublicWeights::Field {
         terms: terms.to_vec(),
     })
 }
 
-/// Build an extension-valued owned trace opening from explicit factors.
-pub fn trace_stage2_opening_owned_ring<F, E, const D: usize>(
+/// Build extension-valued public trace weights from explicit factors.
+pub fn trace_public_weights_ring<F, E, const D: usize>(
     packed_inner_point: &CyclotomicRing<F, D>,
     block_open: &[E],
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + FieldCore,
 {
-    trace_stage2_opening_owned_ring_terms(&[TraceRingBlockOpening {
+    trace_public_weights_ring_terms(&[TraceRingBlockOpening {
         block_offset: 0,
         block_rings: block_rings_at_opening::<F, E, D>(block_open)?,
         packed_inner_point: *packed_inner_point,
     }])
 }
 
-/// Build an extension-valued owned trace opening from explicit block-offset terms.
-pub fn trace_stage2_opening_owned_ring_terms<F, E, const D: usize>(
+/// Build extension-valued public trace weights from explicit block-offset terms.
+pub fn trace_public_weights_ring_terms<F, E, const D: usize>(
     terms: &[TraceRingBlockOpening<F, D>],
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore,
     E: FieldCore,
@@ -180,7 +180,7 @@ where
             "ring trace terms must be non-empty".to_string(),
         ));
     }
-    Ok(TraceStage2OpeningOwned::Ring {
+    Ok(TracePublicWeights::Ring {
         terms: terms.to_vec(),
         _ext: PhantomData,
     })
@@ -212,15 +212,15 @@ where
     Ok(weights.iter().map(|&weight| weight * scale).collect())
 }
 
-/// Build the owned trace opening for a root incidence, optionally scaling each
+/// Build public trace weights for a root incidence, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
-pub fn trace_stage2_opening_owned_root_terms<F, E, const D: usize>(
+pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
@@ -263,7 +263,7 @@ where
                 inner_opening_ring: prepared.packed_inner_point,
             });
         }
-        trace_stage2_opening_owned_field_terms(&terms)
+        trace_public_weights_field_terms(&terms)
     } else {
         let mut terms = Vec::with_capacity(incidence.num_claims());
         for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
@@ -292,22 +292,22 @@ where
                 packed_inner_point: prepared.packed_inner_point,
             });
         }
-        trace_stage2_opening_owned_ring_terms(&terms)
+        trace_public_weights_ring_terms(&terms)
     }
 }
 
-/// Build the owned trace opening for a recursive singleton fold, optionally
+/// Build public trace weights for a recursive singleton fold, optionally
 /// scaling it by an EOR final tensor factor.
-pub fn trace_stage2_opening_owned_recursive<F, E, const D: usize>(
+pub fn trace_public_weights_recursive<F, E, const D: usize>(
     prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
     scale: E,
-) -> Result<TraceStage2OpeningOwned<F, E, D>, AkitaError>
+) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     if E::EXT_DEGREE == 1 {
-        trace_stage2_opening_owned_field_terms(&[TraceFieldBlockOpening {
+        trace_public_weights_field_terms(&[TraceFieldBlockOpening {
             block_offset: 0,
             block_weights: scaled_base_weights(&prepared.ring_opening_point.b, scale)?,
             inner_opening_ring: prepared.packed_inner_point,
@@ -318,7 +318,7 @@ where
                 "extension trace opening point is missing ring block weights".to_string(),
             )
         })?;
-        trace_stage2_opening_owned_ring_terms(&[TraceRingBlockOpening {
+        trace_public_weights_ring_terms(&[TraceRingBlockOpening {
             block_offset: 0,
             block_rings: scaled_ring_weights(block_rings, scale)?,
             packed_inner_point: prepared.packed_inner_point,
@@ -365,20 +365,20 @@ pub fn trace_weight_evals_for_witness<E: FieldCore>(
 /// Build the prover-side compact trace table for a stage-2 witness.
 pub fn build_trace_stage2_compact<F, E, const D: usize>(
     layout: &TraceWeightLayout,
-    opening: &TraceStage2OpeningOwned<F, E, D>,
+    public_weights: &TracePublicWeights<F, E, D>,
     live_x_cols: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    build_trace_stage2_compact_scaled(layout, opening, live_x_cols, E::one())
+    build_trace_stage2_compact_scaled(layout, public_weights, live_x_cols, E::one())
 }
 
 /// Build the prover-side compact trace table and scale each live entry.
 pub fn build_trace_stage2_compact_scaled<F, E, const D: usize>(
     layout: &TraceWeightLayout,
-    opening: &TraceStage2OpeningOwned<F, E, D>,
+    public_weights: &TracePublicWeights<F, E, D>,
     live_x_cols: usize,
     output_scale: E,
 ) -> Result<Vec<E>, AkitaError>
@@ -386,23 +386,19 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    match opening {
-        TraceStage2OpeningOwned::Field { terms } => {
-            build_trace_weight_compact_field_terms_scaled::<F, E, D>(
-                layout,
-                terms,
-                live_x_cols,
-                output_scale,
-            )
-        }
-        TraceStage2OpeningOwned::Ring { terms, .. } => {
-            build_trace_weight_compact_ring_terms_scaled::<F, E, D>(
-                layout,
-                terms,
-                live_x_cols,
-                output_scale,
-            )
-        }
+    match public_weights {
+        TracePublicWeights::Field { terms } => build_trace_weight_compact_field_terms_scaled::<
+            F,
+            E,
+            D,
+        >(layout, terms, live_x_cols, output_scale),
+        TracePublicWeights::Ring { terms, .. } => build_trace_weight_compact_ring_terms_scaled::<
+            F,
+            E,
+            D,
+        >(
+            layout, terms, live_x_cols, output_scale
+        ),
     }
 }
 
@@ -422,7 +418,7 @@ where
                 &wire.layout,
                 ring_point,
                 col_point,
-                wire.opening.as_trace_opening(),
+                wire.public_weights.as_trace_weights(),
             )
         };
     }
@@ -439,7 +435,7 @@ where
 }
 
 /// Sum batched public opening claims under per-claim row coefficients.
-pub fn trace_opening_from_incidence<E, L>(
+pub fn batched_eval_target_from_incidence<E, L>(
     incidence: &ClaimIncidenceSummary,
     row_coefficients: &[L],
     openings: &[E],
@@ -535,10 +531,10 @@ mod tests {
                 inner_opening_ring: test_ring(40),
             },
         ];
-        let opening = trace_stage2_opening_owned_field_terms::<F, F, D>(&terms).unwrap();
+        let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
         let dense = build_trace_weight_table_field_terms::<F, F, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual = build_trace_stage2_compact(&layout, &opening, 5).unwrap();
+        let actual = build_trace_stage2_compact(&layout, &public_weights, 5).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -560,10 +556,10 @@ mod tests {
                 packed_inner_point: test_ring(71),
             },
         ];
-        let opening = trace_stage2_opening_owned_ring_terms::<F, E, D>(&terms).unwrap();
+        let public_weights = trace_public_weights_ring_terms::<F, E, D>(&terms).unwrap();
         let dense = build_trace_weight_table_ring_terms::<F, E, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual = build_trace_stage2_compact(&layout, &opening, 5).unwrap();
+        let actual = build_trace_stage2_compact(&layout, &public_weights, 5).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -585,7 +581,7 @@ mod tests {
                 packed_inner_point: test_ring(71),
             },
         ];
-        let opening = trace_stage2_opening_owned_ring_terms::<F, E, D>(&terms).unwrap();
+        let public_weights = trace_public_weights_ring_terms::<F, E, D>(&terms).unwrap();
         let output_scale = E::new(F::from_u64(11), F::from_u64(19));
         let dense = build_trace_weight_table_ring_terms::<F, E, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5)
@@ -593,7 +589,8 @@ mod tests {
             .into_iter()
             .map(|value| output_scale * value)
             .collect::<Vec<_>>();
-        let actual = build_trace_stage2_compact_scaled(&layout, &opening, 5, output_scale).unwrap();
+        let actual =
+            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, output_scale).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -606,11 +603,11 @@ mod tests {
         let block_weights = lagrange_weights(&b_open).unwrap();
         let inner_ring =
             reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
-        let opening =
-            trace_stage2_opening_owned_k1::<F, F, D>(&block_weights, &inner_ring).unwrap();
+        let public_weights =
+            trace_public_weights_k1::<F, F, D>(&block_weights, &inner_ring).unwrap();
         let wire = TraceStage2Wire {
             layout,
-            opening,
+            public_weights,
             gamma_tr: F::from_u64(13),
             trace_opening_claim: F::from_u64(17),
         };

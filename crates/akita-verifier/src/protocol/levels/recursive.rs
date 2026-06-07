@@ -1,7 +1,7 @@
 use super::*;
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 use akita_types::{
-    trace_input_claim, trace_stage2_enabled, trace_stage2_opening_owned_recursive,
+    trace_input_claim, trace_public_weights_recursive, trace_stage2_enabled,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
     RingSubfieldEncoding, TraceStage2Wire,
 };
@@ -393,12 +393,12 @@ where
         None
     } else {
         #[cfg(not(feature = "zk"))]
-        let (trace_opening, trace_scale) = eor_trace_final
+        let (trace_eval_target, trace_scale) = eor_trace_final
             .as_ref()
             .copied()
             .unwrap_or((current_state.opening, L::one()));
         #[cfg(feature = "zk")]
-        let (trace_opening, trace_scale, trace_opening_mask) =
+        let (trace_eval_target, trace_scale, trace_eval_target_mask) =
             if let Some((final_claim, factor)) = &zk_eor_final {
                 (final_claim.public, *factor, final_claim.mask.clone())
             } else {
@@ -409,14 +409,14 @@ where
                 )
             };
         #[cfg(feature = "zk")]
-        trace_claim_mask.add_scaled(gamma_tr, &trace_opening_mask);
+        trace_claim_mask.add_scaled(gamma_tr, &trace_eval_target_mask);
         Some(build_trace_stage2_wire_recursive::<F, L, D>(
             lp,
             &relation_instance.segment_layout(lp)?,
             rs.col_bits,
             rs.ring_bits,
             &prepared_points[0],
-            trace_opening,
+            trace_eval_target,
             trace_scale,
             gamma_tr,
         )?)
@@ -1088,7 +1088,7 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
-    opening: L,
+    trace_eval_target: L,
     trace_scale: L,
     gamma_tr: L,
 ) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
@@ -1100,7 +1100,7 @@ where
     Ok(TraceStage2Wire {
         layout,
         gamma_tr,
-        trace_opening_claim: trace_input_claim(gamma_tr, opening),
-        opening: trace_stage2_opening_owned_recursive(prepared, trace_scale)?,
+        trace_opening_claim: trace_input_claim(gamma_tr, trace_eval_target),
+        public_weights: trace_public_weights_recursive(prepared, trace_scale)?,
     })
 }
