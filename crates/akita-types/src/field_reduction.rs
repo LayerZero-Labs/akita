@@ -10,6 +10,7 @@ use akita_field::{
     RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend,
 };
 use akita_serialization::Valid;
+use std::array::from_fn;
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
@@ -641,6 +642,66 @@ where
     }
 }
 
+fn lift_ring_to_extension<F, E, const D: usize>(ring: &CyclotomicRing<F, D>) -> CyclotomicRing<E, D>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    CyclotomicRing::from_coefficients(from_fn(|idx| E::lift_base(ring.coefficients()[idx])))
+}
+
+fn weighted_negacyclic_shift_sum<F, E, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    eq_coords: &[E],
+) -> CyclotomicRing<E, D>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let lifted = lift_ring_to_extension::<F, E, D>(ring);
+    let mut out = CyclotomicRing::<E, D>::zero();
+    for (coord, weight) in eq_coords.iter().copied().enumerate() {
+        if weight.is_zero() {
+            continue;
+        }
+        lifted.shift_scale_accumulate_into(&mut out, coord, weight);
+    }
+    out
+}
+
+fn decode_extension_linear_trace<F, E, const D: usize, const K: usize>(
+    params: SubfieldParams<D, K>,
+    trace_input: &CyclotomicRing<E, D>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: ExtField<F>,
+{
+    if K == 1 {
+        return Ok(trace_input.coefficients()[0]);
+    }
+
+    let traced = trace_h::<E, D, K>(params, trace_input);
+    let scale_inv = F::from_u64(params.packed_len() as u64)
+        .inverse()
+        .ok_or_else(|| AkitaError::InvalidInput("trace scale is not invertible".to_string()))?;
+    let scale_inv = E::lift_base(scale_inv);
+    let coeffs = traced.coefficients();
+    let step = D / (2 * K);
+    let mut out = coeffs[0] * scale_inv;
+
+    let mut j = 1usize;
+    while j < K {
+        let mut basis_coords = [F::zero(); K];
+        basis_coords[j] = F::one();
+        let basis = E::from_base_slice(&basis_coords);
+        out += coeffs[j * step] * scale_inv * basis;
+        j += 1;
+    }
+
+    Ok(out)
+}
+
 /// `Σ_c eq_coords[c] · TraceOpen(ring · X^c)` with one `sigma_{-1}(packed)` and one trace setup.
 pub(crate) fn trace_open_ring_mle_dot<F, E, const D: usize>(
     ring: &CyclotomicRing<F, D>,
@@ -652,16 +713,24 @@ where
     F: FieldCore + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F>,
 {
+    let ring_bits = u32::try_from(ring_bits).map_err(|_| {
+        AkitaError::InvalidInput("trace-open ring bits exceed platform width".to_string())
+    })?;
     let ring_len = 1usize
-        .checked_shl(ring_bits as u32)
+        .checked_shl(ring_bits)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open eq length overflow".to_string()))?;
+    if ring_len != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: ring_len,
+        });
+    }
     if eq_coords.len() != ring_len {
         return Err(AkitaError::InvalidSize {
             expected: ring_len,
             actual: eq_coords.len(),
         });
     }
-    let trace_partner = packed_inner_point.sigma_m1();
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| {
@@ -669,26 +738,10 @@ where
                     "claim-field degree must divide the ring dimension".to_string(),
                 )
             })?;
-            let mut acc = E::zero();
-            if $k == 1 {
-                for (coord, eq_w) in eq_coords.iter().enumerate() {
-                    if eq_w.is_zero() {
-                        continue;
-                    }
-                    let trace_input = ring.negacyclic_shift(coord) * trace_partner;
-                    acc += *eq_w * E::lift_base(trace_input.coefficients()[0]);
-                }
-                return Ok(acc);
-            }
-            for (coord, eq_w) in eq_coords.iter().enumerate() {
-                if eq_w.is_zero() {
-                    continue;
-                }
-                let trace_input = ring.negacyclic_shift(coord) * trace_partner;
-                let traced = trace_h::<F, D, $k>(params, &trace_input);
-                acc += *eq_w * decode_traced_to_extension::<F, E, D, $k>(params, &traced)?;
-            }
-            Ok(acc)
+            let shifted = weighted_negacyclic_shift_sum::<F, E, D>(ring, eq_coords);
+            let trace_partner = lift_ring_to_extension::<F, E, D>(&packed_inner_point.sigma_m1());
+            let trace_input = shifted * trace_partner;
+            decode_extension_linear_trace::<F, E, D, $k>(params, &trace_input)
         }};
     }
 
