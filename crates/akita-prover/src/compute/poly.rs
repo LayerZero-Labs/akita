@@ -168,6 +168,49 @@ where
 {
 }
 
+/// Kernel bounds on [`RootTensorProjectionPoly`] commit views (extension-reduction path).
+pub trait RootTensorProjectionCommitKernels<F, const D: usize>:
+    CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    Self: for<'a> RootCommitKernel<
+        <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+        F,
+        D,
+    >,
+{
+}
+
+/// Kernel bounds on [`RootTensorProjectionPoly`] opening/tensor views (extension-reduction path).
+pub trait RootTensorProjectionProveKernels<F, ChallengeE, const D: usize>:
+    CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ChallengeE: ExtField<F>,
+    Self: for<'a> OpeningFoldKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
+            F,
+            D,
+        > + for<'a> OpeningBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            D,
+        > + for<'a> TensorProjectionKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
 /// Backend capability bundle for scheme-level commit with optional tensor transform.
 ///
 /// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
@@ -182,13 +225,9 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootCommitPoly<F, D>,
-    Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
-        + for<'a> RootCommitKernel<
-            <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-            F,
-            D,
-        >,
+    Self: RootTensorProjectionCommitKernels<F, D>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
 {
 }
 
@@ -235,7 +274,8 @@ where
     ClaimE: ExtField<F>,
     ChallengeE: ExtField<F>,
     P: RootProvePoly<F, D>,
-    Self: for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+    Self: RootTensorProjectionProveKernels<F, ChallengeE, D>
+        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
         + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
         + for<'a> TensorProjectionKernel<
             <P as RootTensorSource<F, D>>::TensorView<'a>,
@@ -249,24 +289,6 @@ where
             D,
         > + for<'a> TensorProjectionBatchKernel<
             <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            ChallengeE,
-            D,
-        > + for<'a> OpeningFoldKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
-            F,
-            D,
-        > + for<'a> OpeningBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
-            F,
-            D,
-        > + for<'a> TensorProjectionKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            ChallengeE,
-            D,
-        > + for<'a> TensorProjectionBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
             F,
             ChallengeE,
             D,

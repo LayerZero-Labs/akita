@@ -573,6 +573,56 @@ where
     }
 }
 
+impl<F, const D: usize> crate::compute::RootTensorProjectionCommitKernels<F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    Self: for<'a> crate::compute::RootCommitKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootCommitSource<F, D>>::CommitView<
+                'a,
+            >,
+            F,
+            D,
+        >,
+{
+}
+
+impl<F, ChallengeE, const D: usize>
+    crate::compute::RootTensorProjectionProveKernels<F, ChallengeE, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    ChallengeE: akita_field::ExtField<F>,
+    Self: for<'a> crate::compute::OpeningFoldKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningView<
+                'a,
+            >,
+            F,
+            D,
+        > + for<'a> crate::compute::OpeningBatchKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningBatchView<
+                'a,
+            >,
+            F,
+            D,
+        > + for<'a> crate::compute::TensorProjectionKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorView<
+                'a,
+            >,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> crate::compute::TensorProjectionBatchKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorBatchView<
+                'a,
+            >,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
 impl<F, P, E, const D: usize> crate::compute::RootCommitBackend<F, P, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
@@ -587,12 +637,6 @@ where
             <P as crate::compute::RootTensorSource<F, D>>::TensorView<'a>,
             F,
             E,
-            D,
-        > + for<'a> crate::compute::RootCommitKernel<
-            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootCommitSource<F, D>>::CommitView<
-                'a,
-            >,
-            F,
             D,
         >,
 {
@@ -626,32 +670,6 @@ where
             D,
         > + for<'a> crate::compute::TensorProjectionBatchKernel<
             <P as crate::compute::RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            ChallengeE,
-            D,
-        > + for<'a> crate::compute::OpeningFoldKernel<
-            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningView<
-                'a,
-            >,
-            F,
-            D,
-        > + for<'a> crate::compute::OpeningBatchKernel<
-            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningBatchView<
-                'a,
-            >,
-            F,
-            D,
-        > + for<'a> crate::compute::TensorProjectionKernel<
-            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorView<
-                'a,
-            >,
-            F,
-            ChallengeE,
-            D,
-        > + for<'a> crate::compute::TensorProjectionBatchKernel<
-            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorBatchView<
-                'a,
-            >,
             F,
             ChallengeE,
             D,
