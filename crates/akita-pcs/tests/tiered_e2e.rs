@@ -25,6 +25,87 @@ use common::*;
 type TieredCfg = fp128::D64OneHotTiered;
 const TIERED_D: usize = TieredCfg::D;
 
+fn run_tiered_singleton(nv: usize) {
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 1)
+            .expect("singleton incidence");
+        let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        assert!(
+            layout.f_key.is_some(),
+            "expected a tiered root layout (f_key) for nv={nv} singleton"
+        );
+        assert_ne!(
+            layout.b_key.row_len(),
+            layout.effective_commit_rows(),
+            "nv={nv} singleton must exercise n_b' != sent-commitment length"
+        );
+
+        let poly = make_onehot_poly(&layout, 0x7000_0000);
+        let pt = random_point(nv, 0x7115_0000 + nv as u64);
+        let opening = opening_from_poly(&poly, &pt, &layout);
+
+        let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, 1, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let verifier_setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
+            F,
+            TIERED_D,
+        >>::setup_verifier(&setup);
+
+        let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
+            F,
+            TIERED_D,
+        >>::commit(&setup, &CpuBackend, &prepared, std::slice::from_ref(&poly))
+        .expect("commit");
+        assert_eq!(
+            commitment.u.len(),
+            layout.effective_commit_rows(),
+            "sent commitment must match F row count when tiered"
+        );
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"tiered_e2e");
+        let proof = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            prove_input(&pt[..], std::slice::from_ref(&poly), &commitment, hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .expect("prove");
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"tiered_e2e");
+        let result = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentVerifier<
+            F,
+            TIERED_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt[..], std::slice::from_ref(&opening), &commitment),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(
+            result.is_ok(),
+            "tiered nv={nv} singleton verification failed: {:?}",
+            result.err()
+        );
+    });
+}
+
 fn run_tiered_batch(nv: usize, num_polys: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
@@ -108,4 +189,10 @@ fn run_tiered_batch(nv: usize, num_polys: usize) {
 fn tiered_onehot_batch_nv14() {
     // Smallest natural tiering instance for fp128::D64OneHotTiered.
     run_tiered_batch(14, 16);
+}
+
+#[test]
+fn tiered_onehot_singleton_nv34() {
+    // Shipped table root has n_b'=2 but n_f=1; guards must accept u.len() == 1.
+    run_tiered_singleton(34);
 }

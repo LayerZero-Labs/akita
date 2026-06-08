@@ -41,11 +41,14 @@ u_final = F · decompose(u_1 ‖ … ‖ u_f)
 ```
 
 The `u_i` become part of the witness; only `u_final` is sent (it replaces the
-old commitment `u`). The planner chooses `f` so that the shrunk
-`B_footprint <= A_footprint` and `F_footprint <= A_footprint`, making `A` the
-unique bottleneck. Net effect: a smaller shared preprocessing matrix, a
-faster verifier setup scan (≈ `f×` fewer ring evaluations), and proof size that
-stays in check because `F` replaces clear `u_i`.
+old commitment `u`). The planner chooses the smallest `f` whose shrunk
+`B_footprint' <= A_footprint`, making `A` the bottleneck for the shared
+preprocessing matrix. `F` commits to decomposed intermediate images `u_i`
+(balanced digits), so it stays very small in practice — sizing `F` under `A` is
+not a planner constraint and is not the optimization focus. Net effect: a smaller
+shared preprocessing matrix, a faster verifier setup scan (≈ `f×` fewer ring
+evaluations), and proof size that stays in check because `F` replaces clear
+`u_i`.
 
 This is gated by a new `CommitmentConfig` flag `TIERED_COMMITMENT` (default
 `false`, so existing configs and proofs are byte-for-byte unchanged) and a new
@@ -173,9 +176,11 @@ Key abstractions / surfaces introduced or modified:
 - [ ] Planner emits `tier_split == 1` / `f_key == None` for every non-tiered
       preset, and the `fp128_d64_onehot` shipped table regenerates unchanged.
 - [ ] For `fp128::D64OneHotTiered`, for every scheduled level with a feasible
-      split: `b_footprint' <= a_footprint`, `f_footprint <= a_footprint`, and
+      split: `b_footprint' <= a_footprint` and
       `max_setup_matrix_size(...) == a_footprint` via **both** the per-level and
       the root-incidence-widening paths (skewed multipoint incidence exercised).
+      (`F` is not required to fit under `A`; it commits decomposed `u_i` and
+      stays small — the planner only searches on `B'`.)
 - [ ] Canonical row-offset helpers exist on `LevelParams`; an invariant test
       asserts they equal the open-coded offsets for every non-tiered preset, and
       every row-offset site calls them.
@@ -244,8 +249,8 @@ Direction and how to verify:
   `gen_schedule_tables` / profile comparison and keep it bounded.
 
 If this regresses proof size beyond a small constant, the `f`-selection should
-prefer the largest `f` that still satisfies `B' <= A` only up to the point where
-`F_footprint <= A_footprint` (so `F` and the added witness stay bounded by `A`).
+prefer the largest `f` that still satisfies `B' <= A`. (`F` is sized from
+decomposed `u_i` and is not a sizing bottleneck in practice.)
 
 ## Design
 
@@ -377,19 +382,18 @@ if !policy.tiered || b_footprint <= a_footprint {
     // keep current B; tier_split = 1, f_key = None
 } else {
     // search f over powers of two that divide (num_blocks * t_vectors),
-    // largest first benefit / pick the f minimizing max(B', F):
+    // smallest first: pick the smallest f with b_foot' <= a_footprint
     for f in feasible_powers_of_two(num_blocks * t_vectors) {
         width_t' = width_t / f;                                  // shrink B width
         n_b'     = min_secure_rank(family, d, norm_t, width_t'); // rank may drop
         b_foot'  = n_b' * width_t';
         // F commits decompose(u_1 ‖ … ‖ u_f): width = f * n_b' * delta_open_F,
         // entries are balanced digits → digit-range collision bucket (norm_t).
+        // F is very small (commits to u, not t̂); no f_foot <= a_footprint check.
         width_F  = f * n_b' * delta_open;                         // delta_open at this level
         norm_F   = rounded_up_collision_norm_t(family, d, log_basis);
         n_F      = min_secure_rank(family, d, norm_F, width_F);
-        f_foot   = n_F * width_F;
-        // accept the smallest f with b_foot' <= a_footprint AND f_foot <= a_footprint;
-        // among those, prefer the one minimizing max(b_foot', f_foot).
+        // accept the smallest f with b_foot' <= a_footprint
     }
     // store: b_key' = AjtaiKeyParams::try_new(family, n_b', width_t', norm_t, d)
     //        f_key  = AjtaiKeyParams::try_new(family, n_F, width_F, norm_F, d)
@@ -423,10 +427,11 @@ Notes and edge cases:
   still in the same SIS bucket and `n_b'·width_t' > a`), fall back to
   `tier_split = 1`, `f_key = None` for that level. The acceptance criterion is
   conditional on feasibility; a planner warning/log is emitted.
-- **`F` exceeds `A`.** `width_F = f · n_b' · delta_open` grows with `f`, while
-  `b_foot'` shrinks with `f`; there is a crossover. Requiring both `<= A`
-  bounds the search to the window around the crossover. If the window is empty,
-  fall back to `tier_split = 1` for that level.
+- **`F` sizing is not a search constraint.** `F` commits decomposed
+  intermediate images `u_i` (balanced digits), so `n_F` and `width_F` stay very
+  small in practice — typically `n_F = 1`. The `f`-search only requires
+  `b_foot' <= a_footprint`; it does not cap `F` under `A` and does not fall back
+  when `F` would exceed `A` (which has not been observed in shipped schedules).
 - **Determinism.** The `f`-search is a pure function of `(policy, key, level
   geometry)` exactly like the rest of the DP, so prover and verifier (and a
   future shipped table) regenerate identical `LevelParams`.
@@ -495,7 +500,8 @@ single `"shared"` label). At runtime the verifier/prover take
 `shared_matrix.ring_view::<D>(n_F, width_F)` for `F`, the same way they take the
 A/B/D prefix views. Because all role views are prefixes of one vector and the
 setup only allocates `max_setup_len = max over levels of max(a,b',d,f)`, adding
-`F` does **not** grow the shared matrix once `f` is chosen so `f_len <= a_len`.
+`F` does **not** grow the shared matrix once `B'` is chosen so `b_foot' <= a_footprint`
+(`F` is negligible next to `A` in practice).
 
 Concretely:
 
@@ -845,11 +851,11 @@ flowchart TB
     subgraph after [Tiered]
         Bsmall["B' prefix: n_b' × (width_t / f)"]
         Fmat["F prefix: n_F × (f·n_b'·δ)"]
-        scanT["scan ≈ max(A, B', F, D) ≈ A_footprint"]
+        scanT["scan ≈ max(A, B', F, D) ≈ A_footprint (F negligible)"]
         Bsmall --> scanT
         Fmat --> scanT
     end
-    before -->|"choose f so B'≤A, F≤A"| after
+    before -->|"choose f so B'≤A"| after
 ```
 
 ### Alternatives Considered
@@ -977,8 +983,9 @@ disable `B` in the packed D/B/A scan and add two prefix scans (one
 - `B_inner`: `for entry (row,col) in B' prefix:
   w = Σ_g Σ_j eq_tau1[b_inner_start+g·(f·n_b')+j·n_b'+row]·t_eq[g][j·width_small+col]`
   (this is `fold_reused_b_weight`, reusing the existing `t_eq_slice_per_group`).
-`required = max(d, a, f_required, b_inner_required)` (all ≤ A footprint by the
-planner). Plus a structured `-recompose(û_concat)` term for the `B_inner` RHS,
+`required = max(d, a, f_required, b_inner_required)` (with `B'` bounded by
+`A` via the planner; `F` is small because it commits decomposed `u_i`). Plus a
+structured `-recompose(û_concat)` term for the `B_inner` RHS,
 analogous to the consistency-row `z` recompose.
 
 **Verifier `eval_at_point`.** Add the `F`/`B_inner`/`û` contributions; derive all

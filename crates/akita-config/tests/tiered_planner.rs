@@ -1,9 +1,9 @@
 //! Tiered-commitment planner integration checks for `fp128::D64OneHotTiered`.
 //!
-//! Verify that the real runtime schedule (via the DP fallback, since tiered
-//! policies ship no table) tiers at least one level for a batched key, and
-//! that every tiered level keeps both the shrunk first-tier `B'` and the
-//! second-tier `F` footprints bounded by the inner `A` footprint.
+//! Verify that the real runtime schedule tiers at least one level for a batched
+//! key, and that every tiered level keeps the shrunk first-tier `B'` footprint
+//! bounded by the inner `A` footprint. (`F` commits decomposed `u_i` and is not
+//! a sizing constraint — not asserted here.)
 
 #![allow(missing_docs)]
 
@@ -36,11 +36,6 @@ fn assert_tiered_levels_fit_under_a(schedule: &Schedule) -> usize {
                 footprint(&lp.b_key) <= a_footprint,
                 "tiered B' footprint {} must fit under A footprint {a_footprint}",
                 footprint(&lp.b_key)
-            );
-            assert!(
-                footprint(fk) <= a_footprint,
-                "tiered F footprint {} must fit under A footprint {a_footprint}",
-                footprint(fk)
             );
             assert!(lp.tier_split >= 2, "tiered level must have tier_split >= 2");
             // F width = tier_split · n_b' · num_digits_open.
