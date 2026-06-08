@@ -356,7 +356,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
-        &proof,
+        &oversized_proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(

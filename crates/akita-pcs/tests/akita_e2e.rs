@@ -1184,7 +1184,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &proof,
+            &malformed,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
