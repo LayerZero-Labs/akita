@@ -87,7 +87,7 @@ Each names the test, benchmark, or protocol relation that protects it.
 
 ### Acceptance Criteria
 
-- [ ] `akita-sumcheck` is overhauled to own the generic descriptor algebra (`Source`, `Term`, `Expr`, `SumcheckInstanceDescriptor`, `InstanceKind`, `ClaimSlot`, generic over identifier types), both proof formats (regular compressed and eq-factored), the Tier-A kernel, the `SumcheckFastPath` trait, and the proof sink; it names no protocol-specific identifier or equation.
+- [ ] `akita-sumcheck` is overhauled to own the generic descriptor algebra (`Source`, `Term`, `Expr`, `SubClaim`, `Summand`, `SumcheckInstanceDescriptor`, `InstanceKind`, `ClaimSlot`, generic over identifier types), both proof formats (regular compressed and eq-factored), the Tier-A kernel, the `SumcheckFastPath` trait, and the proof sink; it names no protocol-specific identifier or equation.
 - [ ] New crate `akita-protocol` exists holding only protocol description: the concrete `AkitaOpeningId`/`AkitaPublicId`/`AkitaChallengeId` identifier types, per-stage formula constructors, and the per-level protocol plan (`LevelProtocolPlan`, `StagePlan`, `BatchingScheme`, `plan_level`), composed from `akita-sumcheck` building blocks.
 - [ ] `akita-protocol` depends only on `akita-sumcheck`, `akita-types`, `akita-field`, `akita-challenges`; it names no `CommitmentConfig`-style preset type beyond what the plan inputs require.
 - [ ] Instance-kind/format handling: a standalone eq-factored instance serializes in eq-factored format; an eq-factored instance batched with others serializes in the regular compressed format (with Gruen split-eq still used for compute); a regular instance is arbitrarily batchable. Covered by a format-selection test.
@@ -111,7 +111,7 @@ Existing tests that must remain green unchanged:
 
 New tests:
 
-- Descriptor evaluation: `Expr::try_evaluate` returns the correct value and rejects malformed source references with `AkitaError`.
+- Descriptor evaluation: `Summand::try_evaluate` (and `Expr::try_evaluate` on sub-claim bodies) returns the correct value and rejects malformed source references with `AkitaError`.
 - Fast-path equivalence (byte/field-identical round polynomials) for the compact-integer stage-2 scan versus the generic kernel.
 - Protocol-plan determinism: `plan_level` is a pure function of `(LevelParams, gates)` and prover/verifier obtain identical plans.
 - Format selection: a standalone eq-factored instance round-trips in eq-factored format; the same instance placed in a batch with another instance round-trips in the regular compressed format, and both verify.
@@ -143,7 +143,7 @@ The generic descriptor algebra and engine live in the lower `akita-sumcheck` lay
 ```text
 akita-field / akita-challenges / akita-types
         |
-akita-sumcheck   (OVERHAULED lower layer: descriptor algebra (Expr/Term/Source/descriptor),
+akita-sumcheck   (OVERHAULED lower layer: descriptor algebra (Source/Term/Expr/SubClaim/Summand/descriptor),
                   boolean-hypercube engine, regular + eq-factored proof formats, batching,
                   accumulators, compact fold, fast-path trait, proof sink)
         |
@@ -174,6 +174,13 @@ pub enum Source<O, P, C> {
 pub struct Term<O, P, C> { pub coefficient: i64, pub factors: Vec<Source<O, P, C>> } // coeff * product
 pub struct Expr<O, P, C> { pub terms: Vec<Term<O, P, C>> }                           // sum of terms
 
+pub struct SubClaim<O, P, C> {
+    pub label: &'static str,
+    pub weight: Option<C>,        // Fiat-Shamir batching coefficient; None means weight 1
+    pub body: Expr<O, P, C>,      // sum-of-products; no Challenge factors in the body
+}
+pub struct Summand<O, P, C> { pub subclaims: Vec<SubClaim<O, P, C>> } // g(x) = Σ weight_c · body_c(x)
+
 pub enum InstanceKind {
     Regular,      // batchable; regular compressed proof format
     EqFactored,   // not batchable; eq-factored proof format only when standalone
@@ -186,18 +193,24 @@ pub struct SumcheckInstanceDescriptor<O, P, C> {
     pub kind: InstanceKind,
     pub input_claim: ClaimSlot,   // chained input (split-sumcheck handoff)
     pub output_claim: ClaimSlot,  // chained output
-    pub poly: Expr<O, P, C>,      // the summand g(x) for this instance
+    pub summand: Summand<O, P, C>, // the round-polynomial summand g(x) for this instance
 }
 ```
+
+Three layers: `Term` (one monomial), `Expr` (the body of one sub-claim), `Summand` (weighted sum of sub-claims).
+Each monomial is a product of sources only.
+Protocol formulas that are not literally a single product (for example `W * (W + 1)`) are expanded into a sum of monomials at descriptor construction time in `akita-protocol`; the engine does not need affine or squared-source extensions.
+Repeating the same `Source::Opening` in a term's factor list denotes a repeated MLE factor (for example `W * W`).
+Fiat-Shamir batching coefficients belong on `SubClaim::weight`, not as `Challenge` factors inside term bodies.
 
 There is no domain field: all rounds are over the boolean hypercube (univariate skip is out of scope), so the engine never needs a non-boolean round domain.
 
 The identifier types are generic so the same descriptor serves both sides.
 The verifier instantiates evaluation with `resolve_opening: O -> F` (claimed values); the prover instantiates the kernel with `resolve_opening: O -> PolynomialView` (witness tables).
-`akita-protocol` defines the concrete `AkitaOpeningId`, `AkitaPublicId`, `AkitaChallengeId` enums and constructs concrete `Expr` values; `akita-sumcheck` never names a protocol-specific identifier.
+`akita-protocol` defines the concrete `AkitaOpeningId`, `AkitaPublicId`, `AkitaChallengeId` enums and constructs concrete `Summand` values; `akita-sumcheck` never names a protocol-specific identifier.
 
-The descriptor is field-free: `Term::coefficient` is an `i64`, and `Term`/`Expr`/`SumcheckInstanceDescriptor` carry no `F` type parameter.
-The evaluation field is chosen only when a descriptor is evaluated: `Expr::try_evaluate<F: RingCore + FromPrimitiveInt, ..>` lifts each integer coefficient via `F::from_i64`.
+The descriptor is field-free: `Term::coefficient` is an `i64`, and `Term`/`Expr`/`SubClaim`/`Summand`/`SumcheckInstanceDescriptor` carry no `F` type parameter.
+The evaluation field is chosen only when a descriptor is evaluated: `Summand::try_evaluate<F: RingCore + FromPrimitiveInt, ..>` lifts each integer coefficient via `F::from_i64` and multiplies each sub-claim body by its resolved weight.
 This matches where the field actually matters.
 The symbolic combination in `try_evaluate` is a sum-of-products over a single evaluation field, so it needs no field provenance; the expensive base-by-extension and small-value arithmetic lives in the layer-1 source resolvers (for example `setup_contribution`, which evaluates base-field setup rings against extension-field challenge powers via `mul_base`).
 Jolt draws the same boundary: its claim `Expr` keeps `coefficient: F` and combines in one field (`jolt-claims/src/claims.rs`), while its structured-MLE evaluators are a separate `evaluate_mle<F, C>` with a `ChallengeOps<F>`/`FieldOps<C>` base-by-challenge interface (`jolt-lookup-tables/src/{traits,challenge_ops}.rs`).
@@ -246,7 +259,7 @@ The verifier already has a clean shape (`crates/akita-verifier/src/stages/stage2
 
 ```rust
 fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-    self.descriptor.poly.try_evaluate(
+    self.descriptor.summand.try_evaluate(
         |opening| self.resolve_opening(opening, challenges),  // witness eval / claimed value
         |challenge| self.resolve_challenge(challenge),        // batching coeff, gamma powers
         |public| self.resolve_public(public, challenges),     // relation row, eq, range coeff
@@ -264,7 +277,7 @@ Akita unifies them into one descriptor consumed by both sides, so they cannot dr
 #### 4. Two-tier prover contract (`akita-prover` + `akita-sumcheck`)
 
 Tier A is the generic fused kernel.
-It folds all batched instances once per challenge and computes each instance's round message by walking the declared `Expr` over witness views, evaluating each factor's view at the round's hint points and combining per the product structure.
+It folds all batched instances once per challenge and computes each instance's round message by walking the declared `Summand` over witness views, evaluating each factor's view at the round's hint points and combining per the monomial product structure.
 Promote the front-loaded batching driver (`crates/akita-sumcheck/src/batched_sumcheck.rs`) and the accumulator helpers (`accum.rs`, `compact_fold.rs`) into this kernel.
 This is the always-correct reference implementation.
 
@@ -345,10 +358,10 @@ The plan is the single place gamma-power batching is allocated, so trace, L2, an
 
 #### 6. Crate boundaries
 
-- `akita-sumcheck` (existing, overhauled into the generic lower layer): the descriptor algebra (`Source`/`Term`/`Expr`/`SumcheckInstanceDescriptor`/`InstanceKind`, generic over identifier types), the boolean-hypercube engine (round loop, batched kernel; promote `batched_sumcheck.rs`), both proof wire formats (regular compressed and eq-factored), accumulators (`accum.rs`), compact fold (`compact_fold.rs`), the `SumcheckFastPath` trait, and the proof-sink abstraction.
+- `akita-sumcheck` (existing, overhauled into the generic lower layer): the descriptor algebra (`Source`/`Term`/`Expr`/`SubClaim`/`Summand`/`SumcheckInstanceDescriptor`/`InstanceKind`, generic over identifier types), the boolean-hypercube engine (round loop, batched kernel; promote `batched_sumcheck.rs`), both proof wire formats (regular compressed and eq-factored), accumulators (`accum.rs`), compact fold (`compact_fold.rs`), the `SumcheckFastPath` trait, and the proof-sink abstraction.
   Names no protocol-specific identifier or equation.
   The current `traits.rs` `SumcheckInstance{Prover,Verifier}` / `EqFactored*` pairs are folded into the descriptor + engine model rather than kept as parallel hand-rolled traits.
-- `akita-protocol` (new): pure protocol description only. The concrete `AkitaOpeningId` / `AkitaPublicId` / `AkitaChallengeId` identifier types, the per-stage formula constructors that build concrete `Expr` values, `plan_level`, gating, transcript schedule, and claim-slot chaining.
+- `akita-protocol` (new): pure protocol description only. The concrete `AkitaOpeningId` / `AkitaPublicId` / `AkitaChallengeId` identifier types, the per-stage formula constructors that build concrete `Summand` values, `plan_level`, gating, transcript schedule, and claim-slot chaining.
   Calls into `akita-sumcheck` for every struct/trait/helper; holds no generic engine code.
   Depended on by `akita-prover` and `akita-verifier`. Verifier-reachable, so panic-free.
 - `akita-types` (existing, slimmed): pure types and shared helpers (layouts, proof structs, SIS tables); stage equations move out to `akita-protocol`.
@@ -414,9 +427,12 @@ Recommended: land polyops (or at least its view vocabulary) first, since the sum
 
 Stage-2 pilot, end-to-end on both sides:
 
-1. Overhaul `akita-sumcheck` into the generic lower layer: add the descriptor algebra (`Source`/`Term`/`Expr`/`SumcheckInstanceDescriptor`/`InstanceKind`, generic over identifier types), fold the existing `traits.rs`/`drivers/` pairs and the two proof formats (`types.rs`) into the descriptor + engine model, promote `batched_sumcheck.rs` to the Tier-A kernel, and add the `SumcheckFastPath` trait and proof-sink abstraction.
+1. Overhaul `akita-sumcheck` into the generic lower layer: add the descriptor algebra (`Source`/`Term`/`Expr`/`SubClaim`/`Summand`/`SumcheckInstanceDescriptor`/`InstanceKind`, generic over identifier types), fold the existing `traits.rs`/`drivers/` pairs and the two proof formats (`types.rs`) into the descriptor + engine model, promote `batched_sumcheck.rs` to the Tier-A kernel, and add the `SumcheckFastPath` trait and proof-sink abstraction.
 2. Scaffold `akita-protocol` with the concrete identifier types (`AkitaOpeningId`/`AkitaPublicId`/`AkitaChallengeId`) and a stub `plan_level` that returns the current stage-2 schedule by composing `akita-sumcheck` building blocks.
-3. Define the stage-2 descriptor: a regular instance over sources `[eq, W, alpha, m]` with products for the virtual term (`batching_coeff * eq * W * (W+1)`) and the relation term (`W * alpha * m`), degree 3 over the boolean hypercube, input claim `batching_coeff * s_claim + relation_claim`.
+3. Define the stage-2 descriptor as a regular instance, degree 3 over the boolean hypercube, input claim `batching_coeff * s_claim + relation_claim`. Sources: `eq` (eq at the stage-1 point), `W` (witness opening), `alpha`, `m` (relation row). Summand: two sub-claims at intermediate levels, one at terminal.
+   - *Virtual* sub-claim: protocol equation `batching_coeff * eq * W * (W + 1)`, encoded as `SubClaim { weight: Some(batching_coeff), body: eq*W*W + eq*W }` (algebraic expansion of `W*(W+1)` into repeated-`W` monomials).
+   - *Relation* sub-claim: body `W * alpha * m`, unweighted.
+   At terminal levels the virtual sub-claim is omitted from the summand structurally (relation-only), not zeroed via `batching_coeff = 0`.
 4. Verifier: replace `expected_output_claim` with descriptor evaluation; keep opening discharge.
 5. Prover: build the descriptor, run the Tier-A generic kernel; add the compact-integer scan as a `SumcheckFastPath`; wire the proof sink.
 6. Add the fast-path equivalence test and the proof byte-equality fixture.
