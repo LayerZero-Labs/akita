@@ -1,4 +1,8 @@
-use akita_field::{AkitaError, FieldCore};
+use super::backend::CommitmentComputeBackend;
+use super::kernels::{RootCommitKernel, TensorProjectionKernel};
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
 
 /// Shape metadata every root polynomial exposes.
@@ -105,6 +109,79 @@ where
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
 }
 
+/// One opening-point polynomial bundle passed to commit entry points.
+///
+/// The wrapper pins the polynomial type `P` for inference through generic
+/// [`crate::api::commitment::commit`] and [`CommitmentProver::commit`]. Scheme-level
+/// [`CommitmentProver::commit`] takes this bundle before `backend` so `P` is known when the
+/// compiler checks [`RootCommitBackend`].
+#[derive(Clone, Copy, Debug)]
+pub struct RootCommitPolys<'a, P> {
+    polys: &'a [P],
+}
+
+impl<'a, P> RootCommitPolys<'a, P> {
+    /// Borrow a slice of root polynomials.
+    #[must_use]
+    pub fn new(polys: &'a [P]) -> Self {
+        Self { polys }
+    }
+
+    /// Borrow a singleton polynomial bundle.
+    #[must_use]
+    pub fn from_ref(poly: &'a P) -> Self {
+        Self {
+            polys: std::slice::from_ref(poly),
+        }
+    }
+
+    /// Borrowed polynomial slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &'a [P] {
+        self.polys
+    }
+}
+
+/// Marker bundle for scheme-level commit entry points that may tensor-project.
+///
+/// Algorithms live on [`RootCommitKernel`] / [`TensorProjectionKernel`], not here.
+/// Lower-level helpers such as [`crate::api::commitment::commit_with_params`]
+/// should bound only [`RootCommitSource`].
+pub trait RootCommitPoly<F, const D: usize>:
+    RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, const D: usize, P> RootCommitPoly<F, D> for P
+where
+    F: FieldCore,
+    P: RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>,
+{
+}
+
+/// Backend capability bundle for scheme-level commit with optional tensor transform.
+///
+/// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
+/// Do **not** write `CpuBackend: RootCommitBackend<F, P, E, D>` while `P` is still a type
+/// parameter; that fails for the same reason as a bare HRTB on a fixed backend.
+pub trait RootCommitBackend<F, P, E, const D: usize>: CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F> + 'static,
+    P: RootCommitPoly<F, D>,
+    Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
+        + for<'a> RootCommitKernel<
+            <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+            F,
+            D,
+        >,
+{
+}
+
 /// Umbrella marker for a fully capable Akita root polynomial.
 ///
 /// Acceptable only as a convenience bundle on top-level APIs whose behavior can
@@ -130,4 +207,56 @@ where
         + RootTensorSource<F, D>
         + DirectRootWitnessSource<F, D>,
 {
+}
+
+impl<F, const D: usize, P> RootPolyShape<F, D> for &P
+where
+    F: FieldCore,
+    P: RootPolyShape<F, D>,
+{
+    fn num_ring_elems(&self) -> usize {
+        RootPolyShape::num_ring_elems(*self)
+    }
+}
+
+impl<F, const D: usize, P> RootCommitSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootCommitSource<F, D>,
+{
+    type CommitView<'a>
+        = P::CommitView<'a>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        (*self).commit_view()
+    }
+}
+
+impl<F, const D: usize, P> RootTensorSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootTensorSource<F, D>,
+{
+    type TensorView<'a>
+        = P::TensorView<'a>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = P::TensorBatchView<'a>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        (*self).tensor_view()
+    }
+
+    fn tensor_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "tensor_batch through a polynomial reference is not supported; pass by value"
+                .to_string(),
+        ))
+    }
 }

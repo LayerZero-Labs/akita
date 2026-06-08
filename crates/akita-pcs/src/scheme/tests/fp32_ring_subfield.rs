@@ -1,4 +1,5 @@
 use super::*;
+use akita_prover::{commit_multilinear_polynomials, MultilinearPolynomial, RootCommitPolys};
 
 /// Scale a per-polynomial root layout to a batched root layout without
 /// SIS-floor audit on the scaled B/D keys (synthetic fixture only).
@@ -395,9 +396,9 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -545,12 +546,12 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let poly_refs = [&poly_a, &poly_b];
+    let poly_group = [poly_a, poly_b];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        RootCommitPolys::new(&poly_group),
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];
@@ -565,7 +566,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         vec![(
             &point[..],
             CommittedPolynomials {
-                polynomials: &poly_refs[..],
+                polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint,
             },
@@ -631,6 +632,34 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 }
 
 #[test]
+fn commit_multilinear_polynomials_rejects_tensor_projection_schedule() {
+    type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    const SMALL_D: usize = SmallCfg::D;
+    const NUM_VARS: usize = 5;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let len = 1usize << NUM_VARS;
+    let evals = (0..len)
+        .map(|idx| SmallF::from_u64((idx as u64) + 1))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+
+    let wrapped = [MultilinearPolynomial::dense(&poly)];
+    let err = commit_multilinear_polynomials::<SmallCfg, SMALL_D, usize>(
+        &wrapped,
+        setup.expanded.as_ref(),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap_err();
+    assert!(matches!(err, AkitaError::InvalidInput(_)));
+}
+
+#[test]
 fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
@@ -680,12 +709,11 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let poly_refs = [&poly];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];
@@ -702,7 +730,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             (
                 &point_a[..],
                 CommittedPolynomials {
-                    polynomials: &poly_refs[..],
+                    polynomials: std::slice::from_ref(&poly),
                     commitment: &commitments[0],
                     hint: hint.clone(),
                 },
@@ -710,7 +738,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             (
                 &point_b[..],
                 CommittedPolynomials {
-                    polynomials: &poly_refs[..],
+                    polynomials: std::slice::from_ref(&poly),
                     commitment: &commitments[0],
                     hint,
                 },

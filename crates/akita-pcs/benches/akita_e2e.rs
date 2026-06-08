@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
@@ -121,9 +121,9 @@ fn bench_dense_phases<
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    black_box(RootCommitPolys::from_ref(&poly)),
                     &CpuBackend,
                     &prepared,
-                    black_box(std::slice::from_ref(&poly)),
                 )
                 .unwrap(),
             )
@@ -132,9 +132,9 @@ fn bench_dense_phases<
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -220,9 +220,9 @@ fn bench_dense_phases<
             b.iter(|| {
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    RootCommitPolys::from_ref(&poly),
                     &CpuBackend,
                     &prepared,
-                    std::slice::from_ref(&poly),
                 )
                 .unwrap();
                 let cms = [cm];
@@ -332,9 +332,9 @@ fn bench_onehot_phases<
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    black_box(RootCommitPolys::from_ref(&onehot_poly)),
                     &CpuBackend,
                     &prepared,
-                    black_box(std::slice::from_ref(&onehot_poly)),
                 )
                 .unwrap(),
             )
@@ -343,9 +343,9 @@ fn bench_onehot_phases<
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&onehot_poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&onehot_poly),
     )
     .unwrap();
 
@@ -431,9 +431,9 @@ fn bench_onehot_phases<
             b.iter(|| {
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    RootCommitPolys::from_ref(&onehot_poly),
                     &CpuBackend,
                     &prepared,
-                    std::slice::from_ref(&onehot_poly),
                 )
                 .unwrap();
                 let cms = [cm];

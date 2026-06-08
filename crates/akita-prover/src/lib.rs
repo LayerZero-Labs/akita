@@ -23,8 +23,9 @@ use akita_types::{
 };
 
 pub use api::{
-    batched_commit, batched_commit_with_params, commit, commit_with_params,
-    prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
+    batched_commit, batched_commit_with_params, commit, commit_multilinear_polynomials,
+    commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup,
+    CommitmentProver,
 };
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
@@ -37,7 +38,7 @@ pub use compute::{
     FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
     ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    RootCommitPolys, SparseRingCommitRowsPlan,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{

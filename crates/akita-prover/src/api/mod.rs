@@ -5,8 +5,8 @@ mod scheme;
 pub mod setup;
 
 pub use commitment::{
-    batched_commit, batched_commit_with_params, commit, commit_with_params,
-    prepare_batched_commit_inputs, prepare_commit_inputs,
+    batched_commit, batched_commit_with_params, commit, commit_multilinear_polynomials,
+    commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs,
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;

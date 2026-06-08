@@ -10,8 +10,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex,
-    OneHotPoly,
+    compute::RootCommitPolys, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
+    CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -341,9 +341,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         setup,
+        RootCommitPolys::from_ref(poly),
         &CpuBackend,
         prepared,
-        std::slice::from_ref(poly),
     )
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -725,9 +725,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         &setup,
+        RootCommitPolys::new(&poly_refs),
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];

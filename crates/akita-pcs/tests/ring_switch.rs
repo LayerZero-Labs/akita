@@ -98,6 +98,7 @@ mod tests {
     };
     use akita_prover::{
         AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
+        RootCommitPolys,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
@@ -286,9 +287,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                RootCommitPolys::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 
@@ -427,9 +428,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                RootCommitPolys::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 
@@ -596,9 +597,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                RootCommitPolys::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 

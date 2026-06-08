@@ -7,7 +7,7 @@ mod common;
 use akita_config::tensor_verifier::fp128::D64OneHotTensor;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend};
+use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
@@ -49,14 +49,12 @@ fn run_single_onehot_tensor(nv: usize) {
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
-        let commit_input = std::slice::from_ref(&poly);
+        let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(&setup,
                 commit_input,
-            )
+                &CpuBackend,
+                &prepared)
             .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, TENSOR_D, u8>; 1] = [&poly];
@@ -207,14 +205,12 @@ fn run_single_dense_tensor(nv: usize) {
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
-        let commit_input = std::slice::from_ref(&poly);
+        let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(&setup,
                 commit_input,
-            )
+                &CpuBackend,
+                &prepared)
             .expect("commit");
 
         let poly_refs: [&DensePoly<F, TENSOR_D>; 1] = [&poly];

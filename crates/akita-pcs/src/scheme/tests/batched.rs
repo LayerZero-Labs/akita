@@ -18,7 +18,12 @@ fn batched_commit_matches_individual_commits() {
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
         .map(|group| {
-            <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, group)
+            <Scheme as CommitmentProver<F, D>>::commit(
+                &setup,
+                RootCommitPolys::new(*group),
+                &CpuBackend,
+                &prepared,
+            )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
@@ -26,16 +31,16 @@ fn batched_commit_matches_individual_commits() {
         .unzip();
     let (commitment_a, hint_a) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&poly_a),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly_a),
     )
     .unwrap();
     let (commitment_b, hint_b) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        RootCommitPolys::from_ref(&poly_b),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly_b),
     )
     .unwrap();
 
@@ -65,14 +70,16 @@ fn batched_root_direct_fast_path_round_trip() {
             DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
         })
         .collect();
-    let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        RootCommitPolys::new(&polys),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -173,14 +180,16 @@ fn batched_root_direct_rejects_wrong_opening() {
             DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
         })
         .collect();
-    let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        RootCommitPolys::new(&polys),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -242,10 +251,14 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
-            .unwrap();
+    let poly_group = [poly_a, poly_b];
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        RootCommitPolys::new(&poly_group),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 

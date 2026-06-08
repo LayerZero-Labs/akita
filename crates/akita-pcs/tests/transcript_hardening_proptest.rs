@@ -78,9 +78,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let commit_outputs = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
         &setup,
+        &polys_per_point_refs,
         &CpuBackend,
         &prepared,
-        &polys_per_point_refs,
     )
     .expect("batched commit");
     let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();

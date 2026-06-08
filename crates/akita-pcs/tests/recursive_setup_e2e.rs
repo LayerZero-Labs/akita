@@ -19,7 +19,7 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 
 mod common;
 
@@ -87,11 +87,11 @@ fn prove_onehot(nv: usize, mode: SetupContributionMode) -> OnehotProof {
         F,
         ONEHOT_D,
     >>::setup_verifier(&setup);
-    let commit_input = std::slice::from_ref(&poly);
+    let commit_input = RootCommitPolys::from_ref(&poly);
     let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
-    >>::commit(&setup, &CpuBackend, &prepared, commit_input)
+    >>::commit(&setup, commit_input, &CpuBackend, &prepared)
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];

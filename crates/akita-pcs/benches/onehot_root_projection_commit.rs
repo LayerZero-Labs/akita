@@ -10,7 +10,9 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
+use akita_prover::{
+    commit_with_params, compute::RootCommitPolys, AkitaPolyOps, CommitmentProver, OneHotPoly,
+};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{ClaimIncidenceSummary, RingSubfieldEncoding};
 use criterion::measurement::WallTime;
@@ -177,9 +179,9 @@ where
                 let start = Instant::now();
                 let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    RootCommitPolys::new(&polys),
                     &CpuBackend,
                     &prepared,
-                    &polys,
                 )
                 .expect("benchmark scheme commitment");
                 total += start.elapsed();

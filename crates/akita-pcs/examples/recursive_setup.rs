@@ -26,7 +26,7 @@ use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
-    OneHotPoly,
+    OneHotPoly, RootCommitPolys,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -99,9 +99,13 @@ fn run_mode(
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let commit_input = std::slice::from_ref(poly);
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, commit_input)
-            .expect("commit");
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        RootCommitPolys::new(commit_input),
+        &CpuBackend,
+        &prepared,
+    )
+    .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [poly];
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);

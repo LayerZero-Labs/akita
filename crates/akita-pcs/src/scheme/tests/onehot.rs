@@ -35,9 +35,9 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
     let (commitment, hint) = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
         &setup,
+        RootCommitPolys::new(&polys),
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .expect("batched onehot commit");
     let commitments = [commitment];

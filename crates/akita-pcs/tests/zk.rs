@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "zk")]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend, RootCommitPolys};
 
 mod common;
 
@@ -307,9 +307,9 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
             <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::commit(
             &setup,
+            RootCommitPolys::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("zk fp32 commit");
 
@@ -435,7 +435,7 @@ where
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-        let commit_input = std::slice::from_ref(&poly);
+        let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
             &CpuBackend,
@@ -546,9 +546,9 @@ fn run_zk_dense_cursor_binding_negatives() {
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            RootCommitPolys::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("zk commit");
 
@@ -716,7 +716,7 @@ where
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-        let commit_input = std::slice::from_ref(&poly);
+        let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
             &CpuBackend,
@@ -849,9 +849,9 @@ fn run_zk_dense_batched_shape_cases() {
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            &same_point_polys,
             &CpuBackend,
             &prepared,
-            &same_point_polys,
         )
         .expect("same-point zk batched commit");
         let same_point_poly_refs: Vec<&DensePoly<F, D>> = same_point_polys.iter().collect();
@@ -938,9 +938,9 @@ fn run_zk_dense_batched_shape_cases() {
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &setup,
+            &polys_per_point_refs,
             &CpuBackend,
             &prepared,
-            &polys_per_point_refs,
         )
         .expect("multipoint zk batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -1024,9 +1024,9 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare");
         let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &setup,
+            &polys_per_point_refs,
             &CpuBackend,
             &prepared,
-            &polys_per_point_refs,
         )
         .expect("commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();

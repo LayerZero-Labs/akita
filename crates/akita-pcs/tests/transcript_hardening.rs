@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 
 mod common;
 
@@ -53,9 +53,9 @@ fn event_stream_equality_small() {
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            RootCommitPolys::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 
@@ -276,9 +276,9 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            RootCommitPolys::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 
@@ -391,9 +391,9 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            RootCommitPolys::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 

@@ -1,13 +1,18 @@
 //! Prover-owned commitment kernels.
 
+use crate::backend::MultilinearPolynomialView;
+use crate::compute::{
+    CommitInnerPlan, CommitmentComputeBackend, OperationCtx, RootCommitBackend, RootCommitKernel,
+    RootCommitPoly, RootCommitPolys, RootCommitSource, RootPolyShape, RootTensorSource,
+    TensorProjectionKernel,
+};
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::compute::{
-    AkitaRootPoly, CommitInnerPlan, CommitmentComputeBackend, OperationCtx, RootCommitKernel,
-    RootCommitSource, RootPolyShape, RootTensorSource, TensorProjectionKernel,
+use crate::DigitRowsComputeBackend;
+use crate::{
+    CommitInnerWitness, CpuBackend, MultilinearPolynomial, OneHotIndex, RootTensorProjectionPoly,
 };
-use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
@@ -235,10 +240,7 @@ where
         ));
     }
     let num_vars = RootPolyShape::num_vars(&polys[0]);
-    if polys
-        .iter()
-        .any(|p| RootPolyShape::num_vars(p) != num_vars)
-    {
+    if polys.iter().any(|p| RootPolyShape::num_vars(p) != num_vars) {
         return Err(AkitaError::InvalidInput(
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
@@ -266,6 +268,195 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
             "commit B digit input length overflow for {total_polys} polynomials with {per_poly} digits each"
         ))
     })
+}
+
+fn commit_poly_inner_witness<F, const D: usize, P, B>(
+    poly: &P,
+    ctx: &OperationCtx<'_, F, B, D>,
+    plan: CommitInnerPlan,
+) -> Result<CommitInnerWitness<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootCommitSource<F, D>,
+    B: CommitmentComputeBackend<F>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+    let view = poly.commit_view()?;
+    RootCommitKernel::commit_inner_witness(ctx.backend(), ctx.prepared(), view, plan)
+}
+
+fn commit_multilinear_poly_inner_witness<'p, F, const D: usize, I>(
+    poly: &MultilinearPolynomial<'p, F, D, I>,
+    ctx: &OperationCtx<'_, F, CpuBackend, D>,
+    plan: CommitInnerPlan,
+) -> Result<CommitInnerWitness<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    let view = poly.commit_view()?;
+    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, 'p, F, D, I>, F, D>>::commit_inner_witness(
+        ctx.backend(),
+        ctx.prepared(),
+        view,
+        plan,
+    )
+}
+
+fn commit_multilinear_with_validated_params<'p, F, const D: usize, I>(
+    polys: &'p [MultilinearPolynomial<'p, F, D, I>],
+    ctx: &OperationCtx<'_, F, CpuBackend, D>,
+    params: &LevelParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HasWide,
+    I: OneHotIndex,
+{
+    let plan = commit_inner_plan(params);
+    let b_input_len_per_poly = commit_inner_flat_digit_count(
+        params.num_blocks,
+        params.a_key.row_len(),
+        params.num_digits_open,
+    )?;
+    let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
+    let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
+    let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
+        .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
+        .collect::<Result<_, _>>()?;
+    let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+        vec![Vec::new(); polys.len()];
+    cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
+        .zip(cfg_iter!(polys))
+        .zip(cfg_iter_mut!(decomposed_inner_rows))
+        .zip(cfg_iter_mut!(recomposed_inner_rows))
+        .try_for_each(
+            |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
+                let inner = commit_multilinear_poly_inner_witness(poly, ctx, plan)?;
+                validate_commit_inner_witness_shape(
+                    &inner,
+                    params.num_blocks,
+                    params.a_key.row_len(),
+                    params.num_digits_open,
+                    params.log_basis,
+                )?;
+                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
+                *decomposed = inner.decomposed_inner_rows;
+                *recomposed = inner.recomposed_inner_rows;
+                Ok(())
+            },
+        )?;
+    #[cfg(feature = "zk")]
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
+    validate_commit_outer_input_nonempty(b_input_digits.len())?;
+    #[cfg(feature = "zk")]
+    let mut u: Vec<CyclotomicRing<F, D>> = ctx.backend().digit_rows::<D>(
+        ctx.prepared(),
+        params.b_key.row_len(),
+        &b_input_digits,
+        params.log_basis,
+    )?;
+    #[cfg(not(feature = "zk"))]
+    let u: Vec<CyclotomicRing<F, D>> = ctx.backend().digit_rows::<D>(
+        ctx.prepared(),
+        params.b_key.row_len(),
+        &b_input_digits,
+        params.log_basis,
+    )?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = ctx.backend().zk_b_digit_rows::<D>(
+            ctx.prepared(),
+            params.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
+    if u.len() != params.b_key.row_len() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} B commitment rows, expected {}",
+            u.len(),
+            params.b_key.row_len()
+        )));
+    }
+    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        recomposed_inner_rows,
+        #[cfg(feature = "zk")]
+        vec![b_blinding_digits],
+    );
+    Ok((RingCommitment { u }, hint))
+}
+
+/// Commit a borrowed [`MultilinearPolynomial`] batch on [`CpuBackend`].
+///
+/// Generic [`commit`] / [`CommitmentProver::commit`] require
+/// `for<'a> RootCommitKernel<<P as RootCommitSource>::CommitView<'a>>` with `P` still a type
+/// parameter. For [`MultilinearPolynomial`], `CommitView<'a>` carries a second lifetime tied
+/// to the wrapped dense/one-hot borrow, and the current trait solver then requires those borrows
+/// to be `'static`. This entry point keeps the wrapper lifetime explicit via UFCS on
+/// [`MultilinearPolynomialView`].
+///
+/// Root tensor projection is not supported here: configs whose schedule requires projection
+/// before commit return [`AkitaError::InvalidInput`]. Use generic [`commit`] with a
+/// homogeneous root type when projection is required.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, root tensor projection is
+/// required, or commitment execution fails.
+#[allow(clippy::type_complexity)]
+pub fn commit_multilinear_polynomials<Cfg, const D: usize, I>(
+    polys: &[MultilinearPolynomial<'_, Cfg::Field, D, I>],
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    backend: &CpuBackend,
+    prepared: &<CpuBackend as crate::compute::ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>,
+) -> Result<
+    (
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    ),
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    I: OneHotIndex,
+{
+    let ctx = OperationCtx::new(backend, prepared, expanded)?;
+    let incidence =
+        prepare_commit_inputs::<Cfg::Field, D, MultilinearPolynomial<'_, Cfg::Field, D, I>>(
+            polys, expanded,
+        )?;
+    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
+        return Err(AkitaError::InvalidInput(
+            "commit_multilinear_polynomials does not support root tensor projection; use `commit` with owned roots or a homogeneous backend type".to_string(),
+        ));
+    }
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+    commit_multilinear_with_validated_params(polys, &ctx, &params)
+}
+
+fn tensor_project_root<F, E, const D: usize, P, B>(
+    poly: &P,
+    ctx: &OperationCtx<'_, F, B, D>,
+) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: akita_field::ExtField<F> + RingSubfieldEncoding<F>,
+    P: RootTensorSource<F, D>,
+    B: CommitmentComputeBackend<F>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+{
+    let view = poly.tensor_view()?;
+    TensorProjectionKernel::root_projection(ctx.backend(), Some(ctx.prepared()), view)
 }
 
 fn commit_with_validated_params<F, const D: usize, P, B>(
@@ -298,12 +489,7 @@ where
         .zip(cfg_iter_mut!(recomposed_inner_rows))
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
-                let inner = RootCommitKernel::commit_inner_witness(
-                    ctx.backend(),
-                    ctx.prepared(),
-                    poly.commit_view()?,
-                    plan,
-                )?;
+                let inner = commit_poly_inner_witness(poly, ctx, plan)?;
                 validate_commit_inner_witness_shape(
                     &inner,
                     params.num_blocks,
@@ -391,6 +577,85 @@ where
     commit_with_validated_params::<F, D, P, B>(polys, &ctx, params)
 }
 
+#[allow(clippy::type_complexity)]
+fn commit_tensor_projected_root<Cfg, const D: usize, P, B>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    ctx: &OperationCtx<'_, Cfg::Field, B, D>,
+    incidence: &ClaimIncidenceSummary,
+) -> Result<
+    (
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    ),
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    P: RootCommitPoly<Cfg::Field, D>,
+    B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
+{
+    let transformed = polys
+        .iter()
+        .map(|poly| tensor_project_root::<Cfg::Field, Cfg::ChallengeField, D, P, B>(poly, ctx))
+        .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
+    let params = Cfg::get_params_for_batched_commitment(incidence)?;
+    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+    commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
+        &transformed,
+        ctx,
+        &params,
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn batched_commit_tensor_projected_root<Cfg, const D: usize, P, B>(
+    polys_per_point: &[&[P]],
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    ctx: &OperationCtx<'_, Cfg::Field, B, D>,
+    incidence: &ClaimIncidenceSummary,
+) -> Result<
+    Vec<(
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    )>,
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    P: RootCommitPoly<Cfg::Field, D>,
+    B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
+{
+    let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> = polys_per_point
+        .iter()
+        .map(|polys| {
+            polys
+                .iter()
+                .map(|poly| {
+                    tensor_project_root::<Cfg::Field, Cfg::ChallengeField, D, P, B>(poly, ctx)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<_, _>>()?;
+    let transformed_refs: Vec<&[RootTensorProjectionPoly<Cfg::Field, D>]> =
+        transformed.iter().map(Vec::as_slice).collect();
+    let params = Cfg::get_params_for_batched_commitment(incidence)?;
+    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+    batched_commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
+        &transformed_refs,
+        ctx,
+        &params,
+    )
+}
+
 /// Decide whether a root commitment must be tensor-projected before commit.
 ///
 /// Root tensor projection only applies when the field tower admits it and the
@@ -427,7 +692,7 @@ where
 /// execution fails.
 #[allow(clippy::type_complexity)]
 pub fn commit<Cfg, const D: usize, P, B>(
-    polys: &[P],
+    bundle: RootCommitPolys<'_, P>,
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -444,52 +709,46 @@ where
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
     Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
-    P: AkitaRootPoly<Cfg::Field, D>,
-    B: CommitmentComputeBackend<Cfg::Field>
-        + for<'a> RootCommitKernel<
-            <P as RootCommitSource<Cfg::Field, D>>::CommitView<'a>,
-            Cfg::Field,
-            D,
-        >
-        + for<'a> TensorProjectionKernel<
-            <P as RootTensorSource<Cfg::Field, D>>::TensorView<'a>,
-            Cfg::Field,
-            Cfg::ChallengeField,
-            D,
-        >
-        + for<'a> RootCommitKernel<
-            <RootTensorProjectionPoly<Cfg::Field, D> as RootCommitSource<Cfg::Field, D>>::CommitView<
-                'a,
-            >,
-            Cfg::Field,
-            D,
-        >,
+    P: RootCommitPoly<Cfg::Field, D>,
+    B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
 {
+    let polys = bundle.as_slice();
     let ctx = OperationCtx::new(backend, prepared, expanded)?;
     let incidence = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
     if should_transform_root_commitment::<Cfg, D>(&incidence)? {
-        let transformed = polys
-            .iter()
-            .map(|poly| {
-                TensorProjectionKernel::root_projection(
-                    ctx.backend(),
-                    None,
-                    poly.tensor_view()?,
-                )
-            })
-            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
-        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
-        validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return commit_with_validated_params::<
-            Cfg::Field,
-            D,
-            RootTensorProjectionPoly<Cfg::Field, D>,
-            B,
-        >(&transformed, &ctx, &params);
+        return commit_tensor_projected_root::<Cfg, D, P, B>(polys, expanded, &ctx, &incidence);
     }
     let params = Cfg::get_params_for_batched_commitment(&incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     commit_with_validated_params::<Cfg::Field, D, P, B>(polys, &ctx, &params)
+}
+
+impl<'a, P> RootCommitPolys<'a, P> {
+    /// Commit this bundle with `P` fixed from `self`, for rustc inference at call sites.
+    #[allow(clippy::type_complexity)]
+    pub fn commit_with<Cfg, const D: usize, B>(
+        self,
+        expanded: &AkitaExpandedSetup<Cfg::Field>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
+    ) -> Result<
+        (
+            RingCommitment<Cfg::Field, D>,
+            AkitaCommitmentHint<Cfg::Field, D>,
+        ),
+        AkitaError,
+    >
+    where
+        Cfg: CommitmentConfig,
+        Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+        Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+        P: RootCommitPoly<Cfg::Field, D>,
+        B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
+    {
+        commit::<Cfg, D, P, B>(self, expanded, backend, prepared)
+    }
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -547,7 +806,10 @@ where
                 "batched_commit bundle at point {point_idx} is empty"
             )));
         }
-        if bundle.iter().any(|p| RootPolyShape::num_vars(p) != num_vars) {
+        if bundle
+            .iter()
+            .any(|p| RootPolyShape::num_vars(p) != num_vars)
+        {
             return Err(AkitaError::InvalidInput(
                 "batched_commit requires every polynomial to share num_vars".to_string(),
             ));
@@ -598,55 +860,18 @@ where
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
     Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
-    P: AkitaRootPoly<Cfg::Field, D>,
-    B: CommitmentComputeBackend<Cfg::Field>
-        + for<'a> RootCommitKernel<
-            <P as RootCommitSource<Cfg::Field, D>>::CommitView<'a>,
-            Cfg::Field,
-            D,
-        >
-        + for<'a> TensorProjectionKernel<
-            <P as RootTensorSource<Cfg::Field, D>>::TensorView<'a>,
-            Cfg::Field,
-            Cfg::ChallengeField,
-            D,
-        >
-        + for<'a> RootCommitKernel<
-            <RootTensorProjectionPoly<Cfg::Field, D> as RootCommitSource<Cfg::Field, D>>::CommitView<
-                'a,
-            >,
-            Cfg::Field,
-            D,
-        >,
+    P: RootCommitPoly<Cfg::Field, D>,
+    B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
 {
     let ctx = OperationCtx::new(backend, prepared, expanded)?;
     let incidence = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_point, expanded)?;
     if should_transform_root_commitment::<Cfg, D>(&incidence)? {
-        let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> = polys_per_point
-            .iter()
-            .map(|polys| {
-                polys
-                    .iter()
-                    .map(|poly| {
-                        TensorProjectionKernel::root_projection(
-                            ctx.backend(),
-                            None,
-                            poly.tensor_view()?,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect::<Result<_, _>>()?;
-        let transformed_refs: Vec<&[RootTensorProjectionPoly<Cfg::Field, D>]> =
-            transformed.iter().map(Vec::as_slice).collect();
-        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
-        validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return batched_commit_with_validated_params::<
-            Cfg::Field,
-            D,
-            RootTensorProjectionPoly<Cfg::Field, D>,
-            B,
-        >(&transformed_refs, &ctx, &params);
+        return batched_commit_tensor_projected_root::<Cfg, D, P, B>(
+            polys_per_point,
+            expanded,
+            &ctx,
+            &incidence,
+        );
     }
     let params = Cfg::get_params_for_batched_commitment(&incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
@@ -667,7 +892,9 @@ where
 {
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
-        out.push(commit_with_validated_params::<F, D, P, B>(polys, ctx, params)?);
+        out.push(commit_with_validated_params::<F, D, P, B>(
+            polys, ctx, params,
+        )?);
     }
     Ok(out)
 }
@@ -817,5 +1044,65 @@ mod tests {
             validate_commit_outer_input_nonempty(0),
             Err(AkitaError::InvalidSetup(_))
         ));
+    }
+
+    #[test]
+    fn commit_matches_commit_with_params_on_dense_poly() {
+        use crate::compute::{ComputeBackendSetup, RootCommitPolys};
+        use crate::DensePoly;
+        use akita_config::proof_optimized::fp64;
+        use akita_config::CommitmentConfig;
+        use akita_field::FromPrimitiveInt;
+
+        type Cfg = fp64::D32Full;
+        type PolyF = <Cfg as CommitmentConfig>::Field;
+        const POLY_D: usize = Cfg::D;
+        const NUM_VARS: usize = 10;
+
+        let len = 1usize << NUM_VARS;
+        let evals: Vec<PolyF> = (0..len)
+            .map(|idx| PolyF::from_u64((idx as u64) + 1))
+            .collect();
+        let poly = DensePoly::<PolyF, POLY_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+        let polys = [poly];
+
+        let setup = AkitaProverSetup::<PolyF, POLY_D>::generate_with_capacity(
+            NUM_VARS,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 8192,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let expanded = &setup.expanded;
+        let incidence =
+            prepare_commit_inputs::<PolyF, POLY_D, DensePoly<PolyF, POLY_D>>(&polys, expanded)
+                .unwrap();
+        let params = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
+
+        let via_params = commit_with_params::<PolyF, POLY_D, DensePoly<PolyF, POLY_D>, CpuBackend>(
+            &polys,
+            expanded,
+            &CpuBackend,
+            &prepared,
+            &params,
+        )
+        .expect("commit_with_params");
+        let via_commit = commit::<Cfg, POLY_D, DensePoly<PolyF, POLY_D>, CpuBackend>(
+            RootCommitPolys::new(&polys),
+            expanded,
+            &CpuBackend,
+            &prepared,
+        )
+        .expect("commit");
+
+        assert_eq!(via_params.0.u, via_commit.0.u);
+        assert_eq!(via_params.1, via_commit.1);
     }
 }

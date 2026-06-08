@@ -16,7 +16,7 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{compute::RootCommitPolys, ComputeBackendSetup, CpuBackend};
 
 mod common;
 
@@ -54,12 +54,14 @@ fn run_single_onehot(nv: usize) {
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-            F,
-            ONEHOT_D,
-        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
-        .expect("commit");
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::commit(
+                &setup,
+                RootCommitPolys::from_ref(&poly),
+                &CpuBackend,
+                &prepared,
+            )
+            .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -133,12 +135,14 @@ fn run_single_dense(nv: usize) {
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
-        .expect("commit");
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::commit(
+                &setup,
+                RootCommitPolys::from_ref(&poly),
+                &CpuBackend,
+                &prepared,
+            )
+            .expect("commit");
 
         let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
         let commitments = [commitment];
@@ -264,12 +268,14 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-            F,
-            ONEHOT_D,
-        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
-        .expect("commit with oversized setup");
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::commit(
+                &setup,
+                RootCommitPolys::from_ref(&poly),
+                &CpuBackend,
+                &prepared,
+            )
+            .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
         let commitments = [commitment];

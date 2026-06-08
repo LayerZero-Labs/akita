@@ -120,7 +120,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             F,
             DENSE_D,
         >>::batched_commit(
-            &setup, &CpuBackend, &prepared, &polys_per_point_refs
+            &setup, &polys_per_point_refs, &CpuBackend, &prepared
         )
         .expect("dense batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -234,7 +234,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             F,
             ONEHOT_D,
         >>::batched_commit(
-            &setup, &CpuBackend, &prepared, &polys_per_point_refs
+            &setup, &polys_per_point_refs, &CpuBackend, &prepared
         )
         .expect("onehot batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -482,7 +482,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &setup, &CpuBackend, &prepared, &polys_per_point_refs
+                &setup, &polys_per_point_refs, &CpuBackend, &prepared
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -582,9 +582,9 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::batched_commit(
                 &commit_setup,
+                &polys_per_point_refs,
                 &CpuBackend,
                 &commit_prepared,
-                &polys_per_point_refs,
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -678,7 +678,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &setup, &CpuBackend, &prepared, &polys_per_point_refs
+                &setup, &polys_per_point_refs, &CpuBackend, &prepared
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();

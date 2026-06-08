@@ -49,7 +49,7 @@ pub use plans::{
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 pub use poly::{
-    AkitaRootPoly, DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource,
+    AkitaRootPoly, DirectRootWitnessSource, RootCommitBackend, RootCommitPoly, RootCommitPolys,
+    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
 };
 pub use stack::{OperationCtx, ProverComputeStack};

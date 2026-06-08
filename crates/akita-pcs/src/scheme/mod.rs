@@ -1,18 +1,16 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
 use akita_prover::{
-    compute::{
-        AkitaRootPoly, RootCommitKernel, RootCommitSource, RootTensorSource,
-        TensorProjectionKernel,
-    },
-    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
-    ProverComputeBackend, RootTensorProjectionPoly,
+    batched_commit,
+    compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys},
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend,
+    ProverClaims, ProverComputeBackend,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -68,6 +66,7 @@ where
         + Valid
         + AkitaSerialize
         + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + akita_field::AdditiveGroup,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>
@@ -77,6 +76,7 @@ where
         + HasOptimizedFold
         + AkitaSerialize
         + 'static,
+    <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>: Send + Sync,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
@@ -106,59 +106,32 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     fn commit<P, B>(
         setup: &Self::ProverSetup,
+        bundle: RootCommitPolys<'_, P>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaRootPoly<F, D>,
-        B: CommitmentComputeBackend<F>
-            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-            + for<'a> TensorProjectionKernel<
-                <P as RootTensorSource<F, D>>::TensorView<'a>,
-                F,
-                Self::TensorField,
-                D,
-            >
-            + for<'a> RootCommitKernel<
-                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-                F,
-                D,
-            >,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Cfg::ChallengeField, D>,
+        B::PreparedSetup<D>: Send + Sync,
     {
-        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
+        bundle.commit_with::<Cfg, D, B>(setup.expanded.as_ref(), backend, prepared)
     }
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
+        polys_per_point: &[&[P]],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_point: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaRootPoly<F, D>,
-        B: CommitmentComputeBackend<F>
-            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-            + for<'a> TensorProjectionKernel<
-                <P as RootTensorSource<F, D>>::TensorView<'a>,
-                F,
-                Self::TensorField,
-                D,
-            >
-            + for<'a> RootCommitKernel<
-                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-                F,
-                D,
-            >,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Cfg::ChallengeField, D>,
+        B::PreparedSetup<D>: Send + Sync,
     {
-        akita_prover::batched_commit::<Cfg, D, P, B>(
-            polys_per_point,
-            setup.expanded.as_ref(),
-            backend,
-            prepared,
-        )
+        batched_commit::<Cfg, D, P, B>(polys_per_point, setup.expanded.as_ref(), backend, prepared)
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]

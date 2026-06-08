@@ -1,26 +1,27 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{
-    AkitaRootPoly, CommitmentComputeBackend, ProverComputeBackend, RootCommitKernel,
-    RootCommitSource, RootTensorSource, TensorProjectionKernel,
+use crate::compute::{ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys};
+use crate::{AkitaPolyOps, ProverClaims};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    RandomSampling,
 };
-use crate::{AkitaPolyOps, ProverClaims, RootTensorProjectionPoly};
-use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, RingSubfieldEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over base field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl AkitaRootPoly<F, D>`
-/// for commit paths; prove still accepts `impl AkitaPolyOps<F, D>` until the
-/// flow cutover lands.
+/// Caller-provided root polynomials use [`RootCommitPoly`] with a backend `B` that
+/// implements [`RootCommitBackend`] for that `P`. Prove still accepts
+/// `impl AkitaPolyOps<F, D>` until the flow cutover lands.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
@@ -62,30 +63,26 @@ where
     /// per-point commitment shares the same root layout the prove path will
     /// select for the full multipoint incidence.
     ///
+    /// **Parameter order:** `bundle` precedes `backend` and `prepared` so the
+    /// compiler fixes the polynomial type `P` from [`RootCommitPolys`] before
+    /// proving `B: RootCommitBackend<F, P, …>`. Pass `&CpuBackend` as
+    /// `backend`; do not pin `CpuBackend` in generic commit signatures.
+    ///
+    /// Borrowed [`crate::MultilinearPolynomial`] batches that fail the generic
+    /// `P` HRTB should use [`crate::commit_multilinear_polynomials`] instead.
+    ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P, B>(
         setup: &Self::ProverSetup,
+        bundle: RootCommitPolys<'_, P>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaRootPoly<F, D>,
-        B: CommitmentComputeBackend<F>
-            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-            + for<'a> TensorProjectionKernel<
-                <P as RootTensorSource<F, D>>::TensorView<'a>,
-                F,
-                Self::TensorField,
-                D,
-            >
-            + for<'a> RootCommitKernel<
-                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-                F,
-                D,
-            >;
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::TensorField, D>;
 
     /// Commit one polynomial bundle per opening point under a shared root
     /// layout matched to the corresponding multipoint batched prove.
@@ -96,6 +93,9 @@ where
     /// commitment layout from the full multipoint incidence so the produced
     /// commitments are compatible with the prove root.
     ///
+    /// Like [`Self::commit`], `polys_per_point` precedes `backend` and
+    /// `prepared` so `P` is fixed before `B: RootCommitBackend` is checked.
+    ///
     /// # Errors
     ///
     /// Returns an error if input validation, layout selection, or any
@@ -103,25 +103,13 @@ where
     #[allow(clippy::type_complexity)]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
+        polys_per_point: &[&[P]],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_point: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaRootPoly<F, D>,
-        B: CommitmentComputeBackend<F>
-            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-            + for<'a> TensorProjectionKernel<
-                <P as RootTensorSource<F, D>>::TensorView<'a>,
-                F,
-                Self::TensorField,
-                D,
-            >
-            + for<'a> RootCommitKernel<
-                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-                F,
-                D,
-            >;
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::TensorField, D>;
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///

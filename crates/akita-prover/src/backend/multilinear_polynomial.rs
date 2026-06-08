@@ -585,15 +585,15 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => poly.num_ring_elems(),
-            Self::OneHot(poly) => poly.num_ring_elems(),
+            Self::Dense(poly) => <DensePoly<F, D> as AkitaPolyOps<F, D>>::num_ring_elems(poly),
+            Self::OneHot(poly) => <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::num_ring_elems(poly),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => poly.num_vars(),
-            Self::OneHot(poly) => poly.num_vars(),
+            Self::Dense(poly) => <DensePoly<F, D> as AkitaPolyOps<F, D>>::num_vars(poly),
+            Self::OneHot(poly) => <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::num_vars(poly),
         }
     }
 
@@ -823,8 +823,10 @@ where
 
     fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => poly.direct_root_witness(),
-            Self::OneHot(poly) => poly.direct_root_witness(),
+            Self::Dense(poly) => <DensePoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(poly),
+            Self::OneHot(poly) => {
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::direct_root_witness(poly)
+            }
         }
     }
 }
