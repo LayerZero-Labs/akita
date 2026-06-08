@@ -802,9 +802,15 @@ the hidden `u_i`/`û_concat` are never absorbed (like `ê`/`t̂`).
   canonical helpers (so `a_start`/`b_inner_start` shift by the `F` block
   automatically).
 - **Root-direct recompute** (`crates/akita-verifier/src/protocol/batched.rs`,
-  `recommit_direct_witness_group`): recompute `u_final` from the witness via
-  small-`B` (looped `f` times) → decompose → `F`, and compare to the proof
-  commitment, replacing the single `u = B·t̂` recompute.
+  `recommit_direct_witness_group`): **single-tier only.** The root-direct path is
+  the *small-instance* path (the root commits the cleartext witness without
+  folding), whereas tiering only engages on *large* instances that fold at the
+  root — so the two never co-occur in a well-formed schedule. Rather than carry a
+  second tiered recompute (`small-B` looped → decompose → `F`) that can never be
+  exercised and could silently diverge, `recommit_direct_witness_group` rejects a
+  tiered level (`f_key.is_some()`) with `AkitaError::InvalidSetup` and recomputes
+  only the single-tier `u = B·t̂`. A tiered `f_key` on the root-direct path is
+  therefore treated as a malformed schedule, not a layout to honour.
 
 #### End-to-end example
 
@@ -991,8 +997,10 @@ analogous to the consistency-row `z` recompose.
 **Verifier `eval_at_point`.** Add the `F`/`B_inner`/`û` contributions; derive all
 block starts from the canonical helpers (`f_start`/`b_inner_start`/`a_start`).
 `relation_claim_from_rows_extension`: COMMIT rows ← `u_final`, `B_inner` rows ← 0.
-Root-direct `recommit_direct_witness_group`: recompute `u_final` via
-small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
+Root-direct `recommit_direct_witness_group` is **single-tier only**: it rejects a
+tiered level (`f_key.is_some()`) with `AkitaError::InvalidSetup` (tiering never
+co-occurs with the small-instance root-direct path) and recomputes the
+single-tier `u = B·t̂`. Apply `effective_commit_rows` across the
 `b_key.row_len()` sites that mean "sent-commitment length".
 
 ## References
