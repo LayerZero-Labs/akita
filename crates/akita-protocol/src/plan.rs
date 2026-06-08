@@ -1,0 +1,334 @@
+//! Per-level protocol plan.
+//!
+//! [`plan_level`] is a pure function of `(LevelParams, ProtocolGates)` that both
+//! the prover and the verifier call to obtain the identical ordered sumcheck
+//! schedule, so Fiat-Shamir ordering, batching, and per-instance proof format
+//! agree by construction.
+//!
+//! This PR ships the stage-2 stub: a single regular stage-2 instance. The
+//! y-ring trace term, the L2 certificate instance lists, and the setup-claim
+//! offloading Stage-3 instance are gate-driven additions made by later nodes;
+//! the stub rejects those gates rather than silently emitting the wrong
+//! schedule. The plan is also the single place gamma-power batching is
+//! allocated (via [`BatchingScheme`]), so trace, L2, and offloading instances
+//! cannot collide on the same power once they are added.
+
+use akita_field::{AkitaError, RingCore};
+use akita_sumcheck::descriptor::{ClaimSlot, InstanceKind, SumcheckInstanceDescriptor};
+use akita_types::LevelParams;
+
+use crate::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
+use crate::stage2::stage2_descriptor;
+
+/// Feature gates that select which instances a level's plan contains.
+///
+/// `plan_level` is a pure function of these gates plus the level parameters, so
+/// the prover and verifier obtain identical plans for identical gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProtocolGates {
+    /// Fuse the y-ring trace term into the stage-2 instance (node F-yring).
+    pub trace: bool,
+    /// L2 certificate mode, gating the stage-1/stage-2 instance lists
+    /// (node F-l2).
+    pub l2_certificate: L2CertificateMode,
+    /// Append a Stage-3 setup product-sumcheck instance (node F-offload).
+    pub setup_offload: bool,
+    /// Use ZK committed-round sinks. Does not change the instance list or the
+    /// transcript schedule emitted here; only the prover's sink differs.
+    pub zk: bool,
+}
+
+/// L2 certificate mode gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum L2CertificateMode {
+    /// Deterministic certificate: stage-1 `{Range}`, stage-2 `{S, Relation}`.
+    #[default]
+    Deterministic,
+    /// Realized certificate: stage-1 `{Range, L2}`, stage-2
+    /// `{S, Relation, Virtualization}`.
+    Realized,
+}
+
+/// How gamma powers are allocated across the instances batched in one stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchingScheme {
+    /// One instance proven on its own; there is no cross-instance batching
+    /// coefficient. Any intra-instance fusion (e.g. stage 2's
+    /// virtual-vs-relation gamma) is carried by the instance's own
+    /// `Source::Challenge`, not by this scheme.
+    Standalone,
+    /// Several regular instances linearly combined into one batched sumcheck;
+    /// `gamma_powers[i]` is the exponent of the batching challenge applied to
+    /// instance `i`.
+    GammaPowers {
+        /// Per-instance gamma exponent, allocated centrally.
+        gamma_powers: Vec<usize>,
+    },
+}
+
+/// A group of instances proven together in one (possibly batched) sumcheck.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagePlan<F, O, P, C> {
+    /// Instances batched together in this stage.
+    pub instances: Vec<SumcheckInstanceDescriptor<F, O, P, C>>,
+    /// How gamma powers are allocated across `instances`.
+    pub batching: BatchingScheme,
+}
+
+impl<F, O, P, C> StagePlan<F, O, P, C> {
+    /// Whether the eq-factored proof-size optimization is retained for the
+    /// instance at `index`.
+    ///
+    /// The eq-factored wire format (sending the inner `q` with its linear term
+    /// omitted) is valid only for an [`InstanceKind::EqFactored`] instance
+    /// proven standalone. Any batching linearly combines round polynomials and
+    /// the combined polynomial no longer shares a single eq factor, so a
+    /// batched eq-factored instance demotes to the regular compressed format
+    /// (the prover still computes the eq factor with Gruen split-eq). An
+    /// out-of-range `index` is reported as `false` rather than panicking.
+    pub fn retains_eq_factored_format(&self, index: usize) -> bool {
+        match self.instances.get(index) {
+            Some(instance) => {
+                matches!(instance.kind, InstanceKind::EqFactored)
+                    && self.instances.len() == 1
+                    && matches!(self.batching, BatchingScheme::Standalone)
+            }
+            None => false,
+        }
+    }
+}
+
+/// The carried-opening claims handed from this level to the next fold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CarriedOpeningPlan {
+    /// A single carried opening claim (the common case).
+    Singleton,
+    /// Multiple carried opening claims (setup-claim offloading).
+    List {
+        /// Number of carried opening claims.
+        count: usize,
+    },
+}
+
+/// One ordered Fiat-Shamir event in a level's transcript schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptEvent {
+    /// Absorb a chained input claim before a stage's rounds.
+    AbsorbInputClaim(ClaimSlot),
+    /// Run `num_rounds` boolean-hypercube rounds: per round append the round
+    /// polynomial and squeeze the round challenge.
+    SumcheckRounds {
+        /// Number of rounds.
+        num_rounds: usize,
+    },
+    /// Absorb a chained output claim after a stage's rounds.
+    AbsorbOutputClaim(ClaimSlot),
+}
+
+/// The ordered Fiat-Shamir schedule for a level, derived from its stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptSchedule {
+    /// Ordered events; identical on the prover and verifier.
+    pub events: Vec<TranscriptEvent>,
+}
+
+/// The full per-level protocol plan: stages, carried openings, and schedule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelProtocolPlan<F, O, P, C> {
+    /// Ordered stages, each a batched sumcheck.
+    pub stages: Vec<StagePlan<F, O, P, C>>,
+    /// Carried opening claims handed to the next fold.
+    pub carried_openings: CarriedOpeningPlan,
+    /// Ordered Fiat-Shamir schedule.
+    pub transcript_schedule: TranscriptSchedule,
+}
+
+/// Derive the per-level protocol plan from level parameters and feature gates.
+///
+/// Pure and panic-free: identical inputs yield identical plans on both sides.
+/// This stub emits the baseline stage-2 schedule (one regular fused instance)
+/// and rejects the trace, realized-L2, and setup-offload gates, which later
+/// nodes wire in.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] for a not-yet-supported gate and
+/// [`AkitaError::InvalidSetup`] when the level's ring dimension is not a power
+/// of two or the round count overflows.
+pub fn plan_level<F: RingCore>(
+    params: &LevelParams,
+    gates: &ProtocolGates,
+) -> Result<LevelProtocolPlan<F, AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
+    if gates.trace
+        || gates.setup_offload
+        || matches!(gates.l2_certificate, L2CertificateMode::Realized)
+    {
+        return Err(AkitaError::InvalidInput(
+            "plan_level currently emits only the baseline stage-2 schedule; the trace, \
+             realized-L2, and setup-offload gates are wired by later nodes"
+                .to_string(),
+        ));
+    }
+
+    let num_rounds = stage2_num_rounds(params)?;
+    let descriptor = stage2_descriptor::<F>(num_rounds);
+    let input_claim = descriptor.input_claim;
+    let output_claim = descriptor.output_claim;
+
+    let stage = StagePlan {
+        instances: vec![descriptor],
+        batching: BatchingScheme::Standalone,
+    };
+
+    let transcript_schedule = TranscriptSchedule {
+        events: vec![
+            TranscriptEvent::AbsorbInputClaim(input_claim),
+            TranscriptEvent::SumcheckRounds { num_rounds },
+            TranscriptEvent::AbsorbOutputClaim(output_claim),
+        ],
+    };
+
+    Ok(LevelProtocolPlan {
+        stages: vec![stage],
+        carried_openings: CarriedOpeningPlan::Singleton,
+        transcript_schedule,
+    })
+}
+
+/// Stage-2 round count `col_bits + ring_bits` for a level.
+///
+/// `ring_bits = log2(ring_dimension)` (the within-ring y variables) and
+/// `col_bits = m_vars + r_vars` (the block/position x variables). Rejects a
+/// non-power-of-two ring dimension and an overflowing sum.
+fn stage2_num_rounds(params: &LevelParams) -> Result<usize, AkitaError> {
+    let ring_dimension = params.ring_dimension;
+    if ring_dimension == 0 || !ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "stage-2 plan requires a power-of-two ring dimension".to_string(),
+        ));
+    }
+    let ring_bits = ring_dimension.trailing_zeros() as usize;
+    let col_bits = params.outer_vars();
+    col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 round count overflow".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Prime64Offset59;
+    use akita_types::SisModulusFamily;
+
+    type F = Prime64Offset59;
+
+    fn sample_params() -> LevelParams {
+        // ring_dimension = 64 -> ring_bits = 6; m_vars = 4, r_vars = 2 ->
+        // col_bits = 6; num_rounds = 12.
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("valid layout")
+    }
+
+    #[test]
+    fn plan_level_is_deterministic_for_fixed_inputs() {
+        let params = sample_params();
+        let gates = ProtocolGates::default();
+        let first = plan_level::<F>(&params, &gates).expect("plan");
+        let second = plan_level::<F>(&params, &gates).expect("plan");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn plan_level_emits_single_regular_stage2_instance() {
+        let params = sample_params();
+        let plan = plan_level::<F>(&params, &ProtocolGates::default()).expect("plan");
+
+        assert_eq!(plan.stages.len(), 1);
+        let stage = &plan.stages[0];
+        assert_eq!(stage.instances.len(), 1);
+        assert_eq!(stage.instances[0].kind, InstanceKind::Regular);
+        assert_eq!(stage.instances[0].num_rounds, 12);
+        assert_eq!(stage.batching, BatchingScheme::Standalone);
+        assert!(matches!(
+            plan.carried_openings,
+            CarriedOpeningPlan::Singleton
+        ));
+        assert_eq!(plan.transcript_schedule.events.len(), 3);
+    }
+
+    #[test]
+    fn plan_level_rejects_unsupported_gates() {
+        let params = sample_params();
+        let gates = ProtocolGates {
+            trace: true,
+            ..ProtocolGates::default()
+        };
+        let err = plan_level::<F>(&params, &gates).expect_err("trace gate not yet supported");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn plan_level_allows_zk_gate() {
+        let params = sample_params();
+        let gates = ProtocolGates {
+            zk: true,
+            ..ProtocolGates::default()
+        };
+        // ZK only switches the prover sink; the emitted plan is unchanged.
+        let with_zk = plan_level::<F>(&params, &gates).expect("zk plan");
+        let baseline = plan_level::<F>(&params, &ProtocolGates::default()).expect("baseline plan");
+        assert_eq!(with_zk, baseline);
+    }
+
+    #[test]
+    fn plan_level_rejects_non_power_of_two_ring_dimension() {
+        let mut params = sample_params();
+        params.ring_dimension = 3;
+        let err = plan_level::<F>(&params, &ProtocolGates::default())
+            .expect_err("non-power-of-two ring dimension rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn retains_eq_factored_format_only_for_standalone_eq_factored() {
+        let eq_factored_instance = || {
+            let mut descriptor = stage2_descriptor::<F>(4);
+            descriptor.kind = InstanceKind::EqFactored;
+            descriptor
+        };
+
+        let standalone = StagePlan::<F, _, _, _> {
+            instances: vec![eq_factored_instance()],
+            batching: BatchingScheme::Standalone,
+        };
+        assert!(standalone.retains_eq_factored_format(0));
+
+        let regular = StagePlan::<F, _, _, _> {
+            instances: vec![stage2_descriptor::<F>(4)],
+            batching: BatchingScheme::Standalone,
+        };
+        assert!(!regular.retains_eq_factored_format(0));
+
+        let batched = StagePlan::<F, _, _, _> {
+            instances: vec![eq_factored_instance(), stage2_descriptor::<F>(4)],
+            batching: BatchingScheme::GammaPowers {
+                gamma_powers: vec![0, 1],
+            },
+        };
+        assert!(!batched.retains_eq_factored_format(0));
+        assert!(!batched.retains_eq_factored_format(99));
+    }
+}
