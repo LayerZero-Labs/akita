@@ -1101,3 +1101,426 @@ left as a compatibility path beside the new one.
   decompose-fold and batched decompose-fold call sites.
 - [`crates/akita-prover/src/protocol/ring_switch.rs`](../crates/akita-prover/src/protocol/ring_switch.rs):
   recursive witness commitment and ring-switch flow call sites.
+
+## Appendix: Streaming Commitment And The Commit-Source Boundary
+
+This appendix was added after the initial cutover design to record how the
+source-typed commit boundary should support a future streaming, low-materialization
+commitment path for a Jolt-style integration. It constrains the *shape* of the
+commit source, not the kernel algorithms. No streaming is implemented in this PR.
+
+### Motivation
+
+A near-term consumer (Akita as the PCS under a Jolt-style zkVM) wants to commit to
+the largest root witnesses directly from an execution trace with little or no
+intermediate materialization. The ideal is: from a trace, or a lazy trace over a
+program, walk cycles in row-sized chunks, map each chunk to its contribution to
+the commitment, and accumulate, without ever holding a full witness polynomial.
+Akita's root Ajtai/SIS commitment is linear and block-structured
+(`commit = sum_blocks A * decompose(block)`, realized as the column-sweep / NTT
+mat-vec kernels in `compute/cpu.rs`), so it is inherently amenable to this
+block-incremental accumulation, and only the root (level-0) commitment of the
+largest witnesses needs it.
+
+### Durable rule: no separate streaming trait; the source is the seam
+
+The source-typed kernel boundary this spec already defines is the streaming seam.
+`RootCommitKernel<S, F, D>::commit_inner(prepared, source: S, plan)` is a pull
+model: the kernel receives a source and reads what it needs at its own cadence. A
+fully materialized `DensePoly` / `OneHotPoly` is simply the `S` that traverses its
+own stored coefficients; a lazy trace-backed source is the `S` that produces rows
+on demand. Both use the same kernel and the same single entry point.
+
+Akita must therefore NOT grow a separate `StreamingCommitment`-style trait with a
+`begin` / `feed` / `finish` state machine. Streaming is a property of how a kernel
+consumes its source, not a distinct public trait. Concretely:
+
+- The commit-source capability must be able to hand back a *traversable*, possibly
+  non-materialized source, not only a borrow of an already-built polynomial.
+  `RootCommitSource::commit_view` stays the entry, but its associated view should
+  expose row/block traversal rather than implying a finished coefficient table.
+- The backend kernel owns the *strategy*: block/row accumulation, column-sweep
+  parallelism, opening-hint construction, and the transparent-vs-ZK finish. The
+  source owns only the *data and traversal shape*. Streaming is not fully
+  quarantined inside the source; it is split, with the source describing shape and
+  the backend owning the schedule.
+- `commit_inner` stays the single entry point. Whether it streams or materializes
+  is an internal backend choice, invisible to protocol code and byte-identical in
+  output because the commitment is deterministic and linear.
+
+### Lessons this rule encodes (Jolt prior art)
+
+This is a synthesis of three existing designs, recorded so the boundary is not
+re-litigated:
+
+- jolt-core today already streams: `StreamingCommitmentScheme`
+  (`process_chunk` / `aggregate_chunks`) plus `stream_witness_and_commit_rows`
+  drive a lazy trace in row chunks and never materialize a full witness polynomial.
+- The modular `refactor/audit-prep` crates kept *two* layers: a row source
+  (`MultilinearPoly::for_each_row`, which yields already-widened `&[F]`) and a
+  separate push-model `StreamingCommitment` (`begin` / `feed` / `finish`) plus a
+  typed `PolynomialChunk` stream. The separate trait exists *because*
+  `for_each_row` drops to `&[F]` and loses the compact small-scalar / one-hot
+  encoding, so the compact streaming path had to be recovered through a second
+  trait.
+- The earlier `jolt-openings` cutover (a16z/jolt #1521) went the other way: one
+  `CommitmentSource` with a *typed* `for_each_row` row (`SourceRow`) feeding a
+  single `commit_batch` / `commit_batch_zk`, with the backend overriding those to
+  keep the streaming schedule. No separate streaming trait.
+
+The decisive lesson: a row source must carry the *encoding type*. A `&[F]` source
+forces a second streaming trait; a typed-row source does not. Akita's generic `S`
+is a strict improvement on both, because the source type is open rather than a
+closed `SourceRow` enum, so an encoding palette never has to be the public
+extension point.
+
+Two further footguns from the #1521 review, encoded here as constraints:
+
+- Keep fused/batch kernels first-class. In #1521 the fused Stage-8 RLC could not
+  express itself as a single row scan and degenerated into a panic stub plus a
+  backend-specific override. Akita's `OpeningBatchKernel` and tensor-batch kernels
+  must remain the path for fused work; a source must never be forced to fake row
+  traversal it cannot provide.
+- One canonical lowering. In #1521 the `SourceRow` to evaluations conversion was
+  duplicated per backend with divergent one-hot semantics. Akita must have a single
+  shared lowering from commit-source rows to ring blocks / digit planes, reused by
+  every backend rather than re-derived.
+
+### Provisional: the row-encoding palette (deliberately not frozen)
+
+For the built-in CpuBackend fast paths the kernel needs a concrete row vocabulary.
+The natural shape is a small Akita-owned enum of physical encodings, for example:
+
+```rust
+// PROVISIONAL: shape illustrative, not a committed API. Start with the encodings
+// the built-in sources actually need and expand only when a concrete source does.
+pub enum CommitRow<'a, F, const D: usize> {
+    Ring(&'a [CyclotomicRing<F, D>]),
+    DigitPlanes(&'a [[i8; D]]),
+    OneHot(&'a [Option<usize>]),
+    Zeros(usize),
+}
+```
+
+This enum is intentionally left open-ended and is NOT the extensibility contract:
+
+- It is a physical *output-shaped* sum type, the same category as
+  `TensorPackedWitness` and `MultilinearPolynomial`, not the closed input-source
+  enum this spec rejects elsewhere. A finite set of row encodings is acceptable for
+  the same reason those are.
+- It is never load-bearing for extension. Because the kernel is generic over `S`, a
+  source whose data does not fit the palette can implement the commit kernel
+  directly over its own view, exactly as a downstream custom polynomial does for
+  the non-streaming path. The palette is a convenience for the standard CpuBackend
+  reduction, not a gate.
+- Risk acknowledged: a fixed encoding enum can become too restrictive (a packed
+  device buffer, a strided layout, a wider small-scalar type). The mitigation is to
+  keep the palette minimal at first, let real sources drive additions, and rely on
+  the generic `S` escape hatch rather than enumerating speculatively. Whether this
+  enum is introduced in the first cutover at all, or deferred until a streaming
+  source actually lands, is left open. The durable commitment is the generic source
+  seam above, not this enum.
+
+### Deferred decision: opening-hint retention
+
+Akita's commit output retains the full decomposed witness (`CommitInnerWitness`)
+because the opening fold consumes it, unlike a Dory-style compact row-commitment
+hint. Streaming the commit *input* therefore does not by itself remove the
+O(witness) retention. Two models, deferred to when a streaming source is actually
+wired:
+
+- Single-materialization: stream the input to avoid a separate `DensePoly` /
+  `OneHotPoly` intermediate, but still build `CommitInnerWitness` once for the
+  opening. Smaller change; matches the literal "from trace, contribute to the
+  commitment" goal.
+- Minimal-materialization: `commit_inner` returns only the compact commitment plus
+  a small hint, and the opening path re-derives the witness from the source by
+  re-traversing it. Requires the opening source and `OpeningFoldKernel` to also
+  accept a re-traversable source. Larger change; the asymptote if memory is the
+  binding constraint.
+
+### What PO-CUTOVER should preserve now
+
+Without implementing streaming in this PR, the cutover should avoid foreclosing it:
+
+- [ ] `RootCommitSource::commit_view` and its associated view are defined so the
+      view can later expose row/block traversal, not only a borrow of a finished
+      coefficient table.
+- [ ] The commit call-site cutover threads a commit context/driver that consumes a
+      source through the kernel, rather than hard-coding a whole-poly `commit_inner`
+      shape into every flow site that would then have to be reopened to add a
+      streaming source.
+- [ ] No `StreamingCommitment`-style begin/feed/finish trait is introduced.
+- [ ] Fused/batch kernels remain the path for fused work; no source is required to
+      panic-stub row traversal.
+
+### Concrete instantiation: Jolt trace-only commit (lz/integrate-hachi prior art)
+
+This subsection records, comprehensively, how a trace-only commit (no polynomial
+materialization) was already made to work against the pre-cutover monolithic
+poly-ops trait, and exactly how that maps onto the source-typed boundary. It is
+deliberately not distilled: it exists so the design is not rediscovered or
+re-litigated. The prior art is the `lz/integrate-hachi` branch of the `jolt` repo
+(local worktree `/Users/quang.dao/Documents/SNARKs/jolt-hachi`; "hachi" is Akita's
+former name), files
+`jolt-core/src/poly/commitment/hachi/{commitment_scheme.rs, packed_poly.rs, packed_layout.rs}`
+and `jolt-core/src/zkvm/prover.rs`.
+
+#### The goal restated
+
+Commit the main zkVM witness directly from the execution trace `&[Cycle]`:
+(i) every committed polynomial is in one-hot form, including the `RamInc` / `RdInc`
+increments (offset-encoded as `inc + 2^64`, then split into `d_inc = ceil(65/8) = 9`
+eight-bit one-hot chunks; see `jolt-hachi/HACHI_INTEGRATION.md`), and (ii) all
+one-hot polys are concatenated into one mega-polynomial committed with a single
+Ajtai commitment. No `OneHotPoly` or `DensePoly` is materialized at any point.
+
+#### Layer A: the trace adapter (trace to one-hot index)
+
+`LazyOneHotSource { trace: &[Cycle], polys: &[CommittedPolynomial], preprocessing,
+one_hot_params }` (`jolt-core/src/zkvm/prover.rs:167`). The only essential method is
+`onehot_index(cycle_idx, poly_idx) -> Option<u8>` (`prover.rs:180`), which is
+`polys[poly_idx].extract_index(&trace[cycle_idx], ...)`. There is no polynomial
+array: a "polynomial" is a pure function of the trace. `batch_onehot_indices`
+(`prover.rs:189`) decodes a cycle once and fills a whole row of poly indices,
+including the increment families computed on the fly via `inc_chunk(base, chunk)`
+(`prover.rs:240-265`). This is the seam where the trace becomes one-hot indices,
+and it is the only place that knows the `Cycle` type.
+
+#### Layer B: the mega-poly concatenation (a bit-layout, not a buffer)
+
+`PackedBitLayout` (`packed_layout.rs:82`) defines a bijection
+`(cycle, poly, hot_index) -> (block_idx, pos_in_block, coeff_idx)` via `locate`
+(`packed_layout.rs:278`). It interleaves the one-hot address bits, the cycle bits,
+and the poly-selector bits into a single packed multilinear, keeping each block
+trace-local (knobs `PACKED_MIN_CYCLE_TILE_BITS` / `PACKED_MAX_POLY_TILE_BITS`,
+`packed_layout.rs:9-13`). The concatenation of all polynomials is therefore not a
+concatenated buffer; it is a coordinate mapping. The poly-selector is just extra
+high coordinates of the same packed polynomial, and the batch-open point is built
+by `reorder_packed_point` (`packed_layout.rs:376`).
+
+#### Layer C: the lazy commit (walk blocks, pull trace, accumulate columns)
+
+`JoltPackedPoly { packed_layout, index_fn, batch_fn, num_cycles, num_polys }`
+(`packed_poly.rs:159`) holds only closures over the source and implements the old
+monolithic poly-ops trait (`packed_poly.rs:334`). `commit_inner`
+(`packed_poly.rs:441`) walks output blocks; per block, `for_each_entry_in_block`
+(`packed_poly.rs:249`) iterates the block's `(cycle, poly)` rectangle, calls
+`index_fn`, `locate`s each hit to `(pos_in_block, coeff_idx)`, and accumulates the
+A-matrix column rotated by `coeff_idx` via `shift_accumulate_into_fast`
+(`packed_poly.rs:543`). A one-hot value at coefficient `coeff_idx` is the ring
+monomial `X^coeff_idx`, so the accumulate is a negacyclic shift of the A-column, not
+a plain add. Nothing is materialized: the polynomial is recomputed from the trace on
+every pass.
+
+#### Why it is genuinely trace-only, including the opening
+
+- The whole commit is `(&[Cycle], &[CommittedPolynomial]) -> commitment`.
+  Materialization is actively forbidden on this path: `poly_to_ring_coeffs`
+  `panic!`s on `OneHot` (`commitment_scheme.rs:879`) precisely to ensure the one-hot
+  witness only ever flows through the lazy source.
+- The opening also re-walks the trace. `fold_blocks`, `evaluate_and_fold`, and
+  `decompose_fold` (`packed_poly.rs:374-437`) all re-read `index_fn` / `batch_fn`.
+  So across commit -> open the retained state is the trace plus the compact commit
+  hint (`CommitInnerWitness { t, t_hat }`, which is O(committed blocks), not O(N)).
+  This is the minimal-materialization model from the deferred-decision section
+  above, realized: the trace is the retained representation and the witness is
+  recomputed, rather than holding a materialized witness across the opening.
+- Batching is the mega-poly batch opening. `batch_prove` (`commitment_scheme.rs:501`)
+  samples a selector `rho`, forms the combined claim `sum_i eq(rho, i) * v_i`
+  (`commitment_scheme.rs:537`), and runs a single Ajtai opening on the reordered
+  packed point. There is no homomorphic `combine_commitments`, which is impossible
+  for Ajtai because of the gadget decomposition `G^{-1}`.
+
+#### Mapping onto the source-typed boundary
+
+In the monolith the polynomial owned both the data and the algorithm, so
+`JoltPackedPoly` simply overrode `commit_inner`. The cutover splits those: the
+source owns data and traversal, the backend owns the kernel. The factoring is clean
+and load-bearing:
+
+- `JoltPackedPoly` becomes a custom `RootCommitSource` `S`. Its traversal is exactly
+  the per-block sparse iterator `for_each_block(block_idx) -> {(pos_in_block,
+  coeff_idx)}` plus `num_blocks` / `block_len` and a density hint. The
+  `PackedBitLayout` mapping stays inside the source, because the layout is a property
+  of how this particular mega-poly is concatenated, not a backend concern.
+- The CpuBackend `commit_inner` kernel owns the strategy zoo currently inlined in the
+  packed poly: fast-singleton (`packed_poly.rs:985`), column-sweep
+  (`packed_poly.rs:805`), and tiled (`packed_poly.rs:1040`). These differ only in how
+  they tile A-columns and schedule the accumulate; all consume the same per-block
+  entry stream. So traversal = source, accumulate schedule = backend, with no leakage
+either way. This is end-to-end confirmation of the "backend owns strategy, no
+separate streaming trait" rule.
+
+#### What already exists in Akita today (do not rebuild)
+
+A correction to any impression that the primitives below are future work: the
+one-hot commit path the cutover is building already contains them. They are existing
+CpuBackend machinery, not things to invent for a streaming consumer.
+
+- The one-hot / monomial-rotation accumulate primitive exists:
+  `inner_ajtai_wide_single_chunk` and `inner_ajtai_wide_multi_chunk`
+  (`crates/akita-prover/src/backend/onehot/inner_ajtai.rs`) compute
+  `t[a] += A[a][col] * X^coeff_idx` via `shift_accumulate_into`, exactly the
+  negacyclic monomial rotation of the A-column by the hot coefficient. The same
+  rotation drives fold / decompose-fold (`fill_rotated_challenge` in
+  `backend/onehot/accumulate.rs`).
+- The per-block sparse `(pos, coeff)` entry representation exists:
+  `SingleChunkEntry { pos_in_block, coeff_idx }` and
+  `MultiChunkEntry { pos_in_block, nonzero_coeffs }` (`backend/onehot/entries.rs`).
+- The per-block traversal and the cross-polynomial concatenation exist:
+  `FlatBlocks<E>` with `offsets` / `block(i)` and `OneHotBlocks` /
+  `commit_plan_blocks()` (`backend/onehot/blocks.rs`), consumed as `&[&[Entry]]` by
+  the accumulators, whose batched callers already concatenate slices across
+  polynomials (`backend/onehot/accumulate.rs`). That is the mega-poly concatenation
+  at the entry level.
+
+So `CommitTraversal` is not a new subsystem; it is a small generalization of the
+existing `OneHotCommitView` / `commit_plan_blocks()` boundary
+(`backend/onehot/ops.rs`). What is genuinely missing is narrow and splits by
+materialization model:
+
+- Single-materialization (build O(nonzeros) entries, not the O(N) dense poly):
+  construct an `OneHotBlocks` / commit view from externally produced indices or
+  entries and commit it. This needs only a public producer path, no new trait, and
+  no orphan-rule problem, because the foreign crate produces Akita-owned types
+  (`OneHotBlocks`) and calls an Akita commit entry point. Today the only producer is
+  `OneHotPoly::blocks_for` -> `FlatBlocks::from_indices` (`backend/onehot/ops.rs`,
+  `backend/onehot/blocks.rs`), which requires a materialized `indices: &[Option<I>]`
+  vector; the gap is exposing entry/block construction that does not route through a
+  stored `OneHotPoly`.
+- Minimal-materialization (re-walk the trace per block, never build an entry
+  vector): generalize `onehot_commit_rows` / `inner_ajtai_wide_*` to consume a
+  per-block entry *iterator* instead of `&[Entry]`. This pull source is the only
+  genuinely new abstraction, and the only place the orphan-rule blanket impl matters.
+
+#### The load-bearing constraint: orphan rule (only on the pull path)
+
+For the minimal-materialization path only (a foreign source type that drives the
+kernel by pull, rather than producing an Akita-owned `OneHotBlocks`), Rust coherence
+decides whether a downstream crate (Jolt) can plug in. The single-materialization
+path above sidesteps this entirely. Given the current kernel shape in
+`crates/akita-prover/src/compute/kernels.rs`:
+
+```rust
+pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F> {
+    fn commit_inner(&self, prepared: &Self::PreparedSetup<D>, source: S,
+        plan: CommitInnerPlan) -> Result<FlatDigitBlocks<D>, AkitaError>;
+    // commit_inner_witness ...
+}
+```
+
+If `CpuBackend` implements `RootCommitKernel<S>` only for Akita's own concrete view
+types, a downstream crate cannot add `impl RootCommitKernel<JoltPackedView> for
+CpuBackend`: both the trait and `CpuBackend` are foreign to that crate, so the orphan
+rule forbids it. A trace-only Jolt source would then be impossible without editing
+Akita.
+
+The resolution is the same move that keeps the encoding palette non-load-bearing:
+the traversal is a trait, and the backend has a blanket impl over it.
+
+```rust
+// in akita-prover (orphan-rule-safe for downstream extension)
+impl<S, F, const D: usize> RootCommitKernel<S, F, D> for CpuBackend
+where
+    S: CommitTraversal<F, D>,
+{ /* fast-singleton / column-sweep / tiled strategy zoo lives here */ }
+```
+
+Then Jolt writes `impl CommitTraversal for JoltPackedView` in its own crate (a
+foreign trait on a local type, which coherence allows) and reuses
+`CpuBackend::commit_inner` unchanged.
+
+Coherence caveat that makes this a now-or-later-refactor decision: concrete per-view
+impls (`impl RootCommitKernel<DenseCommitView> for CpuBackend`, etc.) and a later
+blanket `impl<S: CommitTraversal> ...` overlap and cannot coexist. Enabling the
+blanket form later therefore means routing the built-in views through
+`CommitTraversal` too. That is an internal akita-prover refactor (it does not change
+the public kernel signature or any call site, and there is no downstream consumer
+in-repo yet), so it is reversible, but it is not free: it touches every built-in
+commit kernel impl. The one thing that would make it irreversible is leaking a
+*closed input-source enum* into the kernel signature; that must not happen.
+
+#### The enum is the backend's accumulate vocabulary, not the extension point
+
+This instantiation is concrete evidence against freezing the `CommitRow` palette.
+The packed source does not fit `CommitRow::OneHot(&[Option<usize>])`:
+
+- Its per-block rows are not contiguous slices. They are scattered
+  `(pos_in_block, coeff_idx)` pairs produced by the layout walk (`locate`,
+  `packed_layout.rs:278`), so an `&[Option<usize>]` indexed by position cannot
+  represent them without a dense expansion that defeats the purpose.
+- The accumulate is a monomial rotation of the A-column (`shift_accumulate_into_fast`,
+  `packed_poly.rs:543`), not a coefficient add. `coeff_idx` is a rotation amount, not
+  an index into a value slice.
+
+The correct reading: the palette enumerates the backend's *accumulate primitives*
+(dense ring mat-vec vs one-hot-with-monomial-rotation), not input layouts. A
+downstream source either maps onto an existing primitive (Jolt's packed one-hot is
+exactly "one-hot with monomial rotation", which already exists as
+`inner_ajtai_wide_single_chunk` / `_multi_chunk`) or needs a new primitive, which is
+an additive Akita-side change. The traversal trait is the extension point; the enum
+is just what the CpuBackend knows how to fold. This is why it stays provisional, and
+note that "one-hot with monomial rotation" is already the built-in CpuBackend
+primitive, not a new palette entry a consumer must add.
+
+### Concrete suggestions and where they land
+
+Precise actions, tagged by the PR that should carry each. The actual trace-only
+commit is an explicit non-goal of the cutover; only the shape decisions that keep it
+cheap to add later belong in the cutover PRs.
+
+1. (Spec PR #109, polyops-cutover spec) This appendix, including this instantiation.
+   Records the boundary so it is not re-derived. Done here.
+
+2. (PO-CUTOVER, MUST) Keep `RootCommitSource::CommitView<'a>` an unconstrained
+   associated type (it already is, `crates/akita-prover/src/compute/poly.rs`). Do not
+   bind it to a borrow of stored coefficients, to `MultilinearPolynomial`, or to any
+   akita-witness type. The view must be allowed to be a computed, non-materialized,
+   layout-aware, sparse-per-block traversal.
+
+3. (PO-CUTOVER, MUST) Do the commit call-site rewrite (`api/commitment.rs`,
+   `api/scheme.rs`, `protocol/flow*`) by threading commit through an operation
+   context/driver that consumes a source via the kernel, never by hard-coding a
+   whole-poly `commit_inner` shape into each flow site. This is the natural shape of
+   the rewrite the node already does; it costs nothing extra and avoids reopening
+   every site to add a streaming source later.
+
+4. (PO-CUTOVER, MUST NOT) Do not put a closed input-source enum in the
+   `RootCommitKernel` signature, and do not introduce a separate
+   `StreamingCommitment`-style begin/feed/finish trait. Either would foreclose the
+   blanket-over-traversal extension and is the one irreversible mistake here.
+
+5. (PO-CUTOVER, SHOULD) Note that the entry/block boundary a streaming consumer
+   needs already exists (`OneHotCommitView` / `commit_plan_blocks()` /
+   `OneHotBlocks`, see "What already exists in Akita today"); the only coupling is
+   that its sole producer is `OneHotPoly::blocks_for` -> `FlatBlocks::from_indices`
+   over a materialized index vector. The cheap, real move is to keep the commit
+   kernel keyed on that entry/block view rather than re-deriving blocks from a stored
+   `OneHotPoly` deep inside the kernel, so a non-`OneHotPoly` producer can later feed
+   the same view (single-materialization) with no new trait and no orphan handling.
+   Do not build the `CommitTraversal` pull trait or a blanket
+   `impl<S: CommitTraversal> RootCommitKernel<S> for CpuBackend` speculatively now:
+   there is no in-repo consumer, and the minimal-change rule applies. Record that
+   adding the pull path later is an internal akita-prover change, non-breaking for
+   any call site and any downstream.
+
+6. (PO-CUTOVER, MUST) Keep fused/batch kernels first-class (`OpeningBatchKernel`,
+   tensor-batch). No source is ever required to panic-stub row traversal it cannot
+   provide, per the #1521 Stage-8 footgun above.
+
+7. (NOT in any cutover PR; future "Akita-as-PCS / streaming-commit" node, gated on
+   V / `akita-witness` #159 plus a Jolt-side adapter) The genuinely new pieces: for
+   minimal-materialization, a per-block pull/iterator entry source and its blanket
+   backend impl; plus the Jolt-specific packed bit-layout, lazy trace source,
+   increment-to-one-hot encoding, and mega-poly selector batch opening. Explicitly
+   NOT in this list, because they already exist (see "What already exists in Akita
+   today"): the one-hot / monomial-rotation accumulate (`inner_ajtai_wide_*`), the
+   sparse-entry block view (`FlatBlocks` / `OneHotBlocks` / `commit_plan_blocks()`),
+   and cross-poly concatenation. Bundling the new pieces into the cutover would
+   violate the stated non-goal and the minimal-change rule.
+
+8. (NOT PO1 #161, NOT PO-dense #162) PO1 is the trait/context skeleton and is already
+   open; PO-dense is the narrow `backend/dense.rs` slice. No streaming or
+   trace-source work should be retargeted to either. The compute-boundary edits in
+   suggestions 2-6 are owned by PO-CUTOVER under the PO-COMPUTE lock.
