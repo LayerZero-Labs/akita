@@ -370,9 +370,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp64;
+    use akita_field::Prime128Offset275;
 
-    type F = Fp64<4294967197>;
+    type F = Prime128Offset275;
 
     struct DummyVerifier {
         rounds: usize,

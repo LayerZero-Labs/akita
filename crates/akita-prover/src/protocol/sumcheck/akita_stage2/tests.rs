@@ -1,9 +1,9 @@
 use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
-use akita_field::Prime128OffsetA7F7;
+use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset275;
 
 #[derive(Clone, Copy)]
 struct Stage2Params<'a> {
@@ -869,3 +869,6 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
 
 #[path = "descriptor_engine_equivalence.rs"]
 mod descriptor_engine_equivalence;
+
+#[path = "pilot_byte_equality.rs"]
+mod pilot_byte_equality;

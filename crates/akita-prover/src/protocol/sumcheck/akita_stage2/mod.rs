@@ -218,6 +218,7 @@ mod dense_terms;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
+pub(crate) mod stage2_pilot;
 mod x_prefix;
 mod y_prefix;
 
