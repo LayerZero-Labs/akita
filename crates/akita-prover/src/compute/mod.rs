@@ -15,7 +15,7 @@
 //! | Sibling module | Role |
 //! | --- | --- |
 //! | `plans` | Legacy row/commit plan structs and `FlatBlockTable` |
-//! | `backend` | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
+//! | `backend` | Internal trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); not re-exported at crate root |
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
