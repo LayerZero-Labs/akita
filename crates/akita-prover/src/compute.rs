@@ -10,6 +10,7 @@ use crate::backend::onehot::{
     SingleChunkEntry,
 };
 use crate::backend::sparse_ring::{column_sweep_sparse, SparseRingBlockEntry};
+use crate::backend::RootTensorProjectionPoly;
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 #[cfg(test)]
 use crate::kernels::linear::fused_split_eq_quotients;
@@ -19,14 +20,22 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 #[cfg(any(test, feature = "zk"))]
 use crate::validation::MAX_I8_LOG_BASIS;
-use crate::AkitaProverSetup;
+use crate::{AkitaProverSetup, CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::AkitaExpandedSetup;
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+    MulBaseUnreduced,
+};
+use akita_types::{
+    AkitaExpandedSetup, CleartextWitnessProof, FlatDigitBlocks, RingSubfieldEncoding,
+};
 use std::array::from_fn;
+use std::marker::PhantomData;
 use std::sync::Arc;
 #[cfg(feature = "zk")]
 use std::sync::OnceLock;
@@ -967,6 +976,612 @@ where
             1,
         )?;
         Ok(a_quotients)
+    }
+}
+
+// ===========================================================================
+// Open, source-typed operation boundary (PO1)
+//
+// Everything below this banner is the *new* prover compute boundary. It sits
+// ABOVE the fixed representation-named row helpers above (`dense_commit_rows`,
+// `onehot_commit_rows`, `ring_switch_relation_rows`, ...), which survive only
+// as lower-level standard kernels. The new layer is open by *source type* `S`
+// instead of closed over Akita's built-in plan shapes:
+//
+// - operation kernels (`RootCommitKernel`, `OpeningFoldKernel`, ...) take the
+//   borrowed representation view as a generic type parameter `S`, so a
+//   downstream crate can define its own local view type and implement the
+//   relevant kernel for `CpuBackend` without modifying an Akita-owned enum;
+// - root polynomials expose those views through capability traits
+//   (`RootCommitSource`, `RootOpeningSource`, ...) whose associated view types
+//   become the `S` a kernel runs over;
+// - a prover run threads operation *contexts* (`OperationCtx`) bundled into a
+//   `ProverComputeStack`, each carrying a backend plus its validated prepared
+//   setup, so commitment / opening / tensor / ring-switch work can run on
+//   independent backends while the protocol still sees canonical Akita outputs.
+//
+// PO1 establishes this surface additively: the kernel traits are skeletons with
+// no Akita impls yet (the six representation nodes implement them in their own
+// backend files), and the monolithic `ProverComputeBackend`/`AkitaPolyOps`
+// boundary is intentionally left in place for PO4 to remove.
+// ===========================================================================
+
+/// Scalar operation parameters for an inner Ajtai commit.
+///
+/// The polynomial data lives in the borrowed commit source view (`S`); this
+/// plan carries only the shape parameters the kernel needs to size its work.
+#[derive(Debug, Clone, Copy)]
+pub struct CommitInnerPlan {
+    /// Number of A rows to produce.
+    pub n_a: usize,
+    /// Root block length in ring elements.
+    pub block_len: usize,
+    /// Number of balanced digits used for the A-side commit.
+    pub num_digits_commit: usize,
+    /// Number of balanced digits used when opening (recomposition width).
+    pub num_digits_open: usize,
+    /// Logarithm of the gadget basis.
+    pub log_basis: u32,
+}
+
+/// Fold parameters for a fused evaluate-and-fold opening.
+///
+/// The base/ring split preserves the current distinction between base
+/// multiplier points (scalar folds) and ring multiplier points (sparse
+/// ring-multiplier accumulation).
+#[derive(Debug, Clone, Copy)]
+pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
+    /// Base multiplier point: scalar fold weights.
+    Base {
+        /// Outer evaluation scalars applied to the folded blocks.
+        eval_outer_scalars: &'a [F],
+        /// Per-block fold scalars.
+        fold_scalars: &'a [F],
+        /// Block length in ring elements.
+        block_len: usize,
+    },
+    /// Ring multiplier point: ring-element fold weights.
+    Ring {
+        /// Outer evaluation ring multipliers applied to the folded blocks.
+        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+        /// Per-block fold ring multipliers.
+        fold_scalars: &'a [CyclotomicRing<F, D>],
+        /// Block length in ring elements.
+        block_len: usize,
+    },
+}
+
+/// Fused evaluate-and-fold output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
+    /// Evaluation of the polynomial at the opening point.
+    pub eval: CyclotomicRing<F, D>,
+    /// Folded witness rows in ring form.
+    pub folded: Vec<CyclotomicRing<F, D>>,
+}
+
+/// Decompose + challenge-fold parameters for one opening.
+#[derive(Debug, Clone, Copy)]
+pub struct DecomposeFoldPlan<'a> {
+    /// Sparse fold challenges, outermost first.
+    pub challenges: &'a [SparseChallenge],
+    /// Block length in ring elements.
+    pub block_len: usize,
+    /// Number of balanced digits.
+    pub num_digits: usize,
+    /// Logarithm of the gadget basis.
+    pub log_basis: u32,
+}
+
+/// Batched decompose + fold parameters at one opening point.
+///
+/// Both the sparse-challenge and tensor-shaped fused batched paths are exposed
+/// so a representation can keep its fast batched kernel rather than folding
+/// each polynomial independently and aggregating later.
+#[derive(Debug, Clone, Copy)]
+pub enum DecomposeFoldBatchPlan<'a> {
+    /// Sparse-challenge batched fold.
+    Sparse {
+        /// Sparse fold challenges, outermost first.
+        challenges: &'a [SparseChallenge],
+        /// Block length in ring elements.
+        block_len: usize,
+        /// Number of balanced digits.
+        num_digits: usize,
+        /// Logarithm of the gadget basis.
+        log_basis: u32,
+    },
+    /// Tensor-shaped batched fold.
+    Tensor {
+        /// Tensor-structured fold challenges.
+        tensor: &'a TensorChallenges,
+        /// Block length in ring elements.
+        block_len: usize,
+        /// Number of balanced digits.
+        num_digits: usize,
+        /// Logarithm of the gadget basis.
+        log_basis: u32,
+    },
+}
+
+/// Scalar operation parameters for the fused ring-switch relation rows.
+///
+/// The decomposed witness data (`e_hat`, `t_hat`, centered `z` segment) and the
+/// centered infinity norm live in the borrowed relation source view (`S`).
+#[derive(Debug, Clone, Copy)]
+pub struct RingSwitchRelationPlan {
+    /// Number of D-side cyclic rows to produce.
+    pub n_d: usize,
+    /// Number of B-side cyclic rows to produce.
+    pub n_b: usize,
+    /// Number of A-side quotient rows to produce.
+    pub n_a: usize,
+    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
+    pub log_basis: u32,
+}
+
+/// Scalar operation parameters for additional public-row quotient rows.
+#[derive(Debug, Clone, Copy)]
+pub struct RingSwitchQuotientPlan {
+    /// Number of A-side quotient rows to produce.
+    pub n_a: usize,
+}
+
+/// Tensor-packed root witness alternatives produced by a tensor kernel.
+///
+/// This is an Akita-owned *output* sum type: the set of protocol output
+/// alternatives is fixed, so an enum is the right model here. It is not a
+/// closed *input-source* enum, which is the pattern the open boundary forbids.
+#[derive(Debug, Clone)]
+pub enum TensorPackedWitness<E: FieldCore> {
+    /// Dense tensor-packed evaluations (universal fallback).
+    Dense(Vec<E>),
+    /// Sparse tensor-packed witness preserved when the source/backend can.
+    Sparse(SparseExtensionOpeningWitness<E>),
+}
+
+/// Inner Ajtai commit kernel over a borrowed commit source view `S`.
+///
+/// `S` is the extensibility hook: a downstream crate defines its own commit
+/// view and implements `RootCommitKernel<MyCommitView<'_>, F, D>` for a backend
+/// (for example `CpuBackend`) without touching an Akita-owned enum. Built-in
+/// Akita views reduce to the standard `*_commit_rows` helpers above.
+pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Decomposed inner commitment blocks for `source`.
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: S,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
+
+    /// Inner commitment that also preserves the recomposed inner rows.
+    fn commit_inner_witness(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: S,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
+}
+
+/// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
+pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Fused D/B cyclic rows plus A-side quotient rows.
+    fn relation_rows(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: S,
+        plan: RingSwitchRelationPlan,
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
+    where
+        F: HalvingField;
+}
+
+/// Additional public-row quotient kernel over a borrowed quotient view `S`.
+pub trait RingSwitchQuotientKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// A-side quotient rows for one additional public-row segment.
+    fn quotient_rows(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: S,
+        plan: RingSwitchQuotientPlan,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+    where
+        F: HalvingField;
+}
+
+/// Opening fold / decompose-fold kernel over a borrowed opening view `S`.
+///
+/// `prepared` is optional because some opening folds do not need setup-owned
+/// state; setup-dependent work stays explicitly tied to the backend context.
+pub trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Fused fold + evaluation in one pass over the source.
+    fn evaluate_and_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError>;
+
+    /// Decompose + challenge-fold step.
+    fn decompose_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>;
+}
+
+/// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
+pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Fused batched decompose-fold at one opening point.
+    ///
+    /// Returns `Ok(None)` when the backend/source has no fused batched path,
+    /// `Ok(Some(_))` for the fused witness, and `Err(_)` when a batched fold was
+    /// attempted but the input was rejected.
+    fn decompose_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>;
+}
+
+/// Tensor projection kernel over a borrowed tensor view `S` for opening at an
+/// extension-field point of type `E`.
+pub trait TensorProjectionKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Tensor-column partials at one logical point.
+    fn column_partials(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>;
+
+    /// Tensor-packed root witness, dense or sparse when available.
+    fn packed_witness(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+    ) -> Result<TensorPackedWitness<E>, AkitaError>;
+
+    /// Committed tensor-projected root polynomial.
+    fn root_projection(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>;
+}
+
+/// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
+pub trait TensorProjectionBatchKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Tensor-column partials for a same-point batch.
+    fn column_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>;
+
+    /// Sparse linear combination of tensor-packed root witnesses.
+    ///
+    /// Returns `Ok(None)` when a sparse combination is unavailable for the whole
+    /// batch and the caller must fall back to dense materialization.
+    fn sparse_linear_combination(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: S,
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;
+}
+
+/// Shape metadata every root polynomial exposes.
+///
+/// This is the base capability: it carries no view and no backend work, so
+/// shape-only APIs can require just `RootPolyShape` without pulling in commit,
+/// opening, tensor, or direct-witness capabilities.
+pub trait RootPolyShape<F, const D: usize>: Clone + Send + Sync
+where
+    F: FieldCore,
+{
+    /// Total number of ring elements in the polynomial.
+    fn num_ring_elems(&self) -> usize;
+
+    /// Total number of variables (`log2(num_ring_elems() * D)`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_ring_elems() * D` overflows `usize`. This is a prover-only
+    /// shape helper and is not reachable from verifier paths.
+    fn num_vars(&self) -> usize {
+        let total = self
+            .num_ring_elems()
+            .checked_mul(D)
+            .expect("ring elems * D overflow");
+        debug_assert!(
+            total.is_power_of_two(),
+            "total field elements must be a power of 2"
+        );
+        total.trailing_zeros() as usize
+    }
+}
+
+/// Capability: expose a borrowed commit source view for a `RootCommitKernel`.
+pub trait RootCommitSource<F, const D: usize>: RootPolyShape<F, D>
+where
+    F: FieldCore,
+{
+    /// Borrowed commit view consumed by `RootCommitKernel`.
+    type CommitView<'a>
+    where
+        Self: 'a;
+
+    /// Borrow a commit view of this polynomial.
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError>;
+}
+
+/// Capability: expose borrowed opening views for the opening fold kernels.
+pub trait RootOpeningSource<F, const D: usize>: RootPolyShape<F, D>
+where
+    F: FieldCore,
+{
+    /// Borrowed single-poly opening view consumed by `OpeningFoldKernel`.
+    type OpeningView<'a>
+    where
+        Self: 'a;
+
+    /// Borrowed same-point batch view consumed by `OpeningBatchKernel`.
+    type OpeningBatchView<'a>
+    where
+        Self: 'a;
+
+    /// Borrow an opening view of this polynomial.
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError>;
+
+    /// Borrow a same-point batch opening view over several polynomials.
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError>;
+}
+
+/// Capability: expose borrowed tensor views for the tensor projection kernels.
+pub trait RootTensorSource<F, const D: usize>: RootPolyShape<F, D>
+where
+    F: FieldCore,
+{
+    /// Borrowed single-poly tensor view consumed by `TensorProjectionKernel`.
+    type TensorView<'a>
+    where
+        Self: 'a;
+
+    /// Borrowed same-point batch view consumed by `TensorProjectionBatchKernel`.
+    type TensorBatchView<'a>
+    where
+        Self: 'a;
+
+    /// Borrow a tensor view of this polynomial.
+    ///
+    /// The view is extension-field independent; the opening point type `E`
+    /// enters only at kernel evaluation.
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError>;
+
+    /// Borrow a same-point batch tensor view over several polynomials.
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
+}
+
+/// Capability: materialize a direct root witness for zero-fold openings.
+///
+/// This is an explicit opt-in, not a hidden default on every root polynomial:
+/// only proving paths that may select a root-direct schedule require it.
+pub trait DirectRootWitnessSource<F, const D: usize>: RootPolyShape<F, D>
+where
+    F: FieldCore,
+{
+    /// Materialize a direct root witness payload.
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
+}
+
+/// Umbrella marker for a fully capable Akita root polynomial.
+///
+/// Acceptable only as a convenience bundle on top-level APIs whose behavior can
+/// reach every root capability through config-selected schedules. Lower-level
+/// helpers should bound the smallest capability they actually use.
+pub trait AkitaRootPoly<F, const D: usize>:
+    RootPolyShape<F, D>
+    + RootCommitSource<F, D>
+    + RootOpeningSource<F, D>
+    + RootTensorSource<F, D>
+    + DirectRootWitnessSource<F, D>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, const D: usize, P> AkitaRootPoly<F, D> for P
+where
+    F: FieldCore,
+    P: RootPolyShape<F, D>
+        + RootCommitSource<F, D>
+        + RootOpeningSource<F, D>
+        + RootTensorSource<F, D>
+        + DirectRootWitnessSource<F, D>,
+{
+}
+
+/// A single operation context: a backend plus its validated prepared setup.
+///
+/// Construction validates the prepared setup against explicit expanded-setup
+/// metadata, so a kernel may assume its context was validated. The fields are
+/// private to keep that invariant: an `OperationCtx` cannot exist without going
+/// through a validating constructor.
+pub struct OperationCtx<'a, F, B, const D: usize>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    backend: &'a B,
+    prepared: &'a B::PreparedSetup<D>,
+    _field: PhantomData<fn() -> F>,
+}
+
+impl<'a, F, B, const D: usize> OperationCtx<'a, F, B, D>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    /// Build an operation context, validating `prepared` against `expanded`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] (via
+    /// [`ComputeBackendSetup::validate_prepared_setup`]) when `prepared` was not
+    /// built from `expanded`.
+    pub fn new(
+        backend: &'a B,
+        prepared: &'a B::PreparedSetup<D>,
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<Self, AkitaError> {
+        backend.validate_prepared_setup::<D>(prepared, expanded)?;
+        Ok(Self {
+            backend,
+            prepared,
+            _field: PhantomData,
+        })
+    }
+
+    /// Borrowed backend for this operation cluster.
+    pub fn backend(&self) -> &'a B {
+        self.backend
+    }
+
+    /// Borrowed prepared setup for this operation cluster.
+    pub fn prepared(&self) -> &'a B::PreparedSetup<D> {
+        self.prepared
+    }
+}
+
+/// Per-operation-cluster prover compute stack.
+///
+/// Each cluster (commit / opening / tensor / ring-switch) carries its own
+/// backend plus prepared context, so a proof may mix backends across clusters.
+/// A CPU-only prover is the degenerate case where every cluster shares one
+/// backend and prepared setup ([`ProverComputeStack::uniform`]).
+pub struct ProverComputeStack<'a, F, const D: usize, C, O, T, R>
+where
+    F: FieldCore + CanonicalField,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
+{
+    commit: OperationCtx<'a, F, C, D>,
+    opening: OperationCtx<'a, F, O, D>,
+    tensor: OperationCtx<'a, F, T, D>,
+    ring_switch: OperationCtx<'a, F, R, D>,
+}
+
+impl<'a, F, const D: usize, C, O, T, R> ProverComputeStack<'a, F, D, C, O, T, R>
+where
+    F: FieldCore + CanonicalField,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
+{
+    /// Build a heterogeneous prover stack, validating every contained context
+    /// against the same expanded setup before any transcript work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any cluster's prepared setup fails validation.
+    pub fn new(
+        commit: (&'a C, &'a C::PreparedSetup<D>),
+        opening: (&'a O, &'a O::PreparedSetup<D>),
+        tensor: (&'a T, &'a T::PreparedSetup<D>),
+        ring_switch: (&'a R, &'a R::PreparedSetup<D>),
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            commit: OperationCtx::new(commit.0, commit.1, expanded)?,
+            opening: OperationCtx::new(opening.0, opening.1, expanded)?,
+            tensor: OperationCtx::new(tensor.0, tensor.1, expanded)?,
+            ring_switch: OperationCtx::new(ring_switch.0, ring_switch.1, expanded)?,
+        })
+    }
+
+    /// Commit operation context.
+    pub fn commit(&self) -> &OperationCtx<'a, F, C, D> {
+        &self.commit
+    }
+
+    /// Opening / decompose-fold operation context.
+    pub fn opening(&self) -> &OperationCtx<'a, F, O, D> {
+        &self.opening
+    }
+
+    /// Tensor projection operation context.
+    pub fn tensor(&self) -> &OperationCtx<'a, F, T, D> {
+        &self.tensor
+    }
+
+    /// Ring-switch operation context.
+    pub fn ring_switch(&self) -> &OperationCtx<'a, F, R, D> {
+        &self.ring_switch
+    }
+}
+
+impl<'a, F, B, const D: usize> ProverComputeStack<'a, F, D, B, B, B, B>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    /// Build a CPU-only / single-backend stack where every operation cluster
+    /// shares one backend and prepared setup. Validates the prepared setup once
+    /// per cluster against `expanded`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prepared setup fails validation.
+    pub fn uniform(
+        backend: &'a B,
+        prepared: &'a B::PreparedSetup<D>,
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            (backend, prepared),
+            (backend, prepared),
+            (backend, prepared),
+            (backend, prepared),
+            expanded,
+        )
     }
 }
 
