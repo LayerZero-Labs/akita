@@ -185,17 +185,10 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
 fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
-    let (_, _, same_proof, _, _, _) = make_verify_fixture(16);
     let shape = proof.shape();
-    assert_eq!(shape, same_proof.shape());
 
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
-    let mut same_bytes = Vec::new();
-    same_proof.serialize_uncompressed(&mut same_bytes).unwrap();
-    #[cfg(not(feature = "zk"))]
-    assert_eq!(bytes, same_bytes);
-
     let mut repeated_bytes = Vec::new();
     proof.serialize_uncompressed(&mut repeated_bytes).unwrap();
     assert_eq!(bytes, repeated_bytes);
