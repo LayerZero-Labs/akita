@@ -151,3 +151,56 @@ where
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AkitaProverSetup;
+    use crate::CpuBackend;
+    use akita_field::Fp64;
+    use akita_types::SetupMatrixEnvelope;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 32;
+
+    #[test]
+    fn operation_ctx_rejects_mismatched_expanded_setup() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(
+            8,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 4096,
+            },
+        )
+        .expect("setup a");
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(
+            8,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 8192,
+            },
+        )
+        .expect("setup b");
+        assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
+
+        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
+        assert!(matches!(
+            OperationCtx::new(&CpuBackend, &prepared_a, setup_b.expanded.as_ref()),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn operation_ctx_accepts_matching_expanded_setup() {
+        let envelope = SetupMatrixEnvelope {
+            max_setup_len: 4096,
+        };
+        let setup =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, envelope).expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("matching expanded metadata should validate");
+    }
+}
