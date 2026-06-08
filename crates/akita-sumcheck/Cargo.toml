@@ -21,6 +21,7 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+akita-witness = { version = "0.1.0", path = "../akita-witness" }
 tracing = "0.1"
 
 [features]

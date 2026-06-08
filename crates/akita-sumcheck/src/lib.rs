@@ -9,6 +9,7 @@ pub mod batched_sumcheck;
 pub mod compact_fold;
 pub mod descriptor;
 pub mod drivers;
+pub mod engine;
 pub mod traits;
 pub mod types;
 
