@@ -1,10 +1,15 @@
-//! Tier-B fast-path registry for sumcheck proving.
+//! Registry for optimized sumcheck provers.
 //!
-//! A [`SumcheckFastPath`] is an optimized prover admitted through a registry.
-//! The driver selects a matching fast path or falls back to Tier A
-//! ([`SumcheckEngine`]). The hard contract: for any instance a fast path
-//! claims to match, its per-round polynomials equal Tier A's, enforced by
-//! [`assert_round_polynomial_equivalence`].
+//! Most sumcheck instances have a hand-tuned prover (compact witness scans,
+//! split-eq folding, and similar) that is much faster than walking the
+//! descriptor literally. This module selects such an optimized implementation
+//! when one is registered for the instance, and otherwise uses
+//! [`SumcheckEngine`], which evaluates the descriptor's summand directly from
+//! witness and public oracles.
+//!
+//! The contract for every optimized prover: on the same witness layout it must
+//! emit the same per-round univariate polynomials as [`SumcheckEngine`].
+//! [`assert_same_round_polynomials`] checks that round-by-round.
 
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
@@ -13,49 +18,48 @@ use crate::descriptor::SumcheckInstanceDescriptor;
 use crate::engine::SumcheckEngine;
 use crate::traits::SumcheckInstanceProver;
 
-/// Optimized sumcheck prover (Tier B).
+/// Hand-tuned sumcheck prover for a specific instance family.
 ///
-/// Matches the contract in `specs/akita-sumcheck-unification.md`: the fast
-/// path emits the same per-round univariate messages as Tier A for the
-/// descriptor it was registered for. Metadata accessors let the standard
-/// sumcheck driver run without a parallel descriptor lookup.
-pub trait SumcheckFastPath<E: FieldCore>: Send + Sync {
+/// Method names match [`SumcheckInstanceProver`]: compute the round polynomial,
+/// ingest the verifier challenge, then optionally finalize. The optimized prover
+/// must agree with [`SumcheckEngine`] on every round polynomial for the
+/// descriptor it was built for.
+pub trait OptimizedSumcheckProver<E: FieldCore>: Send + Sync {
     /// Compute the prover message `g_round(X)` given the previous running claim.
-    fn evaluate_round(&mut self, round: usize, previous_claim: E) -> UniPoly<E>;
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E>;
 
-    /// Fold/bind the current round variable after the verifier challenge `r`.
-    fn bind(&mut self, round: usize, r: E);
+    /// Fold internal state after the verifier challenge `r_round`.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
 
-    /// Optional end-of-protocol hook after the last challenge has been ingested.
+    /// Optional hook after the last challenge has been ingested.
     fn finalize(&mut self) {}
 
-    /// Number of rounds (boolean variables bound by this instance).
+    /// Number of boolean-hypercube rounds for this instance.
     fn num_rounds(&self) -> usize;
 
-    /// Maximum allowed degree for any round univariate polynomial.
+    /// Maximum total degree of any round univariate polynomial.
     fn degree_bound(&self) -> usize;
 
-    /// The initial claimed sum this instance proves.
+    /// Initial claimed sum this instance proves.
     fn input_claim(&self) -> E;
 }
 
-/// Wrap any [`SumcheckInstanceProver`] as a [`SumcheckFastPath`].
+/// Register an existing [`SumcheckInstanceProver`] as an optimized kernel.
 ///
-/// This is the adapter used to register bespoke kernels such as
-/// `AkitaStage2Prover` verbatim: the optimized prover already implements
-/// [`SumcheckInstanceProver`], and this wrapper exposes the fast-path surface
-/// without reimplementing round logic.
-pub struct InstanceProverFastPath<P> {
+/// Stage-specific provers such as `AkitaStage2Prover` already implement the
+/// instance trait; this adapter exposes the optimized registry interface
+/// without duplicating round logic.
+pub struct InstanceProverAdapter<P> {
     prover: P,
 }
 
-impl<P> InstanceProverFastPath<P> {
-    /// Construct a fast path from an existing sumcheck instance prover.
+impl<P> InstanceProverAdapter<P> {
+    /// Wrap `prover` for the optimized registry.
     pub const fn new(prover: P) -> Self {
         Self { prover }
     }
 
-    /// Consume the wrapper and return the inner prover.
+    /// Consume the adapter and return the inner prover.
     pub fn into_inner(self) -> P {
         self.prover
     }
@@ -71,17 +75,17 @@ impl<P> InstanceProverFastPath<P> {
     }
 }
 
-impl<P, E> SumcheckFastPath<E> for InstanceProverFastPath<P>
+impl<P, E> OptimizedSumcheckProver<E> for InstanceProverAdapter<P>
 where
     P: SumcheckInstanceProver<E>,
     E: FieldCore,
 {
-    fn evaluate_round(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
         self.prover.compute_round_univariate(round, previous_claim)
     }
 
-    fn bind(&mut self, round: usize, r: E) {
-        self.prover.ingest_challenge(round, r);
+    fn ingest_challenge(&mut self, round: usize, r_round: E) {
+        self.prover.ingest_challenge(round, r_round);
     }
 
     fn finalize(&mut self) {
@@ -101,51 +105,51 @@ where
     }
 }
 
-impl<P, E> SumcheckInstanceProver<E> for InstanceProverFastPath<P>
+impl<P, E> SumcheckInstanceProver<E> for InstanceProverAdapter<P>
 where
     P: SumcheckInstanceProver<E>,
     E: FieldCore,
 {
     fn num_rounds(&self) -> usize {
-        SumcheckFastPath::num_rounds(self)
+        OptimizedSumcheckProver::num_rounds(self)
     }
 
     fn degree_bound(&self) -> usize {
-        SumcheckFastPath::degree_bound(self)
+        OptimizedSumcheckProver::degree_bound(self)
     }
 
     fn input_claim(&self) -> E {
-        SumcheckFastPath::input_claim(self)
+        OptimizedSumcheckProver::input_claim(self)
     }
 
     fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
-        SumcheckFastPath::evaluate_round(self, round, previous_claim)
+        OptimizedSumcheckProver::compute_round_univariate(self, round, previous_claim)
     }
 
-    fn ingest_challenge(&mut self, round: usize, r: E) {
-        SumcheckFastPath::bind(self, round, r);
+    fn ingest_challenge(&mut self, round: usize, r_round: E) {
+        OptimizedSumcheckProver::ingest_challenge(self, round, r_round);
     }
 
     fn finalize(&mut self) {
-        SumcheckFastPath::finalize(self);
+        OptimizedSumcheckProver::finalize(self);
     }
 }
 
-/// Unified prover: a resolved fast path or the Tier-A reference engine.
+/// Result of selecting a prover for one sumcheck instance.
 pub enum ResolvedSumcheckProver<E: FieldCore> {
-    /// Tier-B optimized prover selected by the registry.
-    Fast(Box<dyn SumcheckFastPath<E>>),
-    /// Tier-A descriptor-driven reference prover (always correct).
-    TierA(SumcheckEngine<E>),
+    /// Hand-tuned kernel chosen by the registry.
+    Optimized(Box<dyn OptimizedSumcheckProver<E>>),
+    /// Descriptor-driven [`SumcheckEngine`] (always available as fallback).
+    DescriptorEngine(SumcheckEngine<E>),
 }
 
 impl<E> ResolvedSumcheckProver<E>
 where
     E: FieldCore,
 {
-    /// Whether this resolution selected a fast path rather than Tier A.
-    pub const fn is_fast_path(&self) -> bool {
-        matches!(self, Self::Fast(_))
+    /// Whether the registry supplied an optimized kernel instead of the engine.
+    pub const fn uses_optimized_prover(&self) -> bool {
+        matches!(self, Self::Optimized(_))
     }
 }
 
@@ -155,82 +159,83 @@ where
 {
     fn num_rounds(&self) -> usize {
         match self {
-            Self::Fast(path) => path.num_rounds(),
-            Self::TierA(engine) => engine.num_rounds(),
+            Self::Optimized(prover) => prover.num_rounds(),
+            Self::DescriptorEngine(engine) => engine.num_rounds(),
         }
     }
 
     fn degree_bound(&self) -> usize {
         match self {
-            Self::Fast(path) => path.degree_bound(),
-            Self::TierA(engine) => engine.degree_bound(),
+            Self::Optimized(prover) => prover.degree_bound(),
+            Self::DescriptorEngine(engine) => engine.degree_bound(),
         }
     }
 
     fn input_claim(&self) -> E {
         match self {
-            Self::Fast(path) => path.input_claim(),
-            Self::TierA(engine) => engine.input_claim(),
+            Self::Optimized(prover) => prover.input_claim(),
+            Self::DescriptorEngine(engine) => engine.input_claim(),
         }
     }
 
     fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
         match self {
-            Self::Fast(path) => path.evaluate_round(round, previous_claim),
-            Self::TierA(engine) => engine.compute_round_univariate(round, previous_claim),
+            Self::Optimized(prover) => prover.compute_round_univariate(round, previous_claim),
+            Self::DescriptorEngine(engine) => {
+                engine.compute_round_univariate(round, previous_claim)
+            }
         }
     }
 
-    fn ingest_challenge(&mut self, round: usize, r: E) {
+    fn ingest_challenge(&mut self, round: usize, r_round: E) {
         match self {
-            Self::Fast(path) => path.bind(round, r),
-            Self::TierA(engine) => engine.ingest_challenge(round, r),
+            Self::Optimized(prover) => prover.ingest_challenge(round, r_round),
+            Self::DescriptorEngine(engine) => engine.ingest_challenge(round, r_round),
         }
     }
 
     fn finalize(&mut self) {
         match self {
-            Self::Fast(path) => path.finalize(),
-            Self::TierA(engine) => engine.finalize(),
+            Self::Optimized(prover) => prover.finalize(),
+            Self::DescriptorEngine(engine) => engine.finalize(),
         }
     }
 }
 
-/// Descriptor matcher that can materialize a fast path for a sumcheck instance.
-pub trait SumcheckFastPathMatcher<E: FieldCore, O, P, C>: Send + Sync {
-    /// Whether this matcher owns the optimized kernel for `descriptor`.
+/// Builds an optimized prover when a descriptor matches a known instance family.
+pub trait OptimizedProverMatcher<E: FieldCore, O, P, C>: Send + Sync {
+    /// Whether this matcher can build the optimized kernel for `descriptor`.
     fn matches(&self, descriptor: &SumcheckInstanceDescriptor<O, P, C>) -> bool;
 
-    /// Build the fast path for `descriptor`.
+    /// Materialize the optimized prover for `descriptor`.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError`] when the descriptor matches but the prover-side
-    /// witness layout cannot be constructed.
+    /// Returns [`AkitaError`] when the descriptor matches but witness layout or
+    /// oracle construction fails.
     fn build(
         &self,
         descriptor: &SumcheckInstanceDescriptor<O, P, C>,
-    ) -> Result<Box<dyn SumcheckFastPath<E>>, AkitaError>;
+    ) -> Result<Box<dyn OptimizedSumcheckProver<E>>, AkitaError>;
 }
 
-/// Ordered registry of fast-path matchers.
+/// Ordered list of matchers; first successful build wins.
 ///
-/// [`SumcheckFastPathRegistry::resolve`] walks matchers in registration order and
-/// returns the first successful [`ResolvedSumcheckProver::Fast`] build. On no
-/// match, or when every matching build fails, it falls back to the supplied
-/// Tier-A engine unchanged.
-pub struct SumcheckFastPathRegistry<E: FieldCore, O, P, C> {
-    matchers: Vec<Box<dyn SumcheckFastPathMatcher<E, O, P, C>>>,
+/// [`OptimizedProverRegistry::resolve`] tries each registered matcher in order.
+/// If none match, or every matching build fails, it returns the supplied
+/// [`SumcheckEngine`] unchanged.
+pub struct OptimizedProverRegistry<E: FieldCore, O, P, C> {
+    matchers: Vec<Box<dyn OptimizedProverMatcher<E, O, P, C>>>,
 }
 
-impl<E: FieldCore, O, P, C> Default for SumcheckFastPathRegistry<E, O, P, C> {
+impl<E: FieldCore, O, P, C> Default for OptimizedProverRegistry<E, O, P, C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<E: FieldCore, O, P, C> SumcheckFastPathRegistry<E, O, P, C> {
-    /// Construct an empty registry (Tier-A fallback only).
+impl<E: FieldCore, O, P, C> OptimizedProverRegistry<E, O, P, C> {
+    /// Empty registry: every instance falls back to [`SumcheckEngine`].
     pub fn new() -> Self {
         Self {
             matchers: Vec::new(),
@@ -240,55 +245,51 @@ impl<E: FieldCore, O, P, C> SumcheckFastPathRegistry<E, O, P, C> {
     /// Register a matcher. Earlier registrations take precedence.
     pub fn register<M>(&mut self, matcher: M)
     where
-        M: SumcheckFastPathMatcher<E, O, P, C> + 'static,
+        M: OptimizedProverMatcher<E, O, P, C> + 'static,
     {
         self.matchers.push(Box::new(matcher));
     }
 
-    /// Select a fast path for `descriptor`, or return `tier_a` unchanged.
+    /// Select an optimized prover for `descriptor`, or return `descriptor_engine`.
     pub fn resolve(
         &self,
         descriptor: &SumcheckInstanceDescriptor<O, P, C>,
-        tier_a: SumcheckEngine<E>,
+        descriptor_engine: SumcheckEngine<E>,
     ) -> ResolvedSumcheckProver<E> {
         for matcher in &self.matchers {
             if !matcher.matches(descriptor) {
                 continue;
             }
-            if let Ok(fast) = matcher.build(descriptor) {
-                return ResolvedSumcheckProver::Fast(fast);
+            if let Ok(optimized) = matcher.build(descriptor) {
+                return ResolvedSumcheckProver::Optimized(optimized);
             }
         }
-        ResolvedSumcheckProver::TierA(tier_a)
+        ResolvedSumcheckProver::DescriptorEngine(descriptor_engine)
     }
 }
 
-/// Resolve a prover from an optional pre-built fast path and a Tier-A engine.
-///
-/// When `fast_path` is `Some`, the caller has already selected the optimized
-/// kernel (typically after checking a matcher). Otherwise Tier A is used.
+/// Select optimized prover when provided, otherwise use the descriptor engine.
 pub fn resolve_sumcheck_prover<E: FieldCore>(
-    tier_a: SumcheckEngine<E>,
-    fast_path: Option<Box<dyn SumcheckFastPath<E>>>,
+    descriptor_engine: SumcheckEngine<E>,
+    optimized: Option<Box<dyn OptimizedSumcheckProver<E>>>,
 ) -> ResolvedSumcheckProver<E> {
-    match fast_path {
-        Some(path) => ResolvedSumcheckProver::Fast(path),
-        None => ResolvedSumcheckProver::TierA(tier_a),
+    match optimized {
+        Some(prover) => ResolvedSumcheckProver::Optimized(prover),
+        None => ResolvedSumcheckProver::DescriptorEngine(descriptor_engine),
     }
 }
 
-/// Assert that two provers emit identical round polynomials round-by-round.
+/// Check that two provers emit identical round polynomials, round by round.
 ///
-/// Used as the fast-path equivalence gate: Tier B must match Tier A on every
-/// round for the same challenge sequence. Returns the final folded claim on
-/// success.
+/// Returns the final folded claim on success. Used to verify that an optimized
+/// kernel matches [`SumcheckEngine`] on a fixed witness layout.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidInput`] when metadata disagrees (round count,
-/// degree bound, or input claim). Returns [`AkitaError::InvalidProof`] when any
-/// round polynomial differs.
-pub fn assert_round_polynomial_equivalence<E, L, R, S>(
+/// Returns [`AkitaError::InvalidInput`] when round count, degree bound, or
+/// input claim disagree. Returns [`AkitaError::InvalidProof`] when any round
+/// polynomial differs.
+pub fn assert_same_round_polynomials<E, L, R, S>(
     left: &mut L,
     right: &mut R,
     mut sample_challenge: S,
@@ -315,7 +316,7 @@ where
     }
     if left.input_claim() != right.input_claim() {
         return Err(AkitaError::InvalidInput(
-            "input claim mismatch between provers under equivalence test".to_string(),
+            "input claim mismatch between provers in round-polynomial check".to_string(),
         ));
     }
 
@@ -348,10 +349,10 @@ where
 mod tests {
     use super::*;
     use crate::descriptor::{ClaimSlot, Expr, InstanceKind, Source, SubClaim, Summand, Term};
-    use akita_field::Prime64Offset59;
+    use akita_field::Prime128OffsetA7F7;
     use akita_witness::PolynomialView;
 
-    type F = Prime64Offset59;
+    type F = Prime128OffsetA7F7;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum O {
@@ -409,7 +410,7 @@ mod tests {
 
     struct AlwaysMatchMatcher;
 
-    impl SumcheckFastPathMatcher<F, O, P, C> for AlwaysMatchMatcher {
+    impl OptimizedProverMatcher<F, O, P, C> for AlwaysMatchMatcher {
         fn matches(&self, _descriptor: &SumcheckInstanceDescriptor<O, P, C>) -> bool {
             true
         }
@@ -417,44 +418,44 @@ mod tests {
         fn build(
             &self,
             descriptor: &SumcheckInstanceDescriptor<O, P, C>,
-        ) -> Result<Box<dyn SumcheckFastPath<F>>, AkitaError> {
+        ) -> Result<Box<dyn OptimizedSumcheckProver<F>>, AkitaError> {
             let w = [f(2), f(3), f(5), f(7)];
             let a = [f(11), f(13), f(17), f(19)];
             let claim: F = (0..4).map(|i| w[i] * a[i]).sum();
             let engine = build_engine(descriptor, claim, &w, &a);
-            Ok(Box::new(InstanceProverFastPath::new(engine)))
+            Ok(Box::new(InstanceProverAdapter::new(engine)))
         }
     }
 
     #[test]
-    fn registry_selects_first_matching_fast_path() {
+    fn registry_selects_first_matching_optimized_prover() {
         let descriptor = sample_descriptor();
         let w = [f(2), f(3), f(5), f(7)];
         let a = [f(11), f(13), f(17), f(19)];
         let claim: F = (0..4).map(|i| w[i] * a[i]).sum();
-        let tier_a = build_engine(&descriptor, claim, &w, &a);
+        let descriptor_engine = build_engine(&descriptor, claim, &w, &a);
 
-        let mut registry = SumcheckFastPathRegistry::new();
+        let mut registry = OptimizedProverRegistry::new();
         registry.register(AlwaysMatchMatcher);
-        let resolved = registry.resolve(&descriptor, tier_a);
-        assert!(resolved.is_fast_path());
+        let resolved = registry.resolve(&descriptor, descriptor_engine);
+        assert!(resolved.uses_optimized_prover());
     }
 
     #[test]
-    fn registry_falls_back_to_tier_a_when_no_matcher() {
+    fn registry_falls_back_to_descriptor_engine_when_no_matcher() {
         let descriptor = sample_descriptor();
         let w = [f(2), f(3), f(5), f(7)];
         let a = [f(11), f(13), f(17), f(19)];
         let claim: F = (0..4).map(|i| w[i] * a[i]).sum();
-        let tier_a = build_engine(&descriptor, claim, &w, &a);
+        let descriptor_engine = build_engine(&descriptor, claim, &w, &a);
 
-        let registry = SumcheckFastPathRegistry::<F, O, P, C>::new();
-        let resolved = registry.resolve(&descriptor, tier_a);
-        assert!(!resolved.is_fast_path());
+        let registry = OptimizedProverRegistry::<F, O, P, C>::new();
+        let resolved = registry.resolve(&descriptor, descriptor_engine);
+        assert!(!resolved.uses_optimized_prover());
     }
 
     #[test]
-    fn tier_a_matches_itself_round_by_round() {
+    fn descriptor_engine_agrees_with_itself_round_by_round() {
         let descriptor = sample_descriptor();
         let w = [f(2), f(3), f(5), f(7)];
         let a = [f(11), f(13), f(17), f(19)];
@@ -463,23 +464,21 @@ mod tests {
         let mut left = build_engine(&descriptor, claim, &w, &a);
         let mut right = build_engine(&descriptor, claim, &w, &a);
 
-        assert_round_polynomial_equivalence(&mut left, &mut right, |round| f((round as u64) + 9))
-            .expect("two Tier-A engines must agree");
+        assert_same_round_polynomials(&mut left, &mut right, |round| f((round as u64) + 9))
+            .expect("two descriptor engines must agree");
     }
 
     #[test]
-    fn instance_prover_fast_path_delegates_to_inner() {
+    fn instance_prover_adapter_delegates_to_inner() {
         let descriptor = sample_descriptor();
         let w = [f(2), f(3), f(5), f(7)];
         let a = [f(11), f(13), f(17), f(19)];
         let claim: F = (0..4).map(|i| w[i] * a[i]).sum();
 
         let mut direct = build_engine(&descriptor, claim, &w, &a);
-        let mut wrapped = InstanceProverFastPath::new(build_engine(&descriptor, claim, &w, &a));
+        let mut wrapped = InstanceProverAdapter::new(build_engine(&descriptor, claim, &w, &a));
 
-        assert_round_polynomial_equivalence(&mut direct, &mut wrapped, |round| {
-            f((round as u64) + 3)
-        })
-        .expect("wrapper must be transparent");
+        assert_same_round_polynomials(&mut direct, &mut wrapped, |round| f((round as u64) + 3))
+            .expect("adapter must be transparent");
     }
 }

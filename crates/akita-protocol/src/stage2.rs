@@ -135,9 +135,9 @@ pub fn stage2_descriptor(num_rounds: usize, role: LevelRole) -> AkitaSumcheckDes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, Prime64Offset59};
+    use akita_field::{AkitaError, Prime128OffsetA7F7};
 
-    type F = Prime64Offset59;
+    type F = Prime128OffsetA7F7;
 
     fn f(v: u64) -> F {
         F::from_u64(v)

@@ -37,8 +37,9 @@ pub use drivers::{
 };
 pub use engine::{PublicBinding, SumcheckEngine};
 pub use fast_path::{
-    assert_round_polynomial_equivalence, resolve_sumcheck_prover, InstanceProverFastPath,
-    ResolvedSumcheckProver, SumcheckFastPath, SumcheckFastPathMatcher, SumcheckFastPathRegistry,
+    assert_same_round_polynomials, resolve_sumcheck_prover, InstanceProverAdapter,
+    OptimizedProverMatcher, OptimizedProverRegistry, OptimizedSumcheckProver,
+    ResolvedSumcheckProver,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

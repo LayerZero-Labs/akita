@@ -1,8 +1,8 @@
-//! Tier-A vs `AkitaStage2Prover` round-equivalence gate.
+//! Check that `AkitaStage2Prover` matches [`SumcheckEngine`] round-by-round.
 //!
-//! The optimized stage-2 prover is registered verbatim as a fast path; these
-//! tests assert its per-round polynomials match the descriptor-driven Tier-A
-//! engine on the same witness layout.
+//! The stage-2 optimized prover is registered through [`InstanceProverAdapter`].
+//! These tests build hypercube oracle tables for [`SumcheckEngine`] and assert
+//! both provers emit identical per-round polynomials on the same witness layout.
 
 use super::{new_stage2_test_prover, Stage2Params, F};
 use akita_algebra::eq_poly::EqPolynomial;
@@ -10,7 +10,7 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_protocol::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
 use akita_protocol::{matches_stage2_intermediate_descriptor, stage2_descriptor, LevelRole};
 use akita_sumcheck::{
-    assert_round_polynomial_equivalence, InstanceProverFastPath, PublicBinding, SumcheckEngine,
+    assert_same_round_polynomials, InstanceProverAdapter, PublicBinding, SumcheckEngine,
     SumcheckInstanceProver,
 };
 use akita_witness::PolynomialView;
@@ -19,7 +19,7 @@ fn hypercube_len(num_vars: usize) -> usize {
     1usize << num_vars
 }
 
-/// Witness hypercube table: index `(x << ring_bits) | y` holds `w[x][y]`.
+/// Witness table: hypercube index `(x << ring_bits) | y` holds `w[x][y]`.
 fn build_w_hypercube<E: FieldCore + FromPrimitiveInt>(
     w_compact: &[i8],
     live_x_cols: usize,
@@ -65,7 +65,7 @@ fn build_m_hypercube<E: FieldCore>(m_evals_x: &[E], col_bits: usize, ring_bits: 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_stage2_tier_a_engine<E: FieldCore + FromPrimitiveInt>(
+fn build_stage2_descriptor_engine<E: FieldCore + FromPrimitiveInt>(
     batching_coeff: E,
     w_compact: &[i8],
     stage1_point: &[E],
@@ -110,8 +110,8 @@ fn build_stage2_tier_a_engine<E: FieldCore + FromPrimitiveInt>(
 }
 
 #[test]
-fn stage2_fast_path_matches_tier_a_round_by_round() {
-    // ring_bits = 1 keeps two_round_prefix off (requires ring_bits >= 2).
+fn stage2_optimized_prover_matches_descriptor_engine_round_by_round() {
+    // ring_bits = 1 disables the two-round-prefix shortcut (needs ring_bits >= 2).
     let col_bits = 3usize;
     let ring_bits = 1usize;
     let y_len = 1usize << ring_bits;
@@ -145,7 +145,7 @@ fn stage2_fast_path_matches_tier_a_round_by_round() {
             params,
         );
         let input_claim = stage2.input_claim();
-        let tier_a = build_stage2_tier_a_engine(
+        let descriptor_engine = build_stage2_descriptor_engine(
             F::from_u64(13),
             &w_compact,
             &stage1_point,
@@ -156,20 +156,22 @@ fn stage2_fast_path_matches_tier_a_round_by_round() {
             ring_bits,
             input_claim,
         )
-        .expect("tier-A engine builds");
+        .expect("descriptor engine builds");
 
-        let mut fast = InstanceProverFastPath::new(stage2);
-        let mut reference = tier_a;
+        let mut optimized = InstanceProverAdapter::new(stage2);
+        let mut reference = descriptor_engine;
 
-        assert_round_polynomial_equivalence(&mut reference, &mut fast, |round| {
+        assert_same_round_polynomials(&mut reference, &mut optimized, |round| {
             F::from_u64((round as u64) + 37)
         })
-        .unwrap_or_else(|err| panic!("stage-2 fast path must match Tier A for b={b}: {err:?}"));
+        .unwrap_or_else(|err| {
+            panic!("stage-2 optimized prover must match descriptor engine for b={b}: {err:?}")
+        });
     }
 }
 
 #[test]
-fn stage2_fast_path_matches_tier_a_with_live_column_padding() {
+fn stage2_optimized_prover_matches_descriptor_engine_with_live_column_padding() {
     let ring_bits = 1usize;
     let live_x_cols = 5usize;
     let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
@@ -204,7 +206,7 @@ fn stage2_fast_path_matches_tier_a_with_live_column_padding() {
         params,
     );
     let input_claim = stage2.input_claim();
-    let tier_a = build_stage2_tier_a_engine(
+    let descriptor_engine = build_stage2_descriptor_engine(
         F::from_u64(17),
         &w_prefix,
         &stage1_point,
@@ -215,13 +217,13 @@ fn stage2_fast_path_matches_tier_a_with_live_column_padding() {
         ring_bits,
         input_claim,
     )
-    .expect("tier-A engine builds");
+    .expect("descriptor engine builds");
 
-    let mut fast = InstanceProverFastPath::new(stage2);
-    let mut reference = tier_a;
+    let mut optimized = InstanceProverAdapter::new(stage2);
+    let mut reference = descriptor_engine;
 
-    assert_round_polynomial_equivalence(&mut reference, &mut fast, |round| {
+    assert_same_round_polynomials(&mut reference, &mut optimized, |round| {
         F::from_u64((round as u64) + 53)
     })
-    .expect("live-column padding must not break fast-path equivalence");
+    .expect("live-column padding must not break round-polynomial agreement");
 }

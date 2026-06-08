@@ -297,9 +297,9 @@ impl<O, P, C> SumcheckInstanceDescriptor<O, P, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime64Offset59;
+    use akita_field::Prime128OffsetA7F7;
 
-    type F = Prime64Offset59;
+    type F = Prime128OffsetA7F7;
 
     // Minimal identifier types local to the test so the generic algebra is
     // exercised without naming any protocol-specific identifier.

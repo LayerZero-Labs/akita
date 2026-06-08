@@ -1,25 +1,19 @@
-//! Tier-A descriptor-driven sumcheck engine.
+//! Descriptor-driven sumcheck prover.
 //!
-//! [`SumcheckEngine`] is the generic reference prover for a
-//! [`SumcheckInstanceDescriptor`](crate::descriptor::SumcheckInstanceDescriptor):
-//! it walks the descriptor's weighted sub-claim summand over multilinear
-//! witness/public oracles and emits the standard per-round univariate messages,
-//! implementing [`SumcheckInstanceProver`]. It is correctness-first; an
-//! optimized per-instance prover is registered as a fast path (`fast_path`) and
-//! Tier-A is the fallback any descriptor can run through unchanged.
+//! [`SumcheckEngine`] evaluates a [`SumcheckInstanceDescriptor`](crate::descriptor::SumcheckInstanceDescriptor)
+//! directly: it walks the descriptor's weighted sub-claims over multilinear
+//! witness and public oracles and emits the standard per-round univariate
+//! messages. Any instance can be proven this way; hand-tuned provers in
+//! [`crate::fast_path`] must match these round polynomials on the same layout.
 //!
-//! Oracles are sourced through node V's witness vocabulary ([`PolynomialView`]):
-//! each `Source::Opening` resolves to a borrowed multilinear view, each
-//! `Source::Public` to a multilinear view or a cube-constant scalar, and each
-//! sub-claim weight (a `Source::Challenge`) to a scalar. Bodies are challenge-free
-//! by the descriptor's convention, but a body challenge factor is resolved
-//! generically as a scalar so the engine handles any summand.
+//! Each `Source::Opening` resolves to a borrowed [`PolynomialView`]. Each
+//! `Source::Public` is either a multilinear view over the cube or a scalar
+//! constant. Sub-claim weights resolve through `resolve_challenge`. Term bodies
+//! are challenge-free by convention, but challenge factors in a body are still
+//! resolved as scalars so the engine handles any summand shape.
 //!
-//! The round variable is the low bit: a folded table collapses adjacent pairs
-//! `(2j, 2j+1) -> j`, matching [`akita_algebra::poly::fold_evals_in_place`]. A
-//! real instance bound to the same oracle layout as the optimized prover
-//! therefore produces identical round polynomials (verified by the fast-path
-//! round-equivalence test), which keeps proofs byte-identical.
+//! Each round binds the low bit of the hypercube: oracle tables fold adjacent
+//! pairs `(2j, 2j+1) -> j`, matching [`akita_algebra::poly::fold_evals_in_place`].
 
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
@@ -54,7 +48,7 @@ struct LoweredSubClaim<E> {
     terms: Vec<LoweredTerm<E>>,
 }
 
-/// Generic Tier-A sumcheck prover driven by a descriptor's summand.
+/// Sumcheck prover that evaluates a descriptor's summand from witness oracles.
 #[derive(Debug)]
 pub struct SumcheckEngine<E: FieldCore> {
     num_rounds: usize,
@@ -67,7 +61,7 @@ pub struct SumcheckEngine<E: FieldCore> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt> SumcheckEngine<E> {
-    /// Lower a descriptor into a runnable Tier-A prover.
+    /// Lower a descriptor into a runnable prover over the supplied oracles.
     ///
     /// `input_claim` is the chained claim this instance proves (the verifier
     /// absorbs it before the rounds). Each `Source` in the summand is resolved
@@ -275,9 +269,9 @@ fn hypercube_len(num_rounds: usize) -> Result<usize, AkitaError> {
 mod tests {
     use super::*;
     use crate::descriptor::{ClaimSlot, Expr, InstanceKind, SubClaim, Summand, Term};
-    use akita_field::Prime64Offset59;
+    use akita_field::Prime128OffsetA7F7;
 
-    type F = Prime64Offset59;
+    type F = Prime128OffsetA7F7;
 
     // Minimal identifier types local to the test.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
