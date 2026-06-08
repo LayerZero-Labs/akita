@@ -32,6 +32,8 @@ sha3 = "0.10.8"
 tracing = "0.1"
 
 [dev-dependencies]
+akita-protocol = { version = "0.1.0", path = "../akita-protocol" }
+akita-witness = { version = "0.1.0", path = "../akita-witness" }
 rand = "0.8"
 
 [features]

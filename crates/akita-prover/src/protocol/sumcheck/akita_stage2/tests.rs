@@ -866,3 +866,6 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     assert_eq!(prefix_claim, padded_claim);
     assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
 }
+
+#[path = "tier_a_equivalence.rs"]
+mod tier_a_equivalence;

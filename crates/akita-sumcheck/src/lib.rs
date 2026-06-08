@@ -10,6 +10,7 @@ pub mod compact_fold;
 pub mod descriptor;
 pub mod drivers;
 pub mod engine;
+pub mod fast_path;
 pub mod traits;
 pub mod types;
 
@@ -33,6 +34,11 @@ pub use drivers::{
     EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
     ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
     ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
+};
+pub use engine::{PublicBinding, SumcheckEngine};
+pub use fast_path::{
+    assert_round_polynomial_equivalence, resolve_sumcheck_prover, InstanceProverFastPath,
+    ResolvedSumcheckProver, SumcheckFastPath, SumcheckFastPathMatcher, SumcheckFastPathRegistry,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
