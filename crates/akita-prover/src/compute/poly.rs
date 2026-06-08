@@ -1,4 +1,4 @@
-use super::backend::CommitmentComputeBackend;
+use super::backend::{CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
@@ -266,8 +266,7 @@ where
 ///
 /// `ClaimE` and `ChallengeE` do **not** need `'static`; preset extension fields satisfy
 /// it vacuously, but the trait does not require it.
-pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>:
-    CommitmentComputeBackend<F>
+pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -299,10 +298,9 @@ where
 /// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
 ///
 /// With `zk` enabled, requires `RootCommitKernel` on [`DensePoly`]. Without `zk`, this is a
-/// vacuous marker implemented for every `ProverComputeBackend`.
+/// vacuous marker implemented for every [`ComputeBackendSetup`].
 #[cfg(feature = "zk")]
-pub trait ZkHidingCommitBackend<F, const D: usize>:
-    super::backend::ProverComputeBackend<F>
+pub trait ZkHidingCommitBackend<F, const D: usize>: DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField + RandomSampling + 'static,
     Self:
@@ -314,14 +312,13 @@ where
 impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
 where
     F: FieldCore + CanonicalField + RandomSampling + 'static,
-    B: super::backend::ProverComputeBackend<F>
+    B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
 }
 
 #[cfg(not(feature = "zk"))]
-pub trait ZkHidingCommitBackend<F, const D: usize>:
-    super::backend::ProverComputeBackend<F>
+pub trait ZkHidingCommitBackend<F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -331,7 +328,7 @@ where
 impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
 where
     F: FieldCore + CanonicalField,
-    B: super::backend::ProverComputeBackend<F>,
+    B: ComputeBackendSetup<F>,
 {
 }
 
