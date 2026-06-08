@@ -98,7 +98,7 @@ Each names the test, benchmark, or protocol relation that protects it.
 - [ ] Proof bytes for stage 2 are identical to `main` on deterministic fixtures.
 - [ ] `logging-transcript` event-stream equality holds for the unified stage-2 prover and verifier.
 - [ ] The protocol plan derives the stage-2 instance list and transcript schedule from `LevelParams` + gates, and the same function is called by prover and verifier.
-- [ ] A written forward-design section shows how the y-ring trace term, L2 `{Range,L2}`/`{S,Relation,Virtualization}` claim lists with mode gating, and setup-offloading Stage-3 eligibility map onto the plan, including central gamma-power batching allocation.
+- [ ] A written forward-design section shows how the y-ring trace term, the folded-witness L2 certificate (`specs/l2-msis-opnorm-folded-witness.md` grouped-carry realization, gated by `l2_certificate`), and setup-offloading Stage-3 eligibility map onto the plan, including central gamma-power batching allocation.
 - [ ] Stage-2 prover wall time within noise of `main` on the canonical profile workload.
 
 ### Testing Strategy
@@ -331,8 +331,11 @@ How the in-flight features map onto the plan (forward design, not implemented he
   The gate `trace=true` selects the extended `Expr`; the gamma-power index for the trace term comes from the central `BatchingScheme`, not a hardcoded `gamma^2`.
 
 - L2 certificate sumchecks.
-  `certificate_mode` (`Deterministic` vs `Realized`, `crates/akita-types/src/sis/l2_certificate.rs` in the PR-158 worktree) gates the instance lists: stage 1 `{Range}` vs `{Range, L2}`, stage 2 `{S, Relation}` vs `{S, Relation, Virtualization}`.
-  Each is a `SumcheckInstanceDescriptor` in the relevant `StagePlan`; the realized stage-1 format (regular fused-root vs eq-factored) is exactly the `InstanceKind`-plus-batching choice from section 2, selected by the plan and distinct from prover optimizations.
+  An `l2_certificate` gate selects whether a level emits the folded-witness L2 certificate of `specs/l2-msis-opnorm-folded-witness.md`.
+  That spec's grouped-carry design picks a per-level realization (`field-fitting` / `grouped-carry` / `deterministic-fallback`), proves one squared-sum sumcheck `sum_x Z_alpha(x)^2 = V`, and on grouped-carry levels adds an extra `alpha` squeeze, a masked claimed sum `V`, a committed `carry_hat` segment, and a folded carry linear claim.
+  The F-l2 node owns that realization taxonomy and the per-realization proof shape and defines them when it wires this gate, so the plan does not encode the claim lists itself.
+  The plan's role is to host the gate and the realization marker the descriptor binds, to add the extra transcript events (the `alpha` squeeze) to the schedule, and to allocate the certificate instances' gamma powers centrally so they cannot collide with the trace or offload instances.
+  The carry claim and limb/carry virtualization land as `SumcheckInstanceDescriptor`s / structured linear claims in the relevant `StagePlan`, with the `InstanceKind`-plus-batching choice from section 2 selected by the plan and distinct from prover optimizations.
 
 - Setup-claim offloading.
   Eligibility (`D == D_setup`, `N_prefix >= N_min`, presence of a next recursive fold; `STACK.md`) gates whether a Stage-3 setup product-sumcheck instance is appended and whether `carried_openings` is a singleton or a list.
@@ -449,7 +452,7 @@ Risks to resolve first:
   - `crates/akita-verifier/src/stages/stage2.rs`.
 - Related specs and worktrees:
   - `specs/y-ring-trace-internalization.md` (worktree `akita-y-ring-trace-internalization`): fused trace term.
-  - `specs/l2-folded-witness-sumchecks.md`, `crates/akita-types/src/sis/l2_certificate.rs` (worktree `akita-pr-158-l2-certificate-sumchecks`): claim lists and mode gating.
+  - `specs/l2-msis-opnorm-folded-witness.md` (worktree `akita-l2-msis-cutover`): the folded-witness L2 certificate (grouped-carry realization), operator-norm challenge rejection, and L2 SIS pricing the `l2_certificate` gate targets. Supersedes the earlier `l2-folded-witness-sumchecks.md` / `l2_certificate.rs` (PR-158) binary `Deterministic`/`Realized` claim-list shape.
   - `specs/akita-polyops-cutover.md` (worktree `akita-polyops-cutover-spec`): witness/polynomial source boundary.
   - `STACK.md`, `specs/setup-layout-repack.md`: setup-claim offloading and conditional protocol shape.
 - Profiling: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile`.
