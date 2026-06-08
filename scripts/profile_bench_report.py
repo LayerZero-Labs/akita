@@ -122,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -185,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128_d64", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",
