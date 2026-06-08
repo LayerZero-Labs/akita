@@ -111,7 +111,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let opening_groups = [&openings[..]];
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(

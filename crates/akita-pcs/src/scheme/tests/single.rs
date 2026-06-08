@@ -204,7 +204,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     let opening_groups = [&openings[..]];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(
