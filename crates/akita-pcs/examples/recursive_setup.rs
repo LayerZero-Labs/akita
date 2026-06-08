@@ -69,7 +69,7 @@ fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
 }
 
 fn opening_from_poly(poly: &OneHotPoly<F, D, u8>, point: &[F], layout: &LevelParams) -> F {
-    opening_from_poly_impl::<F, D, OneHotPoly<F, D, u8>>(poly, point, layout)
+    opening_from_poly_impl::<D, OneHotPoly<F, D, u8>>(poly, point, layout)
 }
 
 fn opening_from_poly_impl<const D: usize, P: RootOpeningSource<F, D>>(

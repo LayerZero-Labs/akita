@@ -1,7 +1,12 @@
 #![allow(missing_docs)]
 #![cfg(feature = "zk")]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend, RootCommitPolys};
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+};
+use akita_prover::{
+    ComputeBackendSetup, CpuBackend, DensePoly, DigitRowsComputeBackend, RootCommitPolys,
+};
 
 mod common;
 
@@ -72,6 +77,26 @@ fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
     ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid single-point incidence")
 }
 
+fn dense_evaluate_and_fold<const D: usize>(
+    prepared: Option<&<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    poly: &DensePoly<F, D>,
+    ring_opening_point: &akita_types::RingOpeningPoint<F>,
+    block_len: usize,
+) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+    let OpeningFoldOutput { eval, folded } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        prepared,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    (eval, folded)
+}
+
 fn plain_root_d_image<const D: usize>(
     prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>,
     poly: &DensePoly<F, D>,
@@ -92,11 +117,8 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (y_ring, e_folded) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let (y_ring, e_folded) =
+        dense_evaluate_and_fold::<D>(Some(prepared), poly, &ring_opening_point, layout.block_len);
 
     let mut transcript = AkitaTranscript::<F>::new(label);
     commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -105,24 +127,25 @@ fn plain_root_d_image<const D: usize>(
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-        &CpuBackend,
-        prepared,
-        vec![ring_opening_point],
-        vec![ring_multiplier_point],
-        vec![0usize],
-        &[poly],
-        vec![e_folded],
-        &single_point_group_incidence(point.len()),
-        layout.clone(),
-        vec![hint],
-        &mut transcript,
-        std::slice::from_ref(commitment),
-        std::slice::from_ref(&y_ring),
-        vec![CyclotomicRing::<F, D>::one()],
-        MRowLayout::WithDBlock,
-    )
-    .expect("debug ring relation");
+    let (instance, witness) =
+        RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
+            &CpuBackend,
+            prepared,
+            vec![ring_opening_point],
+            vec![ring_multiplier_point],
+            vec![0usize],
+            &[poly],
+            vec![e_folded],
+            &single_point_group_incidence(point.len()),
+            layout.clone(),
+            vec![hint],
+            &mut transcript,
+            std::slice::from_ref(commitment),
+            std::slice::from_ref(&y_ring),
+            vec![CyclotomicRing::<F, D>::one()],
+            MRowLayout::WithDBlock,
+        )
+        .expect("debug ring relation");
 
     let RingRelationWitness { e_hat, .. } = witness;
     let plain_v = CpuBackend
@@ -313,10 +336,11 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         )
         .expect("zk fp32 commit");
 
+        let poly_refs: [&DensePoly<fp32::Field, D>; 1] = [&poly];
         let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(label);
         let proof = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::batched_prove(
             &setup,
-            prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
+            prove_input(&point, &poly_refs, &commitment, hint),
             &CpuBackend,
             &prepared,
             &mut prover_transcript,
@@ -1017,7 +1041,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .map(|point_idx| random_point(NV, 0xaaaa_9000 + point_idx as u64))
             .collect();
         let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
-        let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
         let setup =
             <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, NUM_POINTS, NUM_POINTS)
                 .expect("setup");
@@ -1046,9 +1069,10 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             )
             .expect("ring point");
             let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-            let (y_ring, e_folded) = polys[0].evaluate_and_fold(
-                &ring_opening_point.b,
-                &ring_opening_point.a,
+            let (y_ring, e_folded) = dense_evaluate_and_fold::<D>(
+                Some(&prepared),
+                &polys[0],
+                &ring_opening_point,
                 lp.block_len,
             );
             ring_opening_points.push(ring_opening_point);
@@ -1073,24 +1097,25 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .iter()
             .flat_map(|polys| polys.iter())
             .collect();
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-            &CpuBackend,
-            &prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            incidence.claim_to_point().to_vec(),
-            &polys_flat,
-            e_folded_by_poly,
-            &incidence,
-            lp.clone(),
-            hints,
-            &mut transcript,
-            &commitments,
-            &y_rings,
-            vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
+        let (instance, witness) =
+            RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
+                &CpuBackend,
+                &prepared,
+                ring_opening_points,
+                ring_multiplier_points,
+                incidence.claim_to_point().to_vec(),
+                &polys_flat,
+                e_folded_by_poly,
+                &incidence,
+                lp.clone(),
+                hints,
+                &mut transcript,
+                &commitments,
+                &y_rings,
+                vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
             witness,

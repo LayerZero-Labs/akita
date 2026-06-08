@@ -11,8 +11,9 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    commit_with_params, compute::RootCommitPolys, CommitmentProver, OneHotPoly,
-    RootTensorProjectionPoly,
+    commit_with_params,
+    compute::{RootCommitPolys, RootTensorSource, TensorProjectionKernel},
+    CommitmentProver, OneHotPoly, RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{ClaimIncidenceSummary, RingSubfieldEncoding};
@@ -118,7 +119,13 @@ where
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
     let transformed_polys = onehot_polys
         .iter()
-        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+        .map(|poly| {
+            TensorProjectionKernel::<_, F, Cfg::ChallengeField, D>::root_projection(
+                &CpuBackend,
+                None,
+                poly.tensor_view().expect("tensor view"),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
@@ -142,7 +149,13 @@ where
                 let start = Instant::now();
                 let projected = polys
                     .iter()
-                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .map(|poly| {
+                        TensorProjectionKernel::<_, F, Cfg::ChallengeField, D>::root_projection(
+                            &CpuBackend,
+                            None,
+                            poly.tensor_view().expect("tensor view"),
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();

@@ -92,7 +92,7 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     )]
 }
 
-pub(super) fn build_poly_ref_storage<'a, P>(polynomials_by_point: &'a [Vec<P>]) -> Vec<Vec<&'a P>> {
+pub(super) fn build_poly_ref_storage<P>(polynomials_by_point: &[Vec<P>]) -> Vec<Vec<&P>> {
     polynomials_by_point
         .iter()
         .map(|point| point.iter().collect())
