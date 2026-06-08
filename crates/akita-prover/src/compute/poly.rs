@@ -1,7 +1,6 @@
-use super::backend::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
-};
+#[cfg(feature = "zk")]
+use super::backend::DigitRowsComputeBackend;
+use super::backend::{CommitmentComputeBackend, ComputeBackendSetup, RingSwitchComputeBackend};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
@@ -268,7 +267,8 @@ where
 ///
 /// `ClaimE` and `ChallengeE` do **not** need `'static`; preset extension fields satisfy
 /// it vacuously, but the trait does not require it.
-pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>: ComputeBackendSetup<F>
+pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,

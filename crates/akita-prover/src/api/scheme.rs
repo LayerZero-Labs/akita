@@ -17,7 +17,7 @@ use akita_types::{BasisMode, RingSubfieldEncoding, SetupContributionMode};
 /// Generic over base field `F` and cyclotomic ring degree `D`.
 /// Caller-provided root polynomials use [`RootCommitPoly`] with a backend `B` that
 /// implements [`RootCommitBackend`] for that `P`. Prove accepts [`RootProvePoly`]
-/// with a backend implementing [`RootProveBackend`] for the same `P`.
+/// with a backend implementing [`crate::compute::RootProveBackend`] for the same `P`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>

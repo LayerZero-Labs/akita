@@ -31,8 +31,7 @@ pub use compute::{
     ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     RootCommitPolys, RootProveBackend, RootProveFlowBackend, RootProvePoly, RootTensorSource,
-    SparseRingCommitRowsPlan,
-    TensorProjectionBatchKernel,
+    SparseRingCommitRowsPlan, TensorProjectionBatchKernel,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{

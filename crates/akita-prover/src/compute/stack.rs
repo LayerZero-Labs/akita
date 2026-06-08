@@ -175,20 +175,12 @@ mod tests {
 
     #[test]
     fn operation_ctx_rejects_mismatched_expanded_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(
-            8,
-            1,
-            1,
-            test_envelope(4096),
-        )
-        .expect("setup a");
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(
-            8,
-            1,
-            1,
-            test_envelope(8192),
-        )
-        .expect("setup b");
+        let setup_a =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
+                .expect("setup a");
+        let setup_b =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(8192))
+                .expect("setup b");
         assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
@@ -200,9 +192,8 @@ mod tests {
 
     #[test]
     fn operation_ctx_accepts_matching_expanded_setup() {
-        let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
-                .expect("setup");
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
+            .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("matching expanded metadata should validate");
