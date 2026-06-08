@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
 | Status      | proposed, draft for iteration |
-| PR          | https://github.com/LayerZero-Labs/akita/pull/148 |
+| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (`quang/s3-s5-sis-estimator-spec`) |
 
 ## Summary
 
@@ -153,12 +153,13 @@ The primary protocol surfaces are:
 ### Acceptance Criteria
 
 - [x] *(#155 partial)* Specs and `norm_bound.rs` agree on Euclidean MSIS lookup,
-      Lemma 7 on fold response `z` (`8·ω·β_inf·ν` → `l2_sq_from_linf`), and
-      `β_inf = fold_witness_beta`. Full public security-doc cutover completes with
+      Lemma 7 on fold response `z` (`8·ω·β_inf·ν` → `collision_l2_sq_for_linf_envelope`),
+      and `β_inf = fold_witness_beta`. Full public security-doc cutover completes with
       S6+ certificate wording.
 - [x] *(#155, S5b)* `akita_types::sis` exposes `committed_fold_collision_l2_sq` /
-      `rounded_up_collision_norm_s`; `collision_inf` is removed from production
-      call sites (`collision_l2_sq` on `AjtaiKeyParams`).
+      `rounded_up_collision_norm_s`, derived `d·B²` table keys (`COEFF_LINF_BUCKETS`,
+      `collision_l2_sq_for_linf_envelope`), and pow2-ladder fallback; `collision_inf` is
+      removed from production call sites (`collision_l2_sq` on `AjtaiKeyParams`).
 - [x] *(#155, S3 infra)* Exact-shell operator-norm rejection sampling,
       `operator_norm_cap`, and descriptor binding are implemented. Production
       D=64 keeps `(30, 12)` with `T = 54` (no rejection) until S2 certifies
@@ -191,9 +192,9 @@ The primary protocol surfaces are:
       `carry_hat` digit planes, and a test ties every limb, slack, and carry
       evaluation to the committed `w_next` segment via gadget recomposition (a
       tampered `z_hat`, `ell_hat`, or `carry_hat` fails the check).
-- [x] *(#155, S5b)* B-role and D-role collisions use `l2_sq_from_linf` on `2^lb − 1`
-      (`rounded_up_collision_norm_t/w`). Dedicated table-conversion test remains a
-      follow-up; pricing path is wired.
+- [x] *(#155, S5b)* B-role and D-role collisions use `collision_l2_sq_for_linf_envelope`
+      on `2^lb − 1` (`rounded_up_collision_norm_t/w`). Dedicated table-conversion test
+      remains a follow-up; pricing path is wired.
 - [ ] The squared-sum sumcheck reduces to limb evaluations `a^{<j>}(rho)`
       (equivalently the single `Z_alpha(rho)`), and a linear virtualization step
       ties those plus the carry evaluation `carry_hat(rho_c)` to the existing
@@ -562,11 +563,17 @@ Convert the Lemma-7 collision into the Euclidean SIS floor per ring row:
 
 ```text
 collision_A_inf = 8 · ω · β_inf · ν,
-collision_l2_sq   = ceil_bucket(d · collision_A_inf^2).
+collision_l2_sq   = lookup_L2(d, collision_A_inf).
 ```
 
+`lookup_L2` is `collision_l2_sq_for_linf_envelope` in `ajtai_key.rs`: prefer the
+tabulated derived key `K = d · B²` with `B = ceil_coeff_linf_bucket(linf)` (same
+coefficient-`L∞` ladder as pre-cutover main), else round `d · linf²` up to the next
+generated power-of-two bucket.
+
 `committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` in
-`crates/akita-types/src/sis/norm_bound.rs` implement this path.
+`crates/akita-types/src/sis/norm_bound.rs` call this path.
+B/D roles pass digit collisions `2^lb − 1` through the same helper.
 
 ### Layer 2 — Deterministic `‖z‖_2` envelope (shipped, pre-certificate)
 
@@ -579,7 +586,7 @@ No realized `‖z‖_2` certificate in production yet. The planner bounds
         min(||c||_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf),
 
 ‖z‖_inf  ≤  β_inf,
-‖z‖_2   ≤  √d · β_inf   (hence collision_l2_sq = ceil(d · (8ωβ_inf ν)²)).
+‖z‖_2   ≤  √d · β_inf   (hence collision_l2_sq = lookup_L2(d, 8ωβ_inf ν)).
 ```
 
 `β_inf` is shared with `num_digits_fold` and prover
@@ -622,7 +629,7 @@ L2_BOUND_SQUARED = coeffs · balanced_digit_max(lb, num_digits_fold)^2
 This bounds **`z`**, never `‖s‖_2` or any per-block `s_l2_max` surrogate.
 
 Until this path ships, A-role table lookup uses only Lemma 7 plus
-`l2_sq_from_linf` on `8 · ω · β_inf · ν` (Layer 1–2 above). No
+`collision_l2_sq_for_linf_envelope` on `8 · ω · β_inf · ν` (Layer 1–2 above). No
 `Gamma · B · ‖s‖_2` triangle bound is used for security sizing.
 
 ### Grouped-Carry L2 Certificate
@@ -1210,8 +1217,9 @@ Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later sl
 - **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
   lattice-estimator reliability fixes, vendored LE PR branch submodule, hardened
   `scripts/gen_sis_table.py`, and Akita golden. *(Done in #155.)*
-- **S5b** (same #155): L2 table regen + stitch, `collision_l2_sq` rename, wire A-role
-  and B/D L2 pricing from `norm_bound.rs`. *(In progress.)*
+- **S5b** (same #155): L2 table regen + stitch (pow2 ladder + derived `d·B²` keys),
+  `collision_l2_sq` rename, wire A/B/D pricing through `collision_l2_sq_for_linf_envelope`.
+  *(Done in #155.)*
 - **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
   production D=64 shell/threshold; see below).
 - **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
@@ -1295,8 +1303,9 @@ Gates the production policy in S3.
 **S4 — L2 norm primitives.** *(independent, DONE)*
 `crates/akita-types/src/sis/norm_bound.rs`.
 Adds `committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` (Lemma 7 on
-fold response `z` via `β_inf = fold_witness_beta`, then `l2_sq_from_linf`), and
-the B/D `l2_sq_from_linf` (`||v||_2^2 <= d·||v||_inf^2`) conversion. Squared
+fold response `z` via `β_inf = fold_witness_beta`, then `collision_l2_sq_for_linf_envelope`),
+and the B/D `collision_l2_sq_for_linf_envelope` on `2^lb − 1`
+(`||v||_2^2 <= d·||v||_inf^2`). Squared
 domain keeps every value an exact `u128` integer (`sqrt(D)` is irrational for
 `D ∈ {32, 128}`); the real square root is taken only at bucket/slack selection
 (S8). `fold_witness_beta` prices both `num_digits_fold` and the A-role collision
@@ -1329,15 +1338,15 @@ harden `scripts/gen_sis_table.py`, and check in Akita-local golden CSV under
 `scripts/sis_golden/`. Repoint to `malb/lattice-estimator` after upstream merge. No Rust
 estimator crate.
 
-**S5b — L2 SIS tables + key rename.** *(S4, S5a; in #155)*
+**S5b — L2 SIS tables + key rename.** *(S4, S5a; done in #155)*
 `crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.
-Regenerate L2 bucket ladders (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) + secure-rank floors;
-rename `collision_inf` to `collision_l2_sq` (`u64`, power-of-two ladder) across
-`AjtaiKeyParams`, `min_secure_rank`, `ceil_supported_collision`, and descriptor bytes; wire
-A-role Lemma-7 conversion (`8·ω·beta_inf·ν` via `l2_sq_from_linf`) and B/D
-`l2_sq_from_linf` pricing from S4.
-Remove the old committed-fold L∞ rank-pricing paths. Regen remains Sage +
-`scripts/gen_sis_table.py` against the pinned submodule.
+Regenerate and stitch two key families: power-of-two buckets
+(`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) plus derived `K = d · B²` for
+`COEFF_LINF_BUCKETS`; rename `collision_inf` to `collision_l2_sq` (`u128`) across
+`AjtaiKeyParams`, `min_secure_rank`, `ceil_supported_collision`, and descriptor bytes;
+route A/B/D norm-bound pricing through `collision_l2_sq_for_linf_envelope` (derived key
+default, pow2 fallback). Remove the old committed-fold L∞ rank-pricing paths. Regen remains
+Sage + `scripts/{gen_sis_table,stitch_generated_sis_table}.py` against the pinned submodule.
 
 **S6 — Proof shape, serialization, proof size.** *(parameterizable early)*
 `crates/akita-types/src/proof/{levels,shapes}.rs`, `proof_size.rs`,

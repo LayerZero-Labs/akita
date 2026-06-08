@@ -4,7 +4,7 @@
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
-| Revised     | 2026-06-06 (S5a done; S5b in scope for #155) |
+| Revised     | 2026-06-08 (S5a + S5b done in #155; derived `d·B²` keys) |
 | Status      | proposed |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
 
@@ -46,9 +46,13 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
    CSV plus a regen/check script. *(Done.)*
 3. **Akita (S5b, same PR #155):** stitch emitted rows into
    `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_inf` →
-   `collision_l2_sq` (`u64`, power-of-two ladder), and wire L2 A-role / B/D pricing from
-   `norm_bound.rs` (Lemma 7 plus `l2_sq_from_linf`; see parent spec). Drop only the
-   L∞ **estimator** table keys, not the `8·ω·fold_witness_beta·ν` collision formula.
+   `collision_l2_sq` (`u128`), and wire L2 A-role / B/D pricing from `norm_bound.rs`
+   (Lemma 7 on fold response `z`; see parent spec). The stitched table carries two
+   complementary key families: **derived** keys `K = d · B²` for coefficient-`L∞`
+   buckets `B` (`COEFF_LINF_BUCKETS`, default for norm-bound envelopes via
+   `collision_l2_sq_for_linf_envelope`), plus the **power-of-two** squared-collision
+   ladder (`ceil_supported_collision` fallback). Drop only the old L∞ **estimator**
+   table keys, not the `8·ω·fold_witness_beta·ν` collision formula.
 
 **S5a + S5b** in #155 deliver the offline estimator pin and the runtime L2 SIS floor cutover.
 **S11** (shipped schedule regen + drift under L2 pricing) remains a follow-up after S6.
@@ -71,9 +75,14 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
   non-increasing in commitment width `w` outside a possible degenerate `-inf` prefix at very
   small `w`. The hybrid search in `gen_sis_table.py` assumes this; Akita golden checks
   verify it on the committed grid.
-- **Ladder truncation ordering.** Per-`d` all-zero bucket truncation is valid only when
-  collision buckets are visited in strictly increasing order. `gen_sis_table.py` sorts work
-  items by `(d, collision)` ascending before truncating.
+- **Ladder truncation ordering.** Per-`d` all-zero bucket truncation applies only to the
+  monotonic power-of-two family sweep (default `family_entries`). Custom `--collisions`
+  lists (derived-key supplement and one-off regen) skip dimension-wide truncation so a
+  single failed cell does not drop later rows. Pow2 sweeps still sort by `(d, collision)`
+  ascending before truncating.
+- **Derived-key lockstep.** `COEFF_LINF_BUCKETS` in `ajtai_key.rs` and
+  `scripts/gen_sis_table.py` must match. Derived rows are merged by
+  `scripts/stitch_generated_sis_table.py` (`--supplement-derived-only` or full stitch).
 - **No runtime coupling.** Prover, verifier, and planner read only `generated_sis_table.rs`.
 - **Single cost model.** Euclidean (`norm = 2`) + `BDGL16` only. The `lgsa` shape model is
   **inert** on this path: `SIS.lattice` with `norm == 2` calls `cost_euclidean`, which
@@ -90,9 +99,9 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
   | `SisModulusFamily` | representative `q` (Q32/Q64/Q128) |
 
 - **Bucket ladder lockstep (S5b).** Power-of-two squared-collision buckets
-  (`MIN_LOG_BUCKET = 1`, `MAX_LOG_BUCKET = 84`) live in `scripts/gen_sis_table.py` today.
-  Wiring the same ladder into `ceil_supported_collision` in `ajtai_key.rs` is **S5b**, not
-  S5a.
+  (`MIN_LOG_BUCKET = 1`, `MAX_LOG_BUCKET = 84`) and `COEFF_LINF_BUCKETS` live in
+  `scripts/gen_sis_table.py` and `ajtai_key.rs`. Runtime lookup prefers derived
+  `d · ceil(linf)²` when tabulated, else `ceil_supported_collision` on raw `d · linf²`.
 
 ### Non-Goals
 
@@ -127,14 +136,19 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
 
 ### Acceptance Criteria (S5b, in #155)
 
-- [x] Stitched `generated_sis_table.rs` uses power-of-two `collision_l2_sq` keys (`u128`,
-  ladder `2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`), updated provenance (BDGL16 Euclidean, no
-  `lgsa`), and ranks `1..=20` (`scripts/stitch_generated_sis_table.py`).
+- [x] Stitched `generated_sis_table.rs` unions power-of-two `collision_l2_sq` keys
+  (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) with derived keys `K = d · B²` for each
+  `B ∈ COEFF_LINF_BUCKETS` and `d ∈ {32,64,128,256}`; provenance notes BDGL16 Euclidean
+  (no `lgsa`); ranks `1..=20` via `scripts/stitch_generated_sis_table.py`.
 - [x] `collision_inf` renamed to `collision_l2_sq` on `AjtaiKeyParams`, `min_secure_rank`,
   `ceil_supported_collision`, and descriptor bytes (`u128` LE).
-- [x] A-role pricing uses Lemma 7 (`8·ω·fold_witness_beta·ν`) converted by
-  `l2_sq_from_linf` into `collision_l2_sq`; B/D roles use `l2_sq_from_linf` on
-  `2^lb - 1`. No production path drops the `8` or `ν` factors.
+- [x] A/B/D norm-bound pricing routes through `collision_l2_sq_for_linf_envelope`
+  (derived `d · ceil(linf)²` when tabulated, else pow2 ceil on `d · linf²`). A-role
+  Lemma 7 input is `8·ω·fold_witness_beta·ν`; B/D use `2^lb − 1`. No production path
+  drops the `8` or `ν` factors.
+- [x] Derived keys restore main-equivalent SIS widths at norm-bound collisions (e.g.
+  `fp32_d128_onehot` nv=28: rank-10 width 32768 at `(128, 128·1048575²)` vs 32767 on the
+  adjacent pow2 bucket that `ceil_supported_collision` alone would select).
 - [x] `cargo test -p akita-types` passes; shipped planner tables regened via
   `gen_schedule_tables` so `assert_schedule_stays_within_audited_sis_widths` and
   `generated_schedule_tables_match_find_schedule` pass under L2 floors.
@@ -285,10 +299,11 @@ on this for correctness.
 - Spec revision (this file) and parent cross-links.
 - S3 op-norm rejection (on branch).
 - S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
-- S5b *(done):* L2 `generated_sis_table.rs` stitch, `collision_l2_sq` rename,
-  Lemma 7 (`8·ω·β_inf·ν` → `l2_sq_from_linf`) rank pricing, planner schedule regen.
-  Submodule pinned to `malb/lattice-estimator` @ `27a581b` (`dbdc0b96`); re-run
-  `scripts/sis_golden/check.py` in a Sage env when bumping the pin.
+- S5b *(done):* L2 `generated_sis_table.rs` stitch (pow2 ladder + derived `d·B²` keys),
+  `collision_l2_sq` rename, `collision_l2_sq_for_linf_envelope` rank pricing, planner
+  schedule regen. Submodule pinned to `malb/lattice-estimator` @ `27a581b`; re-run
+  `scripts/sis_golden/check.py` in a Sage env when bumping the pin. Parallel regen shards
+  pass `--dims`/`--collisions` per work item so derived rows are not silently dropped.
 
 #### Follow-up — S11 (separate PR)
 
