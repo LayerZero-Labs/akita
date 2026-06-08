@@ -4,13 +4,18 @@
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
+use crate::backend::RootTensorProjectionPoly;
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
+use akita_types::RingSubfieldEncoding;
 use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
 
 use crate::backend::poly_helpers::{
@@ -18,7 +23,13 @@ use crate::backend::poly_helpers::{
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::compute::{
+    CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DenseCommitInput, DenseCommitRowsPlan, DirectRootWitnessSource,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
+    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
+};
 use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
@@ -224,6 +235,322 @@ impl<F: FieldCore, const D: usize> TensorColumnSource<F> for DenseColumnSource<'
         let ring_idx = flat / D;
         let coeff_idx = flat % D;
         &self.coeffs[ring_idx].coefficients()[coeff_idx..coeff_idx + self.width]
+    }
+}
+
+/// Borrowed commit view over dense ring storage.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseCommitView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Borrowed opening view for fold and decompose-fold kernels.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseOpeningView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Same-point batch opening view over several dense polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseOpeningBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a DensePoly<F, D>],
+}
+
+/// Borrowed tensor projection view over dense ring storage.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseTensorView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Same-point batch tensor view over several dense polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseTensorBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a DensePoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyShape<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+}
+
+impl<F, const D: usize> RootCommitSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type CommitView<'a>
+        = DenseCommitView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        Ok(DenseCommitView { poly: self })
+    }
+}
+
+impl<F, const D: usize> RootOpeningSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type OpeningView<'a>
+        = DenseOpeningView<'a, F, D>
+    where
+        Self: 'a;
+
+    type OpeningBatchView<'a>
+        = DenseOpeningBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+        Ok(DenseOpeningView { poly: self })
+    }
+
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        Ok(DenseOpeningBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> RootTensorSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type TensorView<'a>
+        = DenseTensorView<'a, F, D>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = DenseTensorBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        Ok(DenseTensorView { poly: self })
+    }
+
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Ok(DenseTensorBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut coeffs = Vec::with_capacity(live_len);
+        let mut remaining = live_len;
+        for ring in &self.coeffs {
+            let take = remaining.min(D);
+            coeffs.extend_from_slice(&ring.coefficients()[..take]);
+            remaining -= take;
+            if remaining == 0 {
+                break;
+            }
+        }
+        Ok(CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(coeffs),
+        ))
+    }
+}
+
+impl<F, const D: usize> RootCommitKernel<DenseCommitView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: DenseCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        source.poly.commit_inner(
+            self,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+            plan.num_digits_open,
+            plan.log_basis,
+        )
+    }
+
+    fn commit_inner_witness(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: DenseCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+        source.poly.commit_inner_witness(
+            self,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+            plan.num_digits_open,
+            plan.log_basis,
+        )
+    }
+}
+
+impl<F, const D: usize> OpeningFoldKernel<DenseOpeningView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let (eval, folded) = match plan {
+            OpeningFoldPlan::Base {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+        };
+        Ok(OpeningFoldOutput { eval, folded })
+    }
+
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningView<'_, F, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        Ok(source.poly.decompose_fold(
+            plan.challenges,
+            plan.block_len,
+            plan.num_digits,
+            plan.log_basis,
+        ))
+    }
+}
+
+impl<F, const D: usize> OpeningBatchKernel<DenseOpeningBatchView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn decompose_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningBatchView<'_, F, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        match plan {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges,
+                block_len,
+                num_digits,
+                log_basis,
+            } => Ok(DensePoly::decompose_fold_batched(
+                source.polys,
+                challenges,
+                block_len,
+                num_digits,
+                log_basis,
+            )),
+            DecomposeFoldBatchPlan::Tensor {
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            } => DensePoly::decompose_fold_tensor_batched(
+                source.polys,
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            ),
+        }
+    }
+}
+
+impl<F, E, const D: usize> TensorProjectionKernel<DenseTensorView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F>,
+{
+    fn column_partials(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        source.poly.tensor_extension_column_partials(logical_point)
+    }
+
+    fn packed_witness(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        Ok(TensorPackedWitness::Dense(
+            source.poly.tensor_packed_extension_evals()?,
+        ))
+    }
+
+    fn root_projection(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        E: RingSubfieldEncoding<F>,
+    {
+        source.poly.tensor_packed_extension_root_poly::<E>()
+    }
+}
+
+impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseTensorBatchView<'_, F, D>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    fn column_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorBatchView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        DensePoly::tensor_extension_column_partials_batch(source.polys, logical_point)
+    }
+
+    fn sparse_linear_combination(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorBatchView<'_, F, D>,
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+        DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
     }
 }
 
@@ -729,6 +1056,118 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn dense_kernel_tensor_paths_match_akitapolyops() {
+        const D: usize = 8;
+        type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+
+        let num_vars = 5;
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| F::from_u64(17 * idx as u64 + 9))
+            .collect::<Vec<_>>();
+        let point = (0..num_vars)
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_u64(idx as u64 + 2),
+                    F::from_u64(3 * idx as u64 + 4),
+                    F::from_u64(5 * idx as u64 + 6),
+                    F::from_u64(7 * idx as u64 + 8),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+        let backend = CpuBackend;
+        let tensor_view = poly.tensor_view().unwrap();
+
+        let ops_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
+        let kernel_partials =
+            TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
+                &backend,
+                None,
+                tensor_view,
+                &point,
+            )
+            .unwrap();
+        assert_eq!(kernel_partials, ops_partials);
+
+        let ops_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
+        let kernel_packed =
+            match TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
+                &backend,
+                None,
+                tensor_view,
+            )
+            .unwrap()
+            {
+                TensorPackedWitness::Dense(v) => v,
+                TensorPackedWitness::Sparse(_) => {
+                    panic!("dense kernel must return dense packed witness")
+                }
+            };
+        assert_eq!(kernel_packed, ops_packed);
+
+        let polys = [&poly, &poly];
+        let batch_view = DensePoly::<F, D>::tensor_batch(&polys).unwrap();
+        let ops_batch =
+            DensePoly::<F, D>::tensor_extension_column_partials_batch::<E>(&polys, &point).unwrap();
+        let kernel_batch = TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
+            &backend,
+            None,
+            batch_view,
+            &point,
+        )
+        .unwrap();
+        assert_eq!(kernel_batch, ops_batch);
+    }
+
+    #[test]
+    fn dense_kernel_root_projection_matches_akitapolyops() {
+        use akita_field::{Prime32Offset99, RingSubfieldFpExt4};
+
+        const D: usize = 8;
+        type F = Prime32Offset99;
+        type E = RingSubfieldFpExt4<F>;
+
+        let num_vars = 4;
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| F::from_u64(idx as u64 + 1))
+            .collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+        let backend = CpuBackend;
+        let tensor_view = poly.tensor_view().unwrap();
+
+        let ops_root =
+            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(&poly)
+                .unwrap();
+        let kernel_root =
+            TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
+                &backend,
+                None,
+                tensor_view,
+            )
+            .unwrap();
+        match (kernel_root, ops_root) {
+            (RootTensorProjectionPoly::Dense(got), RootTensorProjectionPoly::Dense(expected)) => {
+                assert_eq!(got, expected);
+            }
+            _ => panic!("dense root projection must stay dense"),
+        }
+    }
+
+    #[test]
+    fn dense_kernel_direct_witness_matches_akitapolyops() {
+        const D: usize = 8;
+        let num_vars = 4;
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| F::from_u64(idx as u64 + 1))
+            .collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+        assert_eq!(
+            <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap(),
+            <DensePoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&poly).unwrap()
+        );
     }
 
     #[test]
