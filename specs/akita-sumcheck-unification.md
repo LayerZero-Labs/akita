@@ -171,23 +171,22 @@ pub enum Source<O, P, C> {
     Public(P),     // a public weight: relation row, trace weight, range coefficient, eq point
 }
 
-pub struct Term<F, O, P, C> { pub coefficient: F, pub factors: Vec<Source<O, P, C>> } // coeff * product
-pub struct Expr<F, O, P, C> { pub terms: Vec<Term<F, O, P, C>> }                       // sum of terms
+pub struct Term<O, P, C> { pub coefficient: i64, pub factors: Vec<Source<O, P, C>> } // coeff * product
+pub struct Expr<O, P, C> { pub terms: Vec<Term<O, P, C>> }                           // sum of terms
 
 pub enum InstanceKind {
     Regular,      // batchable; regular compressed proof format
     EqFactored,   // not batchable; eq-factored proof format only when standalone
 }
 
-pub struct SumcheckInstanceDescriptor<F, O, P, C> {
+pub struct SumcheckInstanceDescriptor<O, P, C> {
     pub label: &'static str,
     pub num_rounds: usize,
     pub degree: usize,
     pub kind: InstanceKind,
     pub input_claim: ClaimSlot,   // chained input (split-sumcheck handoff)
     pub output_claim: ClaimSlot,  // chained output
-    pub poly: Expr<F, O, P, C>,   // the summand g(x) for this instance
-    pub views: Vec<ViewRequirement>, // witness/polynomial sources needed by the prover
+    pub poly: Expr<O, P, C>,      // the summand g(x) for this instance
 }
 ```
 
@@ -196,6 +195,16 @@ There is no domain field: all rounds are over the boolean hypercube (univariate 
 The identifier types are generic so the same descriptor serves both sides.
 The verifier instantiates evaluation with `resolve_opening: O -> F` (claimed values); the prover instantiates the kernel with `resolve_opening: O -> PolynomialView` (witness tables).
 `akita-protocol` defines the concrete `AkitaOpeningId`, `AkitaPublicId`, `AkitaChallengeId` enums and constructs concrete `Expr` values; `akita-sumcheck` never names a protocol-specific identifier.
+
+The descriptor is field-free: `Term::coefficient` is an `i64`, and `Term`/`Expr`/`SumcheckInstanceDescriptor` carry no `F` type parameter.
+The evaluation field is chosen only when a descriptor is evaluated: `Expr::try_evaluate<F: RingCore + FromPrimitiveInt, ..>` lifts each integer coefficient via `F::from_i64`.
+This matches where the field actually matters.
+The symbolic combination in `try_evaluate` is a sum-of-products over a single evaluation field, so it needs no field provenance; the expensive base-by-extension and small-value arithmetic lives in the layer-1 source resolvers (for example `setup_contribution`, which evaluates base-field setup rings against extension-field challenge powers via `mul_base`).
+Jolt draws the same boundary: its claim `Expr` keeps `coefficient: F` and combines in one field (`jolt-claims/src/claims.rs`), while its structured-MLE evaluators are a separate `evaluate_mle<F, C>` with a `ChallengeOps<F>`/`FieldOps<C>` base-by-challenge interface (`jolt-lookup-tables/src/{traits,challenge_ops}.rs`).
+The difference is that Jolt instantiates `C = F` today (single field, hooks retained for readability), whereas Akita's base/challenge split is non-trivial and the resolver-level `mul_base` is a real optimization, not a no-op.
+
+The minimal descriptor shipped here is the field-free `Expr` core only.
+Modeling resolver provenance explicitly (the `views`/`ViewRequirement` witness-source list and the per-`Source` field-vs-compact encoding hint described next) is the real follow-up: it is what lets the layer-1 resolvers select the `mul_base`/compact-integer fast path, and it leaves the layer-2 combination unchanged.
 
 Akita-specific additions beyond a plain `Expr`:
 
@@ -263,7 +272,7 @@ Tier B is bespoke kernels for hot stages, admitted only through a fast-path regi
 
 ```rust
 trait SumcheckFastPath<F, O, P, C> {
-    fn matches(&self, instance: &SumcheckInstanceDescriptor<F, O, P, C>) -> bool;
+    fn matches(&self, instance: &SumcheckInstanceDescriptor<O, P, C>) -> bool;
     fn evaluate_round(&mut self, round: usize, previous_claim: F) -> UniPoly<F>;
     fn bind(&mut self, round: usize, r: F);
 }
@@ -286,18 +295,22 @@ The level's protocol is runtime-derived, not fixed.
 A pure function maps level parameters and feature gates to an ordered schedule:
 
 ```rust
-pub struct LevelProtocolPlan<F, O, P, C> {
-    pub stages: Vec<StagePlan<F, O, P, C>>,
+pub struct LevelProtocolPlan<O, P, C> {
+    pub stages: Vec<StagePlan<O, P, C>>,
     pub carried_openings: CarriedOpeningPlan,   // singleton or list (offloading)
     pub transcript_schedule: TranscriptSchedule,
 }
-pub struct StagePlan<F, O, P, C> {
-    pub instances: Vec<SumcheckInstanceDescriptor<F, O, P, C>>, // batched together
+pub struct StagePlan<O, P, C> {
+    pub instances: Vec<SumcheckInstanceDescriptor<O, P, C>>, // batched together
     pub batching: BatchingScheme,  // gamma-power index per regular instance, allocated centrally
 }
-pub fn plan_level(params: &LevelParams, gates: &ProtocolGates)
+pub fn plan_level<const D: usize>(params: &LevelParams, next_w_len: usize, gates: &ProtocolGates)
     -> Result<LevelProtocolPlan<..>, AkitaError>;
 ```
+
+The plan is field-free (it inherits the descriptor's identifier-only generics), so `plan_level` describes schedule structure without committing to an evaluation field.
+The ring dimension is a `const D`, not a runtime parameter: `plan_level` validates `D == params.ring_dimension` (and that `D` is a power of two and `next_w_len` a positive multiple of `D`), so the compile-time `D` threaded through the prover/verifier stack cannot drift from the runtime layout.
+Stage-2 round counts come from `next_w_len` (the next folded-witness length) via `akita_types::sumcheck_rounds(D, next_w_len)`, the same source the stage-1/2 provers and verifiers use, rather than from `LevelParams::outer_vars()`.
 
 Both prover and verifier call `plan_level` with the same inputs and obtain the same schedule, so Fiat-Shamir ordering, batching, and per-instance proof format are identical by construction.
 `ProtocolGates` carries the feature switches: trace on/off, L2 certificate mode, setup-offload eligibility, ZK.
