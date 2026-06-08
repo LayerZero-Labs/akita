@@ -1,19 +1,21 @@
 //! Per-level protocol plan.
 //!
 //! [`plan_level`] is a pure function of `(const D, LevelParams, next_w_len,
-//! ProtocolGates)` that both the prover and the verifier call to obtain the
-//! identical ordered sumcheck schedule, so Fiat-Shamir ordering, batching, and
-//! per-instance proof format agree by construction. The plan is field-free: it
-//! describes schedule structure only, and the evaluation field is chosen when a
-//! descriptor is later evaluated.
+//! ProtocolGates, LevelRole)` that both the prover and the verifier call to
+//! obtain the identical ordered sumcheck schedule, so Fiat-Shamir ordering,
+//! batching, and per-instance proof format agree by construction. The plan is
+//! field-free: it describes schedule structure only, and the evaluation field
+//! is chosen when a descriptor is later evaluated.
 //!
-//! This PR ships the stage-2 stub: a single regular stage-2 instance. The
-//! y-ring trace term, the folded-witness L2 certificate, and the setup-claim
-//! offloading Stage-3 instance are gate-driven additions made by later nodes;
-//! the stub rejects those gates rather than silently emitting the wrong
-//! schedule. The plan is also the single place gamma-power batching is
-//! allocated (via [`BatchingScheme`]), so trace, L2, and offloading instances
-//! cannot collide on the same power once they are added.
+//! This PR ships the stage-2 stub: a single regular stage-2 instance, fused at
+//! intermediate levels and relation-only at the terminal (cleartext-witness)
+//! level (selected by [`LevelRole`]). The y-ring trace term, the folded-witness
+//! L2 certificate, and the setup-claim offloading Stage-3 instance are
+//! gate-driven additions made by later nodes; the stub rejects those gates
+//! rather than silently emitting the wrong schedule. The plan is also the
+//! single place gamma-power batching is allocated (via [`BatchingScheme`]), so
+//! trace, L2, and offloading instances cannot collide on the same power once
+//! they are added.
 
 use akita_field::AkitaError;
 use akita_sumcheck::descriptor::{ClaimSlot, InstanceKind, SumcheckInstanceDescriptor};
@@ -49,6 +51,23 @@ pub struct ProtocolGates {
     /// Use ZK committed-round sinks. Does not change the instance list or the
     /// transcript schedule emitted here; only the prover's sink differs.
     pub zk: bool,
+}
+
+/// Whether a level folds into a further committed level or is the cleartext tail.
+///
+/// This selects which stage-2 descriptor a level emits. It mirrors the
+/// `Intermediate`/`Terminal` split the prover (`prove_terminal_*` /
+/// `AkitaProofStep::Terminal`) and verifier (`RootStageInput::Terminal`)
+/// already encode: the caller knows its position in the fold schedule, so the
+/// role is an explicit input rather than something `plan_level` derives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelRole {
+    /// A non-final fold. The next witness stays committed, so the carried
+    /// norm/range virtual claim is fused into stage 2 (the fused descriptor).
+    Intermediate,
+    /// The cleartext-witness tail. The witness is opened in the clear, so there
+    /// is no carried virtual claim and stage 2 is relation-only.
+    Terminal,
 }
 
 /// How gamma powers are allocated across the instances batched in one stage.
@@ -156,7 +175,8 @@ pub struct LevelProtocolPlan<O, P, C> {
 /// count against a ring dimension the rest of the call is not using.
 ///
 /// Pure and panic-free: identical inputs yield identical plans on both sides.
-/// This stub emits the baseline stage-2 schedule (one regular fused instance)
+/// This stub emits the baseline stage-2 schedule (one regular instance: fused
+/// at [`LevelRole::Intermediate`], relation-only at [`LevelRole::Terminal`])
 /// and rejects the trace, L2-certificate, and setup-offload gates, which later
 /// nodes wire in.
 ///
@@ -170,6 +190,7 @@ pub fn plan_level<const D: usize>(
     params: &LevelParams,
     next_w_len: usize,
     gates: &ProtocolGates,
+    role: LevelRole,
 ) -> Result<LevelProtocolPlan<AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
     if gates.trace || gates.l2_certificate || gates.setup_offload {
         return Err(AkitaError::InvalidInput(
@@ -180,7 +201,7 @@ pub fn plan_level<const D: usize>(
     }
 
     let num_rounds = stage2_num_rounds::<D>(params, next_w_len)?;
-    let descriptor = stage2_descriptor(num_rounds);
+    let descriptor = stage2_descriptor(num_rounds, role);
     let input_claim = descriptor.input_claim;
     let output_claim = descriptor.output_claim;
 
@@ -237,6 +258,7 @@ fn stage2_num_rounds<const D: usize>(
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
+    use akita_sumcheck::descriptor::Source;
     use akita_types::SisModulusFamily;
 
     // Dispatched ring dimension for the sample level (matches `sample_params`).
@@ -269,29 +291,77 @@ mod tests {
         let params = sample_params();
         let next_w_len = sample_next_w_len(&params);
         let gates = ProtocolGates::default();
-        let first = plan_level::<D>(&params, next_w_len, &gates).expect("plan");
-        let second = plan_level::<D>(&params, next_w_len, &gates).expect("plan");
+        let first =
+            plan_level::<D>(&params, next_w_len, &gates, LevelRole::Intermediate).expect("plan");
+        let second =
+            plan_level::<D>(&params, next_w_len, &gates, LevelRole::Intermediate).expect("plan");
         assert_eq!(first, second);
     }
 
     #[test]
-    fn plan_level_emits_single_regular_stage2_instance() {
+    fn plan_level_intermediate_emits_single_fused_stage2_instance() {
         let params = sample_params();
         let next_w_len = sample_next_w_len(&params);
         let expected_rounds = sumcheck_rounds(D, next_w_len);
-        let plan = plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("plan");
+        let plan = plan_level::<D>(
+            &params,
+            next_w_len,
+            &ProtocolGates::default(),
+            LevelRole::Intermediate,
+        )
+        .expect("plan");
 
         assert_eq!(plan.stages.len(), 1);
         let stage = &plan.stages[0];
         assert_eq!(stage.instances.len(), 1);
         assert_eq!(stage.instances[0].kind, InstanceKind::Regular);
         assert_eq!(stage.instances[0].num_rounds, expected_rounds);
+        // Intermediate level fuses the virtual half: two sub-claims (virtual +
+        // relation).
+        assert_eq!(stage.instances[0].summand.subclaims.len(), 2);
         assert_eq!(stage.batching, BatchingScheme::Standalone);
         assert!(matches!(
             plan.carried_openings,
             CarriedOpeningPlan::Singleton
         ));
         assert_eq!(plan.transcript_schedule.events.len(), 3);
+    }
+
+    #[test]
+    fn plan_level_terminal_emits_relation_only_stage2_instance() {
+        let params = sample_params();
+        let next_w_len = sample_next_w_len(&params);
+        let expected_rounds = sumcheck_rounds(D, next_w_len);
+        let plan = plan_level::<D>(
+            &params,
+            next_w_len,
+            &ProtocolGates::default(),
+            LevelRole::Terminal,
+        )
+        .expect("plan");
+
+        assert_eq!(plan.stages.len(), 1);
+        let stage = &plan.stages[0];
+        assert_eq!(stage.instances.len(), 1);
+        let instance = &stage.instances[0];
+        assert_eq!(instance.kind, InstanceKind::Regular);
+        assert_eq!(instance.num_rounds, expected_rounds);
+        assert_eq!(instance.label, "stage2-relation-only");
+        // Terminal level is relation-only: a single unweighted relation
+        // sub-claim, and no batching-coeff challenge anywhere in the summand
+        // (neither as a sub-claim weight nor as a body factor).
+        assert_eq!(instance.summand.subclaims.len(), 1);
+        assert_eq!(instance.summand.subclaims[0].weight, None);
+        let has_challenge = instance.summand.subclaims.iter().any(|subclaim| {
+            subclaim.weight.is_some()
+                || subclaim.body.terms.iter().any(|term| {
+                    term.factors
+                        .iter()
+                        .any(|factor| matches!(factor, Source::Challenge(_)))
+                })
+        });
+        assert!(!has_challenge, "terminal summand must not fuse a gamma");
+        assert_eq!(stage.batching, BatchingScheme::Standalone);
     }
 
     #[test]
@@ -312,8 +382,8 @@ mod tests {
                 ..ProtocolGates::default()
             },
         ] {
-            let err =
-                plan_level::<D>(&params, next_w_len, &gates).expect_err("gate not yet supported");
+            let err = plan_level::<D>(&params, next_w_len, &gates, LevelRole::Intermediate)
+                .expect_err("gate not yet supported");
             assert!(matches!(err, AkitaError::InvalidInput(_)));
         }
     }
@@ -327,9 +397,15 @@ mod tests {
             ..ProtocolGates::default()
         };
         // ZK only switches the prover sink; the emitted plan is unchanged.
-        let with_zk = plan_level::<D>(&params, next_w_len, &gates).expect("zk plan");
-        let baseline =
-            plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("baseline plan");
+        let with_zk =
+            plan_level::<D>(&params, next_w_len, &gates, LevelRole::Intermediate).expect("zk plan");
+        let baseline = plan_level::<D>(
+            &params,
+            next_w_len,
+            &ProtocolGates::default(),
+            LevelRole::Intermediate,
+        )
+        .expect("baseline plan");
         assert_eq!(with_zk, baseline);
     }
 
@@ -337,8 +413,13 @@ mod tests {
     fn plan_level_rejects_non_power_of_two_ring_dimension() {
         let mut params = sample_params();
         params.ring_dimension = 3;
-        let err = plan_level::<3>(&params, 24, &ProtocolGates::default())
-            .expect_err("non-power-of-two ring dimension rejected");
+        let err = plan_level::<3>(
+            &params,
+            24,
+            &ProtocolGates::default(),
+            LevelRole::Intermediate,
+        )
+        .expect_err("non-power-of-two ring dimension rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -351,6 +432,7 @@ mod tests {
             &params,
             sample_next_w_len(&params),
             &ProtocolGates::default(),
+            LevelRole::Intermediate,
         )
         .expect_err("ring dimension mismatch rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -364,7 +446,13 @@ mod tests {
         let expected_rounds = sumcheck_rounds(D, next_w_len);
         assert_ne!(expected_rounds, params.outer_vars() + 6);
 
-        let plan = plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("plan");
+        let plan = plan_level::<D>(
+            &params,
+            next_w_len,
+            &ProtocolGates::default(),
+            LevelRole::Intermediate,
+        )
+        .expect("plan");
         assert_eq!(plan.stages[0].instances[0].num_rounds, expected_rounds);
         assert_eq!(
             plan.transcript_schedule.events[1],
@@ -377,7 +465,7 @@ mod tests {
     #[test]
     fn retains_eq_factored_format_only_for_standalone_eq_factored() {
         let eq_factored_instance = || {
-            let mut descriptor = stage2_descriptor(4);
+            let mut descriptor = stage2_descriptor(4, LevelRole::Intermediate);
             descriptor.kind = InstanceKind::EqFactored;
             descriptor
         };
@@ -389,13 +477,16 @@ mod tests {
         assert!(standalone.retains_eq_factored_format(0));
 
         let regular = StagePlan {
-            instances: vec![stage2_descriptor(4)],
+            instances: vec![stage2_descriptor(4, LevelRole::Intermediate)],
             batching: BatchingScheme::Standalone,
         };
         assert!(!regular.retains_eq_factored_format(0));
 
         let batched = StagePlan {
-            instances: vec![eq_factored_instance(), stage2_descriptor(4)],
+            instances: vec![
+                eq_factored_instance(),
+                stage2_descriptor(4, LevelRole::Intermediate),
+            ],
             batching: BatchingScheme::GammaPowers {
                 gamma_powers: vec![0, 1],
             },

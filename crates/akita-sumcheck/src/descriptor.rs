@@ -24,6 +24,19 @@
 //! [`Source`]-resolver (the `base * extension` `mul_base` paths), while the
 //! sum-of-products combination the descriptor describes is performed in the
 //! single evaluation field the resolvers all return.
+//!
+//! A descriptor's summand is one layer above the sum-of-products: it is a
+//! weighted sum of named [`SubClaim`]s, `g(x) = Σ_c weight_c · body_c(x)`, where
+//! each body is an [`Expr`] (sum of products) and each `weight_c` is an optional
+//! Fiat-Shamir challenge. Which sub-claims are active is the structural variable
+//! a level's plan controls (e.g. fusing a norm/range sub-claim onto a relation
+//! sub-claim, or dropping it at a cleartext tail). Pulling the weight out of the
+//! body keeps the two coefficient roles distinct: a monomial's structural
+//! integer multiplier stays in [`Term::coefficient`], while every Fiat-Shamir
+//! weight is a [`SubClaim::weight`], allocated centrally by the plan. The same
+//! weighting is what cross-instance batching applies one level up, so fusing
+//! sub-claims into one instance and batching separate instances are the same
+//! operation at different granularities.
 
 use akita_field::{AkitaError, FromPrimitiveInt, RingCore};
 
@@ -68,11 +81,44 @@ impl<O, P, C> Term<O, P, C> {
     }
 }
 
-/// A sum-of-products expression: the summand `g(x)` of a sumcheck instance.
+/// A sum-of-products expression: the body of a [`SubClaim`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr<O, P, C> {
     /// Terms summed to form the expression.
     pub terms: Vec<Term<O, P, C>>,
+}
+
+/// A named, weighted sub-claim: a sum-of-products body scaled by an optional
+/// Fiat-Shamir batching coefficient.
+///
+/// `weight` is the challenge that scales the whole `body`; `None` is weight `1`.
+/// Pulling the coefficient out of the body keeps two roles distinct: a
+/// monomial's structural integer multiplier stays in [`Term::coefficient`],
+/// while a Fiat-Shamir weight is the sub-claim's `weight`. As a consequence
+/// bodies carry no [`Source::Challenge`] factor; every challenge enters as a
+/// sub-claim weight, allocated centrally by the protocol plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubClaim<O, P, C> {
+    /// Human-readable diagnostic label (e.g. `"stage2-relation"`). Not bound
+    /// into the transcript.
+    pub label: &'static str,
+    /// The Fiat-Shamir challenge scaling `body`, or `None` for weight `1`.
+    pub weight: Option<C>,
+    /// The sum-of-products body, with no weight factor included.
+    pub body: Expr<O, P, C>,
+}
+
+/// A sumcheck instance's summand `g(x)`: a weighted sum of named sub-claims.
+///
+/// `g(x) = Σ_c weight_c · body_c(x)`. The active set of sub-claims is the
+/// structural variable a level's plan controls: an intermediate fold level
+/// fuses a virtual norm/range sub-claim onto the relation sub-claim, while a
+/// terminal (cleartext-witness) level keeps only the relation sub-claim. This
+/// is the same weighting cross-instance batching applies one level up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Summand<O, P, C> {
+    /// Sub-claims summed (each weighted) to form the summand.
+    pub subclaims: Vec<SubClaim<O, P, C>>,
 }
 
 /// Whether a sumcheck instance is batchable and which wire format it uses.
@@ -124,8 +170,8 @@ pub struct SumcheckInstanceDescriptor<O, P, C> {
     pub input_claim: ClaimSlot,
     /// Chained output claim this instance produces.
     pub output_claim: ClaimSlot,
-    /// The summand `g(x)` for this instance.
-    pub poly: Expr<O, P, C>,
+    /// The summand `g(x)` for this instance, as a weighted sum of sub-claims.
+    pub summand: Summand<O, P, C>,
 }
 
 impl<O, P, C> Expr<O, P, C> {
@@ -179,12 +225,66 @@ impl<O, P, C> Expr<O, P, C> {
     }
 }
 
+impl<O, P, C> SubClaim<O, P, C> {
+    /// Construct a sub-claim from its label, optional weight challenge, and body.
+    pub fn new(label: &'static str, weight: Option<C>, body: Expr<O, P, C>) -> Self {
+        Self {
+            label,
+            weight,
+            body,
+        }
+    }
+}
+
+impl<O, P, C> Summand<O, P, C> {
+    /// Construct a summand from its weighted sub-claims.
+    pub fn new(subclaims: Vec<SubClaim<O, P, C>>) -> Self {
+        Self { subclaims }
+    }
+
+    /// Evaluate the weighted sum of sub-claims at a resolved point, fallibly and
+    /// panic-free.
+    ///
+    /// The result is `sum_subclaims weight * body`, where a `None` weight is `1`
+    /// and a `Some(challenge)` weight is resolved through `resolve_challenge`.
+    /// Each body is evaluated through [`Expr::try_evaluate`]; a malformed or
+    /// unknown source short-circuits as `Err`, so this is safe on
+    /// verifier-reachable paths.
+    pub fn try_evaluate<F, RO, RC, RP>(
+        &self,
+        resolve_opening: RO,
+        resolve_challenge: RC,
+        resolve_public: RP,
+    ) -> Result<F, AkitaError>
+    where
+        F: RingCore + FromPrimitiveInt,
+        RO: Fn(&O) -> Result<F, AkitaError>,
+        RC: Fn(&C) -> Result<F, AkitaError>,
+        RP: Fn(&P) -> Result<F, AkitaError>,
+    {
+        let mut acc = F::zero();
+        for subclaim in &self.subclaims {
+            let weight = match &subclaim.weight {
+                Some(challenge) => resolve_challenge(challenge)?,
+                None => F::one(),
+            };
+            let body = subclaim.body.try_evaluate(
+                &resolve_opening,
+                &resolve_challenge,
+                &resolve_public,
+            )?;
+            acc += weight * body;
+        }
+        Ok(acc)
+    }
+}
+
 impl<O, P, C> SumcheckInstanceDescriptor<O, P, C> {
     /// Evaluate this instance's summand at a resolved point.
     ///
     /// This is the generic verifier descriptor-eval helper: a verifier computes
     /// its `expected_output_claim` by calling this with resolvers that close
-    /// over the round challenges. It forwards to [`Expr::try_evaluate`] and is
+    /// over the round challenges. It forwards to [`Summand::try_evaluate`] and is
     /// likewise fallible and panic-free.
     pub fn try_evaluate<F, RO, RC, RP>(
         &self,
@@ -198,7 +298,7 @@ impl<O, P, C> SumcheckInstanceDescriptor<O, P, C> {
         RC: Fn(&C) -> Result<F, AkitaError>,
         RP: Fn(&P) -> Result<F, AkitaError>,
     {
-        self.poly
+        self.summand
             .try_evaluate(resolve_opening, resolve_challenge, resolve_public)
     }
 }
@@ -332,5 +432,90 @@ mod tests {
             )
             .expect_err("malformed public must be rejected");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn summand_weights_each_subclaim_by_its_challenge() {
+        // gamma * (A * W)  +  1 * (2 * B), gamma = 3, A = 7, W = 5, B = 11.
+        let summand: Summand<O, P, C> = Summand::new(vec![
+            SubClaim::new(
+                "weighted",
+                Some(C::Gamma),
+                Expr::new(vec![Term::new(
+                    1,
+                    vec![Source::Public(P::A), Source::Opening(O::W)],
+                )]),
+            ),
+            SubClaim::new(
+                "unweighted",
+                None,
+                Expr::new(vec![Term::new(2, vec![Source::Public(P::B)])]),
+            ),
+        ]);
+
+        let value = summand
+            .try_evaluate(
+                |o| match o {
+                    O::W => Ok(f(5)),
+                },
+                |c| match c {
+                    C::Gamma => Ok(f(3)),
+                },
+                |p| match p {
+                    P::A => Ok(f(7)),
+                    P::B => Ok(f(11)),
+                },
+            )
+            .expect("all sources resolve");
+
+        // 3 * (7 * 5) + 1 * (2 * 11) = 105 + 22 = 127.
+        assert_eq!(value, f(127));
+    }
+
+    #[test]
+    fn summand_dropping_a_subclaim_drops_its_contribution() {
+        // The same two sub-claims, but the weighted one is absent: only the
+        // bare second sub-claim contributes (2 * 11 = 22). This is the terminal
+        // vs intermediate distinction in miniature.
+        let summand: Summand<O, P, C> = Summand::new(vec![SubClaim::new(
+            "unweighted",
+            None,
+            Expr::new(vec![Term::new(2, vec![Source::Public(P::B)])]),
+        )]);
+
+        let value = summand
+            .try_evaluate(
+                |o| match o {
+                    O::W => Ok(f(5)),
+                },
+                |c| match c {
+                    C::Gamma => Ok(f(3)),
+                },
+                |p| match p {
+                    P::A => Ok(f(7)),
+                    P::B => Ok(f(11)),
+                },
+            )
+            .expect("all sources resolve");
+
+        assert_eq!(value, f(22));
+    }
+
+    #[test]
+    fn summand_propagates_a_malformed_weight_as_error() {
+        // A rejected weight challenge short-circuits instead of panicking.
+        let summand: Summand<O, P, C> = Summand::new(vec![SubClaim::new(
+            "weighted",
+            Some(C::Gamma),
+            Expr::new(vec![Term::new(1, vec![Source::Opening(O::W)])]),
+        )]);
+        let err = summand
+            .try_evaluate(
+                |_o| Ok(f(4)),
+                |_c| Err(AkitaError::InvalidProof),
+                |_p| Ok(f(1)),
+            )
+            .expect_err("malformed weight must be rejected, not panic");
+        assert!(matches!(err, AkitaError::InvalidProof));
     }
 }
