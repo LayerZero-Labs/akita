@@ -157,7 +157,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
@@ -277,7 +277,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &proof,
+            &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
@@ -415,7 +415,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
             verifier_claims,

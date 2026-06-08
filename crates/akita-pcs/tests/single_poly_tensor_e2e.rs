@@ -112,16 +112,16 @@ fn run_single_onehot_tensor(nv: usize) {
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);
 
-        let _decoded = round_trip_proof(&proof);
+        let decoded = round_trip_proof(&proof);
         #[cfg(feature = "zk")]
-        let _second_decoded = round_trip_proof(&second_proof);
+        let second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
             F,
             TENSOR_D,
         >>::batched_verify(
-            &proof,
+            &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -144,7 +144,7 @@ fn run_single_onehot_tensor(nv: usize) {
                     F,
                     TENSOR_D,
                 >>::batched_verify(
-                    &proof,
+                    &decoded,
                     &verifier_setup,
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
@@ -164,7 +164,7 @@ fn run_single_onehot_tensor(nv: usize) {
                 F,
                 TENSOR_D,
             >>::batched_verify(
-        &proof,
+        &second_decoded,
         &verifier_setup,
         &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -269,16 +269,16 @@ fn run_single_dense_tensor(nv: usize) {
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);
 
-        let _decoded = round_trip_proof(&proof);
+        let decoded = round_trip_proof(&proof);
         #[cfg(feature = "zk")]
-        let _second_decoded = round_trip_proof(&second_proof);
+        let second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
             F,
             TENSOR_D,
         >>::batched_verify(
-            &proof,
+            &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -301,7 +301,7 @@ fn run_single_dense_tensor(nv: usize) {
                     F,
                     TENSOR_D,
                 >>::batched_verify(
-                    &proof,
+                    &decoded,
                     &verifier_setup,
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
@@ -321,7 +321,7 @@ fn run_single_dense_tensor(nv: usize) {
                 F,
                 TENSOR_D,
             >>::batched_verify(
-        &proof,
+        &second_decoded,
         &verifier_setup,
         &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),

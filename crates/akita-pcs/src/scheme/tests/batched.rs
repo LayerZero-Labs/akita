@@ -150,7 +150,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
-        &proof,
+        &round_trip,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(

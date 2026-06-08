@@ -139,7 +139,7 @@ mod non_zk_aggregated_cases {
                 F,
                 ONEHOT_D,
             >>::batched_verify(
-                &proof,
+                &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -246,7 +246,7 @@ mod non_zk_aggregated_cases {
                 F,
                 DENSE_D,
             >>::batched_verify(
-                &proof,
+                &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -378,7 +378,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let result =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),

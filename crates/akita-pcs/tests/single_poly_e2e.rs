@@ -100,7 +100,7 @@ fn run_single_onehot(nv: usize) {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &proof,
+            &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -189,7 +189,7 @@ fn run_single_dense(nv: usize) {
             F,
             DENSE_D,
         >>::batched_verify(
-        &proof,
+        &decoded,
         &verifier_setup,
         &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -331,7 +331,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &proof,
+            &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
