@@ -11,10 +11,10 @@ use super::build::{
     build_trace_weight_compact_field_terms_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
 use crate::{
-    block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_weight_at_point,
-    lagrange_weights, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
+    block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_terms_closed, lagrange_weights,
+    BasisMode, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceWeightLayout,
+    TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -31,23 +31,18 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
-impl<F: FieldCore, E: FieldCore, const D: usize> TracePublicWeights<F, E, D> {
-    fn as_trace_weights(&self) -> TraceOpeningAtPoint<'_, F, E, D> {
-        match self {
-            Self::Field { terms } => TraceOpeningAtPoint::Field { terms },
-            Self::Ring { terms, .. } => TraceOpeningAtPoint::Ring {
-                terms,
-                _ext: PhantomData,
-            },
-        }
-    }
-}
-
 /// Public trace payload consumed by a stage-2 verifier final-point check.
+///
+/// The verifier reconstructs the fused trace term in its short closed form
+/// ([`TraceTerm`]): one term per claim opening carrying the block-axis opening
+/// `b_open`, the ψ-packed inner point, and a public coefficient. This is the
+/// succinct counterpart of the prover's materialized [`TracePublicWeights`]
+/// table; the two are kept distinct because the prover folds every block while
+/// the verifier collapses each claim to a single `Tr_H`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceStage2Wire<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
-    pub public_weights: TracePublicWeights<F, E, D>,
+    pub trace_terms: Vec<TraceTerm<F, E, D>>,
     /// Batching weight applied to the fused trace term. This is the `γ²` power
     /// of the stage-2 batching challenge (`CHALLENGE_SUMCHECK_BATCH`); the trace
     /// term reuses that challenge rather than sampling a dedicated one, so it is
@@ -337,6 +332,139 @@ where
     }
 }
 
+/// Slice the block-axis opening `b_open` out of a root opening point.
+///
+/// The root uses [`crate::BlockOrder::RowMajor`]: after padding `opening_point`
+/// to `m_vars + r_vars + alpha_bits` coordinates, the outer coordinates are
+/// `padded[alpha_bits..]` and the block coordinates are their tail
+/// `outer[m_vars..m_vars + r_vars]`. This reproduces the `b_open` that
+/// `prepare_root_opening_point_ext` consumes (and then discards) when it
+/// materializes the ring block multipliers.
+pub fn root_trace_block_opening<X: FieldCore>(
+    opening_point: &[X],
+    lp: &LevelParams,
+    alpha_bits: usize,
+) -> Result<Vec<X>, AkitaError> {
+    let target = lp
+        .m_vars
+        .checked_add(lp.r_vars)
+        .and_then(|n| n.checked_add(alpha_bits))
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() > target {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: target,
+            actual: opening_point.len(),
+        });
+    }
+    let mut padded = opening_point.to_vec();
+    padded.resize(target, X::zero());
+    let start = alpha_bits + lp.m_vars;
+    Ok(padded[start..start + lp.r_vars].to_vec())
+}
+
+/// Build the verifier's short closed-form trace terms for a root incidence.
+///
+/// `b_opens_per_point[point_idx]` must hold the block-axis opening (in the
+/// evaluation field `E`) for that opening point; the verifier obtains it via
+/// [`root_trace_block_opening`] (lifting claim-field coordinates into `E` as
+/// needed). Mirrors [`trace_public_weights_root_terms`] but emits the succinct
+/// per-claim terms instead of materialized block weights.
+#[allow(clippy::too_many_arguments)]
+pub fn trace_terms_root<F, E, const D: usize>(
+    lp: &LevelParams,
+    incidence: &ClaimIncidenceSummary,
+    prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    b_opens_per_point: &[Vec<E>],
+    basis: BasisMode,
+    row_coefficients: &[E],
+    claim_scales: Option<&[E]>,
+) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    if row_coefficients.len() != incidence.num_claims() {
+        return Err(AkitaError::InvalidSize {
+            expected: incidence.num_claims(),
+            actual: row_coefficients.len(),
+        });
+    }
+    if b_opens_per_point.len() != incidence.num_points() {
+        return Err(AkitaError::InvalidSize {
+            expected: incidence.num_points(),
+            actual: b_opens_per_point.len(),
+        });
+    }
+    if let Some(scales) = claim_scales {
+        if scales.len() != incidence.num_claims() {
+            return Err(AkitaError::InvalidSize {
+                expected: incidence.num_claims(),
+                actual: scales.len(),
+            });
+        }
+    }
+
+    let mut terms = Vec::with_capacity(incidence.num_claims());
+    for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
+        let scale = claim_scales
+            .and_then(|scales| scales.get(claim_idx).copied())
+            .unwrap_or_else(E::one);
+        let point_idx = *incidence
+            .claim_to_point()
+            .get(claim_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let prepared = prepared_points.get(point_idx).ok_or(AkitaError::InvalidProof)?;
+        let b_open = b_opens_per_point
+            .get(point_idx)
+            .ok_or(AkitaError::InvalidProof)?
+            .clone();
+        let block_offset = claim_idx
+            .checked_mul(lp.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
+        terms.push(TraceTerm {
+            block_offset,
+            b_open,
+            basis,
+            packed_inner_point: prepared.packed_inner_point,
+            coefficient: coefficient * scale,
+        });
+    }
+    Ok(terms)
+}
+
+/// Build the verifier's short closed-form trace term for a recursive singleton
+/// fold. The block-axis opening is sliced from the retained padded point under
+/// the [`crate::BlockOrder::ColumnMajor`] convention.
+pub fn trace_terms_recursive<F, E, const D: usize>(
+    prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
+    lp: &LevelParams,
+    basis: BasisMode,
+    scale: E,
+) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    let outer_len = lp
+        .m_vars
+        .checked_add(lp.r_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    let alpha_bits = prepared
+        .padded_point
+        .len()
+        .checked_sub(outer_len)
+        .ok_or_else(|| AkitaError::InvalidProof)?;
+    // Column-major: the block coordinates are the head of the outer point.
+    let b_open = prepared.padded_point[alpha_bits..alpha_bits + lp.r_vars].to_vec();
+    Ok(vec![TraceTerm {
+        block_offset: 0,
+        b_open,
+        basis,
+        packed_inner_point: prepared.packed_inner_point,
+        coefficient: scale,
+    }])
+}
+
 /// Materialize the trace-weight table and keep only live witness columns.
 pub fn trace_weight_evals_for_witness<E: FieldCore>(
     layout: &TraceWeightLayout,
@@ -413,7 +541,10 @@ where
     }
 }
 
-/// Evaluate the trace-weight table at the verifier's final stage-2 point.
+/// Evaluate the fused trace term at the verifier's final stage-2 point.
+///
+/// Uses the short closed form: one `Tr_H` per claim term, with no dependence on
+/// the number of fold blocks or opening digits (see [`eval_trace_terms_closed`]).
 pub fn eval_trace_stage2_wire_for_degree<F, E, const D: usize>(
     wire: &TraceStage2Wire<F, E, D>,
     ring_point: &[E],
@@ -423,26 +554,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    macro_rules! eval {
-        ($k:expr) => {
-            eval_trace_weight_at_point::<F, E, D, $k>(
-                &wire.layout,
-                ring_point,
-                col_point,
-                wire.public_weights.as_trace_weights(),
-            )
-        };
-    }
-
-    match E::EXT_DEGREE {
-        1 => eval!(1),
-        2 => eval!(2),
-        4 => eval!(4),
-        8 => eval!(8),
-        _ => Err(AkitaError::InvalidInput(
-            "unsupported trace-stage2 extension degree".to_string(),
-        )),
-    }
+    eval_trace_terms_closed::<F, E, D>(&wire.layout, ring_point, col_point, &wire.trace_terms)
 }
 
 /// Sum batched public opening claims under per-claim row coefficients.
@@ -614,11 +726,15 @@ mod tests {
         let block_weights = lagrange_weights(&b_open).unwrap();
         let inner_ring =
             reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
-        let public_weights =
-            trace_public_weights_k1::<F, F, D>(&block_weights, &inner_ring).unwrap();
         let wire = TraceStage2Wire {
             layout,
-            public_weights,
+            trace_terms: vec![TraceTerm {
+                block_offset: 0,
+                b_open: b_open.clone(),
+                basis: BasisMode::Lagrange,
+                packed_inner_point: inner_ring,
+                coefficient: F::one(),
+            }],
             trace_coeff: F::from_u64(13),
             trace_opening_claim: F::from_u64(17),
         };

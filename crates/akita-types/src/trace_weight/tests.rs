@@ -1,8 +1,8 @@
 use super::{
     build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
-    eval_trace_weight_at_point, trace_weight_mle_eval, TraceFieldBlockOpening, TraceOpeningAtPoint,
-    TraceRingBlockOpening, TraceWeightLayout,
+    eval_trace_terms_closed, eval_trace_weight_at_point, trace_weight_mle_eval,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
@@ -549,5 +549,301 @@ mod ring_block_weights {
     #[test]
     fn witness_dot_matches_ring_subfield_inner_product_ring_block_weights_k8() {
         run_witness_dot_matches_ring_subfield_inner_product::<F8, E8, 16, 8>();
+    }
+}
+
+/// Tests for the short-data closed-form evaluator [`eval_trace_terms_closed`],
+/// which reconstructs the same MLE the prover materializes but takes one `Tr_H`
+/// per claim instead of folding every block.
+mod closed_terms {
+    use super::*;
+    use crate::{basis_weights, embed_ring_subfield_vector, reduce_inner_opening_to_ring_element};
+    use akita_field::{AkitaError, Ext2, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
+
+    type Fk = Fp32<251>;
+    type E2 = Ext2<Fk>;
+    type E4 = RingSubfieldFpExt4<Fk>;
+    type E8 = RingSubfieldFpExt8<Fk>;
+
+    const LB: u32 = 3;
+
+    fn ext_point<E: akita_field::RandomSampling>(rng: &mut StdRng, len: usize) -> Vec<E> {
+        (0..len).map(|_| E::random(rng)).collect()
+    }
+
+    fn trace_inner_len<E, const D: usize>() -> usize
+    where
+        E: akita_field::ExtField<Fk>,
+    {
+        (D / E::EXT_DEGREE).trailing_zeros() as usize
+    }
+
+    fn packed_inner<E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<Fk, D>
+    where
+        E: akita_field::ExtField<Fk> + crate::RingSubfieldEncoding<Fk> + akita_field::FieldCore,
+    {
+        let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
+        embed_ring_subfield_vector(
+            &weights,
+            AkitaError::InvalidInput("trace inner opening is not embeddable".to_string()),
+        )
+        .unwrap()
+    }
+
+    /// One random single-claim K>1 round: closed form must equal the dense MLE.
+    fn run_single_ring<E, const D: usize>(seed: u64, layout: &TraceWeightLayout)
+    where
+        E: crate::RingSubfieldEncoding<Fk>
+            + akita_field::ExtField<Fk>
+            + akita_field::FieldCore
+            + akita_field::FromPrimitiveInt
+            + akita_field::RandomSampling,
+    {
+        let mut rng = StdRng::seed_from_u64(seed);
+        for _ in 0..8 {
+            let trace_inner_open = ext_point::<E>(&mut rng, trace_inner_len::<E, D>());
+            let inner = packed_inner::<E, D>(&trace_inner_open);
+            let b_open = ext_point::<E>(&mut rng, layout.r_vars);
+            let block_rings = block_rings_at_opening::<Fk, E, D>(&b_open).unwrap();
+            let table = build_trace_weight_table_ring_block_weights::<Fk, E, D>(
+                layout,
+                &block_rings,
+                &inner,
+            )
+            .unwrap();
+
+            let ring_point = ext_point::<E>(&mut rng, layout.ring_bits);
+            let col_point = ext_point::<E>(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(layout, &table, &col_point, &ring_point).unwrap();
+
+            let term = TraceTerm {
+                block_offset: 0,
+                b_open: b_open.clone(),
+                basis: BasisMode::Lagrange,
+                packed_inner_point: inner,
+                coefficient: E::one(),
+            };
+            let closed = eval_trace_terms_closed::<Fk, E, D>(
+                layout,
+                &ring_point,
+                &col_point,
+                std::slice::from_ref(&term),
+            )
+            .unwrap();
+            assert_eq!(dense, closed);
+        }
+    }
+
+    fn ring_layout<const D: usize>() -> TraceWeightLayout {
+        TraceWeightLayout {
+            ring_bits: D.trailing_zeros() as usize,
+            col_bits: 2,
+            opening_digit_offset: 0,
+            num_blocks: 2,
+            num_digits_open: 2,
+            r_vars: 1,
+            log_basis: LB,
+        }
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k2() {
+        run_single_ring::<E2, 4>(0x5EED_0002, &ring_layout::<4>());
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k4() {
+        run_single_ring::<E4, 8>(0x5EED_0004, &ring_layout::<8>());
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k8() {
+        run_single_ring::<E8, 16>(0x5EED_0008, &ring_layout::<16>());
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k1_single() {
+        let layout = TraceWeightLayout {
+            ring_bits: 3,
+            col_bits: 3,
+            opening_digit_offset: 4,
+            num_blocks: 2,
+            num_digits_open: 2,
+            r_vars: 1,
+            log_basis: LB,
+        };
+        const D8: usize = 8;
+        let mut rng = StdRng::seed_from_u64(0x5EED_0001);
+        for _ in 0..16 {
+            let inner_open = random_point(&mut rng, layout.ring_bits);
+            let inner =
+                reduce_inner_opening_to_ring_element::<F, D8>(&inner_open, BasisMode::Lagrange)
+                    .unwrap();
+            let b_open = random_point(&mut rng, layout.r_vars);
+            let block_weights = lagrange_weights(&b_open).unwrap();
+            let table = build_trace_weight_table_field_block_weights::<F, F, D8>(
+                &layout,
+                &block_weights,
+                &inner,
+            )
+            .unwrap();
+            let ring_point = random_point(&mut rng, layout.ring_bits);
+            let col_point = random_point(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+
+            let term = TraceTerm {
+                block_offset: 0,
+                b_open: b_open.clone(),
+                basis: BasisMode::Lagrange,
+                packed_inner_point: inner,
+                coefficient: F::one(),
+            };
+            let closed = eval_trace_terms_closed::<F, F, D8>(
+                &layout,
+                &ring_point,
+                &col_point,
+                std::slice::from_ref(&term),
+            )
+            .unwrap();
+            assert_eq!(dense, closed);
+        }
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k1_multi_claim() {
+        // Two claims tiled along the block axis (num_blocks = 2 claims * 2^1).
+        let layout = TraceWeightLayout {
+            ring_bits: 3,
+            col_bits: 4,
+            opening_digit_offset: 4,
+            num_blocks: 4,
+            num_digits_open: 2,
+            r_vars: 2,
+            log_basis: LB,
+        };
+        const D8: usize = 8;
+        let mut rng = StdRng::seed_from_u64(0x5EED_1001);
+        for _ in 0..16 {
+            let mut terms = Vec::new();
+            let mut dense_terms = Vec::new();
+            for claim in 0..2usize {
+                let inner_open = random_point(&mut rng, layout.ring_bits);
+                let inner =
+                    reduce_inner_opening_to_ring_element::<F, D8>(&inner_open, BasisMode::Lagrange)
+                        .unwrap();
+                let b_open = random_point(&mut rng, 1);
+                let block_weights = lagrange_weights(&b_open).unwrap();
+                dense_terms.push(TraceFieldBlockOpening {
+                    block_offset: claim * 2,
+                    block_weights,
+                    inner_opening_ring: inner,
+                });
+                terms.push(TraceTerm {
+                    block_offset: claim * 2,
+                    b_open,
+                    basis: BasisMode::Lagrange,
+                    packed_inner_point: inner,
+                    coefficient: F::one(),
+                });
+            }
+            let table = build_trace_weight_table_field_terms::<F, F, D8>(&layout, &dense_terms)
+                .unwrap();
+            let ring_point = random_point(&mut rng, layout.ring_bits);
+            let col_point = random_point(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let closed =
+                eval_trace_terms_closed::<F, F, D8>(&layout, &ring_point, &col_point, &terms)
+                    .unwrap();
+            assert_eq!(dense, closed);
+        }
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k4_multi_claim() {
+        // Two K=4 claims tiled along the block axis.
+        let layout = TraceWeightLayout {
+            ring_bits: 3,
+            col_bits: 4,
+            opening_digit_offset: 4,
+            num_blocks: 4,
+            num_digits_open: 2,
+            r_vars: 2,
+            log_basis: LB,
+        };
+        const D8: usize = 8;
+        let mut rng = StdRng::seed_from_u64(0x5EED_4001);
+        for _ in 0..8 {
+            let mut terms = Vec::new();
+            let mut dense_terms = Vec::new();
+            for claim in 0..2usize {
+                let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
+                let inner = packed_inner::<E4, D8>(&trace_inner_open);
+                let b_open = ext_point::<E4>(&mut rng, 1);
+                let block_rings = block_rings_at_opening::<Fk, E4, D8>(&b_open).unwrap();
+                dense_terms.push(TraceRingBlockOpening {
+                    block_offset: claim * 2,
+                    block_rings,
+                    packed_inner_point: inner,
+                });
+                terms.push(TraceTerm {
+                    block_offset: claim * 2,
+                    b_open,
+                    basis: BasisMode::Lagrange,
+                    packed_inner_point: inner,
+                    coefficient: E4::one(),
+                });
+            }
+            let table =
+                build_trace_weight_table_ring_terms::<Fk, E4, D8>(&layout, &dense_terms).unwrap();
+            let ring_point = ext_point::<E4>(&mut rng, layout.ring_bits);
+            let col_point = ext_point::<E4>(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let closed =
+                eval_trace_terms_closed::<Fk, E4, D8>(&layout, &ring_point, &col_point, &terms)
+                    .unwrap();
+            assert_eq!(dense, closed);
+        }
+    }
+
+    #[test]
+    fn closed_terms_coefficient_scales_linearly() {
+        let layout = ring_layout::<8>();
+        const D8: usize = 8;
+        let mut rng = StdRng::seed_from_u64(0x5EED_C0EF);
+        for _ in 0..8 {
+            let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
+            let inner = packed_inner::<E4, D8>(&trace_inner_open);
+            let b_open = ext_point::<E4>(&mut rng, layout.r_vars);
+            let ring_point = ext_point::<E4>(&mut rng, layout.ring_bits);
+            let col_point = ext_point::<E4>(&mut rng, layout.col_bits);
+            let coeff = E4::random(&mut rng);
+
+            let unit = TraceTerm {
+                block_offset: 0,
+                b_open: b_open.clone(),
+                basis: BasisMode::Lagrange,
+                packed_inner_point: inner,
+                coefficient: E4::one(),
+            };
+            let scaled = TraceTerm {
+                coefficient: coeff,
+                ..unit.clone()
+            };
+            let base = eval_trace_terms_closed::<Fk, E4, D8>(
+                &layout,
+                &ring_point,
+                &col_point,
+                std::slice::from_ref(&unit),
+            )
+            .unwrap();
+            let got = eval_trace_terms_closed::<Fk, E4, D8>(
+                &layout,
+                &ring_point,
+                &col_point,
+                std::slice::from_ref(&scaled),
+            )
+            .unwrap();
+            assert_eq!(got, coeff * base);
+        }
     }
 }

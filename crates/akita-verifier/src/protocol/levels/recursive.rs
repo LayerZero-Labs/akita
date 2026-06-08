@@ -1,6 +1,6 @@
 use super::*;
 use akita_types::{
-    ensure_trace_stage2_supported, trace_input_claim, trace_public_weights_recursive,
+    ensure_trace_stage2_supported, trace_input_claim, trace_terms_recursive,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
     RingSubfieldEncoding, TraceStage2Wire,
 };
@@ -460,6 +460,7 @@ where
             rs.col_bits,
             rs.ring_bits,
             &prepared_points[0],
+            current_state.basis,
             trace_eval_target,
             trace_scale,
             trace_coeff,
@@ -1096,6 +1097,7 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
+    basis: BasisMode,
     trace_eval_target: L,
     trace_scale: L,
     trace_coeff: L,
@@ -1109,6 +1111,6 @@ where
         layout,
         trace_coeff,
         trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),
-        public_weights: trace_public_weights_recursive(prepared, trace_scale)?,
+        trace_terms: trace_terms_recursive(prepared, lp, basis, trace_scale)?,
     })
 }

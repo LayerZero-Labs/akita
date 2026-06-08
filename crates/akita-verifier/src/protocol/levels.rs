@@ -19,7 +19,7 @@ use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, LiftBase,
     PseudoMersenneField, RandomSampling,
 };
 #[cfg(feature = "zk")]
@@ -63,7 +63,7 @@ use akita_types::{
     TerminalWitnessTranscriptParts,
 };
 use akita_types::{
-    ensure_trace_stage2_supported, trace_input_claim, trace_public_weights_root_terms,
+    ensure_trace_stage2_supported, root_trace_block_opening, trace_input_claim, trace_terms_root,
     trace_weight_layout_from_segment, TraceStage2Wire,
 };
 #[cfg(not(feature = "zk"))]
@@ -609,29 +609,43 @@ where
         None
     };
 
-    let prepared_points = if let Some(rho) = &reduction_check {
-        let protocol_point =
-            ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
-        let prepared = prepare_root_opening_point_ext::<F, C, C, D>(
-            &protocol_point,
-            basis,
-            root_lp,
-            alpha_bits,
-        )?;
-        vec![prepared; incidence_summary.num_points()]
-    } else {
-        claim_points
-            .iter()
-            .map(|opening_point| {
-                prepare_root_opening_point_ext::<F, E, C, D>(
+    // Alongside each prepared opening point, keep the short block-axis opening
+    // `b_open` (in the challenge field `C`) for the verifier's closed-form trace
+    // term. `prepare_root_opening_point_ext` consumes and discards it, so it is
+    // re-sliced here from the same source point.
+    let (prepared_points, trace_block_openings): (Vec<_>, Vec<Vec<C>>) =
+        if let Some(rho) = &reduction_check {
+            let protocol_point =
+                ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
+            let prepared = prepare_root_opening_point_ext::<F, C, C, D>(
+                &protocol_point,
+                basis,
+                root_lp,
+                alpha_bits,
+            )?;
+            let b_open = root_trace_block_opening::<C>(&protocol_point, root_lp, alpha_bits)?;
+            let num_points = incidence_summary.num_points();
+            (vec![prepared; num_points], vec![b_open; num_points])
+        } else {
+            let mut prepared = Vec::with_capacity(claim_points.len());
+            let mut block_openings = Vec::with_capacity(claim_points.len());
+            for opening_point in claim_points.iter() {
+                prepared.push(prepare_root_opening_point_ext::<F, E, C, D>(
                     opening_point,
                     basis,
                     root_lp,
                     alpha_bits,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    };
+                )?);
+                let b_open = root_trace_block_opening::<E>(opening_point, root_lp, alpha_bits)?;
+                block_openings.push(
+                    b_open
+                        .into_iter()
+                        .map(<C as LiftBase<E>>::lift_base)
+                        .collect(),
+                );
+            }
+            (prepared, block_openings)
+        };
     let mut batched_openings_per_row: Vec<C> = vec![C::zero(); incidence_summary.num_public_rows()];
     for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
         if row.point_idx() >= prepared_points.len() || row.claim_indices().is_empty() {
@@ -882,10 +896,12 @@ where
             layout,
             trace_coeff,
             trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),
-            public_weights: trace_public_weights_root_terms(
+            trace_terms: trace_terms_root(
                 batched_lp,
                 incidence_summary,
                 &prepared_points,
+                &trace_block_openings,
+                basis,
                 &row_coefficients,
                 trace_claim_scales.as_deref(),
             )?,
