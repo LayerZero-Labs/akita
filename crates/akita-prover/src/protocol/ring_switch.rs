@@ -3,15 +3,13 @@ use crate::api::commitment::{
     validate_commit_inner_witness_shape, validate_commit_level_params,
     validate_commit_outer_input_nonempty,
 };
+use crate::compute::{CommitmentComputeBackend, RingSwitchComputeBackend};
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
-use crate::compute::{CommitmentComputeBackend, RingSwitchComputeBackend};
-use crate::{
-    tensor_pack_recursive_witness, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
-};
+use crate::{tensor_pack_recursive_witness, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;

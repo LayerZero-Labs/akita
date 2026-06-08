@@ -124,7 +124,10 @@ fn heterogeneous_stack_has_distinct_cluster_backend_types() {
     );
 
     assert!(std::ptr::eq(stack.commit().backend(), &CpuBackend));
-    assert!(std::ptr::eq(stack.opening().backend(), &DummyOpeningBackend));
+    assert!(std::ptr::eq(
+        stack.opening().backend(),
+        &DummyOpeningBackend
+    ));
     assert!(std::ptr::eq(stack.tensor().backend(), &CpuBackend));
     assert!(std::ptr::eq(
         stack.ring_switch().backend(),
@@ -134,12 +137,10 @@ fn heterogeneous_stack_has_distinct_cluster_backend_types() {
 
 #[test]
 fn heterogeneous_stack_rejects_mismatched_opening_prepared() {
-    let setup_a =
-        AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
-            .expect("setup a");
-    let setup_b =
-        AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(8192))
-            .expect("setup b");
+    let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
+        .expect("setup a");
+    let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(8192))
+        .expect("setup b");
     assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
     let cpu_prepared = CpuBackend.prepare_setup(&setup_a).expect("cpu prepared");
@@ -151,7 +152,14 @@ fn heterogeneous_stack_rejects_mismatched_opening_prepared() {
         .expect("ring prepared");
 
     assert!(matches!(
-        ProverComputeStack::<F, D, CpuBackend, DummyOpeningBackend, CpuBackend, DummyRingSwitchBackend>::new(
+        ProverComputeStack::<
+            F,
+            D,
+            CpuBackend,
+            DummyOpeningBackend,
+            CpuBackend,
+            DummyRingSwitchBackend,
+        >::new(
             (&CpuBackend, &cpu_prepared),
             (&DummyOpeningBackend, &wrong_opening),
             (&CpuBackend, &cpu_prepared),

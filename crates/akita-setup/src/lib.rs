@@ -657,9 +657,9 @@ mod tests {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
                 use akita_prover::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
-                use akita_prover::DensePoly;
                 use akita_prover::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
                 use akita_prover::CpuBackend;
+                use akita_prover::DensePoly;
 
                 const MAX_VARS: usize = 14;
 
