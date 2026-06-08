@@ -3,22 +3,32 @@
 //! This is the natural backend for Frobenius-packed one-hot tables: after
 //! canonical-basis packing, each original one-hot chunk becomes a small number
 //! of signed monomial coefficients inside the committed ring table.
+//!
+//! Source-typed views and `CpuBackend` kernels live in [`ops`].
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly};
 
+mod ops;
 mod tensor_fold;
+
+pub use ops::{
+    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView,
+    SparseRingTensorBatchView, SparseRingTensorView,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -304,6 +314,18 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
             (block_len, blocks)
         });
         Ok(blocks)
+    }
+
+    /// Total number of variables (`log2(total field evaluation slots)`).
+    #[inline]
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    /// Total number of ring elements in the polynomial.
+    #[inline]
+    pub fn num_ring_elems(&self) -> usize {
+        self.total_ring_elems
     }
 }
 
@@ -771,8 +793,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DensePoly;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use crate::compute::{
+        DirectRootWitnessSource, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource,
+        RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    };
+    use crate::{CpuBackend, DensePoly};
+    use akita_field::{
+        Prime128OffsetA7F7 as F, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4, TwoNr,
+        UnitNr,
+    };
 
     #[test]
     fn sparse_ring_fold_matches_dense_reference() {
@@ -798,6 +827,170 @@ mod tests {
         assert_eq!(
             sparse.fold_blocks_ring(&scalars, 2),
             dense.fold_blocks_ring(&scalars, 2)
+        );
+    }
+
+    #[test]
+    fn sparse_ring_kernel_opening_matches_akitapolyops() {
+        const D: usize = 8;
+        let sparse = SparseRingPoly::<F, D>::from_signed_coeffs(
+            5,
+            4,
+            vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
+        )
+        .unwrap();
+        let fold_scalars = (0..2)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_u64(10 + idx * 10 + k as u64)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let eval_outer_scalars = (0..2)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_u64(70 + idx * 10 + k as u64)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let expected = sparse.evaluate_and_fold_ring(&eval_outer_scalars, &fold_scalars, 2);
+        let view = sparse.opening_view().unwrap();
+        let got = OpeningFoldKernel::<SparseRingOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            view,
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars: &eval_outer_scalars,
+                fold_scalars: &fold_scalars,
+                block_len: 2,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(got.eval, expected.0);
+        assert_eq!(got.folded, expected.1);
+    }
+
+    #[test]
+    fn sparse_ring_kernel_tensor_fallback_matches_akitapolyops() {
+        type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+        const D: usize = 8;
+
+        let sparse = SparseRingPoly::<F, D>::from_signed_coeffs(
+            5,
+            4,
+            vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
+        )
+        .unwrap();
+        let point = (0..sparse.num_vars())
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_u64(idx as u64 + 2),
+                    F::from_u64(3 * idx as u64 + 4),
+                    F::from_u64(5 * idx as u64 + 6),
+                    F::from_u64(7 * idx as u64 + 8),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let backend = CpuBackend;
+        let tensor_view = sparse.tensor_view().unwrap();
+
+        let ops_partials = sparse
+            .tensor_extension_column_partials::<E>(&point)
+            .unwrap();
+        let kernel_partials =
+            TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::column_partials(
+                &backend,
+                None,
+                tensor_view,
+                &point,
+            )
+            .unwrap();
+        assert_eq!(kernel_partials, ops_partials);
+
+        let ops_packed = sparse.tensor_packed_extension_evals::<E>().unwrap();
+        let kernel_packed =
+            match TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::packed_witness(
+                &backend,
+                None,
+                tensor_view,
+            )
+            .unwrap()
+            {
+                TensorPackedWitness::Dense(values) => values,
+                TensorPackedWitness::Sparse(_) => {
+                    panic!("sparse-ring kernel should use dense tensor fallback")
+                }
+            };
+        assert_eq!(kernel_packed, ops_packed);
+
+        let poly_refs = [&sparse, &sparse];
+        let batch_view = SparseRingPoly::<F, D>::tensor_batch(&poly_refs).unwrap();
+        let ops_batch =
+            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+                &poly_refs,
+                &point,
+            )
+            .unwrap();
+        let kernel_batch = TensorProjectionBatchKernel::<
+            SparseRingTensorBatchView<'_, F, D>,
+            F,
+            E,
+            D,
+        >::column_partials_batch(&backend, None, batch_view, &point)
+        .unwrap();
+        assert_eq!(kernel_batch, ops_batch);
+    }
+
+    #[test]
+    fn sparse_ring_kernel_root_projection_matches_akitapolyops() {
+        type F32 = Prime32Offset99;
+        type E = RingSubfieldFpExt4<F32>;
+        const D: usize = 8;
+
+        let sparse = SparseRingPoly::<F32, D>::from_signed_coeffs(
+            5,
+            4,
+            vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let tensor_view = sparse.tensor_view().unwrap();
+
+        let ops_root =
+            <SparseRingPoly<F32, D> as AkitaPolyOps<F32, D>>::tensor_packed_extension_root_poly::<E>(
+                &sparse,
+            )
+            .unwrap();
+        let kernel_root =
+            TensorProjectionKernel::<SparseRingTensorView<'_, F32, D>, F32, E, D>::root_projection(
+                &backend,
+                None,
+                tensor_view,
+            )
+            .unwrap();
+        match (kernel_root, ops_root) {
+            (RootTensorProjectionPoly::Dense(got), RootTensorProjectionPoly::Dense(expected)) => {
+                assert_eq!(got, expected);
+            }
+            _ => panic!("sparse-ring default root projection must stay dense"),
+        }
+    }
+
+    #[test]
+    fn sparse_ring_kernel_direct_witness_matches_akitapolyops() {
+        const D: usize = 8;
+        let sparse = SparseRingPoly::<F, D>::from_signed_coeffs(
+            5,
+            4,
+            vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            <SparseRingPoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&sparse)
+                .unwrap(),
+            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&sparse).unwrap()
         );
     }
 
