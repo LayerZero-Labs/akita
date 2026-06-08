@@ -349,10 +349,10 @@ where
 mod tests {
     use super::*;
     use crate::descriptor::{ClaimSlot, Expr, InstanceKind, Source, SubClaim, Summand, Term};
-    use akita_field::Prime128Offset275;
+    use akita_field::Prime128OffsetA7F7;
     use akita_witness::PolynomialView;
 
-    type F = Prime128Offset275;
+    type F = Prime128OffsetA7F7;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum O {

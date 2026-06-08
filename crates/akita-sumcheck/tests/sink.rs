@@ -3,7 +3,7 @@
 
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::Prime128Offset275;
+use akita_field::Prime128OffsetA7F7;
 use akita_sumcheck::{
     prove_clear_eq_factored, prove_clear_regular, EqFactoredSumcheckInstanceProver,
     EqFactoredSumcheckInstanceProverExt, EqFactoredUniPoly, SumcheckInstanceProver,
@@ -12,7 +12,7 @@ use akita_sumcheck::{
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
 
-type F = Prime128Offset275;
+type F = Prime128OffsetA7F7;
 
 fn new_transcript() -> AkitaTranscript<F> {
     <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
