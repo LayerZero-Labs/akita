@@ -56,4 +56,4 @@ pub use poly::{
     RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
     RootTensorProjectionCommitKernels, RootTensorProjectionProveKernels, RootTensorSource,
 };
-pub use stack::{OperationCtx, ProverComputeStack};
+pub use stack::{OperationCtx, ProverComputeStack, UniformProverStack};

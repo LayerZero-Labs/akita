@@ -3,10 +3,18 @@ use super::super::*;
 use super::{prove_root_fold_from_ring_relation, prove_terminal_root_fold_from_ring_relation};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finish_root_fold_with_prepared_openings<F, C, T, Q, B, const D: usize, CommitW>(
+pub(super) fn finish_root_fold_with_prepared_openings<
+    'stack,
+    F,
+    C,
+    T,
+    Q,
+    B,
+    const D: usize,
+    CommitW,
+>(
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&Q],
     incidence_summary: &ClaimIncidenceSummary,
@@ -44,11 +52,14 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     Q: RootOpeningSource<F, D>,
-    B: RingSwitchComputeBackend<F>
-        + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>
-        + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
+    B: DigitRowsComputeBackend<F>
+        + RingSwitchComputeBackend<F>
+        + for<'view> OpeningFoldKernel<Q::OpeningView<'view>, F, D>
+        + for<'view> OpeningBatchKernel<Q::OpeningBatchView<'view>, F, D>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
+    let opening = stack.opening();
+    let ring_switch = stack.ring_switch();
     let ring_opening_points = incidence_summary
         .public_rows()
         .iter()
@@ -74,8 +85,8 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let (instance, witness) = RingRelationProver::new::<F, D, _, Q, B>(
-        backend,
-        prepared,
+        opening.backend(),
+        opening.prepared(),
         ring_opening_points,
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
@@ -103,8 +114,8 @@ where
 
     let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
-        backend,
-        prepared,
+        ring_switch.backend(),
+        ring_switch.prepared(),
         transcript,
         commitment_rows,
         root_params,
@@ -128,10 +139,17 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finish_terminal_root_fold_with_prepared_openings<F, C, T, Q, B, const D: usize>(
+pub(super) fn finish_terminal_root_fold_with_prepared_openings<
+    'stack,
+    F,
+    C,
+    T,
+    Q,
+    B,
+    const D: usize,
+>(
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&Q],
     incidence_summary: &ClaimIncidenceSummary,
@@ -166,10 +184,13 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     Q: RootOpeningSource<F, D>,
-    B: RingSwitchComputeBackend<F>
-        + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>
-        + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
+    B: DigitRowsComputeBackend<F>
+        + RingSwitchComputeBackend<F>
+        + for<'view> OpeningFoldKernel<Q::OpeningView<'view>, F, D>
+        + for<'view> OpeningBatchKernel<Q::OpeningBatchView<'view>, F, D>,
 {
+    let opening = stack.opening();
+    let ring_switch = stack.ring_switch();
     let ring_opening_points = incidence_summary
         .public_rows()
         .iter()
@@ -195,8 +216,8 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let (instance, witness) = RingRelationProver::new::<F, D, _, Q, B>(
-        backend,
-        prepared,
+        opening.backend(),
+        opening.prepared(),
         ring_opening_points,
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
@@ -224,8 +245,8 @@ where
 
     let mut terminal = prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
-        backend,
-        prepared,
+        ring_switch.backend(),
+        ring_switch.prepared(),
         transcript,
         commitment_rows,
         root_params,

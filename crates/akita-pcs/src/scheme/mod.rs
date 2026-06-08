@@ -10,7 +10,7 @@ use akita_prover::{
     batched_commit, commit,
     compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys},
     prove_batched, AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend,
-    ProverClaims, RootProveFlowBackend, RootProvePoly,
+    ProverClaims, ProverComputeStack, RootProveFlowBackend, RootProvePoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -138,8 +138,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &ProverComputeStack<'a, F, D, B, B, B, B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -153,8 +152,7 @@ where
         validate_field_roles_for_ring::<F, D, Cfg>()?;
         let proof = prove_batched::<Cfg, T, P, B, D>(
             &setup.expanded,
-            backend,
-            prepared,
+            stack,
             claims,
             transcript,
             basis,

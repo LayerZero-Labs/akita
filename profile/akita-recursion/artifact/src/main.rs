@@ -20,7 +20,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
-use akita_prover::{
+use akita_prover::{ProverComputeStack, 
     CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
 };
 use akita_recursion_glue::AkitaJoltInputs;
@@ -337,6 +337,8 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let prove_stack = ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(&prover_setup,
         vec![(
             &opening_point[..],
@@ -346,9 +348,7 @@ fn run() -> Result<(), String> {
                 hint,
             },
         )],
-        &CpuBackend,
-        &prepared,
-        
+        &prove_stack,
         &mut prover_transcript,
         
         BasisMode::Lagrange,
@@ -366,8 +366,7 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
     verify_with_setup_mode(
-        &proof,
-        &verifier_setup,
+        &prove_stack,
         &mut verifier_transcript,
         vec![(
             &opening_point[..],

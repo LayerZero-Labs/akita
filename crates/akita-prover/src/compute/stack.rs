@@ -125,6 +125,9 @@ where
     }
 }
 
+/// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
+pub type UniformProverStack<'a, F, B, const D: usize> = ProverComputeStack<'a, F, D, B, B, B, B>;
+
 impl<'a, F, B, const D: usize> ProverComputeStack<'a, F, D, B, B, B, B>
 where
     F: FieldCore + CanonicalField,

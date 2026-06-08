@@ -1,7 +1,8 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::compute::{
-    RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveFlowBackend, RootProvePoly,
+    ProverComputeStack, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveFlowBackend,
+    RootProvePoly,
 };
 use crate::ProverClaims;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -123,14 +124,15 @@ where
     ///
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
-    /// **Parameter order:** `claims` precedes `backend` and `prepared` so the
-    /// compiler fixes the polynomial type `P` before proving `B: RootProveBackend<F, P, …>`.
+    /// **Parameter order:** `claims` precedes `stack` so the compiler fixes the
+    /// polynomial type `P` before proving `B: RootProveFlowBackend<F, P, …>`.
+    /// Build a uniform stack with [`ProverComputeStack::uniform`] when every
+    /// operation cluster shares one backend and prepared setup.
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &ProverComputeStack<'a, F, D, B, B, B, B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,

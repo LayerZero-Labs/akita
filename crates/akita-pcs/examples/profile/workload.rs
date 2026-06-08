@@ -15,6 +15,7 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
+    ProverComputeStack,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -371,6 +372,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: RootProve
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         vec![(
@@ -381,8 +385,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: RootProve
                 hint,
             },
         )],
-        &CpuBackend,
-        prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -788,6 +791,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         vec![(
@@ -798,8 +804,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

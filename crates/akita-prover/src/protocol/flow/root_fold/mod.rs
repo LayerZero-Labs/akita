@@ -36,10 +36,9 @@ use super::*;
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
+pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
@@ -77,6 +76,9 @@ where
     B: RootProveFlowBackend<F, P, E, C, D>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
+    let opening = stack.opening();
+    let opening_backend = opening.backend();
+    let ring_switch = stack.ring_switch();
     validate_root_fold_inputs(
         polys.len(),
         incidence_summary,
@@ -93,14 +95,14 @@ where
 
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     if let Some(prepared_reduction) = maybe_prepare_root_extension_reduction::<F, E, C, P, B, D>(
-        backend,
+        opening_backend,
         polys,
         incidence_summary,
         claim_points,
         incidence_summary.num_vars(),
     )? {
         let extension_phase = prove_root_extension_reduction_public_phase::<F, E, C, T, P, B, D>(
-            backend,
+            opening_backend,
             polys,
             incidence_summary,
             root_params,
@@ -127,8 +129,7 @@ where
             _,
         >(
             expanded,
-            backend,
-            prepared,
+            stack,
             transcript,
             &transformed_refs,
             incidence_summary,
@@ -155,8 +156,8 @@ where
     }
 
     let direct = prepare_root_fold_direct_public_phase::<F, E, C, T, P, B, D>(
-        backend,
-        prepared,
+        opening_backend,
+        opening.prepared(),
         polys,
         incidence_summary,
         claim_points,
@@ -183,8 +184,8 @@ where
     } = direct;
     prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
-        backend,
-        prepared,
+        ring_switch.backend(),
+        ring_switch.prepared(),
         transcript,
         commitment_rows,
         root_params,
@@ -221,10 +222,9 @@ where
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
+pub fn prove_terminal_root_fold_with_params<'stack, F, E, C, T, P, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
@@ -258,6 +258,9 @@ where
     P: RootProvePoly<F, D>,
     B: RootProveFlowBackend<F, P, E, C, D>,
 {
+    let opening = stack.opening();
+    let opening_backend = opening.backend();
+    let ring_switch = stack.ring_switch();
     validate_root_fold_inputs(
         polys.len(),
         incidence_summary,
@@ -274,14 +277,14 @@ where
 
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     if let Some(prepared_reduction) = maybe_prepare_root_extension_reduction::<F, E, C, P, B, D>(
-        backend,
+        opening_backend,
         polys,
         incidence_summary,
         claim_points,
         incidence_summary.num_vars(),
     )? {
         let extension_phase = prove_root_extension_reduction_public_phase::<F, E, C, T, P, B, D>(
-            backend,
+            opening_backend,
             polys,
             incidence_summary,
             root_params,
@@ -307,8 +310,7 @@ where
             D,
         >(
             expanded,
-            backend,
-            prepared,
+            stack,
             transcript,
             &transformed_refs,
             incidence_summary,
@@ -331,8 +333,8 @@ where
     }
 
     let direct = prepare_root_fold_direct_public_phase::<F, E, C, T, P, B, D>(
-        backend,
-        prepared,
+        opening_backend,
+        opening.prepared(),
         polys,
         incidence_summary,
         claim_points,
@@ -359,8 +361,8 @@ where
     } = direct;
     prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
-        backend,
-        prepared,
+        ring_switch.backend(),
+        ring_switch.prepared(),
         transcript,
         commitment_rows,
         root_params,

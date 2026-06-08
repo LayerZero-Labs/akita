@@ -28,10 +28,11 @@ pub use compute::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
     FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitPolys, RootProveBackend, RootProveFlowBackend, RootProvePoly, RootTensorSource,
-    SparseRingCommitRowsPlan, TensorProjectionBatchKernel,
+    ProverComputeBackend, ProverComputeStack, RecursiveWitnessCommitRowsPlan,
+    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, RootCommitPolys, RootProveBackend, RootProveFlowBackend,
+    RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan, TensorProjectionBatchKernel,
+    UniformProverStack,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{

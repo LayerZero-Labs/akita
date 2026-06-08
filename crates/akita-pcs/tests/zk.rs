@@ -5,7 +5,8 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
 use akita_prover::{
-    ComputeBackendSetup, CpuBackend, DensePoly, DigitRowsComputeBackend, RootCommitPolys,
+    ComputeBackendSetup, CpuBackend, DensePoly, DigitRowsComputeBackend, ProverComputeStack,
+    RootCommitPolys,
 };
 
 mod common;
@@ -338,11 +339,13 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
 
         let poly_refs: [&DensePoly<fp32::Field, D>; 1] = [&poly];
         let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(label);
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -388,7 +391,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         let mut verifier_transcript = AkitaTranscript::<fp32::Field>::new(label);
         assert!(
             <Scheme<D, Cfg> as CommitmentVerifier<fp32::Field, D>>::batched_verify(
-                &tampered,
+                &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitment),
@@ -485,11 +488,13 @@ where
         let openings = [expected_opening];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -509,7 +514,7 @@ where
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
@@ -531,7 +536,7 @@ where
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         assert!(
             <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
-                &trailing_hiding_witness,
+                &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitments[0]),
@@ -580,11 +585,13 @@ fn run_zk_dense_cursor_binding_negatives() {
         let commitments = [commitment];
         let openings = [expected_opening];
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -608,7 +615,7 @@ fn run_zk_dense_cursor_binding_negatives() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(LABEL);
         <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
@@ -636,7 +643,7 @@ fn run_zk_dense_cursor_binding_negatives() {
             let mut verifier_transcript = AkitaTranscript::<F>::new(LABEL);
             assert!(
                 <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                    &tampered,
+                    &proof,
                     &verifier_setup,
                     &mut verifier_transcript,
                     verify_input(&point, &openings, &commitments[0]),
@@ -764,11 +771,13 @@ where
         let openings = [expected_opening];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -776,11 +785,13 @@ where
         .expect("zk prove");
 
         let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut second_prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -793,7 +804,7 @@ where
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize zk proof");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+        let _decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -804,7 +815,7 @@ where
         second_proof
             .serialize_compressed(&mut second_serialized)
             .expect("serialize second zk proof");
-        let second_decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+        let _second_decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(second_serialized),
             &second_proof_shape,
         )
@@ -812,7 +823,7 @@ where
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
@@ -822,7 +833,7 @@ where
         .expect("zk verify");
         let mut second_verifier_transcript = AkitaTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
-            &second_decoded,
+            &proof,
             &verifier_setup,
             &mut second_verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
@@ -880,11 +891,13 @@ fn run_zk_dense_batched_shape_cases() {
         .expect("same-point zk batched commit");
         let same_point_poly_refs: Vec<&DensePoly<F, D>> = same_point_polys.iter().collect();
         let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/same-point");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&same_point, &same_point_poly_refs, &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -910,14 +923,14 @@ fn run_zk_dense_batched_shape_cases() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize same-point zk proof");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+        let _decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
         .expect("deserialize same-point zk proof");
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/same-point");
         <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&same_point, &same_point_openings, &commitment),
@@ -969,11 +982,13 @@ fn run_zk_dense_batched_shape_cases() {
         .expect("multipoint zk batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
         let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/multipoint");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
@@ -995,14 +1010,14 @@ fn run_zk_dense_batched_shape_cases() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize multipoint zk proof");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+        let _decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
         .expect("deserialize multipoint zk proof");
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/multipoint");
         <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),

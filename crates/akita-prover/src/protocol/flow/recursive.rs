@@ -8,11 +8,10 @@ use super::*;
 /// own stack frame.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_prove_level<Cfg, T, B, const D: usize>(
+fn dispatch_prove_level<'a, Cfg, T, B, const D: usize>(
     level_d: usize,
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     current_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
     transcript: &mut T,
     level: usize,
@@ -42,8 +41,7 @@ where
     if level_d == D {
         prove_recursive_level::<Cfg, T, B, D>(
             expanded,
-            backend,
-            prepared,
+            stack,
             transcript,
             current_state,
             level,
@@ -53,10 +51,15 @@ where
         )
     } else {
         dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
-            prove_recursive_level::<Cfg, T, B, { D_LEVEL }>(
+            let ring_switch = stack.ring_switch();
+            let level_prepared = ring_switch
+                .backend()
+                .prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            prove_recursive_level_with_prepared::<Cfg, T, B, { D_LEVEL }>(
                 expanded,
-                backend,
+                ring_switch.backend(),
+                &level_prepared,
+                ring_switch.backend(),
                 &level_prepared,
                 transcript,
                 current_state,
@@ -73,11 +76,10 @@ where
 /// `Cfg`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_prove_terminal_level<Cfg, T, B, const D: usize>(
+fn dispatch_prove_terminal_level<'a, Cfg, T, B, const D: usize>(
     level_d: usize,
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     current_state: &mut RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
     transcript: &mut T,
     level: usize,
@@ -106,8 +108,7 @@ where
     if level_d == D {
         prove_terminal_recursive_level::<Cfg, T, B, D>(
             expanded.as_ref(),
-            backend,
-            prepared,
+            stack,
             transcript,
             current_state,
             level,
@@ -116,10 +117,13 @@ where
         )
     } else {
         dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
-            prove_terminal_recursive_level::<Cfg, T, B, { D_LEVEL }>(
+            let ring_switch = stack.ring_switch();
+            let level_prepared = ring_switch
+                .backend()
+                .prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            prove_terminal_recursive_level_with_prepared::<Cfg, T, B, { D_LEVEL }>(
                 expanded.as_ref(),
-                backend,
+                ring_switch.backend(),
                 &level_prepared,
                 transcript,
                 current_state,
@@ -145,10 +149,9 @@ where
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_recursive_suffix<Cfg, T, B, const D: usize>(
+pub fn prove_recursive_suffix<'a, Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     num_vars: usize,
     transcript: &mut T,
     initial_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
@@ -197,8 +200,7 @@ where
         let out = dispatch_prove_level::<Cfg, T, B, D>(
             level_params.ring_dimension,
             expanded,
-            backend,
-            prepared,
+            stack,
             current_state,
             transcript,
             level,
@@ -222,8 +224,7 @@ where
     let terminal = dispatch_prove_terminal_level::<Cfg, T, B, D>(
         level_params.ring_dimension,
         expanded,
-        backend,
-        prepared,
+        stack,
         &mut current_state,
         transcript,
         level,
@@ -1261,10 +1262,60 @@ where
 /// cannot be typed at `D`, layout selection fails, or recursive proving fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_level<Cfg, T, B, const D: usize>(
+pub fn prove_recursive_level<'stack, Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'stack, Cfg::Field, D, B, B, B, B>,
+    transcript: &mut T,
+    current_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
+    level: usize,
+    level_params: &LevelParams,
+    next_params: &LevelParams,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<ProveLevelOutput<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field> + CommitmentComputeBackend<Cfg::Field>,
+{
+    let ring_switch = stack.ring_switch();
+    let commit = stack.commit();
+    prove_recursive_level_with_prepared::<Cfg, T, B, D>(
+        expanded,
+        ring_switch.backend(),
+        ring_switch.prepared(),
+        commit.backend(),
+        commit.prepared(),
+        transcript,
+        current_state,
+        level,
+        level_params,
+        next_params,
+        setup_contribution_mode,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_recursive_level_with_prepared<Cfg, T, B, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    ring_switch_backend: &B,
+    ring_switch_prepared: &B::PreparedSetup<D>,
+    commit_backend: &B,
+    commit_prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     current_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
     level: usize,
@@ -1296,15 +1347,23 @@ where
 
     prove_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, D, _>(
         expanded.as_ref(),
-        backend,
-        prepared,
+        ring_switch_backend,
+        ring_switch_prepared,
         transcript,
         current_state,
         level,
         level_params,
         next_params.log_basis,
         setup_contribution_mode,
-        |w| crate::commit_next_w::<Cfg, B, D>(next_params, expanded, backend, prepared, w),
+        |w| {
+            crate::commit_next_w::<Cfg, B, D>(
+                next_params,
+                expanded,
+                commit_backend,
+                commit_prepared,
+                w,
+            )
+        },
     )
 }
 
@@ -1319,7 +1378,49 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_recursive_level<Cfg, T, B, const D: usize>(
+pub fn prove_terminal_recursive_level<'stack, Cfg, T, B, const D: usize>(
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    stack: &crate::compute::ProverComputeStack<'stack, Cfg::Field, D, B, B, B, B>,
+    transcript: &mut T,
+    current_state: &mut RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
+    level: usize,
+    level_params: &LevelParams,
+    final_log_basis: u32,
+) -> Result<TerminalLevelProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field>,
+{
+    let ring_switch = stack.ring_switch();
+    prove_terminal_recursive_level_with_prepared::<Cfg, T, B, D>(
+        expanded,
+        ring_switch.backend(),
+        ring_switch.prepared(),
+        transcript,
+        current_state,
+        level,
+        level_params,
+        final_log_basis,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_terminal_recursive_level_with_prepared<Cfg, T, B, const D: usize>(
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,

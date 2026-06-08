@@ -406,6 +406,8 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let commitments = [commitment];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -416,8 +418,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
                 hint,
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -560,6 +561,8 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -570,8 +573,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
                 hint,
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -723,6 +725,8 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let poly_refs = [&poly];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![
@@ -743,8 +747,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
                 },
             ),
         ],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

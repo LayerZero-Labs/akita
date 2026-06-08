@@ -5,7 +5,7 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
@@ -87,11 +87,13 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
         &setup,
         prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,

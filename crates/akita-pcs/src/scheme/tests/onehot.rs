@@ -44,6 +44,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
         &setup,
         vec![(
@@ -54,8 +56,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -110,7 +111,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let opening_groups = [&openings[..]];
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
-        &decoded,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(

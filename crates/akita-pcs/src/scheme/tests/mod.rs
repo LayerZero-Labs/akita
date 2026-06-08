@@ -9,7 +9,7 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
@@ -45,6 +45,18 @@ type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
+
+fn uniform_prove_stack<'a, B, F, const D: usize>(
+    setup: &'a AkitaProverSetup<F, D>,
+    backend: &'a B,
+    prepared: &'a B::PreparedSetup<D>,
+) -> ProverComputeStack<'a, F, D, B, B, B, B>
+where
+    F: akita_field::FieldCore + akita_field::CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    ProverComputeStack::uniform(backend, prepared, setup.expanded.as_ref()).unwrap()
+}
 
 mod batched;
 mod fp32_ring_subfield;
@@ -242,6 +254,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -252,8 +266,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
                 hint,
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

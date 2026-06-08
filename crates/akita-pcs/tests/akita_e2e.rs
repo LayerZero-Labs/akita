@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
@@ -244,6 +244,9 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
         &setup,
         prove_input(
@@ -252,8 +255,7 @@ where
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -429,6 +431,9 @@ fn full_d64_prove_verify() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -437,8 +442,7 @@ fn full_d64_prove_verify() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -646,6 +650,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -654,8 +661,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -710,7 +716,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
@@ -770,7 +776,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/adaptive-full-mixed");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
@@ -833,6 +839,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -841,24 +850,23 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
-        let mut serialized = Vec::new();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize adaptive onehot proof");
-        let mut cursor = std::io::Cursor::new(serialized);
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
-                .expect("deserialize adaptive onehot proof");
         #[cfg(not(feature = "zk"))]
         {
+            let mut serialized = Vec::new();
+            proof
+                .serialize_compressed(&mut serialized)
+                .expect("serialize adaptive onehot proof");
+            let mut cursor = std::io::Cursor::new(serialized);
+            let decoded =
+                AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
+                    .expect("deserialize adaptive onehot proof");
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -896,7 +904,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -1006,6 +1014,9 @@ fn batched_onehot_same_point_round_trip() {
         let poly_refs = [&poly_group[0], &poly_group[1]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -1014,8 +1025,7 @@ fn batched_onehot_same_point_round_trip() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1034,7 +1044,7 @@ fn batched_onehot_same_point_round_trip() {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -1056,7 +1066,7 @@ fn batched_onehot_same_point_round_trip() {
         let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let truncated_result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                &truncated,
+                &proof,
                 &verifier_setup,
                 &mut truncated_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -1127,6 +1137,9 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -1135,8 +1148,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1172,7 +1184,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &malformed,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
@@ -163,8 +163,12 @@ fn bench_dense_phases<
                                     hint: h.into_iter().next().unwrap(),
                                 },
                             )],
-                            &CpuBackend,
-                            &prepared,
+                            &ProverComputeStack::uniform(
+                                &CpuBackend,
+                                &prepared,
+                                setup.expanded.as_ref(),
+                            )
+                            .unwrap(),
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -177,6 +181,9 @@ fn bench_dense_phases<
         });
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
@@ -187,8 +194,7 @@ fn bench_dense_phases<
                     hint: hint.clone(),
                 },
             )],
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -227,6 +233,10 @@ fn bench_dense_phases<
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+                let prove_stack =
+                    ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                        .unwrap();
+
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
                     vec![(
@@ -237,8 +247,7 @@ fn bench_dense_phases<
                             hint: h,
                         },
                     )],
-                    &CpuBackend,
-                    &prepared,
+                    &prove_stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -374,8 +383,12 @@ fn bench_onehot_phases<
                                     hint: h.into_iter().next().unwrap(),
                                 },
                             )],
-                            &CpuBackend,
-                            &prepared,
+                            &ProverComputeStack::uniform(
+                                &CpuBackend,
+                                &prepared,
+                                setup.expanded.as_ref(),
+                            )
+                            .unwrap(),
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -388,6 +401,9 @@ fn bench_onehot_phases<
         });
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
@@ -398,8 +414,7 @@ fn bench_onehot_phases<
                     hint: hint.clone(),
                 },
             )],
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -438,6 +453,10 @@ fn bench_onehot_phases<
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+                let prove_stack =
+                    ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                        .unwrap();
+
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
                     vec![(
@@ -448,8 +467,7 @@ fn bench_onehot_phases<
                             hint: h,
                         },
                     )],
-                    &CpuBackend,
-                    &prepared,
+                    &prove_stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 
 mod common;
 
@@ -66,6 +66,9 @@ fn event_stream_equality_small() {
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
             prove_input(
@@ -74,8 +77,7 @@ fn event_stream_equality_small() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -296,8 +298,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -399,11 +400,13 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

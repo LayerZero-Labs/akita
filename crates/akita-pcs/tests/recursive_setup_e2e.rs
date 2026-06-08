@@ -19,7 +19,7 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 
 mod common;
 
@@ -97,12 +97,13 @@ fn prove_onehot(nv: usize, mode: SetupContributionMode) -> OnehotProof {
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
     let proof =
         <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
             prove_input(&point[..], &poly_refs[..], &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,

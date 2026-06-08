@@ -16,7 +16,7 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_prover::{compute::RootCommitPolys, ComputeBackendSetup, CpuBackend};
+use akita_prover::{compute::RootCommitPolys, ComputeBackendSetup, CpuBackend, ProverComputeStack};
 
 mod common;
 
@@ -70,13 +70,15 @@ fn run_single_onehot(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(&setup,
         prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
          &mut prover_transcript,
          BasisMode::Lagrange,
          akita_types::SetupContributionMode::Direct)
@@ -98,7 +100,7 @@ fn run_single_onehot(nv: usize) {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -157,13 +159,15 @@ fn run_single_dense(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(&setup,
         prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
          &mut prover_transcript,
          BasisMode::Lagrange,
          akita_types::SetupContributionMode::Direct)
@@ -185,9 +189,9 @@ fn run_single_dense(nv: usize) {
             F,
             DENSE_D,
         >>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -296,13 +300,15 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(&setup,
         prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
          &mut prover_transcript,
          BasisMode::Lagrange,
          akita_types::SetupContributionMode::Direct)
@@ -325,7 +331,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),

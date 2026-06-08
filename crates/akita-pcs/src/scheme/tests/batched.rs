@@ -107,6 +107,8 @@ fn batched_root_direct_fast_path_round_trip() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -117,8 +119,7 @@ fn batched_root_direct_fast_path_round_trip() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -149,7 +150,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
-        &round_trip,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(
@@ -199,6 +200,8 @@ fn batched_root_direct_rejects_wrong_opening() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -209,8 +212,7 @@ fn batched_root_direct_rejects_wrong_opening() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -272,6 +274,8 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     const TRANSCRIPT_LABEL: &[u8] = b"test/batched-prove";
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
+
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -282,8 +286,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -353,7 +356,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
-        &oversized_proof,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(

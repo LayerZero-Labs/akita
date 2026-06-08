@@ -26,7 +26,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
-use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -93,6 +93,10 @@ mod non_zk_aggregated_cases {
 
             let poly_refs: Vec<_> = polys.iter().collect();
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
+            let prove_stack =
+                ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                    .unwrap();
+
             let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
@@ -104,8 +108,7 @@ mod non_zk_aggregated_cases {
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
-                &CpuBackend,
-                &prepared,
+                &prove_stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -136,7 +139,7 @@ mod non_zk_aggregated_cases {
                 F,
                 ONEHOT_D,
             >>::batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -197,6 +200,10 @@ mod non_zk_aggregated_cases {
 
             let poly_refs: Vec<_> = polys.iter().collect();
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
+            let prove_stack =
+                ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                    .unwrap();
+
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -208,8 +215,7 @@ mod non_zk_aggregated_cases {
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
-                &CpuBackend,
-                &prepared,
+                &prove_stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -240,7 +246,7 @@ mod non_zk_aggregated_cases {
                 F,
                 DENSE_D,
             >>::batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -331,6 +337,9 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let poly_refs: Vec<_> = polys.iter().collect();
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -342,8 +351,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -370,9 +378,9 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let result =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-                &decoded,
-                &verifier_setup,
-                &mut verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,

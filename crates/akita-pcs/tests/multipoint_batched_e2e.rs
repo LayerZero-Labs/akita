@@ -4,7 +4,9 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_with_params, CommitmentProver, ComputeBackendSetup, CpuBackend};
+use akita_prover::{
+    commit_with_params, CommitmentProver, ComputeBackendSetup, CpuBackend, ProverComputeStack,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -126,14 +128,16 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(
             &setup,
             prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -153,9 +157,9 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -241,6 +245,8 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&setup,
         prove_inputs_from_groups(
@@ -249,8 +255,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
                     &commitments,
                     hints,
                 ),
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
          &mut prover_transcript,
          BasisMode::Lagrange,
          akita_types::SetupContributionMode::Direct)
@@ -272,7 +277,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             F,
             ONEHOT_D,
         >>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
@@ -365,14 +370,16 @@ fn multipoint_dense_shared_commitment_round_trip() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(
             &setup,
             prover_claims,
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -408,9 +415,9 @@ fn multipoint_dense_shared_commitment_round_trip() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
             verifier_claims,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -498,14 +505,17 @@ mod non_zk_negative_cases {
 
             let mut prover_transcript =
                 AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
+            let prove_stack =
+                ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                    .unwrap();
+
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-                &CpuBackend,
-                &prepared,
+                &prove_stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -595,14 +605,19 @@ mod non_zk_negative_cases {
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
             let mut transcript =
                 AkitaTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
+            let prove_stack = ProverComputeStack::uniform(
+                &CpuBackend,
+                &prove_prepared,
+                prove_setup.expanded.as_ref(),
+            )
+            .unwrap();
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::batched_prove(
                 &prove_setup,
                 prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-                &CpuBackend,
-                &prove_prepared,
+                &prove_stack,
                 &mut transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -686,14 +701,17 @@ mod non_zk_negative_cases {
 
             let mut prover_transcript =
                 AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_opening_count");
+            let prove_stack =
+                ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+                    .unwrap();
+
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
-                &CpuBackend,
-                &prepared,
+                &prove_stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,

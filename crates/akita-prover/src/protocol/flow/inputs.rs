@@ -167,8 +167,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     claims: ProverClaims<
         'a,
         Cfg::ClaimField,
@@ -205,7 +204,6 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: RootProveFlowBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
         prepare_batched_prove_inputs::<Cfg::Field, Cfg::ClaimField, P, D>(
@@ -254,8 +252,7 @@ where
 
     prove_folded_batched::<Cfg, T, P, B, D>(
         expanded,
-        backend,
-        prepared,
+        stack,
         transcript,
         prepared_claims,
         &schedule,
@@ -371,8 +368,7 @@ where
 #[inline(never)]
 pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
     schedule: &Schedule,
@@ -405,8 +401,7 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: RootProveFlowBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
-
+    let commit = stack.commit();
     let Some(root_step) = schedule_root_fold_step(schedule) else {
         return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
@@ -428,8 +423,8 @@ where
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
         build_zk_hiding_context::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, B, D>(
-            backend,
-            prepared,
+            commit.backend(),
+            commit.prepared(),
             schedule,
             &root_step.params,
             prepared_claims.incidence_summary.num_vars(),
@@ -468,8 +463,7 @@ where
             D,
         >(
             expanded.as_ref(),
-            backend,
-            prepared,
+            stack,
             transcript,
             &prepared_claims.flat_polys,
             &prepared_claims.incidence_summary,
@@ -507,8 +501,7 @@ where
         _,
     >(
         expanded.as_ref(),
-        backend,
-        prepared,
+        stack,
         transcript,
         &prepared_claims.flat_polys,
         &prepared_claims.incidence_summary,
@@ -524,7 +517,15 @@ where
         zk_hiding_state,
         basis,
         setup_contribution_mode,
-        |w| crate::commit_next_w::<Cfg, B, D>(root_next_params, expanded, backend, prepared, w),
+        |w| {
+            crate::commit_next_w::<Cfg, B, D>(
+                root_next_params,
+                expanded,
+                commit.backend(),
+                commit.prepared(),
+                w,
+            )
+        },
     )?;
 
     build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(
@@ -532,8 +533,7 @@ where
         |next_state| {
             crate::prove_recursive_suffix::<Cfg, T, B, D>(
                 expanded,
-                backend,
-                prepared,
+                stack,
                 num_vars,
                 transcript,
                 next_state,

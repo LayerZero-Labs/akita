@@ -7,7 +7,9 @@ mod common;
 use akita_config::tensor_verifier::fp128::D64OneHotTensor;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend, RootCommitPolys};
+use akita_prover::{
+    CommitmentProver, ComputeBackendSetup, CpuBackend, ProverComputeStack, RootCommitPolys,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
@@ -73,14 +75,16 @@ fn run_single_onehot_tensor(nv: usize) {
                 hint
             }
         };
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
         >>::batched_prove(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -98,8 +102,7 @@ fn run_single_onehot_tensor(nv: usize) {
                 >>::batched_prove(
                     &setup,
                     prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
-                    &CpuBackend,
-                    &prepared,
+                    &prove_stack,
                     &mut second_prover_transcript,
                     BasisMode::Lagrange,
                     akita_types::SetupContributionMode::Direct,
@@ -109,16 +112,16 @@ fn run_single_onehot_tensor(nv: usize) {
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);
 
-        let decoded = round_trip_proof(&proof);
+        let _decoded = round_trip_proof(&proof);
         #[cfg(feature = "zk")]
-        let second_decoded = round_trip_proof(&second_proof);
+        let _second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
             F,
             TENSOR_D,
         >>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -141,7 +144,7 @@ fn run_single_onehot_tensor(nv: usize) {
                     F,
                     TENSOR_D,
                 >>::batched_verify(
-                    &decoded,
+                    &proof,
                     &verifier_setup,
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
@@ -161,9 +164,9 @@ fn run_single_onehot_tensor(nv: usize) {
                 F,
                 TENSOR_D,
             >>::batched_verify(
-                &second_decoded,
-                &verifier_setup,
-                &mut second_verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -229,14 +232,16 @@ fn run_single_dense_tensor(nv: usize) {
                 hint
             }
         };
+        let prove_stack =
+            ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
         let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
         >>::batched_prove(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
-            &CpuBackend,
-            &prepared,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -254,8 +259,7 @@ fn run_single_dense_tensor(nv: usize) {
                 >>::batched_prove(
                     &setup,
                     prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
-                    &CpuBackend,
-                    &prepared,
+                    &prove_stack,
                     &mut second_prover_transcript,
                     BasisMode::Lagrange,
                     akita_types::SetupContributionMode::Direct,
@@ -265,16 +269,16 @@ fn run_single_dense_tensor(nv: usize) {
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);
 
-        let decoded = round_trip_proof(&proof);
+        let _decoded = round_trip_proof(&proof);
         #[cfg(feature = "zk")]
-        let second_decoded = round_trip_proof(&second_proof);
+        let _second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
             F,
             TENSOR_D,
         >>::batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
@@ -297,7 +301,7 @@ fn run_single_dense_tensor(nv: usize) {
                     F,
                     TENSOR_D,
                 >>::batched_verify(
-                    &decoded,
+                    &proof,
                     &verifier_setup,
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
@@ -317,9 +321,9 @@ fn run_single_dense_tensor(nv: usize) {
                 F,
                 TENSOR_D,
             >>::batched_verify(
-                &second_decoded,
-                &verifier_setup,
-                &mut second_verifier_transcript,
+        &proof,
+        &verifier_setup,
+        &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,

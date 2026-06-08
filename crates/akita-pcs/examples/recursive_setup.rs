@@ -29,7 +29,7 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
-    RootCommitPolys,
+    ProverComputeStack, RootCommitPolys,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -129,6 +129,9 @@ fn run_mode(
 
     let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [poly];
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let prove_stack =
+        ProverComputeStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -139,8 +142,7 @@ fn run_mode(
                 hint,
             },
         )],
-        &CpuBackend,
-        &prepared,
+        &prove_stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         mode,
