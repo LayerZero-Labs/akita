@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor assistant                |
 | Created     | 2026-05-26                                 |
 | Status      | proposed                                   |
-| PR          | stacked after `quang/metal-backend`        |
+| PR          | [#109](https://github.com/LayerZero-Labs/akita/pull/109), based on `main` |
 
 ## Summary
 
@@ -938,11 +938,11 @@ actual data model and not the public extension boundary.
 
 #### Keep `AkitaPolyOps` And Add Backend Arguments
 
-Rejected. The current `quang/metal-backend` branch already moved commitment
-methods in this direction, but keeping `AkitaPolyOps` as the umbrella makes the
-polynomial trait continue to own algorithm dispatch. That blocks a clean
-heterogeneous backend design and keeps tensor projection trapped in polynomial
-methods.
+Rejected. `main` already moved commitment methods in this direction via the
+typed `ComputeBackendSetup` compute backend, but keeping `AkitaPolyOps` as the
+umbrella makes the polynomial trait continue to own algorithm dispatch. That
+blocks a clean heterogeneous backend design and keeps tensor projection trapped
+in polynomial methods.
 
 #### Keep Fixed Commitment/Ring-Switch Backend Traits Public
 
