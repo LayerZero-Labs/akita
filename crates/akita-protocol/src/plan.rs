@@ -68,7 +68,8 @@ pub enum LevelRole {
 pub enum BatchingScheme {
     /// One instance proven on its own; there is no cross-instance batching
     /// coefficient. Intra-instance fusion (for example stage 2's virtual
-    /// sub-claim weighted by gamma) is carried by [`SubClaim::weight`] on that
+    /// sub-claim weighted by gamma) is carried by
+    /// [`akita_sumcheck::descriptor::SubClaim::weight`] on that
     /// instance's summand, not by this scheme.
     Standalone,
     /// Several regular instances linearly combined into one batched sumcheck;
