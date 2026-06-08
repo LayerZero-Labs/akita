@@ -31,12 +31,12 @@ mod plans;
 mod poly;
 mod stack;
 
-pub(crate) use dispatch::tensor_root_projection;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
+pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
     RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,

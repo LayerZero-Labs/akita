@@ -451,20 +451,18 @@ where
             plan.block_len,
             plan.num_digits_commit,
         )?;
-        let decomposed_inner_rows = decompose_commit_rows::<F, D>(
-            &t,
-            plan.n_a,
-            plan.num_digits_open,
-            plan.log_basis,
-        )?;
+        let decomposed_inner_rows =
+            decompose_commit_rows::<F, D>(&t, plan.n_a, plan.num_digits_open, plan.log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows,
         })
     }
 
-
-    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(
+        &self,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
         E: akita_field::MulBaseUnreduced<F>,
     {
@@ -504,7 +502,10 @@ where
 
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
-    ) -> Result<Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        AkitaError,
+    >
     where
         E: akita_field::ExtField<F>,
     {
@@ -1045,11 +1046,7 @@ mod tests {
         let backend = CpuBackend;
         let tensor_view = sparse.tensor_view().unwrap();
 
-        let ops_root =
-            SparseRingPoly::tensor_packed_extension_root_poly::<E>(
-                &sparse,
-            )
-            .unwrap();
+        let ops_root = SparseRingPoly::tensor_packed_extension_root_poly::<E>(&sparse).unwrap();
         let kernel_root =
             TensorProjectionKernel::<SparseRingTensorView<'_, F32, D>, F32, E, D>::root_projection(
                 &backend,

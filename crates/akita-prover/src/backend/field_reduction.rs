@@ -21,8 +21,7 @@ use crate::compute::{
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
-    CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat,
-    SparseRingPoly,
+    CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat, SparseRingPoly,
 };
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
@@ -524,7 +523,10 @@ where
         })
     }
 
-    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(
+        &self,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
         E: akita_field::MulBaseUnreduced<F>,
     {
@@ -540,7 +542,10 @@ where
 
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
-    ) -> Result<Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>, AkitaError>
+    ) -> Result<
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        AkitaError,
+    >
     where
         E: akita_field::ExtField<F>,
     {
@@ -657,9 +662,7 @@ mod tests {
             .map(|idx| F::from_u64(idx as u64 + 1))
             .collect::<Vec<_>>();
         let dense = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
-        let root =
-            DensePoly::tensor_packed_extension_root_poly::<E>(&dense)
-                .unwrap();
+        let root = DensePoly::tensor_packed_extension_root_poly::<E>(&dense).unwrap();
         let point = (0..num_vars)
             .map(|idx| {
                 E::from_base_slice(&[
@@ -714,14 +717,8 @@ mod tests {
         let dense0 = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let dense1 = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let roots = [
-            DensePoly::tensor_packed_extension_root_poly::<E>(
-                &dense0,
-            )
-            .unwrap(),
-            DensePoly::tensor_packed_extension_root_poly::<E>(
-                &dense1,
-            )
-            .unwrap(),
+            DensePoly::tensor_packed_extension_root_poly::<E>(&dense0).unwrap(),
+            DensePoly::tensor_packed_extension_root_poly::<E>(&dense1).unwrap(),
         ];
         let root_refs = [&roots[0], &roots[1]];
         let point = (0..num_vars)
@@ -746,11 +743,9 @@ mod tests {
             })
             .collect();
         let dense_root_refs: Vec<&DensePoly<F, D>> = dense_roots.iter().copied().collect();
-        let expected = DensePoly::tensor_extension_column_partials_batch::<E>(
-            &dense_root_refs,
-            &point,
-        )
-        .unwrap();
+        let expected =
+            DensePoly::tensor_extension_column_partials_batch::<E>(&dense_root_refs, &point)
+                .unwrap();
         let batch_view = RootTensorProjectionPoly::<F, D>::tensor_batch(&root_refs).unwrap();
         let got = TensorProjectionBatchKernel::<RootTensorProjectionBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend,

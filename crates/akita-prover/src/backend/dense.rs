@@ -606,7 +606,10 @@ where
         )
     }
 
-    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(
+        &self,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
@@ -1195,9 +1198,7 @@ mod tests {
         let backend = CpuBackend;
         let tensor_view = poly.tensor_view().unwrap();
 
-        let ops_root =
-            DensePoly::tensor_packed_extension_root_poly::<E>(&poly)
-                .unwrap();
+        let ops_root = DensePoly::tensor_packed_extension_root_poly::<E>(&poly).unwrap();
         let kernel_root =
             TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
                 &backend,
@@ -1222,8 +1223,7 @@ mod tests {
             .collect::<Vec<_>>();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let witness =
-            <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly)
-                .unwrap();
+            <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap();
         assert!(matches!(witness, CleartextWitnessProof::FieldElements(_)));
     }
 

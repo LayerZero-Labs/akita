@@ -24,7 +24,9 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+};
 use akita_prover::{
     CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
     RootCommitPolys,

@@ -24,11 +24,7 @@ pub(crate) fn commit_zk_hiding_witness<F, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: ProverComputeBackend<F>
-        + for<'a> RootCommitKernel<
-            <DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-            F,
-            D,
-        >,
+        + for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
     let num_ring = hiding_witness.len().div_ceil(D).max(1).next_power_of_two();
     let eval_len = num_ring
@@ -52,12 +48,8 @@ where
         num_digits_open: hiding_params.num_digits_open,
         log_basis: hiding_params.log_basis,
     };
-    let inner = RootCommitKernel::commit_inner_witness(
-        backend,
-        prepared,
-        poly.commit_view()?,
-        plan,
-    )?;
+    let inner =
+        RootCommitKernel::commit_inner_witness(backend, prepared, poly.commit_view()?, plan)?;
     let b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(hiding_params.b_key.row_len(), hiding_params.log_basis)?;

@@ -5,7 +5,9 @@ use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+};
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

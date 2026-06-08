@@ -342,12 +342,9 @@ where
                 decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
             });
         #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t.iter())
-            .for_each(|(dst, t_i)| {
-                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
-            });
+        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+            decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+        });
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows: t_hat,

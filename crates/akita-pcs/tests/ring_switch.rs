@@ -93,15 +93,14 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
-    use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
-    };
     use akita_prover::compute::{
         OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
     };
+    use akita_prover::protocol::ring_switch::{
+        build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
+    };
     use akita_prover::{
-        ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
-        RootCommitPolys,
+        ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver, RootCommitPolys,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
@@ -367,24 +366,25 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            lp.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
+        let (instance, witness) =
+            RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
+                &CpuBackend,
+                &prepared,
+                vec![ring_opening_point],
+                vec![ring_multiplier_point.clone()],
+                vec![0usize],
+                &[&poly],
+                vec![e_folded],
+                &incidence_summary,
+                lp.clone(),
+                vec![batched_hint],
+                &mut transcript,
+                std::slice::from_ref(&commitment),
+                std::slice::from_ref(&y_ring),
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
@@ -504,24 +504,25 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            lp.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
+        let (instance, witness) =
+            RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
+                &CpuBackend,
+                &prepared,
+                vec![ring_opening_point],
+                vec![ring_multiplier_point.clone()],
+                vec![0usize],
+                &[&poly],
+                vec![e_folded],
+                &incidence_summary,
+                lp.clone(),
+                vec![batched_hint],
+                &mut transcript,
+                std::slice::from_ref(&commitment),
+                std::slice::from_ref(&y_ring),
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
@@ -677,24 +678,25 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point.clone()],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            level_params.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
+        let (instance, witness) =
+            RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
+                &CpuBackend,
+                &prepared,
+                vec![ring_opening_point.clone()],
+                vec![ring_multiplier_point.clone()],
+                vec![0usize],
+                &[&poly],
+                vec![e_folded],
+                &incidence_summary,
+                level_params.clone(),
+                vec![batched_hint],
+                &mut transcript,
+                std::slice::from_ref(&commitment),
+                std::slice::from_ref(&y_ring),
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
         ring_switch_build_w::<F, CpuBackend, D>(
             &instance,

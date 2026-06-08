@@ -21,11 +21,10 @@ use crate::backend::{
     OneHotTensorBatchView, OneHotTensorView,
 };
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -664,11 +663,7 @@ mod tests {
             })
             .collect();
         let expected =
-            OneHotPoly::tensor_extension_column_partials_batch::<E>(
-                &inner_refs,
-                &point,
-            )
-            .unwrap();
+            OneHotPoly::tensor_extension_column_partials_batch::<E>(&inner_refs, &point).unwrap();
         let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
         let got = TensorProjectionBatchKernel::<
             MultilinearPolynomialBatchView<'_, F, D>,

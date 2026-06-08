@@ -8,11 +8,13 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+};
+use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotIndex;
 use akita_prover::OneHotPoly;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
-use akita_prover::AkitaProverSetup;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -332,7 +334,11 @@ fn opening_from_poly<const D: usize, P: OpeningAtPointPadded<D>>(
     poly.opening_at_point_padded(point, layout)
 }
 
-fn opening_from_poly_padded_impl<FField: CanonicalField, const D: usize, P: RootOpeningSource<FField, D>>(
+fn opening_from_poly_padded_impl<
+    FField: CanonicalField,
+    const D: usize,
+    P: RootOpeningSource<FField, D>,
+>(
     poly: &P,
     point: &[FField],
     layout: &LevelParams,

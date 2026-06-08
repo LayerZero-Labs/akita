@@ -80,8 +80,8 @@ where
     };
     let prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
     let transformed_polys = {
-        let _span =
-            tracing::info_span!("root_extension_transform_polys", num_claims = polys.len()).entered();
+        let _span = tracing::info_span!("root_extension_transform_polys", num_claims = polys.len())
+            .entered();
         cfg_iter!(polys)
             .map(|poly| poly_kernels::tensor_root_projection::<F, P, C, B, D>(backend, poly))
             .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
@@ -96,11 +96,8 @@ where
             &prepared_points,
             root_params.block_len,
         )?;
-    let y_rings = combine_root_y_rings::<F, D>(
-        &per_claim_y_rings,
-        incidence_summary,
-        row_coefficient_rings,
-    )?;
+    let y_rings =
+        combine_root_y_rings::<F, D>(&per_claim_y_rings, incidence_summary, row_coefficient_rings)?;
     #[cfg(feature = "zk")]
     let y_rings_masked = {
         let mut masked = y_rings.clone();

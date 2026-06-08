@@ -809,7 +809,9 @@ where
     let eval = folded
         .iter()
         .zip(eval_outer_scalars.iter())
-        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| acc + f_i.scale(s_i));
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+            acc + f_i.scale(s_i)
+        });
     (eval, folded)
 }
 
@@ -824,7 +826,9 @@ where
     let eval = folded
         .iter()
         .zip(eval_outer_scalars.iter())
-        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| acc + (*f_i * *s_i));
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+            acc + (*f_i * *s_i)
+        });
     (eval, folded)
 }
 

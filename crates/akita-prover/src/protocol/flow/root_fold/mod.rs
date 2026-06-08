@@ -1,11 +1,15 @@
 mod relation;
-pub use relation::{prove_root_fold_from_ring_relation, prove_terminal_root_fold_from_ring_relation};
+pub use relation::{
+    prove_root_fold_from_ring_relation, prove_terminal_root_fold_from_ring_relation,
+};
 
 mod eval;
 mod finish;
 
 use eval::{eval_extension_reduction_post_transform, evaluate_root_claims_at_prepared_points};
-use finish::{finish_root_fold_with_prepared_openings, finish_terminal_root_fold_with_prepared_openings};
+use finish::{
+    finish_root_fold_with_prepared_openings, finish_terminal_root_fold_with_prepared_openings,
+};
 
 pub(in crate::protocol::flow) use eval::evaluate_recursive_witness_at_multiplier_point;
 
@@ -152,10 +156,7 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
-        let transformed_refs = post_transform
-            .transformed_polys
-            .iter()
-            .collect::<Vec<_>>();
+        let transformed_refs = post_transform.transformed_polys.iter().collect::<Vec<_>>();
 
         return finish_root_fold_with_prepared_openings::<
             F,
@@ -486,10 +487,7 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
         )?;
-        let transformed_refs = post_transform
-            .transformed_polys
-            .iter()
-            .collect::<Vec<_>>();
+        let transformed_refs = post_transform.transformed_polys.iter().collect::<Vec<_>>();
 
         return finish_terminal_root_fold_with_prepared_openings::<
             F,

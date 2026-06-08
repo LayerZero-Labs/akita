@@ -166,10 +166,7 @@ fn onehot_kernel_tensor_paths_match_akitapolyops() {
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batch_view = OneHotPoly::<F, D>::tensor_batch(&poly_refs).unwrap();
     let ops_batch =
-        OneHotPoly::tensor_extension_column_partials_batch::<E>(
-            &poly_refs, &point,
-        )
-        .unwrap();
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
     let kernel_batch =
         TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend,
@@ -181,12 +178,9 @@ fn onehot_kernel_tensor_paths_match_akitapolyops() {
     assert_eq!(kernel_batch, ops_batch);
 
     let ops_linear =
-        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(
-            &poly_refs,
-            &coeffs,
-        )
-        .unwrap()
-        .unwrap();
+        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(&poly_refs, &coeffs)
+            .unwrap()
+            .unwrap();
     let kernel_linear =
         TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
             &backend,
@@ -239,14 +233,8 @@ fn onehot_kernel_batched_decompose_fold_matches_akitapolyops() {
         },
     ];
     let poly_refs = polys.iter().collect::<Vec<_>>();
-    let expected = OneHotPoly::decompose_fold_batched(
-        &poly_refs,
-        &challenges,
-        block_len,
-        1,
-        0,
-    )
-    .unwrap();
+    let expected =
+        OneHotPoly::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 0).unwrap();
     let batch_view = OneHotPoly::<F, D>::opening_batch(&poly_refs).unwrap();
     let got = OpeningBatchKernel::<OneHotOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
         &CpuBackend,
@@ -505,11 +493,7 @@ fn batched_tensor_column_partials_match_individual() {
         .map(|poly| poly.tensor_extension_column_partials::<E>(&point).unwrap())
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
-    let got =
-        OneHotPoly::tensor_extension_column_partials_batch::<E>(
-            &poly_refs, &point,
-        )
-        .unwrap();
+    let got = OneHotPoly::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(got, expected);
 }
@@ -574,10 +558,7 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        OneHotPoly::tensor_extension_column_partials_batch::<E>(
-            &poly_refs, &point,
-        )
-        .unwrap();
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(batched, dense_expected);
     assert_eq!(batched, individual);
@@ -632,10 +613,7 @@ fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp_ext4() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        OneHotPoly::tensor_extension_column_partials_batch::<E>(
-            &poly_refs, &point,
-        )
-        .unwrap();
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(batched, dense_expected);
 }
@@ -703,12 +681,9 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
             .unwrap();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got =
-        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(
-            &poly_refs,
-            &coeffs,
-        )
-        .unwrap()
-        .unwrap();
+        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(&poly_refs, &coeffs)
+            .unwrap()
+            .unwrap();
 
     assert_eq!(got.table_len(), expected.table_len());
     assert_eq!(got.entries(), expected.entries());
@@ -1019,14 +994,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             .collect::<Vec<_>>(),
     );
     let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-    let got = OneHotPoly::decompose_fold_batched(
-        &poly_refs,
-        &challenges,
-        block_len,
-        1,
-        0,
-    )
-    .expect("onehot batched path should apply");
+    let got = OneHotPoly::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 0)
+        .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
 }

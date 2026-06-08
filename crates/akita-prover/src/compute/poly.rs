@@ -223,7 +223,8 @@ where
 ///
 /// `ClaimE` and `ChallengeE` do **not** need `'static`; preset extension fields satisfy
 /// it vacuously, but the trait does not require it.
-pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>: CommitmentComputeBackend<F>
+pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,

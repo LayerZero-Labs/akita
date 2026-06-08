@@ -54,10 +54,7 @@ use crate::compute::{
     RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{
-    CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
-    SparseRingPoly,
-};
+use crate::{CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.

@@ -3,7 +3,9 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
-pub(super) use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+pub(super) use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+};
 pub(super) use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::MultilinearPolynomial;

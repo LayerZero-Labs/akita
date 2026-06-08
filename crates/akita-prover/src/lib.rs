@@ -91,4 +91,3 @@ pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     /// explicit block boundaries.
     pub decomposed_inner_rows: FlatDigitBlocks<D>,
 }
-

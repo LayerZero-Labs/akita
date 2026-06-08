@@ -427,7 +427,10 @@ where
             .fold(E::zero(), |acc, weight| acc + weight))
     }
 
-    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(
+        &self,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
@@ -576,7 +579,6 @@ where
             .collect::<Vec<_>>();
         Ok(out)
     }
-
 
     pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
