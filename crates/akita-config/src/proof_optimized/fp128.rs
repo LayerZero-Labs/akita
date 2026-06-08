@@ -92,15 +92,15 @@ pub enum Fp128Preset {
     D32Full,
     /// Full-field adaptive `D=64` preset.
     D64Full,
-    /// Full-field `D=128` preset (proof-size optimum under committed-fold
-    /// A-role pricing).
+    /// Full-field `D=128` preset (comparison / legacy; D32/D64 are smaller under
+    /// committed-fold A-role pricing).
     D128Full,
     /// Onehot adaptive `D=32` preset.
     D32OneHot,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
-    /// Binary onehot `D=128` preset (proof-size optimum under committed-fold
-    /// A-role pricing).
+    /// Binary onehot `D=128` preset (comparison / legacy; D32/D64 are smaller under
+    /// committed-fold A-role pricing).
     D128OneHot,
 }
 
