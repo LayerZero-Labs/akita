@@ -12,15 +12,15 @@
 //! `backend/*`; this directory owns traits, shared plans, and the CPU row
 //! helpers.
 //!
-//! | Module | Role |
+//! | Sibling module | Role |
 //! | --- | --- |
-//! | [`plans`](plans) | Legacy row/commit plan structs and [`FlatBlockTable`] |
-//! | [`backend`](backend) | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
-//! | [`cpu`](cpu) | [`CpuBackend`] / [`CpuPreparedSetup`] and standard row-kernel impls |
-//! | [`operation_plans`](operation_plans) | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
-//! | [`kernels`](kernels) | Source-typed operation kernel traits generic over view `S` |
-//! | [`poly`](poly) | Root polynomial capability traits (`RootPolyShape`, `RootCommitSource`, …) |
-//! | [`stack`](stack) | [`OperationCtx`] and heterogeneous [`ProverComputeStack`] |
+//! | `plans` | Legacy row/commit plan structs and `FlatBlockTable` |
+//! | `backend` | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
+//! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
+//! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
+//! | `kernels` | Source-typed operation kernel traits generic over view `S` |
+//! | `poly` | Root polynomial capability traits (`RootPolyShape`, `RootCommitSource`, …) |
+//! | `stack` | `OperationCtx` and heterogeneous `ProverComputeStack` |
 
 mod backend;
 mod cpu;
