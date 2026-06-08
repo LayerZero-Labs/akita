@@ -350,10 +350,6 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         fold.y_rings = FlatRingVec::from_coeffs(oversized_y_coeffs);
     }
 
-    let mut oversized_openings = openings.to_vec();
-    oversized_openings.push(F::zero());
-    let oversized_opening_groups = [&oversized_openings[..]];
-
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
@@ -362,7 +358,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         vec![(
             &opening_point[..],
             CommittedOpenings {
-                openings: oversized_opening_groups[0],
+                openings: opening_groups[0],
                 commitment: &commitments[0],
             },
         )],
