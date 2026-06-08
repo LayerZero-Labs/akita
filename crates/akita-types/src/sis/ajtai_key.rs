@@ -4,7 +4,7 @@
 //! This is the single home for "given a width and a rounded-up collision
 //! bound, what is the minimum SIS-secure module rank, and what audited
 //! `AjtaiKeyParams` does it yield". The generated SIS-floor tables it consults
-//! live in the private sibling `super::generated_sis_table`.
+//! live in the private sibling module `super::generated_sis_table`.
 
 use akita_field::AkitaError;
 
