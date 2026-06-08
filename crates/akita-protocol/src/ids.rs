@@ -18,7 +18,9 @@ pub enum AkitaOpeningId {
 /// Public, verifier-evaluable weight identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AkitaPublicId {
-    /// `eq(stage1_point, ·)` evaluated at the full round point.
+    /// `eq(norm_point, ·)` at the full round point (legacy name: stage-1 output
+    /// point). SC-MIGRATE renames to `EqNormPoint`; see
+    /// `specs/akita-sumcheck-level-naming.md`.
     EqStage1Point,
     /// The stage-1 sparse-challenge weight MLE `alpha(·)` over the ring (y)
     /// variables.

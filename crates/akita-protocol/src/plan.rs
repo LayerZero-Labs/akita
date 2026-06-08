@@ -7,9 +7,10 @@
 //! field-free: it describes schedule structure only, and the evaluation field
 //! is chosen when a descriptor is later evaluated.
 //!
-//! Today [`plan_level`] emits only the baseline stage-2 schedule: one regular
-//! instance, fused at intermediate levels and relation-only at the terminal
-//! cleartext-witness level ([`LevelRole`]). Optional gates select future
+//! Today [`plan_level`] emits only the **fold stage** schedule (legacy "stage
+//! 2"): one regular instance, fused at intermediate levels and relation-only at
+//! the terminal cleartext-witness level ([`LevelRole`]). SC-MIGRATE will prepend
+//! **norm node** batches per `specs/akita-sumcheck-level-naming.md`. Optional gates select future
 //! extensions (y-ring trace fusion, folded-witness L2 certificate, setup-claim
 //! offloading); when a gate is enabled but not yet implemented, planning
 //! fails rather than emitting an incomplete schedule. [`BatchingScheme`] is
@@ -81,10 +82,14 @@ pub enum BatchingScheme {
     },
 }
 
-/// A group of instances proven together in one (possibly batched) sumcheck.
+/// Scheduled sumcheck batch: instances proven together in one Fiat-Shamir chunk.
+///
+/// This is **not** a level stage (norm / fold / setup). A level may contain
+/// several `StagePlan`s (for example one per norm tree node, then the fold batch).
+/// See [`crate::naming`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagePlan<O, P, C> {
-    /// Instances batched together in this stage.
+    /// Instances batched together in this scheduled batch.
     pub instances: Vec<SumcheckInstanceDescriptor<O, P, C>>,
     /// How gamma powers are allocated across `instances`.
     pub batching: BatchingScheme,
