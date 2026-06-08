@@ -226,6 +226,11 @@ Crucially, Gruen split-eq sits on the compute axis, while the eq-factored format
 The protocol plan owns the batching decision, so it owns whether each eq-factored instance keeps or loses its format.
 The engine therefore takes the instance kind and the batching grouping as inputs and selects the wire format deterministically; the verifier derives the same selection from the same plan.
 
+Worked example (current code): the extension-opening reduction (`crates/akita-prover/src/protocol/extension_opening_reduction/`) is a regular, degree-2, boolean-hypercube instance `sum_i coeff_i * (witness_i * factor_i)`.
+`witness_i` is a `Source::Opening` (the tensor-packed committed witness; prover resolves to the packed table, verifier to `witness(rho)`); `factor_i` is a transparent `Source::Public`, the evaluable factor `A(x) = sum_k coeff_k * eq(point_k, x)` the verifier computes itself.
+It already implements the regular `SumcheckInstanceProver` and serializes in the regular compressed format, so it maps onto the descriptor with no special casing.
+It also fixes the `Source::Public` contract: resolution must support evaluating a transparent multilinear at the round challenges (`A(rho)`), not only looking up a precomputed scalar weight.
+
 #### 3. Verifier = evaluate the descriptor (`akita-verifier`)
 
 The verifier already has a clean shape (`crates/akita-verifier/src/stages/stage2.rs`); this replaces the hand-inlined equation with descriptor evaluation:
@@ -300,6 +305,11 @@ Both prover and verifier call `plan_level` with the same inputs and obtain the s
 The plan also resolves the instance-kind/proof-format interaction from the previous section: a `StagePlan` with a single eq-factored instance keeps the eq-factored format; any `StagePlan` that batches an eq-factored instance with others demotes it to the regular format (the prover keeps Gruen split-eq compute).
 `BatchingScheme` therefore allocates gamma powers only over instances that are actually batched together, and a standalone eq-factored stage carries no batching coefficient.
 
+Opening-reduction stages sit at the head of a level.
+The extension-opening reduction (EOR) is a `SumcheckInstanceDescriptor` whose input `ClaimSlot` is the extension/tensor opening carried into the level and whose output `ClaimSlot` is the reduced base-field witness opening that the relation/range stages and the subsequent commit/fold consume.
+Akita's convention places EOR at the start of a folding step rather than the tail of the previous one; the plan encodes that boundary explicitly and one-directionally, so "where a folding step begins" is a plan fact rather than an implicit driver split.
+The tensor algebra around EOR (column/row partials, eta row-batching, head/tail split) is opening-reduction work that builds the witness table and the transparent factor; it is polyops tensor-projection work, not sumcheck round work (see §7).
+
 How the in-flight features map onto the plan (forward design, not implemented here):
 
 - y-ring trace internalization.
@@ -339,6 +349,21 @@ Mapping of current pieces to new homes:
 | stage-1 tree interstage batching, stage-2 coeff-addition fusion | `BatchingScheme` in the protocol plan (`akita-protocol`) |
 | eq-factored proof-size optimization (`EqFactoredUniPoly`) | eq-factored wire format in `akita-sumcheck`, selected by the plan's batching decision |
 | `two_round_prefix/` | Tier-B fast path (`akita-prover`), protocol-invariant |
+
+#### 7. Relationship to the polyops cutover (`specs/akita-polyops-cutover.md`, PR #109)
+
+The two cutovers are largely orthogonal and neither changes proof bytes, so they cannot conflict on the wire.
+PolyOps owns the root-polynomial operation boundary (commit, open/fold, decompose-fold, tensor projection, ring-switch rows) and explicitly excludes sumcheck; this spec owns the sumcheck round layer.
+The verifier half of this spec is independent of polyops entirely (the verifier has no prover polynomial backends).
+
+They meet at one seam: the witness/polynomial view the sumcheck kernel reads, and the claim handoff.
+The extension-opening reduction is the canonical example: its witness comes from polyops tensor projection (`tensor_packed_extension_*`), its round reduction is a sumcheck-framework regular instance, and its output opening is discharged by polyops opening/fold.
+So a prover-side `Source::Opening` resolves to a polyops witness view, and a descriptor output `ClaimSlot` becomes a polyops opening claim.
+
+Ordering implication: define the borrowed witness/polynomial view vocabulary once in the lower layer (the `jolt-witness` analog) so both cutovers consume it rather than inventing competing view layers.
+With that shared seam, merge order is flexible (whichever lands second rebases).
+Without it, parallel work duplicates the view layer and collides in `protocol/flow.rs` and `protocol/quadratic_equation.rs`, which both cutovers edit.
+Recommended: land polyops (or at least its view vocabulary) first, since the sumcheck kernel is the consumer of that boundary.
 
 ### Alternatives Considered
 
