@@ -204,7 +204,8 @@ where
     T: Transcript<Cfg::Field>,
     P: RootProvePoly<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>
-        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
+        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -405,7 +406,8 @@ where
     T: Transcript<Cfg::Field>,
     P: RootProvePoly<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>
-        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
+        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 

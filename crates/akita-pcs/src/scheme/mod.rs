@@ -147,7 +147,8 @@ where
         T: Transcript<F>,
         P: akita_prover::RootProvePoly<F, D>,
         B: akita_prover::ProverComputeBackend<F>
-            + akita_prover::RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
+            + akita_prover::RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>
+            + akita_prover::compute::ZkHidingCommitBackend<F, D>,
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;

@@ -1,5 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+#[cfg(feature = "zk")]
+use crate::compute::ZkHidingCommitBackend;
 use crate::compute::{
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource,
     RootProveBackend, RootTensorSource, TensorProjectionBatchKernel,
@@ -583,10 +585,10 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
     E: RingSubfieldEncoding<F>,
     L: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F>,
-    B: ProverComputeBackend<F>,
+    B: ZkHidingCommitBackend<F, D>,
 {
     let mut rng = OsRng;
     let fold_steps = schedule

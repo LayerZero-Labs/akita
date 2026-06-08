@@ -3,9 +3,11 @@ use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
-use crate::RootTensorProjectionPoly;
+use crate::{DensePoly, RootTensorProjectionPoly};
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+};
 use akita_types::CleartextWitnessProof;
 
 /// Shape metadata every root polynomial exposes.
@@ -267,6 +269,45 @@ where
             ChallengeE,
             D,
         >,
+{
+}
+
+/// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
+///
+/// With `zk` enabled, requires `RootCommitKernel` on [`DensePoly`]. Without `zk`, this is a
+/// vacuous marker implemented for every [`ProverComputeBackend`].
+#[cfg(feature = "zk")]
+pub trait ZkHidingCommitBackend<F, const D: usize>:
+    super::backend::ProverComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
+    Self:
+        for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+#[cfg(feature = "zk")]
+impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
+where
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
+    B: super::backend::ProverComputeBackend<F>
+        + for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+#[cfg(not(feature = "zk"))]
+pub trait ZkHidingCommitBackend<F, const D: usize>:
+    super::backend::ProverComputeBackend<F>
+where
+    F: FieldCore,
+{
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
+where
+    F: FieldCore,
+    B: super::backend::ProverComputeBackend<F>,
 {
 }
 

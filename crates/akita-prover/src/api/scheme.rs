@@ -139,5 +139,7 @@ where
     where
         T: Transcript<F>,
         P: RootProvePoly<F, D>,
-        B: ProverComputeBackend<F> + RootProveBackend<F, P, Self::ClaimField, Self::TensorField, D>;
+        B: ProverComputeBackend<F>
+            + RootProveBackend<F, P, Self::ClaimField, Self::TensorField, D>
+            + crate::compute::ZkHidingCommitBackend<F, D>;
 }

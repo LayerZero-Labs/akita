@@ -50,6 +50,7 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+pub use poly::ZkHidingCommitBackend;
 pub use poly::{
     AkitaRootPoly, DirectRootWitnessSource, RootCommitBackend, RootCommitPoly, RootCommitPolys,
     RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly,
