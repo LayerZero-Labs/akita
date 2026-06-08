@@ -377,15 +377,7 @@ where
         source: DenseCommitView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        source.poly.commit_inner(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner(self, prepared, plan)
     }
 
     fn commit_inner_witness(
@@ -394,15 +386,7 @@ where
         source: DenseCommitView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner_witness(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner_witness(self, prepared, plan)
     }
 }
 
@@ -876,17 +860,12 @@ where
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
@@ -894,24 +873,19 @@ where
         let t = self.commit_rows(
             backend,
             prepared,
-            n_a,
-            block_len,
-            num_digits_commit,
-            log_basis,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+            plan.log_basis,
         )?;
-        decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)
+        decompose_commit_rows::<F, D>(&t, plan.num_digits_open, plan.log_basis)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
@@ -919,12 +893,13 @@ where
         let t = self.commit_rows(
             backend,
             prepared,
-            n_a,
-            block_len,
-            num_digits_commit,
-            log_basis,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+            plan.log_basis,
         )?;
-        let decomposed_inner_rows = decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)?;
+        let decomposed_inner_rows =
+            decompose_commit_rows::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows,

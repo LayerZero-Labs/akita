@@ -164,15 +164,7 @@ where
         source: OneHotCommitView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        source.poly.commit_inner(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner(self, prepared, plan)
     }
 
     fn commit_inner_witness(
@@ -181,15 +173,7 @@ where
         source: OneHotCommitView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner_witness(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner_witness(self, prepared, plan)
     }
 }
 
@@ -841,24 +825,19 @@ where
         Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(block_len)?;
+        let blocks = self.blocks_for(plan.block_len)?;
         let num_blocks = blocks.num_blocks();
-        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+        let zero_block_len = plan.n_a.checked_mul(plan.num_digits_open).ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "one-hot inner commitment digit block count overflow".to_string(),
             )
@@ -866,9 +845,9 @@ where
         let t_all = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
-                n_a,
-                block_len,
-                num_digits_commit,
+                n_a: plan.n_a,
+                block_len: plan.block_len,
+                num_digits_commit: plan.num_digits_commit,
                 blocks: blocks.commit_plan_blocks(),
             },
         )?;
@@ -880,7 +859,7 @@ where
             .zip(cfg_iter!(t_all))
             .for_each(|(dst, t_i)| {
                 if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                    decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
                 }
             });
         #[cfg(not(feature = "parallel"))]
@@ -889,30 +868,25 @@ where
             .zip(t_all.iter())
             .for_each(|(dst, t_i)| {
                 if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                    decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
                 }
             });
 
         Ok(t_hat)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
     pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(block_len)?;
-        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+        let blocks = self.blocks_for(plan.block_len)?;
+        let zero_block_len = plan.n_a.checked_mul(plan.num_digits_open).ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "one-hot inner commitment digit block count overflow".to_string(),
             )
@@ -920,9 +894,9 @@ where
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
-                n_a,
-                block_len,
-                num_digits_commit,
+                n_a: plan.n_a,
+                block_len: plan.block_len,
+                num_digits_commit: plan.num_digits_commit,
                 blocks: blocks.commit_plan_blocks(),
             },
         )?;
@@ -934,13 +908,13 @@ where
             .zip(cfg_iter!(t))
             .for_each(|(dst, t_i)| {
                 if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                    decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
                 }
             });
         #[cfg(not(feature = "parallel"))]
         dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
             if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
             }
         });
 

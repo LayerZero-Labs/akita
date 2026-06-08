@@ -262,17 +262,12 @@ where
     }
 
     #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
     pub fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_rows: usize,
-        block_len: usize,
         num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
@@ -281,44 +276,43 @@ where
             prepared,
             RecursiveWitnessCommitRowsPlan {
                 coeffs: self.coeffs,
-                n_rows,
-                block_len,
+                n_rows: plan.n_a,
+                block_len: plan.block_len,
                 num_blocks,
-                num_digits_commit,
-                log_basis,
+                num_digits_commit: plan.num_digits_commit,
+                log_basis: plan.log_basis,
             },
         )?;
 
         let block_sizes: Vec<usize> = t_all
             .iter()
-            .map(|t_i| t_i.len() * num_digits_open)
+            .map(|t_i| t_i.len() * plan.num_digits_open)
             .collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
         let dst_blocks = t_hat.split_blocks_mut();
         #[cfg(feature = "parallel")]
         cfg_into_iter!(dst_blocks)
             .zip(cfg_iter!(t_all))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+            .for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+            });
         #[cfg(not(feature = "parallel"))]
         dst_blocks
             .into_iter()
             .zip(t_all.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+            .for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+            });
         Ok(t_hat)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    #[allow(clippy::too_many_arguments)]
     pub fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_rows: usize,
-        block_len: usize,
         num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
@@ -327,26 +321,33 @@ where
             prepared,
             RecursiveWitnessCommitRowsPlan {
                 coeffs: self.coeffs,
-                n_rows,
-                block_len,
+                n_rows: plan.n_a,
+                block_len: plan.block_len,
                 num_blocks,
-                num_digits_commit,
-                log_basis,
+                num_digits_commit: plan.num_digits_commit,
+                log_basis: plan.log_basis,
             },
         )?;
 
-        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+        let block_sizes: Vec<usize> = t
+            .iter()
+            .map(|t_i| t_i.len() * plan.num_digits_open)
+            .collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
         let dst_blocks = t_hat.split_blocks_mut();
         #[cfg(feature = "parallel")]
         cfg_into_iter!(dst_blocks)
             .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+            .for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+            });
         #[cfg(not(feature = "parallel"))]
         dst_blocks
             .into_iter()
             .zip(t.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+            .for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+            });
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows: t_hat,
@@ -416,16 +417,9 @@ where
         source: RecursiveWitnessOpeningView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        source.witness.commit_inner(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            source.num_blocks,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source
+            .witness
+            .commit_inner(self, prepared, source.num_blocks, plan)
     }
 
     fn commit_inner_witness(
@@ -434,16 +428,9 @@ where
         source: RecursiveWitnessOpeningView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.witness.commit_inner_witness(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            source.num_blocks,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source
+            .witness
+            .commit_inner_witness(self, prepared, source.num_blocks, plan)
     }
 }
 

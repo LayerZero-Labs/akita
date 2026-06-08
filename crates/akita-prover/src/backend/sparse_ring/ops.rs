@@ -156,15 +156,7 @@ where
         source: SparseRingCommitView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        source.poly.commit_inner(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner(self, prepared, plan)
     }
 
     fn commit_inner_witness(
@@ -173,15 +165,7 @@ where
         source: SparseRingCommitView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner_witness(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner_witness(self, prepared, plan)
     }
 }
 

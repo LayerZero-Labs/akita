@@ -190,15 +190,7 @@ where
         source: RootTensorProjectionView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        source.poly.commit_inner(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner(self, prepared, plan)
     }
 
     fn commit_inner_witness(
@@ -207,15 +199,7 @@ where
         source: RootTensorProjectionView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner_witness(
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner_witness(self, prepared, plan)
     }
 }
 
@@ -573,59 +557,29 @@ where
         dispatch_root_projection!(self, poly => poly.tensor_packed_extension_root_poly::<E>())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<akita_types::FlatDigitBlocks<D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        dispatch_root_projection!(self, poly => {
-            poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            )
-        })
+        dispatch_root_projection!(self, poly => poly.commit_inner(backend, prepared, plan))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<crate::CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
         B: CommitmentComputeBackend<F>,
     {
-        dispatch_root_projection!(self, poly => {
-            poly.commit_inner_witness(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            )
-        })
+        dispatch_root_projection!(self, poly => poly.commit_inner_witness(backend, prepared, plan))
     }
 }
 

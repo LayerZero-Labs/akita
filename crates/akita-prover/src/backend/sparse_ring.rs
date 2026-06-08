@@ -16,7 +16,9 @@ use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
+use crate::compute::{
+    CommitInnerPlan, CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan,
+};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
@@ -412,43 +414,49 @@ where
         )?))
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
-        decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)
+        let t = self.commit_inner_rows(
+            backend,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+        )?;
+        decompose_commit_rows::<F, D>(&t, plan.n_a, plan.num_digits_open, plan.log_basis)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner_witness")]
     pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
-        let decomposed_inner_rows =
-            decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)?;
+        let t = self.commit_inner_rows(
+            backend,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            plan.num_digits_commit,
+        )?;
+        let decomposed_inner_rows = decompose_commit_rows::<F, D>(
+            &t,
+            plan.n_a,
+            plan.num_digits_open,
+            plan.log_basis,
+        )?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows,

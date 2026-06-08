@@ -686,11 +686,13 @@ mod tests {
                         .commit_inner_witness(
                             &CpuBackend,
                             &prepared,
-                            lp.a_key.row_len(),
-                            lp.block_len,
-                            lp.num_digits_commit,
-                            lp.num_digits_open,
-                            lp.log_basis,
+                            akita_prover::compute::CommitInnerPlan {
+                                n_a: lp.a_key.row_len(),
+                                block_len: lp.block_len,
+                                num_digits_commit: lp.num_digits_commit,
+                                num_digits_open: lp.num_digits_open,
+                                log_basis: lp.log_basis,
+                            },
                         )
                         .unwrap();
                     CpuBackend
