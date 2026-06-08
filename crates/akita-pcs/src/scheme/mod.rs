@@ -7,8 +7,12 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 use akita_prover::{
+    compute::{
+        AkitaRootPoly, RootCommitKernel, RootCommitSource, RootTensorSource,
+        TensorProjectionKernel,
+    },
     AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
-    ProverComputeBackend,
+    ProverComputeBackend, RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -62,7 +66,8 @@ where
         + FromPrimitiveInt
         + PseudoMersenneField
         + Valid
-        + AkitaSerialize,
+        + AkitaSerialize
+        + 'static,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>
@@ -70,12 +75,14 @@ where
         + FromPrimitiveInt
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + 'static,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ClaimField = Cfg::ClaimField;
+    type TensorField = Cfg::ChallengeField;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F, Cfg::ChallengeField>;
 
@@ -104,8 +111,20 @@ where
         polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        P: AkitaRootPoly<F, D>,
+        B: CommitmentComputeBackend<F>
+            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+            + for<'a> TensorProjectionKernel<
+                <P as RootTensorSource<F, D>>::TensorView<'a>,
+                F,
+                Self::TensorField,
+                D,
+            >
+            + for<'a> RootCommitKernel<
+                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+                F,
+                D,
+            >,
     {
         akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
     }
@@ -119,8 +138,20 @@ where
         polys_per_point: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        P: AkitaRootPoly<F, D>,
+        B: CommitmentComputeBackend<F>
+            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+            + for<'a> TensorProjectionKernel<
+                <P as RootTensorSource<F, D>>::TensorView<'a>,
+                F,
+                Self::TensorField,
+                D,
+            >
+            + for<'a> RootCommitKernel<
+                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+                F,
+                D,
+            >,
     {
         akita_prover::batched_commit::<Cfg, D, P, B>(
             polys_per_point,

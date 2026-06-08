@@ -1,20 +1,26 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
-use crate::{AkitaPolyOps, ProverClaims};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use crate::compute::{
+    AkitaRootPoly, CommitmentComputeBackend, ProverComputeBackend, RootCommitKernel,
+    RootCommitSource, RootTensorSource, TensorProjectionKernel,
+};
+use crate::{AkitaPolyOps, ProverClaims, RootTensorProjectionPoly};
+use akita_field::unreduced::HasWide;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, SetupContributionMode};
+use akita_types::{BasisMode, RingSubfieldEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over base field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
+/// Caller-provided root polynomials are provided as `impl AkitaRootPoly<F, D>`
+/// for commit paths; prove still accepts `impl AkitaPolyOps<F, D>` until the
+/// flow cutover lands.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
@@ -24,6 +30,8 @@ where
     type Commitment: Clone + Send + Sync;
     /// Public opening point and claimed-evaluation field.
     type ClaimField: ExtField<F>;
+    /// Extension field used for root tensor projection during commit.
+    type TensorField: ExtField<F> + RingSubfieldEncoding<F> + 'static;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -64,8 +72,20 @@ where
         polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        P: AkitaRootPoly<F, D>,
+        B: CommitmentComputeBackend<F>
+            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+            + for<'a> TensorProjectionKernel<
+                <P as RootTensorSource<F, D>>::TensorView<'a>,
+                F,
+                Self::TensorField,
+                D,
+            >
+            + for<'a> RootCommitKernel<
+                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+                F,
+                D,
+            >;
 
     /// Commit one polynomial bundle per opening point under a shared root
     /// layout matched to the corresponding multipoint batched prove.
@@ -88,8 +108,20 @@ where
         polys_per_point: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        P: AkitaRootPoly<F, D>,
+        B: CommitmentComputeBackend<F>
+            + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+            + for<'a> TensorProjectionKernel<
+                <P as RootTensorSource<F, D>>::TensorView<'a>,
+                F,
+                Self::TensorField,
+                D,
+            >
+            + for<'a> RootCommitKernel<
+                <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+                F,
+                D,
+            >;
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///
