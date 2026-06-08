@@ -7,15 +7,14 @@
 //! field-free: it describes schedule structure only, and the evaluation field
 //! is chosen when a descriptor is later evaluated.
 //!
-//! This PR ships the stage-2 stub: a single regular stage-2 instance, fused at
-//! intermediate levels and relation-only at the terminal (cleartext-witness)
-//! level (selected by [`LevelRole`]). The y-ring trace term, the folded-witness
-//! L2 certificate, and the setup-claim offloading Stage-3 instance are
-//! gate-driven additions made by later nodes; the stub rejects those gates
-//! rather than silently emitting the wrong schedule. The plan is also the
-//! single place gamma-power batching is allocated (via [`BatchingScheme`]), so
-//! trace, L2, and offloading instances cannot collide on the same power once
-//! they are added.
+//! Today [`plan_level`] emits only the baseline stage-2 schedule: one regular
+//! instance, fused at intermediate levels and relation-only at the terminal
+//! cleartext-witness level ([`LevelRole`]). Optional gates select future
+//! extensions (y-ring trace fusion, folded-witness L2 certificate, setup-claim
+//! offloading); when a gate is enabled but not yet implemented, planning
+//! fails rather than emitting an incomplete schedule. [`BatchingScheme`] is
+//! the single place cross-instance gamma powers are allocated so extensions
+//! cannot collide on the same exponent.
 
 use akita_field::AkitaError;
 use akita_sumcheck::descriptor::{ClaimSlot, InstanceKind, SumcheckInstanceDescriptor};
@@ -30,23 +29,17 @@ use crate::stage2::stage2_descriptor;
 /// the schedule's `next_w_len`, so the prover and verifier obtain identical
 /// plans for identical inputs.
 ///
-/// Each non-`zk` gate is a forward extension point. Today `plan_level` emits
-/// only the baseline stage-2 schedule and rejects an enabled gate rather than
-/// guessing a schedule; the feature nodes (`F-yring`, `F-l2`, `F-offload`) own
-/// the instance lists, transcript-schedule additions, and per-realization proof
-/// shapes those gates select when they rebase onto this plan. The gates live
-/// here only so the plan stays the single place gamma-power batching is
-/// allocated, so the features cannot collide on a power once they are added.
+/// Each non-`zk` gate is an extension point. Today `plan_level` rejects an
+/// enabled gate until that extension wires its instances and transcript events
+/// into this plan. Gates live here so gamma-power batching stays centralized
+/// in [`BatchingScheme`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ProtocolGates {
-    /// Fuse the y-ring trace term into the stage-2 instance (node F-yring).
+    /// Fuse the y-ring trace term into the stage-2 instance.
     pub trace: bool,
-    /// Emit the folded-witness L2 certificate instances (node F-l2). The
-    /// certificate's realization taxonomy and per-realization proof shape are
-    /// the F-l2 node's concern, defined when it wires this gate onto the plan;
-    /// the plan only records that the level requested a certificate.
+    /// Emit folded-witness L2 certificate sumcheck instances for this level.
     pub l2_certificate: bool,
-    /// Append a Stage-3 setup product-sumcheck instance (node F-offload).
+    /// Append a stage-3 setup product-sumcheck instance (setup-claim offloading).
     pub setup_offload: bool,
     /// Use ZK committed-round sinks. Does not change the instance list or the
     /// transcript schedule emitted here; only the prover's sink differs.
@@ -74,9 +67,9 @@ pub enum LevelRole {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BatchingScheme {
     /// One instance proven on its own; there is no cross-instance batching
-    /// coefficient. Any intra-instance fusion (e.g. stage 2's
-    /// virtual-vs-relation gamma) is carried by the instance's own
-    /// `Source::Challenge`, not by this scheme.
+    /// coefficient. Intra-instance fusion (for example stage 2's virtual
+    /// sub-claim weighted by gamma) is carried by [`SubClaim::weight`] on that
+    /// instance's summand, not by this scheme.
     Standalone,
     /// Several regular instances linearly combined into one batched sumcheck;
     /// `gamma_powers[i]` is the exponent of the batching challenge applied to
@@ -177,8 +170,7 @@ pub struct LevelProtocolPlan<O, P, C> {
 /// Pure and panic-free: identical inputs yield identical plans on both sides.
 /// This stub emits the baseline stage-2 schedule (one regular instance: fused
 /// at [`LevelRole::Intermediate`], relation-only at [`LevelRole::Terminal`])
-/// and rejects the trace, L2-certificate, and setup-offload gates, which later
-/// nodes wire in.
+/// and rejects unimplemented trace, L2-certificate, and setup-offload gates.
 ///
 /// # Errors
 ///
@@ -194,8 +186,9 @@ pub fn plan_level<const D: usize>(
 ) -> Result<LevelProtocolPlan<AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
     if gates.trace || gates.l2_certificate || gates.setup_offload {
         return Err(AkitaError::InvalidInput(
-            "plan_level currently emits only the baseline stage-2 schedule; the trace, \
-             L2-certificate, and setup-offload gates are wired by later nodes"
+            "plan_level currently emits only the baseline stage-2 schedule; enable \
+             trace, L2-certificate, or setup-offload only after those extensions \
+             are implemented"
                 .to_string(),
         ));
     }

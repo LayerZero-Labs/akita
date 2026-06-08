@@ -1,32 +1,24 @@
-//! Stage-2 sumcheck descriptor: a weighted sum of named sub-claims.
+//! Stage-2 sumcheck descriptor.
 //!
-//! This is the worked example of the descriptor abstraction. The verifier's
-//! current hand-inlined `expected_output_claim` equation
-//! (`crates/akita-verifier/src/stages/stage2.rs`) is
+//! Stage 2 proves a degree-3 sum over the boolean hypercube. The summand is a
+//! weighted sum of named sub-claims ([`stage2_summand`]):
 //!
 //! ```text
 //! g(r) = gamma * eq(stage1_point, r) * W(r) * (W(r) + 1)   // virtual sub-claim
 //!       + W(r) * alpha(r_y) * row(r_x)                      // relation sub-claim
 //! ```
 //!
-//! over the boolean hypercube, degree 3. The summand is a weighted sum of two
-//! named sub-claims ([`stage2_summand`]):
+//! - *Virtual* norm/range sub-claim ([`stage2_virtual_subclaim`]): body
+//!   `eq * W * (W + 1)` (expanded to `eq*W*W + eq*W`), weighted by the
+//!   Fiat-Shamir batching coefficient `gamma` on [`SubClaim::weight`].
+//! - *Relation* sub-claim ([`stage2_relation_subclaim`]): body `W * alpha * row`,
+//!   unweighted.
 //!
-//! - the *virtual* norm/range sub-claim, body `eq * W * (W + 1)` (expanded to
-//!   the two monomials `eq*W*W + eq*W`), weighted by the Fiat-Shamir batching
-//!   coefficient `gamma` ([`stage2_virtual_subclaim`]);
-//! - the *relation* sub-claim, body `W * alpha * row`, unweighted
-//!   ([`stage2_relation_subclaim`]).
-//!
-//! Which sub-claims are active is the level's structural choice, carried by
-//! [`LevelRole`]. An *intermediate* fold level keeps the witness committed and
-//! fuses the virtual sub-claim onto the relation sub-claim. A *terminal* level
-//! opens the witness in the clear, so there is no carried virtual claim and the
-//! summand keeps only the relation sub-claim. The terminal summand is therefore
-//! literally the intermediate summand with the virtual sub-claim dropped, not a
-//! separate expression: the structural fact the verifier previously encoded
-//! numerically by running the fused equation with `gamma = 0`, a zero
-//! `s_claim`, and a fabricated zero `stage1_point`.
+//! [`LevelRole`] selects which sub-claims are active. An intermediate fold level
+//! keeps the witness committed and fuses both sub-claims. A terminal level opens
+//! the witness in the clear, so the summand keeps only the relation sub-claim.
+//! That is structural (the virtual sub-claim is omitted from the descriptor),
+//! not a numeric shortcut such as setting `gamma = 0`.
 
 use akita_sumcheck::descriptor::{
     ClaimSlot, Expr, InstanceKind, Source, SubClaim, SumcheckInstanceDescriptor, Summand, Term,
@@ -101,6 +93,16 @@ pub fn stage2_summand(role: LevelRole) -> AkitaSummand {
         }
         LevelRole::Terminal => Summand::new(vec![stage2_relation_subclaim()]),
     }
+}
+
+/// Whether `descriptor` is the fused intermediate stage-2 instance.
+///
+/// Optimized stage-2 provers use this predicate to confirm a descriptor matches
+/// the intermediate fused shape before taking a hand-tuned code path.
+pub fn matches_stage2_intermediate_descriptor(descriptor: &AkitaSumcheckDescriptor) -> bool {
+    descriptor.label == "stage2-fused-virtual-relation"
+        && descriptor.degree == 3
+        && descriptor.summand.subclaims.len() == 2
 }
 
 /// Build the stage-2 sumcheck instance descriptor for a level.
@@ -193,11 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn stage2_terminal_matches_fused_with_gamma_zero() {
-        // Dropping the virtual sub-claim evaluates to exactly the fused summand
-        // with gamma = 0: the byte-equality bridge. The terminal level dropped
-        // the virtual sub-claim structurally rather than zeroing a challenge,
-        // but computes the same value, so terminal proofs stay byte-identical.
+    fn stage2_terminal_eval_matches_relation_only_summand() {
+        // Relation-only evaluation equals the fused summand with gamma = 0, the
+        // byte-equality bridge while the verifier still uses the legacy equation.
         let (eq, w, alpha, row) = (f(5), f(7), f(11), f(13));
         let fused_gamma_zero = eval_stage2(LevelRole::Intermediate, F::zero(), eq, w, alpha, row);
         let terminal = eval_terminal(w, alpha, row);

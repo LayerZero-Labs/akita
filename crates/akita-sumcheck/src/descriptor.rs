@@ -1,42 +1,33 @@
-//! Declarative sumcheck descriptor algebra.
+//! Sumcheck descriptor algebra.
 //!
-//! A sumcheck instance's round-polynomial summand is a sum of products over
-//! typed sources (openings, challenges, publics). The same descriptor is
-//! consumed by both sides of the protocol: the prover resolves an opening to a
-//! witness view, the verifier resolves it to a claimed evaluation. Keeping one
-//! object for both sides means the verifier's expected-output equation and the
-//! prover's round polynomial cannot drift apart.
+//! A sumcheck instance is described by what gets summed over the boolean
+//! hypercube each round. Here that description has three layers:
 //!
-//! This module owns the generic, protocol-independent algebra. It is generic
-//! over the identifier types and names no protocol-specific identifier or
-//! equation; the concrete `Akita*Id` types and the per-stage formula
-//! constructors live in `akita-protocol`.
+//! - [`Term`]: one monomial, `coefficient * product(sources)`.
+//! - [`Expr`]: a sum of terms (the body of one sub-claim).
+//! - [`Summand`]: a weighted sum of named [`SubClaim`]s,
+//!   `g(x) = Σ weight_c · body_c(x)`.
 //!
-//! All sumcheck rounds here are over the boolean hypercube: there is no domain
-//! field and no univariate-skip support. The evaluator
-//! ([`Expr::try_evaluate`]) is fallible and panic-free so it can sit inside the
-//! verifier no-panic boundary.
+//! The same [`SumcheckInstanceDescriptor`] is used on both sides of the
+//! protocol. The verifier calls [`SumcheckInstanceDescriptor::try_evaluate`] to
+//! obtain the expected output claim; the prover walks the same summand over
+//! witness oracles. Only how each [`Source`] is resolved
+//! differs (claimed evaluation vs witness table).
 //!
-//! The descriptor structure is field-free: a term's `coefficient` is a small
-//! integer, and the *evaluation* field is chosen at [`Expr::try_evaluate`]
-//! time. This matches Akita's field reality, where base-field witness/setup
-//! coefficients and extension-field weights only meet inside each
-//! [`Source`]-resolver (the `base * extension` `mul_base` paths), while the
-//! sum-of-products combination the descriptor describes is performed in the
-//! single evaluation field the resolvers all return.
+//! This module is generic over identifier types (`O`/`P`/`C`) and names no
+//! protocol-specific opening or equation. Concrete Akita identifiers and
+//! per-stage formulas live in `akita-protocol`.
 //!
-//! A descriptor's summand is one layer above the sum-of-products: it is a
-//! weighted sum of named [`SubClaim`]s, `g(x) = Σ_c weight_c · body_c(x)`, where
-//! each body is an [`Expr`] (sum of products) and each `weight_c` is an optional
-//! Fiat-Shamir challenge. Which sub-claims are active is the structural variable
-//! a level's plan controls (e.g. fusing a norm/range sub-claim onto a relation
-//! sub-claim, or dropping it at a cleartext tail). Pulling the weight out of the
-//! body keeps the two coefficient roles distinct: a monomial's structural
-//! integer multiplier stays in [`Term::coefficient`], while every Fiat-Shamir
-//! weight is a [`SubClaim::weight`], allocated centrally by the plan. The same
-//! weighting is what cross-instance batching applies one level up, so fusing
-//! sub-claims into one instance and batching separate instances are the same
-//! operation at different granularities.
+//! Types are field-free: integer monomial coefficients are lifted at evaluation
+//! time, and the evaluation field is chosen by the caller. Every evaluator entry
+//! point is fallible and panic-free for verifier-reachable use.
+//!
+//! Fiat-Shamir weights belong on [`SubClaim::weight`], not inside term bodies.
+//! That keeps monomial integer coefficients ([`Term::coefficient`]) separate
+//! from challenge scalars. A level's plan chooses which sub-claims are active
+//! (for example fusing a carried norm/range claim with a relation claim, or
+//! dropping the carried claim at a cleartext tail). The same weighting pattern
+//! applies one level up when several instances are batched together.
 
 use akita_field::{AkitaError, FromPrimitiveInt, RingCore};
 
@@ -58,11 +49,11 @@ pub enum Source<O, P, C> {
 
 /// A single monomial `coefficient * product(factors)`.
 ///
-/// `coefficient` is a small integer lifted into the evaluation field at
-/// [`Expr::try_evaluate`] time (every protocol coefficient is a structural
-/// constant such as `1` or `-1`; field-valued weights are carried by
-/// [`Source`] factors, not the coefficient). An empty `factors` list denotes
-/// the bare constant `coefficient`.
+/// `coefficient` is a small integer (typically `1` or `-1`) lifted into the
+/// evaluation field at evaluation time. Fiat-Shamir weights belong on
+/// [`SubClaim::weight`]; [`Source::Challenge`] in a body is reserved for the
+/// rare case a challenge multiplies inside a monomial rather than scaling a
+/// whole sub-claim. An empty `factors` list is the bare constant `coefficient`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term<O, P, C> {
     /// Integer multiplier applied to the product of `factors`.
@@ -121,12 +112,12 @@ pub struct Summand<O, P, C> {
     pub subclaims: Vec<SubClaim<O, P, C>>,
 }
 
-/// Whether a sumcheck instance is batchable and which wire format it uses.
+/// Whether a sumcheck instance may be batched with others and which proof wire
+/// format it uses on the transcript.
 ///
-/// This is the proof-format / batchability axis. It is orthogonal to the
-/// prover-compute axis (Gruen split-eq, compact-integer scan, ...): Gruen
-/// split-eq is a compute optimization that an [`InstanceKind::EqFactored`]
-/// instance keeps even when batching forces the regular wire format.
+/// Proof format is separate from how the prover computes round polynomials: an
+/// eq-factored instance may still use split-eq internally even when batching
+/// forces the regular compressed wire format on the transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InstanceKind {
     /// Arbitrarily batchable; serializes in the regular compressed format.
@@ -147,9 +138,9 @@ pub struct ClaimSlot(pub usize);
 
 /// A fully declarative sumcheck instance.
 ///
-/// The same descriptor drives the verifier's expected-output equation (via
-/// [`Self::try_evaluate`]) and the prover's round-polynomial computation; only
-/// the resolution of each [`Source`] differs between the two sides.
+/// The same descriptor drives verifier evaluation ([`Self::try_evaluate`]) and
+/// prover round polynomials; only how each [`Source`] is resolved differs
+/// between the two sides.
 ///
 /// Field-free: generic only over the identifier types `O`/`P`/`C`. The
 /// evaluation field is chosen at [`Self::try_evaluate`] time (the verifier
@@ -162,7 +153,7 @@ pub struct SumcheckInstanceDescriptor<O, P, C> {
     pub label: &'static str,
     /// Number of boolean-hypercube rounds.
     pub num_rounds: usize,
-    /// Total degree of `poly` in the round variable.
+    /// Total degree of the summand in the round variable.
     pub degree: usize,
     /// Batchability / wire-format class.
     pub kind: InstanceKind,

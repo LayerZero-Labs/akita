@@ -30,7 +30,7 @@ pub enum AkitaPublicId {
 /// Fiat-Shamir scalar identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AkitaChallengeId {
-    /// The gamma batching coefficient fusing the virtual-claim sumcheck into
-    /// the relation sumcheck.
+    /// Fiat-Shamir weight on the stage-2 virtual norm/range sub-claim when fused
+    /// with the relation sub-claim at an intermediate level.
     BatchingCoeff,
 }
