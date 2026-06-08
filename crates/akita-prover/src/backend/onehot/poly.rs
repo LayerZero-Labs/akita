@@ -91,6 +91,18 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         self.onehot_k
     }
 
+    /// Total number of variables (`log2(total field evaluation slots)`).
+    #[inline]
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    /// Total number of ring elements in the polynomial.
+    #[inline]
+    pub fn num_ring_elems(&self) -> usize {
+        self.total_ring_elems
+    }
+
     /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
     #[inline]
     pub fn indices(&self) -> &[Option<I>] {

@@ -69,6 +69,228 @@ where
     }))
 }
 
+#[test]
+fn onehot_kernel_tensor_paths_match_akitapolyops() {
+    type F = Prime24Offset3;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    const D: usize = 16;
+
+    let polys = [
+        OneHotPoly::<F, D>::new(
+            8,
+            vec![
+                Some(0usize),
+                Some(7),
+                None,
+                Some(3),
+                Some(5),
+                Some(1),
+                None,
+                Some(6),
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, D>::new(
+            8,
+            vec![
+                Some(4usize),
+                Some(2),
+                Some(7),
+                None,
+                Some(1),
+                None,
+                Some(5),
+                Some(0),
+            ],
+        )
+        .unwrap(),
+    ];
+    let point = (0..polys[0].num_vars())
+        .map(|idx| {
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(5 * idx as u128 + 2),
+                F::from_canonical_u128_reduced(5 * idx as u128 + 3),
+                F::from_canonical_u128_reduced(5 * idx as u128 + 5),
+                F::from_canonical_u128_reduced(5 * idx as u128 + 7),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let coeffs = vec![
+        E::from_base_slice(&[
+            F::from_canonical_u128_reduced(3),
+            F::from_canonical_u128_reduced(5),
+            F::from_canonical_u128_reduced(7),
+            F::from_canonical_u128_reduced(11),
+        ]),
+        E::from_base_slice(&[
+            F::from_canonical_u128_reduced(13),
+            F::from_canonical_u128_reduced(17),
+            F::from_canonical_u128_reduced(19),
+            F::from_canonical_u128_reduced(23),
+        ]),
+    ];
+    let backend = CpuBackend;
+
+    let tensor_view = polys[0].tensor_view().unwrap();
+    let ops_partials = polys[0]
+        .tensor_extension_column_partials::<E>(&point)
+        .unwrap();
+    let kernel_partials =
+        TensorProjectionKernel::<OneHotTensorView<'_, F, D>, F, E, D>::column_partials(
+            &backend,
+            None,
+            tensor_view,
+            &point,
+        )
+        .unwrap();
+    assert_eq!(kernel_partials, ops_partials);
+
+    let ops_sparse = polys[0]
+        .tensor_packed_extension_sparse_evals::<E>()
+        .unwrap()
+        .unwrap();
+    let kernel_sparse =
+        match TensorProjectionKernel::<OneHotTensorView<'_, F, D>, F, E, D>::packed_witness(
+            &backend,
+            None,
+            tensor_view,
+        )
+        .unwrap()
+        {
+            TensorPackedWitness::Sparse(witness) => witness,
+            TensorPackedWitness::Dense(_) => panic!("onehot kernel must preserve sparse witness"),
+        };
+    assert_eq!(kernel_sparse.table_len(), ops_sparse.table_len());
+    assert_eq!(kernel_sparse.entries(), ops_sparse.entries());
+
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let batch_view = OneHotPoly::<F, D>::tensor_batch(&poly_refs).unwrap();
+    let ops_batch =
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+            &poly_refs, &point,
+        )
+        .unwrap();
+    let kernel_batch =
+        TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
+            &backend,
+            None,
+            batch_view,
+            &point,
+        )
+        .unwrap();
+    assert_eq!(kernel_batch, ops_batch);
+
+    let ops_linear =
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<E>(
+            &poly_refs,
+            &coeffs,
+        )
+        .unwrap()
+        .unwrap();
+    let kernel_linear =
+        TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
+            &backend,
+            None,
+            batch_view,
+            &coeffs,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(kernel_linear.table_len(), ops_linear.table_len());
+    assert_eq!(kernel_linear.entries(), ops_linear.entries());
+}
+
+#[test]
+fn onehot_kernel_batched_decompose_fold_matches_akitapolyops() {
+    type F = Prime24Offset3;
+    const D: usize = 64;
+
+    let block_len = 64;
+    let mut indices0 = vec![None; 128];
+    indices0[0] = Some(1usize);
+    indices0[17] = Some(5usize);
+    indices0[64] = Some(9usize);
+    indices0[91] = Some(33usize);
+    let mut indices1 = vec![None; 128];
+    indices1[3] = Some(7usize);
+    indices1[29] = Some(11usize);
+    indices1[64] = Some(19usize);
+    indices1[100] = Some(21usize);
+    let polys = [
+        OneHotPoly::<F, D>::new(block_len, indices0).unwrap(),
+        OneHotPoly::<F, D>::new(block_len, indices1).unwrap(),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0, 5],
+            coeffs: vec![1, -1],
+        },
+        SparseChallenge {
+            positions: vec![2, 7],
+            coeffs: vec![1, 1],
+        },
+        SparseChallenge {
+            positions: vec![4, 11],
+            coeffs: vec![-1, 2],
+        },
+        SparseChallenge {
+            positions: vec![8, 13],
+            coeffs: vec![1, -2],
+        },
+    ];
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let expected = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+        &poly_refs,
+        &challenges,
+        block_len,
+        1,
+        0,
+    )
+    .unwrap();
+    let batch_view = OneHotPoly::<F, D>::opening_batch(&poly_refs).unwrap();
+    let got = OpeningBatchKernel::<OneHotOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+        &CpuBackend,
+        None,
+        batch_view,
+        DecomposeFoldBatchPlan::Sparse {
+            challenges: &challenges,
+            block_len,
+            num_digits: 1,
+            log_basis: 0,
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn onehot_kernel_direct_witness_matches_akitapolyops() {
+    type F = Prime24Offset3;
+    const D: usize = 16;
+
+    let poly = OneHotPoly::<F, D>::new(
+        8,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(3),
+            Some(5),
+            Some(1),
+            None,
+            Some(6),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        <OneHotPoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap(),
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&poly).unwrap()
+    );
+}
+
 // -------------------------------------------------------------------------
 // Tests for the flat-storage mapping helpers and the sparse inner-Ajtai
 // reference implementation. Originally in `commitment/onehot.rs`.

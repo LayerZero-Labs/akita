@@ -16,7 +16,10 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use crate::compute::{
+    CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldPlan, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RecursiveWitnessCommitRowsPlan, RootCommitKernel,
+};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_types::FlatDigitBlocks;
 use std::marker::PhantomData;
@@ -67,6 +70,13 @@ pub struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
     _marker: PhantomData<F>,
 }
 
+/// Recursive-witness operation view carrying the recursive block layout.
+#[derive(Debug, Clone, Copy)]
+pub struct RecursiveWitnessOpeningView<'a, F: FieldCore, const D: usize> {
+    witness: RecursiveWitnessView<'a, F, D>,
+    num_blocks: usize,
+}
+
 impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
@@ -96,6 +106,21 @@ impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
 
     pub fn num_ring_elems(&self) -> usize {
         self.padded_ring_elems
+    }
+
+    pub fn opening_view(
+        self,
+        num_blocks: usize,
+    ) -> Result<RecursiveWitnessOpeningView<'a, F, D>, AkitaError> {
+        if num_blocks == 0 || !num_blocks.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "recursive witness num_blocks={num_blocks} must be a nonzero power of two"
+            )));
+        }
+        Ok(RecursiveWitnessOpeningView {
+            witness: self,
+            num_blocks,
+        })
     }
 }
 
@@ -329,6 +354,99 @@ where
     }
 }
 
+impl<F, const D: usize> OpeningFoldKernel<RecursiveWitnessOpeningView<'_, F, D>, F, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: RecursiveWitnessOpeningView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let (eval, folded) = match plan {
+            OpeningFoldPlan::Base {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source.witness.evaluate_and_fold(
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+                source.num_blocks,
+            ),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source.witness.evaluate_and_fold_ring(
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+                source.num_blocks,
+            ),
+        };
+        Ok(OpeningFoldOutput { eval, folded })
+    }
+
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: RecursiveWitnessOpeningView<'_, F, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        Ok(source.witness.decompose_fold(
+            plan.challenges,
+            plan.block_len,
+            source.num_blocks,
+            plan.num_digits,
+            plan.log_basis,
+        ))
+    }
+}
+
+impl<F, const D: usize> RootCommitKernel<RecursiveWitnessOpeningView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: RecursiveWitnessOpeningView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        source.witness.commit_inner(
+            self,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            source.num_blocks,
+            plan.num_digits_commit,
+            plan.num_digits_open,
+            plan.log_basis,
+        )
+    }
+
+    fn commit_inner_witness(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: RecursiveWitnessOpeningView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+        source.witness.commit_inner_witness(
+            self,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            source.num_blocks,
+            plan.num_digits_commit,
+            plan.num_digits_open,
+            plan.log_basis,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,5 +502,35 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn recursive_witness_opening_kernel_matches_view_method() {
+        const D: usize = 4;
+        let digits = vec![1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11, -12];
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let num_blocks = 2;
+        let block_len = 2;
+        let fold_scalars = vec![ring::<D>(10), ring::<D>(20)];
+        let eval_outer_scalars = vec![ring::<D>(100), ring::<D>(200)];
+        let expected =
+            view.evaluate_and_fold_ring(&eval_outer_scalars, &fold_scalars, block_len, num_blocks);
+        let opening_view = view.opening_view(num_blocks).unwrap();
+        let got =
+            OpeningFoldKernel::<RecursiveWitnessOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                &CpuBackend,
+                None,
+                opening_view,
+                OpeningFoldPlan::Ring {
+                    eval_outer_scalars: &eval_outer_scalars,
+                    fold_scalars: &fold_scalars,
+                    block_len,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(got.eval, expected.0);
+        assert_eq!(got.folded, expected.1);
     }
 }

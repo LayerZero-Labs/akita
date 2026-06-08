@@ -48,7 +48,11 @@ use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
 use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DirectRootWitnessSource, FlatBlockTable, OneHotCommitBlocks,
+    OneHotCommitRowsPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
@@ -79,4 +83,8 @@ pub(crate) use column_sweep::{column_sweep_ajtai_multi_chunk, column_sweep_ajtai
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_multi_chunk, inner_ajtai_wide_single_chunk_tiled};
+pub use ops::{
+    OneHotCommitView, OneHotOpeningBatchView, OneHotOpeningView, OneHotTensorBatchView,
+    OneHotTensorView,
+};
 pub use poly::OneHotPoly;
