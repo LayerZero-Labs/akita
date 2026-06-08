@@ -1,6 +1,6 @@
 //! Descriptor-driven sumcheck prover.
 //!
-//! [`SumcheckEngine`] evaluates a [`SumcheckInstanceDescriptor`](crate::descriptor::SumcheckInstanceDescriptor)
+//! [`SumcheckEngine`] evaluates a [`SumcheckInstanceDescriptor`]
 //! directly: it walks the descriptor's weighted sub-claims over multilinear
 //! witness and public oracles and emits the standard per-round univariate
 //! messages. Any instance can be proven this way; hand-tuned provers in

@@ -872,3 +872,7 @@ mod descriptor_engine_equivalence;
 
 #[path = "pilot_byte_equality.rs"]
 mod pilot_byte_equality;
+
+#[cfg(feature = "logging-transcript")]
+#[path = "pilot_logging_transcript.rs"]
+mod pilot_logging_transcript;

@@ -8,7 +8,8 @@
 //! Two items make up the vocabulary:
 //!
 //! - [`PolynomialView`]: a borrowed multilinear-evaluation view (an eval slice
-//!   plus its `num_vars` shape). [`SumcheckEngine`] reads this view while
+//!   plus its `num_vars` shape). The descriptor-driven sumcheck engine in
+//!   `akita-sumcheck` reads this view while
 //!   evaluating a descriptor summand; polyops standard views use the same type.
 //! - [`WitnessProvider`]: a fallible, panic-free trait that resolves an opening
 //!   identifier to a [`PolynomialView`].

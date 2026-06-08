@@ -12,7 +12,8 @@ use akita_field::AkitaError;
 /// Evaluations are indexed in little-endian (LSB-first) order: entry `i` holds
 /// the value at the assignment whose `k`-th variable is bit `k` of `i`. The
 /// view borrows the backing slice and stores no copy, so it is cheap to pass to
-/// [`SumcheckEngine`] and the polyops standard views.
+/// the descriptor-driven sumcheck engine in `akita-sumcheck` and the polyops
+/// standard views.
 ///
 /// Construction is fallible: [`PolynomialView::new`] rejects a slice whose
 /// length is not exactly `2^num_vars`, so malformed shapes from untrusted data

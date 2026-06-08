@@ -4,12 +4,12 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_protocol::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
+use akita_protocol::{stage2_descriptor, LevelRole};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckFinalRelation;
-use akita_protocol::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
-use akita_protocol::{stage2_descriptor, LevelRole};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, CleartextWitnessProof, PackedDigits,
@@ -543,8 +543,8 @@ mod tests {
     use super::{field_witness_eval, packed_witness_eval};
     use akita_field::{AkitaError, FieldCore};
     use akita_field::{FpExt2, NegOneNr, Prime128OffsetA7F7};
-    use akita_protocol::{stage2_descriptor, LevelRole};
     use akita_protocol::ids::AkitaPublicId;
+    use akita_protocol::{stage2_descriptor, LevelRole};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
@@ -663,8 +663,7 @@ mod tests {
 
     #[test]
     fn terminal_descriptor_evaluates_relation_only_without_virtual_sources() {
-        let challenges = vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)];
-        let descriptor = stage2_descriptor(challenges.len(), LevelRole::Terminal);
+        let descriptor = stage2_descriptor(3, LevelRole::Terminal);
         let got = descriptor
             .try_evaluate(
                 |_opening| Ok(F::from_u64(7)),
@@ -687,14 +686,13 @@ mod tests {
 
     #[test]
     fn intermediate_descriptor_matches_legacy_fused_equation() {
-        let challenges = vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)];
         let gamma = F::from_u64(17);
         let w = F::from_u64(7);
         let eq = F::from_u64(11);
         let alpha = F::from_u64(13);
         let row = F::from_u64(19);
 
-        let descriptor = stage2_descriptor(challenges.len(), LevelRole::Intermediate);
+        let descriptor = stage2_descriptor(3, LevelRole::Intermediate);
         let via_descriptor = descriptor
             .try_evaluate(
                 |_opening| Ok(w),
