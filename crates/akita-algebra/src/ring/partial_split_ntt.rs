@@ -20,7 +20,8 @@
 
 use super::CyclotomicRing;
 use crate::{CanonicalField, FieldCore, HalvingField};
-use akita_field::{PackedField, Zero};
+use akita_field::packed::PackedField;
+use akita_field::Zero;
 use core::ops::{Add, Mul, Sub};
 use std::array::from_fn;
 

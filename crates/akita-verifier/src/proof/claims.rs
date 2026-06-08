@@ -67,11 +67,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, NegOneNr};
+    use akita_field::{Fp32, FpExt2, NegOneNr};
     use akita_types::{AkitaSetupSeed, CommittedOpenings, FlatMatrix};
 
     type F = Fp32<251>;
-    type E = Fp2<F, NegOneNr>;
+    type E = FpExt2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

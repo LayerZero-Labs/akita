@@ -6,8 +6,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,

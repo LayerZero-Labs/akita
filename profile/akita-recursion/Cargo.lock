@@ -94,7 +94,6 @@ name = "akita-field"
 version = "0.1.0"
 dependencies = [
  "akita-serialization",
- "jolt-field",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
@@ -1236,17 +1235,6 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "jolt-field"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
-dependencies = [
- "num-traits",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "serde",
 ]
 
 [[package]]

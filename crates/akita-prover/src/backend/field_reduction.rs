@@ -1,6 +1,6 @@
 //! Tensor extension-opening packing helpers.
 
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt};
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
@@ -256,12 +256,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, Prime32Offset99, RingSubfieldFp4};
+    use akita_field::{AkitaError, Prime32Offset99, RingSubfieldFpExt4};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {
         type F = Prime32Offset99;
-        type E = RingSubfieldFp4<F>;
+        type E = RingSubfieldFpExt4<F>;
         const D: usize = 32;
         let witness = RecursiveWitnessFlat::from_i8_digits(vec![1, 2, 3]);
 

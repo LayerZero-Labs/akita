@@ -1,7 +1,8 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 use std::time::Instant;
 
-use akita_field::{FieldCore, Invertible, PackedField, RandomSampling, RingCore};
+use akita_field::packed::PackedField;
+use akita_field::{FieldCore, Invertible, RandomSampling, RingCore};
 use criterion::{black_box, Criterion, Throughput};
 use rand::{rngs::StdRng, SeedableRng};
 

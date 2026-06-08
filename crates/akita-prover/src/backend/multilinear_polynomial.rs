@@ -11,7 +11,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::fields::wide::HasWide;
+use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 

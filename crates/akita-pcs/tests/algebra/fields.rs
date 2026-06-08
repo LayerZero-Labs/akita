@@ -2,9 +2,9 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
 use akita_field::{
-    pseudo_mersenne_modulus, Fp2, Fp32, Fp64, Invertible, Prime128Offset159, Prime128Offset2355,
+    pseudo_mersenne_modulus, Fp32, Fp64, FpExt2, Invertible, Prime128Offset159, Prime128Offset2355,
     Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenneField, RandomSampling,
-    TowerBasisFp4, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    TowerBasisFpExt4, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 
 use super::fixtures::{check_solinas_prime, NR, NR4};
@@ -54,10 +54,10 @@ fn fp128_primes_match_biguint_oracle() {
 }
 
 #[test]
-fn fp2_fp4_inversion_smoke() {
+fn fp_ext2_fp_ext4_inversion_smoke() {
     type F = Fp32<251>;
-    type F2 = Fp2<F, NR>;
-    type F4 = TowerBasisFp4<F, NR, NR4>;
+    type F2 = FpExt2<F, NR>;
+    type F4 = TowerBasisFpExt4<F, NR, NR4>;
 
     let x = F2::new(F::from_u64(3), F::from_u64(7));
     let inv = x.inverse().unwrap();
@@ -160,23 +160,23 @@ fn field_identities_fp128() {
 }
 
 #[test]
-fn fp2_conjugate_and_norm() {
+fn fp_ext2_conjugate_and_norm() {
     type F = Fp32<251>;
-    type F2 = Fp2<F, NR>;
+    type F2 = FpExt2<F, NR>;
     let x = F2::new(F::from_u64(3), F::from_u64(7));
     let conj = x.conjugate();
     assert!(conj == F2::new(F::from_u64(3), -F::from_u64(7)));
-    // For Fp2 with u^2 = -1: norm = c0^2 + c1^2 = 9 + 49 = 58
+    // For FpExt2 with u^2 = -1: norm = c0^2 + c1^2 = 9 + 49 = 58
     assert_eq!(x.norm(), F::from_u64(58));
-    // x * conjugate(x) should embed the norm into Fp2
+    // x * conjugate(x) should embed the norm into FpExt2
     let prod = x * conj;
     assert!(prod == F2::new(F::from_u64(58), F::zero()));
 }
 
 #[test]
-fn fp2_distributivity() {
+fn fp_ext2_distributivity() {
     type F = Fp32<251>;
-    type F2 = Fp2<F, NR>;
+    type F2 = FpExt2<F, NR>;
     let a = F2::new(F::from_u64(3), F::from_u64(7));
     let b = F2::new(F::from_u64(11), F::from_u64(5));
     let c = F2::new(F::from_u64(2), F::from_u64(9));
