@@ -716,10 +716,28 @@ that already own their invariants:
   `crates/akita-prover/src/protocol/quadratic_equation.rs`, depending on where
   the owning witness state naturally lives.
 
-Avoid moving all implementation code into `compute.rs`. `compute.rs` should own
-backend traits, shared operation plans, and the CPU backend's setup-dependent
-low-level kernels. Representation-specific view construction and algorithms
-should stay with the representation modules.
+Avoid moving all implementation code into the compute module tree.
+`crates/akita-prover/src/compute/` should own backend traits, shared operation
+plans, and the CPU backend's setup-dependent low-level kernels.
+Representation-specific view construction and algorithms should stay with the
+representation modules.
+
+PO1 landed the tree as sibling modules under `compute/` (all re-exported from
+`compute/mod.rs` so `crate::compute::…` paths stay stable):
+
+| Module | Role |
+| --- | --- |
+| `plans.rs` | Legacy row/commit plan structs and `FlatBlockTable` |
+| `backend.rs` | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
+| `cpu.rs` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
+| `operation_plans.rs` | Scalar PO1 operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
+| `kernels.rs` | Source-typed operation kernel traits generic over view `S` |
+| `poly.rs` | Root polynomial capability traits (`RootPolyShape`, `RootCommitSource`, …) |
+| `stack.rs` | `OperationCtx` and heterogeneous `ProverComputeStack` |
+
+The split exists to satisfy the repository 1500-line cap without changing
+semantics. New compute-boundary work should land in the matching sibling module,
+not grow a single file back toward monolith size.
 
 ### Operation Mapping
 
@@ -765,12 +783,12 @@ Affected public and semi-public surfaces:
   operation commit context and `RootCommitKernel<_, F, D>` bounds.
 - `crates/akita-prover/src/api/scheme.rs`: update docs and bounds away from
   `impl AkitaPolyOps`.
-- `crates/akita-prover/src/compute.rs`: replace the public fixed
+- `crates/akita-prover/src/compute/`: replace the public fixed
   `CommitmentComputeBackend`, `RingSwitchComputeBackend`, and
-  `ProverComputeBackend` surfaces with operation contexts plus source-typed
-  commit/ring-switch/opening/tensor kernels. Low-level standard row helpers may
-  remain public if they are useful building blocks, but protocol APIs must not
-  depend on them as the main abstraction.
+  `ProverComputeBackend` surfaces (today in `backend.rs`) with operation
+  contexts plus source-typed commit/ring-switch/opening/tensor kernels. Low-level
+  standard row helpers in `cpu.rs` may remain public if they are useful building
+  blocks, but protocol APIs must not depend on them as the main abstraction.
 - `crates/akita-prover/src/protocol/flow.rs`: replace root claim evaluation,
   extension opening reduction, tensor projection, and root tensor projection
   call sites with provider/view plus operation-context kernel calls.
@@ -853,7 +871,7 @@ Implementation requirements:
 
 ### Relationship To Current Compute Backend
 
-This spec extends the design already present in `compute.rs`.
+This spec extends the design already present in `crates/akita-prover/src/compute/`.
 
 Similarities:
 
@@ -1038,9 +1056,9 @@ Expected implementation diff:
 
 - `crates/akita-prover/src/lib.rs`: large deletion of `AkitaPolyOps`, smaller
   re-export additions for new traits.
-- `crates/akita-prover/src/compute.rs`: substantial replacement of the fixed
-  commitment/ring-switch/prover backend surfaces with operation contexts,
-  source-kernel traits, and standard helper kernels.
+- `crates/akita-prover/src/compute/`: substantial replacement of the fixed
+  commitment/ring-switch/prover backend surfaces (`backend.rs`) with operation
+  contexts, source-kernel traits, and standard helper kernels (`cpu.rs`).
 - `crates/akita-prover/src/backend/*.rs`: moderate churn moving impl blocks
   from `AkitaPolyOps` to provider/view/kernel impls.
 - `crates/akita-prover/src/protocol/flow.rs` and
@@ -1062,8 +1080,9 @@ left as a compatibility path beside the new one.
   `AkitaPolyOps` cutover notes there.
 - [`crates/akita-prover/src/lib.rs`](../crates/akita-prover/src/lib.rs):
   current `AkitaPolyOps` definition and blanket reference impl.
-- [`crates/akita-prover/src/compute.rs`](../crates/akita-prover/src/compute.rs):
-  current typed compute backend setup and low-level commit/ring-switch plans.
+- [`crates/akita-prover/src/compute/`](../crates/akita-prover/src/compute/):
+  typed compute backend setup, low-level commit/ring-switch plans, and PO1
+  source-typed kernel trait skeletons.
 - [`crates/akita-prover/src/backend/dense.rs`](../crates/akita-prover/src/backend/dense.rs):
   dense root implementation, tensor dense paths, and dense decompose-fold.
 - [`crates/akita-prover/src/backend/onehot.rs`](../crates/akita-prover/src/backend/onehot.rs):
