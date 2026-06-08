@@ -656,7 +656,6 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
                 use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 

@@ -96,8 +96,11 @@ mod tests {
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
+    use akita_prover::compute::{
+        OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    };
     use akita_prover::{
-        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
+        ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
         RootCommitPolys,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -114,6 +117,46 @@ mod tests {
     use std::array::from_fn;
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
+
+    fn dense_evaluate_and_fold<F: CanonicalField, const D: usize>(
+        poly: &DensePoly<F, D>,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let OpeningFoldOutput { eval, folded } = OpeningFoldKernel::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        (eval, folded)
+    }
+
+    fn dense_evaluate_and_fold_ring<F: CanonicalField, const D: usize>(
+        poly: &DensePoly<F, D>,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let OpeningFoldOutput { eval, folded } = OpeningFoldKernel::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            },
+        )
+        .expect("evaluate_and_fold_ring");
+        (eval, folded)
+    }
 
     fn single_point_group_incidence(
         num_vars: usize,
@@ -305,7 +348,8 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (y_ring, e_folded) = poly.evaluate_and_fold_ring(
+        let (y_ring, e_folded) = dense_evaluate_and_fold_ring(
+            &poly,
             ring_multiplier_point
                 .b_rings()
                 .expect("nonconstant test point has ring b weights"),
@@ -323,7 +367,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -445,8 +489,12 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) =
-            poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
+        let (y_ring, e_folded) = dense_evaluate_and_fold(
+            &poly,
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            lp.block_len,
+        );
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -456,7 +504,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -614,7 +662,8 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) = poly.evaluate_and_fold(
+        let (y_ring, e_folded) = dense_evaluate_and_fold(
+            &poly,
             &ring_opening_point.b,
             &ring_opening_point.a,
             level_params.block_len,
@@ -628,7 +677,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, AkitaTranscript<F>, DensePoly<F, D>, CpuBackend>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point.clone()],

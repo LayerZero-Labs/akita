@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
 mod tensor_fold;
@@ -327,20 +327,12 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     }
 }
 
-impl<F, const D: usize> AkitaPolyOps<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> SparseRingPoly<F, D>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.total_ring_elems
-    }
-
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
             .blocks_for(block_len)
             .expect("SparseRingPoly::fold_blocks: invalid block_len");
@@ -349,7 +341,7 @@ where
             .collect()
     }
 
-    fn fold_blocks_ring(
+    pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
@@ -362,7 +354,19 @@ where
             .collect()
     }
 
-    fn evaluate_and_fold_ring(
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_and_fold_ring(
         &self,
         eval_outer_scalars: &[CyclotomicRing<F, D>],
         fold_scalars: &[CyclotomicRing<F, D>],
@@ -377,7 +381,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -396,7 +400,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
-    fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
@@ -408,8 +412,9 @@ where
         )?))
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    fn commit_inner<B>(
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -426,8 +431,9 @@ where
         decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner_witness")]
-    fn commit_inner_witness<B>(
+    pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -449,7 +455,84 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+
+    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::MulBaseUnreduced<F>,
+    {
+        let num_vars = self.num_vars();
+        if logical_point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor partials require field-element root witness".to_string(),
+            )
+        })?;
+        akita_types::tensor_column_partials_from_base_evals::<F, E>(
+            num_vars,
+            field_elems.coeffs(),
+            logical_point,
+        )
+    }
+
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor projection requires field-element root witness".to_string(),
+            )
+        })?;
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        Ok(None)
+    }
+
+    pub(crate) fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<crate::backend::RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + akita_field::FromPrimitiveInt,
+        E: akita_types::RingSubfieldEncoding<F>,
+    {
+        let evals = self.tensor_packed_extension_evals::<E>()?;
+        let packed_len = D / E::EXT_DEGREE;
+        if packed_len == 0 {
+            return Err(AkitaError::InvalidInput(
+                "extension degree exceeds root ring dimension".to_string(),
+            ));
+        }
+        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
+        for chunk in evals.chunks(packed_len) {
+            let mut values = chunk.to_vec();
+            values.resize(packed_len, E::zero());
+            rings.push(akita_types::embed_ring_subfield_vector::<F, E, D>(
+                &values,
+                AkitaError::InvalidInput(
+                    "root transformed witness does not encode in the ring-subfield basis"
+                        .to_string(),
+                ),
+            )?);
+        }
+        Ok(crate::backend::dense::DensePoly::<F, D>::from_ring_coeffs(rings).into())
+    }
+
+    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
         })?;
@@ -924,11 +1007,10 @@ mod tests {
 
         let poly_refs = [&sparse, &sparse];
         let batch_view = SparseRingPoly::<F, D>::tensor_batch(&poly_refs).unwrap();
-        let ops_batch =
-            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
-                &poly_refs,
-                &point,
-            )
+        let ops_batch: Vec<Vec<E>> = poly_refs
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials::<E>(&point))
+            .collect::<Result<_, _>>()
             .unwrap();
         let kernel_batch = TensorProjectionBatchKernel::<
             SparseRingTensorBatchView<'_, F, D>,
@@ -956,7 +1038,7 @@ mod tests {
         let tensor_view = sparse.tensor_view().unwrap();
 
         let ops_root =
-            <SparseRingPoly<F32, D> as AkitaPolyOps<F32, D>>::tensor_packed_extension_root_poly::<E>(
+            SparseRingPoly::tensor_packed_extension_root_poly::<E>(
                 &sparse,
             )
             .unwrap();
@@ -988,7 +1070,7 @@ mod tests {
         assert_eq!(
             <SparseRingPoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&sparse)
                 .unwrap(),
-            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&sparse).unwrap()
+            SparseRingPoly::direct_root_witness(&sparse).unwrap()
         );
     }
 

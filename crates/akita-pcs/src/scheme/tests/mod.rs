@@ -5,7 +5,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -296,12 +297,23 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
     OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
 }
 
-fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
-    poly: &P,
+fn debug_opening_from_poly(
+    poly: &OneHotPoly<OneHotF, ONEHOT_D, u8>,
     point: &[OneHotF],
     layout: &LevelParams,
 ) -> OneHotF {
-    let alpha_bits = ONEHOT_D.trailing_zeros() as usize;
+    debug_opening_from_poly_impl::<ONEHOT_D, OneHotPoly<OneHotF, ONEHOT_D, u8>>(poly, point, layout)
+}
+
+fn debug_opening_from_poly_impl<const D: usize, P: RootOpeningSource<OneHotF, D>>(
+    poly: &P,
+    point: &[OneHotF],
+    layout: &LevelParams,
+) -> OneHotF
+where
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, OneHotF, D>,
+{
+    let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
 
     let inner_point = &point[..alpha_bits];
@@ -315,13 +327,18 @@ fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
     )
     .expect("debug opening point");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
-    let v =
-        reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(inner_point, BasisMode::Lagrange)
-            .expect("debug inner opening point");
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let v = reduce_inner_opening_to_ring_element::<OneHotF, D>(inner_point, BasisMode::Lagrange)
+        .expect("debug inner opening point");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }

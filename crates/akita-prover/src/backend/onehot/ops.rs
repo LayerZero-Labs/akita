@@ -350,19 +350,11 @@ where
     }
 }
 
-impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, I>
+impl<F, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.total_ring_elems
-    }
-
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
@@ -377,7 +369,7 @@ where
         }
     }
 
-    fn fold_blocks_ring(
+    pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
@@ -396,7 +388,31 @@ where
         }
     }
 
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
+            self.fold_blocks_ring(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -427,7 +443,7 @@ where
             .fold(E::zero(), |acc, weight| acc + weight))
     }
 
-    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
@@ -488,7 +504,7 @@ where
         Ok(partials)
     }
 
-    fn tensor_extension_column_partials_batch<E>(
+    pub(crate) fn tensor_extension_column_partials_batch<E>(
         polys: &[&Self],
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -577,7 +593,22 @@ where
         Ok(out)
     }
 
-    fn tensor_packed_extension_sparse_evals<E>(
+
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor projection requires field-element root witness".to_string(),
+            )
+        })?;
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
     where
@@ -586,7 +617,7 @@ where
         Ok(Some(self.tensor_packed_sparse_witness::<E>()?))
     }
 
-    fn tensor_packed_extension_sparse_linear_combination<E>(
+    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
         polys: &[&Self],
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
@@ -738,7 +769,7 @@ where
         )?))
     }
 
-    fn tensor_packed_extension_root_poly<E>(
+    pub(crate) fn tensor_packed_extension_root_poly<E>(
         &self,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
@@ -749,7 +780,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -770,7 +801,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
-    fn decompose_fold_batched(
+    pub(crate) fn decompose_fold_batched(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -800,7 +831,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
-    fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
@@ -810,8 +841,9 @@ where
         Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    fn commit_inner<B>(
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -864,8 +896,9 @@ where
         Ok(t_hat)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
-    fn commit_inner_witness<B>(
+    pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -917,7 +950,7 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;

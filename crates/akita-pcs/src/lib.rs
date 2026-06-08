@@ -58,7 +58,7 @@ pub use akita_field::{
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
+    CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
     ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
     DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
     FlatBlockTable, MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,

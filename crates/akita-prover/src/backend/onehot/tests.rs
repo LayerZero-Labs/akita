@@ -166,7 +166,7 @@ fn onehot_kernel_tensor_paths_match_akitapolyops() {
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batch_view = OneHotPoly::<F, D>::tensor_batch(&poly_refs).unwrap();
     let ops_batch =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(
             &poly_refs, &point,
         )
         .unwrap();
@@ -181,7 +181,7 @@ fn onehot_kernel_tensor_paths_match_akitapolyops() {
     assert_eq!(kernel_batch, ops_batch);
 
     let ops_linear =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<E>(
+        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(
             &poly_refs,
             &coeffs,
         )
@@ -239,7 +239,7 @@ fn onehot_kernel_batched_decompose_fold_matches_akitapolyops() {
         },
     ];
     let poly_refs = polys.iter().collect::<Vec<_>>();
-    let expected = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+    let expected = OneHotPoly::decompose_fold_batched(
         &poly_refs,
         &challenges,
         block_len,
@@ -287,7 +287,7 @@ fn onehot_kernel_direct_witness_matches_akitapolyops() {
 
     assert_eq!(
         <OneHotPoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap(),
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&poly).unwrap()
+        OneHotPoly::direct_root_witness(&poly).unwrap()
     );
 }
 
@@ -506,7 +506,7 @@ fn batched_tensor_column_partials_match_individual() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(
             &poly_refs, &point,
         )
         .unwrap();
@@ -574,7 +574,7 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(
             &poly_refs, &point,
         )
         .unwrap();
@@ -632,7 +632,7 @@ fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp_ext4() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+        OneHotPoly::tensor_extension_column_partials_batch::<E>(
             &poly_refs, &point,
         )
         .unwrap();
@@ -703,7 +703,7 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
             .unwrap();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<E>(
+        OneHotPoly::tensor_packed_extension_sparse_linear_combination::<E>(
             &poly_refs,
             &coeffs,
         )
@@ -1019,7 +1019,7 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             .collect::<Vec<_>>(),
     );
     let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-    let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+    let got = OneHotPoly::decompose_fold_batched(
         &poly_refs,
         &challenges,
         block_len,

@@ -9,8 +9,10 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
+use akita_prover::OneHotIndex;
 use akita_prover::OneHotPoly;
-use akita_prover::{AkitaPolyOps, AkitaProverSetup};
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+use akita_prover::AkitaProverSetup;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -306,11 +308,38 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FField, D>>(
+trait OpeningAtPointPadded<const D: usize> {
+    fn opening_at_point_padded(&self, point: &[F], layout: &LevelParams) -> F;
+}
+
+impl<const D: usize> OpeningAtPointPadded<D> for DensePoly<F, D> {
+    fn opening_at_point_padded(&self, point: &[F], layout: &LevelParams) -> F {
+        opening_from_poly_padded_impl::<F, D, Self>(self, point, layout)
+    }
+}
+
+impl<const D: usize, I: OneHotIndex> OpeningAtPointPadded<D> for OneHotPoly<F, D, I> {
+    fn opening_at_point_padded(&self, point: &[F], layout: &LevelParams) -> F {
+        opening_from_poly_padded_impl::<F, D, Self>(self, point, layout)
+    }
+}
+
+fn opening_from_poly<const D: usize, P: OpeningAtPointPadded<D>>(
+    poly: &P,
+    point: &[F],
+    layout: &LevelParams,
+) -> F {
+    poly.opening_at_point_padded(point, layout)
+}
+
+fn opening_from_poly_padded_impl<FField: CanonicalField, const D: usize, P: RootOpeningSource<FField, D>>(
     poly: &P,
     point: &[FField],
     layout: &LevelParams,
-) -> FField {
+) -> FField
+where
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, FField, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
     assert!(
@@ -333,11 +362,17 @@ fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FFi
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
     let v = reduce_inner_opening_to_ring_element::<FField, D>(inner_point, BasisMode::Lagrange)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
@@ -962,13 +997,14 @@ fn batched_onehot_same_point_round_trip() {
         .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
+        let poly_refs = [&poly_group[0], &poly_group[1]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
-                &poly_group[..],
+                &poly_refs,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),

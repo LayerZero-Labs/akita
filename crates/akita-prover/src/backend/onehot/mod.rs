@@ -1,15 +1,14 @@
 //! One-hot polynomial: sparse witness with at most one nonzero field
 //! element per chunk of size `onehot_k`.
 //!
-//! [`OneHotPoly`] is a backend for [`AkitaPolyOps`](akita_prover::AkitaPolyOps)
-//! that implements the four prover operations (ring evaluation, per-block
-//! fold, decompose+fold, and inner-Ajtai commit) by iterating only over
-//! the nonzero monomial positions.
+//! [`OneHotPoly`] implements the four prover operations (ring evaluation,
+//! per-block fold, decompose+fold, and inner-Ajtai commit) by iterating only
+//! over the nonzero monomial positions.
 //!
 //! # Module layout
 //!
 //! The module is organised as cohesive private submodules — entry types,
-//! flat block storage, and the polynomial + its [`AkitaPolyOps`] impl.
+//! flat block storage, and the polynomial inherent methods.
 //!
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
@@ -56,7 +55,7 @@ use crate::compute::{
 };
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
+    CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
     SparseRingPoly,
 };
 

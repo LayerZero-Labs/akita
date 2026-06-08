@@ -169,6 +169,9 @@ where
 /// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
 /// Do **not** write `CpuBackend: RootCommitBackend<F, P, E, D>` while `P` is still a type
 /// parameter; that fails for the same reason as a bare HRTB on a fixed backend.
+///
+/// `F: 'static` is required for the same GAT + `for<'a>` view-kernel reason documented on
+/// [`RootProveBackend`]. `E` (tensor extension field) is not bounded `'static` here.
 pub trait RootCommitBackend<F, P, E, const D: usize>: CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
@@ -208,6 +211,18 @@ where
 /// entry points. `ClaimE` covers extension-opening prepare batch partials at the
 /// claim field; `ChallengeE` covers post-transform tensor projection and opening
 /// fold paths at the challenge field.
+///
+/// ## Why `F: 'static`?
+///
+/// The bundle closes over higher-ranked bounds on borrowed polynomial views, e.g.
+/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
+/// Those GATs carry `where Self: 'a` (see [`RootOpeningSource::OpeningView`]). For the
+/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F, D>` must be
+/// `'static`, which requires `F: 'static`. This is a rustc lifetime solver artifact, not
+/// a protocol requirement that base-field types outlive the process.
+///
+/// `ClaimE` and `ChallengeE` do **not** need `'static`; preset extension fields satisfy
+/// it vacuously, but the trait does not require it.
 pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>: CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,

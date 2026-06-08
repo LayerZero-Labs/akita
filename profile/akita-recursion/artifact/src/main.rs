@@ -19,9 +19,9 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
-    OneHotPoly,
+    CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
@@ -87,12 +87,15 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn opening_from_poly<P: AkitaPolyOps<F, D>>(
+fn opening_from_poly<P: RootOpeningSource<F, D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,
-) -> Result<F, String> {
+) -> Result<F, String>
+where
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
         .checked_add(layout.m_vars)
@@ -118,11 +121,18 @@ fn opening_from_poly<P: AkitaPolyOps<F, D>>(
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view()
+            .map_err(|err| format!("opening view: {err}"))?,
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .map_err(|err| format!("evaluate_and_fold: {err}"))?;
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
         .map_err(|err| format!("inner opening point should match ring dimension: {err}"))?;
     Ok((y_ring * v.sigma_m1()).coefficients()[0])

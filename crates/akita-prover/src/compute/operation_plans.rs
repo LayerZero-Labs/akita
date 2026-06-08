@@ -25,7 +25,7 @@ use akita_field::FieldCore;
 //
 // PO1 establishes this surface additively: the kernel traits are skeletons with
 // no Akita impls yet (the six representation nodes implement them in their own
-// backend files), and the monolithic `ProverComputeBackend`/`AkitaPolyOps`
+// backend files), and the monolithic `ProverComputeBackend` ladder
 // boundary is intentionally left in place for PO4 to remove.
 // ===========================================================================
 

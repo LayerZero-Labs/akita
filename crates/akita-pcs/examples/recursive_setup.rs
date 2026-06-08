@@ -24,9 +24,10 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
-    OneHotPoly, RootCommitPolys,
+    CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
+    RootCommitPolys,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -65,7 +66,18 @@ fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
     root + suffix
 }
 
-fn opening_from_poly<P: AkitaPolyOps<F, D>>(poly: &P, point: &[F], layout: &LevelParams) -> F {
+fn opening_from_poly(poly: &OneHotPoly<F, D, u8>, point: &[F], layout: &LevelParams) -> F {
+    opening_from_poly_impl::<F, D, OneHotPoly<F, D, u8>>(poly, point, layout)
+}
+
+fn opening_from_poly_impl<const D: usize, P: RootOpeningSource<F, D>>(
+    poly: &P,
+    point: &[F],
+    layout: &LevelParams,
+) -> F
+where
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
     let inner_point = &point[..alpha_bits];
@@ -78,11 +90,17 @@ fn opening_from_poly<P: AkitaPolyOps<F, D>>(poly: &P, point: &[F], layout: &Leve
         BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]

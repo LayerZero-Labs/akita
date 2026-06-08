@@ -1,5 +1,6 @@
+use crate::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, DensePoly, ProverComputeBackend};
+use crate::{DensePoly, ProverComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::LevelParams;
@@ -22,7 +23,12 @@ pub(crate) fn commit_zk_hiding_witness<F, B, const D: usize>(
 ) -> Result<(Vec<F>, Vec<i8>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    B: ProverComputeBackend<F>,
+    B: ProverComputeBackend<F>
+        + for<'a> RootCommitKernel<
+            <DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+            F,
+            D,
+        >,
 {
     let num_ring = hiding_witness.len().div_ceil(D).max(1).next_power_of_two();
     let eval_len = num_ring
@@ -39,14 +45,18 @@ where
         root_params.num_digits_open,
         num_ring,
     )?;
-    let inner = poly.commit_inner_witness(
+    let plan = CommitInnerPlan {
+        n_a: hiding_params.a_key.row_len(),
+        block_len: hiding_params.block_len,
+        num_digits_commit: hiding_params.num_digits_commit,
+        num_digits_open: hiding_params.num_digits_open,
+        log_basis: hiding_params.log_basis,
+    };
+    let inner = RootCommitKernel::commit_inner_witness(
         backend,
         prepared,
-        hiding_params.a_key.row_len(),
-        hiding_params.block_len,
-        hiding_params.num_digits_commit,
-        hiding_params.num_digits_open,
-        hiding_params.log_basis,
+        poly.commit_view()?,
+        plan,
     )?;
     let b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
     let b_blinding_digits =

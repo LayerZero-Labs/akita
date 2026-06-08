@@ -16,7 +16,7 @@ use crate::compute::{
     RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 /// Borrowed commit view over sparse signed ring coefficients.
 #[derive(Debug, Clone, Copy)]

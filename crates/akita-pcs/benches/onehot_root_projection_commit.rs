@@ -11,7 +11,7 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    commit_with_params, compute::RootCommitPolys, AkitaPolyOps, CommitmentProver, OneHotPoly,
+    commit_with_params, compute::RootCommitPolys, CommitmentProver, OneHotPoly,
     RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};

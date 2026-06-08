@@ -1,8 +1,7 @@
 //! Dense polynomial: all ring coefficients materialized in memory.
 //!
-//! [`DensePoly`] implements [`AkitaPolyOps`](akita_prover::AkitaPolyOps) via standard
-//! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
-//! multiply, and parallel block folds.
+//! [`DensePoly`] uses standard dense algorithms — balanced-digit decomposition,
+//! NTT-based matrix-vector multiply, and parallel block folds.
 
 use crate::backend::RootTensorProjectionPoly;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -16,7 +15,10 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::RingSubfieldEncoding;
-use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
+use akita_types::{
+    embed_ring_subfield_vector, tensor_column_partials_split_fold, tensor_opening_split,
+    TensorColumnSource,
+};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -34,7 +36,7 @@ use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod tensor_fold;
 
@@ -554,19 +556,11 @@ where
     }
 }
 
-impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
+impl<F, const D: usize> DensePoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.coeffs.len()
-    }
-
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
         cfg_into_iter!(0..num_blocks)
@@ -583,7 +577,7 @@ where
             .collect()
     }
 
-    fn fold_blocks_ring(
+    pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
@@ -604,7 +598,31 @@ where
             .collect()
     }
 
-    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
+            self.fold_blocks_ring(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
@@ -619,7 +637,7 @@ where
         ))
     }
 
-    fn tensor_extension_column_partials_batch<E>(
+    pub(crate) fn tensor_extension_column_partials_batch<E>(
         polys: &[&Self],
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -648,7 +666,7 @@ where
             .collect()
     }
 
-    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -669,8 +687,89 @@ where
         Ok(evals)
     }
 
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        Ok(None)
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(polys.len());
+        for poly in polys {
+            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
+                return Ok(None);
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(witnesses.iter()),
+        )?))
+    }
+
+    pub(crate) fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        let evals = self.tensor_packed_extension_evals::<E>()?;
+        let packed_len = D / E::EXT_DEGREE;
+        if packed_len == 0 {
+            return Err(AkitaError::InvalidInput(
+                "extension degree exceeds root ring dimension".to_string(),
+            ));
+        }
+        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
+        for chunk in evals.chunks(packed_len) {
+            let mut values = chunk.to_vec();
+            values.resize(packed_len, E::zero());
+            rings.push(embed_ring_subfield_vector::<F, E, D>(
+                &values,
+                AkitaError::InvalidInput(
+                    "root transformed witness does not encode in the ring-subfield basis"
+                        .to_string(),
+                ),
+            )?);
+        }
+        Ok(DensePoly::<F, D>::from_ring_coeffs(rings))
+    }
+
+    pub(crate) fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        Ok(self.tensor_packed_extension_poly::<E>()?.into())
+    }
+
+    pub(crate) fn decompose_fold_batched(
+        _polys: &[&Self],
+        _challenges: &[SparseChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        None
+    }
+
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -765,7 +864,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
-    fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
@@ -777,8 +876,9 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
-    fn commit_inner<B>(
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -802,7 +902,8 @@ where
         decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)
     }
 
-    fn commit_inner_witness<B>(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -828,25 +929,6 @@ where
             recomposed_inner_rows: t,
             decomposed_inner_rows,
         })
-    }
-
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
-        })?;
-        let mut coeffs = Vec::with_capacity(live_len);
-        let mut remaining = live_len;
-        for ring in &self.coeffs {
-            let take = remaining.min(D);
-            coeffs.extend_from_slice(&ring.coefficients()[..take]);
-            remaining -= take;
-            if remaining == 0 {
-                break;
-            }
-        }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
     }
 }
 
@@ -978,7 +1060,7 @@ fn accumulate_cached_digit_planes<const D: usize>(
 
 /// Test-only helpers for [`DensePoly`].
 ///
-/// These live outside the production `AkitaPolyOps` trait because they are
+/// These live outside the production polynomial API because they are
 /// only used by cross-check tests (e.g. verifying that fused prover paths
 /// match a straight-line reference implementation).
 #[cfg(test)]
@@ -1139,7 +1221,7 @@ mod tests {
         let tensor_view = poly.tensor_view().unwrap();
 
         let ops_root =
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(&poly)
+            DensePoly::tensor_packed_extension_root_poly::<E>(&poly)
                 .unwrap();
         let kernel_root =
             TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
@@ -1164,10 +1246,10 @@ mod tests {
             .map(|idx| F::from_u64(idx as u64 + 1))
             .collect::<Vec<_>>();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
-        assert_eq!(
-            <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap(),
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&poly).unwrap()
-        );
+        let witness =
+            <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly)
+                .unwrap();
+        assert!(matches!(witness, CleartextWitnessProof::FieldElements(_)));
     }
 
     #[test]

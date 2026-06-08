@@ -9,9 +9,12 @@ use akita_field::{
     LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitPolys, RootOpeningSource,
+    RootPolyShape, RootProveBackend, RootProvePoly,
+};
 use akita_prover::{
-    compute::RootCommitPolys, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
+    AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -258,7 +261,7 @@ where
         .fold(E::zero(), |acc, weight| acc + weight)
 }
 
-fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
+fn opening_from_poly<FF, const D: usize, P: RootOpeningSource<FF, D>>(
     poly: &P,
     point: &[FF],
     layout: &LevelParams,
@@ -266,6 +269,7 @@ fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
 ) -> FF
 where
     FF: CanonicalField,
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
@@ -289,17 +293,23 @@ where
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
     let v = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
+fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: RootProvePoly<FF, D>>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
@@ -335,6 +345,13 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         + 'static,
     Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
     Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    CpuBackend: RootProveBackend<
+        FF,
+        P,
+        Cfg::ClaimField,
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::TensorField,
+        D,
+    >,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
@@ -496,7 +513,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let opening = if let Some(base_pt) =
         degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&original_pt)
     {
-        Cfg::ClaimField::lift_base(opening_from_poly(
+        Cfg::ClaimField::lift_base(opening_from_poly::<FF, D, DensePoly<FF, D>>(
             &poly,
             &base_pt,
             layout,
@@ -507,7 +524,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     };
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        poly.num_vars(),
+        RootPolyShape::num_vars(&poly),
         1,
         1,
     )
@@ -537,7 +554,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
-    run_prove::<FF, D, Cfg, _>(
+    run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
         label,
         &setup,
         &prepared,
@@ -602,7 +619,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let pt = random_claim_point::<FF, Cfg::ClaimField>(nv, &mut rng);
     let opening = if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&pt)
     {
-        Cfg::ClaimField::lift_base(opening_from_poly(
+        Cfg::ClaimField::lift_base(opening_from_poly::<FF, D, OneHotPoly<FF, D, u8>>(
             &onehot_poly,
             &base_pt,
             layout,
@@ -639,7 +656,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
-    run_prove::<FF, D, Cfg, _>(
+    run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
         label,
         &setup,
         &prepared,
@@ -715,7 +732,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             polys
                 .iter()
                 .map(|poly| {
-                    Cfg::ClaimField::lift_base(opening_from_poly(
+                    Cfg::ClaimField::lift_base(opening_from_poly::<FF, D, OneHotPoly<FF, D, u8>>(
                         poly,
                         &base_pt,
                         layout,

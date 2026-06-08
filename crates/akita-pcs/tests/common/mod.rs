@@ -3,8 +3,11 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
-pub(super) use akita_prover::AkitaPolyOps;
+pub(super) use akita_prover::compute::{OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource};
+pub(super) use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
+pub(super) use akita_prover::MultilinearPolynomial;
+pub(super) use akita_prover::OneHotIndex;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
 pub(super) use akita_types::LevelParams;
@@ -139,20 +142,45 @@ pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
         .collect()
 }
 
-pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
+pub(super) trait OpeningAtPoint<const D: usize> {
+    fn opening_at_point(&self, point: &[F], layout: &LevelParams) -> F;
+}
+
+impl<const D: usize> OpeningAtPoint<D> for DensePoly<F, D> {
+    fn opening_at_point(&self, point: &[F], layout: &LevelParams) -> F {
+        opening_from_poly_with_basis::<D, Self>(self, point, layout, BasisMode::Lagrange)
+    }
+}
+
+impl<const D: usize, I: OneHotIndex> OpeningAtPoint<D> for OneHotPoly<F, D, I> {
+    fn opening_at_point(&self, point: &[F], layout: &LevelParams) -> F {
+        opening_from_poly_with_basis::<D, Self>(self, point, layout, BasisMode::Lagrange)
+    }
+}
+
+impl<const D: usize, I: OneHotIndex> OpeningAtPoint<D> for MultilinearPolynomial<F, D, I> {
+    fn opening_at_point(&self, point: &[F], layout: &LevelParams) -> F {
+        opening_from_poly_with_basis::<D, Self>(self, point, layout, BasisMode::Lagrange)
+    }
+}
+
+pub(super) fn opening_from_poly<const D: usize, P: OpeningAtPoint<D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,
 ) -> F {
-    opening_from_poly_with_basis(poly, point, layout, BasisMode::Lagrange)
+    poly.opening_at_point(point, layout)
 }
 
-pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>>(
+fn opening_from_poly_with_basis<const D: usize, P: RootOpeningSource<F, D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,
     basis_mode: BasisMode,
-) -> F {
+) -> F
+where
+    CpuBackend: for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
 
@@ -167,11 +195,17 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let OpeningFoldOutput { eval: y_ring, .. } = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]

@@ -21,7 +21,7 @@ use crate::compute::{
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat,
+    CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat,
     SparseRingPoly,
 };
 
@@ -495,42 +495,26 @@ where
     }
 }
 
-impl<F, const D: usize> AkitaPolyOps<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootTensorProjectionPoly<F, D>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn num_ring_elems(&self) -> usize {
-        match self {
-            RootTensorProjectionPoly::Dense(poly) => AkitaPolyOps::num_ring_elems(poly),
-            RootTensorProjectionPoly::Sparse(poly) => AkitaPolyOps::num_ring_elems(poly.as_ref()),
-        }
-    }
-
-    fn num_vars(&self) -> usize {
-        match self {
-            RootTensorProjectionPoly::Dense(poly) => AkitaPolyOps::num_vars(poly),
-            RootTensorProjectionPoly::Sparse(poly) => AkitaPolyOps::num_vars(poly.as_ref()),
-        }
-    }
-
-    fn fold_blocks(
+    pub(crate) fn evaluate_and_fold(
         &self,
-        scalars: &[F],
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
         block_len: usize,
-    ) -> Vec<akita_algebra::CyclotomicRing<F, D>> {
-        dispatch_root_projection!(self, poly => poly.fold_blocks(scalars, block_len))
+    ) -> (
+        akita_algebra::CyclotomicRing<F, D>,
+        Vec<akita_algebra::CyclotomicRing<F, D>>,
+    ) {
+        dispatch_root_projection!(self, poly => {
+            poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+        })
     }
 
-    fn fold_blocks_ring(
-        &self,
-        scalars: &[akita_algebra::CyclotomicRing<F, D>],
-        block_len: usize,
-    ) -> Vec<akita_algebra::CyclotomicRing<F, D>> {
-        dispatch_root_projection!(self, poly => poly.fold_blocks_ring(scalars, block_len))
-    }
-
-    fn evaluate_and_fold_ring(
+    pub(crate) fn evaluate_and_fold_ring(
         &self,
         eval_outer_scalars: &[akita_algebra::CyclotomicRing<F, D>],
         fold_scalars: &[akita_algebra::CyclotomicRing<F, D>],
@@ -544,7 +528,7 @@ where
         })
     }
 
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[akita_challenges::SparseChallenge],
         block_len: usize,
@@ -556,55 +540,41 @@ where
         })
     }
 
-    fn decompose_fold_tensor_batched(
-        polys: &[&Self],
-        tensor: &akita_challenges::TensorChallenges,
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<crate::DecomposeFoldWitness<F, D>>, AkitaError> {
-        let Some(first) = polys.first() else {
-            return Ok(None);
-        };
-        match *first {
-            RootTensorProjectionPoly::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
-                        RootTensorProjectionPoly::Sparse(_) => return Ok(None),
-                    }
-                }
-                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
-                    &dense_polys,
-                    tensor,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-            RootTensorProjectionPoly::Sparse(_) => {
-                let mut sparse_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        RootTensorProjectionPoly::Sparse(inner) => {
-                            sparse_polys.push(inner.as_ref())
-                        }
-                        RootTensorProjectionPoly::Dense(_) => return Ok(None),
-                    }
-                }
-                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
-                    &sparse_polys,
-                    tensor,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-        }
+    pub(crate) fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::MulBaseUnreduced<F>,
+    {
+        dispatch_root_projection!(self, poly => poly.tensor_extension_column_partials(logical_point))
     }
 
-    fn commit_inner<B>(
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        dispatch_root_projection!(self, poly => poly.tensor_packed_extension_evals())
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        dispatch_root_projection!(self, poly => poly.tensor_packed_extension_sparse_evals())
+    }
+
+    pub(crate) fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + akita_field::FromPrimitiveInt,
+        E: akita_types::RingSubfieldEncoding<F>,
+    {
+        dispatch_root_projection!(self, poly => poly.tensor_packed_extension_root_poly::<E>())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -630,7 +600,8 @@ where
         })
     }
 
-    fn commit_inner_witness<B>(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -655,15 +626,6 @@ where
                 log_basis,
             )
         })
-    }
-
-    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            RootTensorProjectionPoly::Dense(poly) => AkitaPolyOps::direct_root_witness(poly),
-            RootTensorProjectionPoly::Sparse(poly) => {
-                AkitaPolyOps::direct_root_witness(poly.as_ref())
-            }
-        }
     }
 }
 
@@ -742,7 +704,7 @@ mod tests {
             .collect::<Vec<_>>();
         let dense = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let root =
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(&dense)
+            DensePoly::tensor_packed_extension_root_poly::<E>(&dense)
                 .unwrap();
         let point = (0..num_vars)
             .map(|idx| {
@@ -798,11 +760,11 @@ mod tests {
         let dense0 = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let dense1 = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         let roots = [
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(
+            DensePoly::tensor_packed_extension_root_poly::<E>(
                 &dense0,
             )
             .unwrap(),
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(
+            DensePoly::tensor_packed_extension_root_poly::<E>(
                 &dense1,
             )
             .unwrap(),
@@ -820,8 +782,18 @@ mod tests {
             .collect::<Vec<_>>();
         let backend = CpuBackend;
 
-        let expected = <RootTensorProjectionPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
-            &root_refs,
+        let dense_roots: Vec<&DensePoly<F, D>> = roots
+            .iter()
+            .map(|root| match root {
+                RootTensorProjectionPoly::Dense(inner) => inner,
+                RootTensorProjectionPoly::Sparse(_) => {
+                    panic!("test roots are dense tensor projections")
+                }
+            })
+            .collect();
+        let dense_root_refs: Vec<&DensePoly<F, D>> = dense_roots.iter().copied().collect();
+        let expected = DensePoly::tensor_extension_column_partials_batch::<E>(
+            &dense_root_refs,
             &point,
         )
         .unwrap();
