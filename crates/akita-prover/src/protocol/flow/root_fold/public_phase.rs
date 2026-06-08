@@ -114,7 +114,7 @@ pub(super) fn prove_root_extension_reduction_public_phase<F, E, C, T, P, B, cons
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<RootExtensionReductionPublicPhase<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
@@ -127,7 +127,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
-    B: ProverComputeBackend<F> + RootProveBackend<F, P, E, C, D>,
+    B: RootProveFlowBackend<F, P, E, C, D>,
 {
     let openings = prepared_reduction.openings.clone();
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
@@ -212,13 +212,13 @@ pub(super) fn prepare_root_fold_direct_public_phase<F, E, C, T, P, B, const D: u
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<RootFoldDirectPublicPhase<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F> + ExtField<E> + FieldCore,
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
-    B: ProverComputeBackend<F> + RootProveBackend<F, P, E, C, D>,
+    B: RootProveFlowBackend<F, P, E, C, D>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
 

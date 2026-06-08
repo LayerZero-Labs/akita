@@ -8,9 +8,9 @@ use akita_field::{
 };
 use akita_prover::{
     batched_commit, commit,
-    compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys, ZkHidingCommitBackend},
+    compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys},
     prove_batched, AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend,
-    ProverClaims, ProverComputeBackend, RootProveBackend, RootProvePoly,
+    ProverClaims, RootProveFlowBackend, RootProvePoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -147,9 +147,7 @@ where
     where
         T: Transcript<F>,
         P: RootProvePoly<F, D>,
-        B: ProverComputeBackend<F>
-            + RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>
-            + ZkHidingCommitBackend<F, D>,
+        B: RootProveFlowBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;

@@ -30,7 +30,8 @@ pub use compute::{
     FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
     ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitPolys, RootProveBackend, RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan,
+    RootCommitPolys, RootProveBackend, RootProveFlowBackend, RootProvePoly, RootTensorSource,
+    SparseRingCommitRowsPlan,
     TensorProjectionBatchKernel,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};

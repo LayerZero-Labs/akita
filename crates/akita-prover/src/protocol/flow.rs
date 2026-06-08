@@ -3,8 +3,9 @@
 #[cfg(feature = "zk")]
 use crate::compute::ZkHidingCommitBackend;
 use crate::compute::{
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource,
-    RootProveBackend, RootTensorSource, TensorProjectionBatchKernel,
+    CommitmentComputeBackend, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
+    RingSwitchComputeBackend, RootOpeningSource, RootProveBackend, RootProveFlowBackend,
+    RootTensorSource, TensorProjectionBatchKernel,
 };
 use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{
@@ -21,7 +22,7 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    CommittedPolynomials, ProverClaims, ProverComputeBackend, RecursiveCommitmentHintCache,
+    CommittedPolynomials, ProverClaims, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance, RingRelationWitness,
     RootProvePoly, RootTensorProjectionPoly,
 };

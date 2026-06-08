@@ -53,13 +53,13 @@ pub(super) fn eval_extension_reduction_post_transform<F, E, C, T, P, B, const D:
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<ExtensionReductionPostTransform<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F> + FieldCore,
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
-    B: ProverComputeBackend<F> + RootProveBackend<F, P, E, C, D>,
+    B: RootProveFlowBackend<F, P, E, C, D>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let protocol_point = {

@@ -74,7 +74,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
-    B: ProverComputeBackend<F> + RootProveBackend<F, P, E, C, D>,
+    B: RootProveFlowBackend<F, P, E, C, D>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     validate_root_fold_inputs(
@@ -256,7 +256,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
-    B: ProverComputeBackend<F> + RootProveBackend<F, P, E, C, D>,
+    B: RootProveFlowBackend<F, P, E, C, D>,
 {
     validate_root_fold_inputs(
         polys.len(),

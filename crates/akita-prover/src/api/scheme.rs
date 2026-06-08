@@ -1,8 +1,7 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::compute::{
-    ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveBackend,
-    RootProvePoly, ZkHidingCommitBackend,
+    RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveFlowBackend, RootProvePoly,
 };
 use crate::ProverClaims;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -139,7 +138,5 @@ where
     where
         T: Transcript<F>,
         P: RootProvePoly<F, D>,
-        B: ProverComputeBackend<F>
-            + RootProveBackend<F, P, Self::ClaimField, Self::TensorField, D>
-            + ZkHidingCommitBackend<F, D>;
+        B: RootProveFlowBackend<F, P, Self::ClaimField, Self::TensorField, D>;
 }

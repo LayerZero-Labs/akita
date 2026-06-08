@@ -44,7 +44,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     Q: RootOpeningSource<F, D>,
-    B: ProverComputeBackend<F>
+    B: RingSwitchComputeBackend<F>
         + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>
         + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -166,7 +166,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     Q: RootOpeningSource<F, D>,
-    B: ProverComputeBackend<F>
+    B: RingSwitchComputeBackend<F>
         + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>
         + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
 {

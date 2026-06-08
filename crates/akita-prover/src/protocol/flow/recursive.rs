@@ -37,7 +37,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field> + CommitmentComputeBackend<Cfg::Field>,
 {
     if level_d == D {
         prove_recursive_level::<Cfg, T, B, D>(
@@ -101,7 +101,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field>,
 {
     if level_d == D {
         prove_terminal_recursive_level::<Cfg, T, B, D>(
@@ -172,7 +172,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field> + CommitmentComputeBackend<Cfg::Field>,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -287,7 +287,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
@@ -548,7 +548,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
 {
     let terminal_layout = terminal_witness_segment_layout(
         lp,
@@ -867,7 +867,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     {
@@ -1084,7 +1084,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -1289,7 +1289,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field> + CommitmentComputeBackend<Cfg::Field>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
     drop(_setup_span);
@@ -1346,7 +1346,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RingSwitchComputeBackend<Cfg::Field>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
     drop(_setup_span);

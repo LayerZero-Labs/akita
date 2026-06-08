@@ -1,4 +1,7 @@
-use super::backend::{CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend};
+use super::backend::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
+    RingSwitchComputeBackend,
+};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
@@ -7,7 +10,6 @@ use super::kernels::{
 use crate::DensePoly;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
-#[cfg(feature = "zk")]
 use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
@@ -329,6 +331,40 @@ impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
 where
     F: FieldCore + CanonicalField,
     B: ComputeBackendSetup<F>,
+{
+}
+
+/// Scheme-level prove entry bundle: root prove kernels plus ring-switch,
+/// commitment rows, and ZK hiding witness commitment.
+///
+/// Replaces the historical `ProverComputeBackend + RootProveBackend +
+/// ZkHidingCommitBackend` bound triad on prove-facing APIs.
+pub trait RootProveFlowBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    RootProveBackend<F, P, ClaimE, ChallengeE, D>
+    + RingSwitchComputeBackend<F>
+    + CommitmentComputeBackend<F>
+    + ZkHidingCommitBackend<F, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+{
+}
+
+impl<F, P, ClaimE, ChallengeE, const D: usize, B> RootProveFlowBackend<F, P, ClaimE, ChallengeE, D>
+    for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveBackend<F, P, ClaimE, ChallengeE, D>
+        + RingSwitchComputeBackend<F>
+        + CommitmentComputeBackend<F>
+        + ZkHidingCommitBackend<F, D>,
 {
 }
 

@@ -44,7 +44,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
@@ -301,7 +301,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
 {
     let terminal_layout = terminal_witness_segment_layout(
         lp,
