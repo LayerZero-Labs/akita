@@ -2,7 +2,8 @@ use super::{
     build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
     eval_trace_terms_closed, eval_trace_weight_at_point, trace_weight_mle_eval,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm,
+    TraceWeightLayout,
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
@@ -746,8 +747,8 @@ mod closed_terms {
                     coefficient: F::one(),
                 });
             }
-            let table = build_trace_weight_table_field_terms::<F, F, D8>(&layout, &dense_terms)
-                .unwrap();
+            let table =
+                build_trace_weight_table_field_terms::<F, F, D8>(&layout, &dense_terms).unwrap();
             let ring_point = random_point(&mut rng, layout.ring_bits);
             let col_point = random_point(&mut rng, layout.col_bits);
             let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();

@@ -413,7 +413,9 @@ where
             .claim_to_point()
             .get(claim_idx)
             .ok_or(AkitaError::InvalidProof)?;
-        let prepared = prepared_points.get(point_idx).ok_or(AkitaError::InvalidProof)?;
+        let prepared = prepared_points
+            .get(point_idx)
+            .ok_or(AkitaError::InvalidProof)?;
         let b_open = b_opens_per_point
             .get(point_idx)
             .ok_or(AkitaError::InvalidProof)?
@@ -453,7 +455,7 @@ where
         .padded_point
         .len()
         .checked_sub(outer_len)
-        .ok_or_else(|| AkitaError::InvalidProof)?;
+        .ok_or(AkitaError::InvalidProof)?;
     // Column-major: the block coordinates are the head of the outer point.
     let b_open = prepared.padded_point[alpha_bits..alpha_bits + lp.r_vars].to_vec();
     Ok(vec![TraceTerm {

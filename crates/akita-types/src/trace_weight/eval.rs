@@ -382,8 +382,8 @@ where
         let r = col_low[t];
         let one_minus_r = E::one() - r;
         let mut next = [vec![E::zero(); k], vec![E::zero(); k]];
-        for carry_in in 0..2usize {
-            if state[carry_in].iter().all(|value| value.is_zero()) {
+        for (carry_in, state_row) in state.iter().enumerate() {
+            if state_row.iter().all(|value| value.is_zero()) {
                 continue;
             }
             for (j_bit, cw) in [(0usize, cw0), (1usize, cw1)] {
@@ -391,7 +391,7 @@ where
                 let result_bit = sum & 1;
                 let carry_out = sum >> 1;
                 let eq_bit = if result_bit == 1 { r } else { one_minus_r };
-                let folded = cstar_mul::<F, E>(&state[carry_in], cw, gamma);
+                let folded = cstar_mul::<F, E>(state_row, cw, gamma);
                 for (slot, value) in next[carry_out].iter_mut().zip(folded) {
                     *slot += eq_bit * value;
                 }
@@ -451,10 +451,9 @@ where
         let block_span = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
-        let end = term
-            .block_offset
-            .checked_add(block_span)
-            .ok_or_else(|| AkitaError::InvalidInput("trace term block range overflow".to_string()))?;
+        let end = term.block_offset.checked_add(block_span).ok_or_else(|| {
+            AkitaError::InvalidInput("trace term block range overflow".to_string())
+        })?;
         if end > layout.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "trace term exceeds layout block count".to_string(),
@@ -463,7 +462,9 @@ where
         let base = layout
             .opening_digit_offset
             .checked_add(term.block_offset)
-            .ok_or_else(|| AkitaError::InvalidInput("trace term column base overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace term column base overflow".to_string())
+            })?;
 
         let col_low = &col_point[..r_pc];
         let col_high = &col_point[r_pc..];
