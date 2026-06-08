@@ -16,7 +16,6 @@
 //! virtual monomials, leaving only the relation term, matching the verifier's
 //! terminal-level early return without any special case in the descriptor.
 
-use akita_field::RingCore;
 use akita_sumcheck::descriptor::{
     ClaimSlot, Expr, InstanceKind, Source, SumcheckInstanceDescriptor, Term,
 };
@@ -24,8 +23,11 @@ use akita_sumcheck::descriptor::{
 use crate::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
 
 /// A sumcheck descriptor over the Akita identifier types.
-pub type AkitaSumcheckDescriptor<F> =
-    SumcheckInstanceDescriptor<F, AkitaOpeningId, AkitaPublicId, AkitaChallengeId>;
+///
+/// Field-free: the evaluation field is chosen when the descriptor is evaluated
+/// (`SumcheckInstanceDescriptor::try_evaluate`).
+pub type AkitaSumcheckDescriptor =
+    SumcheckInstanceDescriptor<AkitaOpeningId, AkitaPublicId, AkitaChallengeId>;
 
 /// The stage-2 fused summand `g(r)` as a sum-of-products expression.
 ///
@@ -33,7 +35,7 @@ pub type AkitaSumcheckDescriptor<F> =
 /// [`AkitaChallengeId::BatchingCoeff`] source (a Fiat-Shamir scalar resolved at
 /// evaluation time), never a hardcoded constant, so the central batching
 /// allocation in the protocol plan controls it.
-pub fn stage2_expr<F: RingCore>() -> Expr<F, AkitaOpeningId, AkitaPublicId, AkitaChallengeId> {
+pub fn stage2_expr() -> Expr<AkitaOpeningId, AkitaPublicId, AkitaChallengeId> {
     let gamma = Source::Challenge(AkitaChallengeId::BatchingCoeff);
     let eq = Source::Public(AkitaPublicId::EqStage1Point);
     let w = Source::Opening(AkitaOpeningId::Witness);
@@ -42,11 +44,11 @@ pub fn stage2_expr<F: RingCore>() -> Expr<F, AkitaOpeningId, AkitaPublicId, Akit
 
     Expr::new(vec![
         // gamma * eq * W * W   (the quadratic part of gamma * eq * W * (W + 1))
-        Term::new(F::one(), vec![gamma, eq, w, w]),
+        Term::new(1, vec![gamma, eq, w, w]),
         // gamma * eq * W       (the linear part of gamma * eq * W * (W + 1))
-        Term::new(F::one(), vec![gamma, eq, w]),
+        Term::new(1, vec![gamma, eq, w]),
         // W * alpha * row      (the relation term)
-        Term::new(F::one(), vec![w, alpha, row]),
+        Term::new(1, vec![w, alpha, row]),
     ])
 }
 
@@ -56,7 +58,7 @@ pub fn stage2_expr<F: RingCore>() -> Expr<F, AkitaOpeningId, AkitaPublicId, Akit
 /// `plan::plan_level`). The instance is [`InstanceKind::Regular`]: the fused
 /// stage-2 sumcheck is arbitrarily batchable and uses the regular compressed
 /// wire format.
-pub fn stage2_descriptor<F: RingCore>(num_rounds: usize) -> AkitaSumcheckDescriptor<F> {
+pub fn stage2_descriptor(num_rounds: usize) -> AkitaSumcheckDescriptor {
     SumcheckInstanceDescriptor {
         label: "stage2-fused-virtual-relation",
         num_rounds,
@@ -64,7 +66,7 @@ pub fn stage2_descriptor<F: RingCore>(num_rounds: usize) -> AkitaSumcheckDescrip
         kind: InstanceKind::Regular,
         input_claim: ClaimSlot(0),
         output_claim: ClaimSlot(1),
-        poly: stage2_expr::<F>(),
+        poly: stage2_expr(),
     }
 }
 
@@ -80,7 +82,7 @@ mod tests {
     }
 
     fn eval_stage2(gamma: F, eq: F, w: F, alpha: F, row: F) -> F {
-        stage2_descriptor::<F>(4)
+        stage2_descriptor(4)
             .try_evaluate(
                 |opening| match opening {
                     AkitaOpeningId::Witness => Ok(w),
@@ -116,7 +118,7 @@ mod tests {
 
     #[test]
     fn stage2_descriptor_shape() {
-        let descriptor = stage2_descriptor::<F>(9);
+        let descriptor = stage2_descriptor(9);
         assert_eq!(descriptor.num_rounds, 9);
         assert_eq!(descriptor.degree, 3);
         assert_eq!(descriptor.kind, InstanceKind::Regular);
@@ -125,7 +127,7 @@ mod tests {
 
     #[test]
     fn stage2_descriptor_rejects_malformed_resolution() {
-        let err = stage2_descriptor::<F>(4)
+        let err = stage2_descriptor(4)
             .try_evaluate(
                 |_opening| Err(AkitaError::InvalidProof),
                 |_challenge| Ok(F::one()),

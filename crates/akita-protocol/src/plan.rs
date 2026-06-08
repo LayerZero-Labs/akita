@@ -1,9 +1,11 @@
 //! Per-level protocol plan.
 //!
-//! [`plan_level`] is a pure function of `(LevelParams, ProtocolGates)` that both
-//! the prover and the verifier call to obtain the identical ordered sumcheck
-//! schedule, so Fiat-Shamir ordering, batching, and per-instance proof format
-//! agree by construction.
+//! [`plan_level`] is a pure function of `(const D, LevelParams, next_w_len,
+//! ProtocolGates)` that both the prover and the verifier call to obtain the
+//! identical ordered sumcheck schedule, so Fiat-Shamir ordering, batching, and
+//! per-instance proof format agree by construction. The plan is field-free: it
+//! describes schedule structure only, and the evaluation field is chosen when a
+//! descriptor is later evaluated.
 //!
 //! This PR ships the stage-2 stub: a single regular stage-2 instance. The
 //! y-ring trace term, the L2 certificate instance lists, and the setup-claim
@@ -13,17 +15,18 @@
 //! allocated (via [`BatchingScheme`]), so trace, L2, and offloading instances
 //! cannot collide on the same power once they are added.
 
-use akita_field::{AkitaError, RingCore};
+use akita_field::AkitaError;
 use akita_sumcheck::descriptor::{ClaimSlot, InstanceKind, SumcheckInstanceDescriptor};
-use akita_types::LevelParams;
+use akita_types::{sumcheck_rounds, LevelParams};
 
 use crate::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
 use crate::stage2::stage2_descriptor;
 
 /// Feature gates that select which instances a level's plan contains.
 ///
-/// `plan_level` is a pure function of these gates plus the level parameters, so
-/// the prover and verifier obtain identical plans for identical gates.
+/// `plan_level` is a pure function of these gates plus the level parameters and
+/// the schedule's `next_w_len`, so the prover and verifier obtain identical
+/// plans for identical inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ProtocolGates {
     /// Fuse the y-ring trace term into the stage-2 instance (node F-yring).
@@ -68,14 +71,14 @@ pub enum BatchingScheme {
 
 /// A group of instances proven together in one (possibly batched) sumcheck.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StagePlan<F, O, P, C> {
+pub struct StagePlan<O, P, C> {
     /// Instances batched together in this stage.
-    pub instances: Vec<SumcheckInstanceDescriptor<F, O, P, C>>,
+    pub instances: Vec<SumcheckInstanceDescriptor<O, P, C>>,
     /// How gamma powers are allocated across `instances`.
     pub batching: BatchingScheme,
 }
 
-impl<F, O, P, C> StagePlan<F, O, P, C> {
+impl<O, P, C> StagePlan<O, P, C> {
     /// Whether the eq-factored proof-size optimization is retained for the
     /// instance at `index`.
     ///
@@ -134,9 +137,9 @@ pub struct TranscriptSchedule {
 
 /// The full per-level protocol plan: stages, carried openings, and schedule.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LevelProtocolPlan<F, O, P, C> {
+pub struct LevelProtocolPlan<O, P, C> {
     /// Ordered stages, each a batched sumcheck.
-    pub stages: Vec<StagePlan<F, O, P, C>>,
+    pub stages: Vec<StagePlan<O, P, C>>,
     /// Carried opening claims handed to the next fold.
     pub carried_openings: CarriedOpeningPlan,
     /// Ordered Fiat-Shamir schedule.
@@ -144,6 +147,14 @@ pub struct LevelProtocolPlan<F, O, P, C> {
 }
 
 /// Derive the per-level protocol plan from level parameters and feature gates.
+///
+/// Field-free: the plan describes only the schedule's *structure* (round
+/// counts, batching, instance kinds, claim chaining, transcript order). The
+/// evaluation field is chosen later, when the verifier evaluates a descriptor.
+/// The ring dimension is the const `D` the whole prove/verify stack is
+/// dispatched at; `params.ring_dimension` must agree (mirroring the verifier's
+/// `lp.ring_dimension == D` boundary check), so the plan cannot derive a round
+/// count against a ring dimension the rest of the call is not using.
 ///
 /// Pure and panic-free: identical inputs yield identical plans on both sides.
 /// This stub emits the baseline stage-2 schedule (one regular fused instance)
@@ -153,12 +164,14 @@ pub struct LevelProtocolPlan<F, O, P, C> {
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidInput`] for a not-yet-supported gate and
-/// [`AkitaError::InvalidSetup`] when the level's ring dimension is not a power
-/// of two or the round count overflows.
-pub fn plan_level<F: RingCore>(
+/// [`AkitaError::InvalidSetup`] when `D` is not a power of two, when
+/// `params.ring_dimension` disagrees with `D`, or when `next_w_len` is not a
+/// positive multiple of `D`.
+pub fn plan_level<const D: usize>(
     params: &LevelParams,
+    next_w_len: usize,
     gates: &ProtocolGates,
-) -> Result<LevelProtocolPlan<F, AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
+) -> Result<LevelProtocolPlan<AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
     if gates.trace
         || gates.setup_offload
         || matches!(gates.l2_certificate, L2CertificateMode::Realized)
@@ -170,8 +183,8 @@ pub fn plan_level<F: RingCore>(
         ));
     }
 
-    let num_rounds = stage2_num_rounds(params)?;
-    let descriptor = stage2_descriptor::<F>(num_rounds);
+    let num_rounds = stage2_num_rounds::<D>(params, next_w_len)?;
+    let descriptor = stage2_descriptor(num_rounds);
     let input_claim = descriptor.input_claim;
     let output_claim = descriptor.output_claim;
 
@@ -195,40 +208,48 @@ pub fn plan_level<F: RingCore>(
     })
 }
 
-/// Stage-2 round count `col_bits + ring_bits` for a level.
+/// Stage-2 round count for a level, matching prover/verifier sumcheck drivers.
 ///
-/// `ring_bits = log2(ring_dimension)` (the within-ring y variables) and
-/// `col_bits = m_vars + r_vars` (the block/position x variables). Rejects a
-/// non-power-of-two ring dimension and an overflowing sum.
-fn stage2_num_rounds(params: &LevelParams) -> Result<usize, AkitaError> {
-    let ring_dimension = params.ring_dimension;
-    if ring_dimension == 0 || !ring_dimension.is_power_of_two() {
+/// Delegates to [`sumcheck_rounds`]: `col_bits` is `log2` of the next power of
+/// two of `next_w_len / D`, and `ring_bits` is `log2(D)`. Validates `D` against
+/// `params.ring_dimension` so the plan's round count cannot diverge from the
+/// const ring dimension the rest of the call uses.
+fn stage2_num_rounds<const D: usize>(
+    params: &LevelParams,
+    next_w_len: usize,
+) -> Result<usize, AkitaError> {
+    if D == 0 || !D.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "stage-2 plan requires a power-of-two ring dimension".to_string(),
         ));
     }
-    let ring_bits = ring_dimension.trailing_zeros() as usize;
-    let col_bits = params.outer_vars();
-    col_bits
-        .checked_add(ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 round count overflow".to_string()))
+    if params.ring_dimension != D {
+        return Err(AkitaError::InvalidSetup(
+            "stage-2 plan ring dimension does not match dispatched D".to_string(),
+        ));
+    }
+    if next_w_len == 0 || !next_w_len.is_multiple_of(D) {
+        return Err(AkitaError::InvalidSetup(
+            "stage-2 plan requires next_w_len to be a positive multiple of the ring dimension"
+                .to_string(),
+        ));
+    }
+    Ok(sumcheck_rounds(D, next_w_len))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime64Offset59;
     use akita_types::SisModulusFamily;
 
-    type F = Prime64Offset59;
+    // Dispatched ring dimension for the sample level (matches `sample_params`).
+    const D: usize = 64;
 
     fn sample_params() -> LevelParams {
-        // ring_dimension = 64 -> ring_bits = 6; m_vars = 4, r_vars = 2 ->
-        // col_bits = 6; num_rounds = 12.
         LevelParams::params_only(
             SisModulusFamily::Q128,
-            64,
+            D,
             3,
             2,
             4,
@@ -242,25 +263,33 @@ mod tests {
         .expect("valid layout")
     }
 
+    fn sample_next_w_len(params: &LevelParams) -> usize {
+        // Same witness-shape convention as schedule/proof-size tests.
+        params.ring_dimension * 8
+    }
+
     #[test]
     fn plan_level_is_deterministic_for_fixed_inputs() {
         let params = sample_params();
+        let next_w_len = sample_next_w_len(&params);
         let gates = ProtocolGates::default();
-        let first = plan_level::<F>(&params, &gates).expect("plan");
-        let second = plan_level::<F>(&params, &gates).expect("plan");
+        let first = plan_level::<D>(&params, next_w_len, &gates).expect("plan");
+        let second = plan_level::<D>(&params, next_w_len, &gates).expect("plan");
         assert_eq!(first, second);
     }
 
     #[test]
     fn plan_level_emits_single_regular_stage2_instance() {
         let params = sample_params();
-        let plan = plan_level::<F>(&params, &ProtocolGates::default()).expect("plan");
+        let next_w_len = sample_next_w_len(&params);
+        let expected_rounds = sumcheck_rounds(D, next_w_len);
+        let plan = plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("plan");
 
         assert_eq!(plan.stages.len(), 1);
         let stage = &plan.stages[0];
         assert_eq!(stage.instances.len(), 1);
         assert_eq!(stage.instances[0].kind, InstanceKind::Regular);
-        assert_eq!(stage.instances[0].num_rounds, 12);
+        assert_eq!(stage.instances[0].num_rounds, expected_rounds);
         assert_eq!(stage.batching, BatchingScheme::Standalone);
         assert!(matches!(
             plan.carried_openings,
@@ -272,24 +301,28 @@ mod tests {
     #[test]
     fn plan_level_rejects_unsupported_gates() {
         let params = sample_params();
+        let next_w_len = sample_next_w_len(&params);
         let gates = ProtocolGates {
             trace: true,
             ..ProtocolGates::default()
         };
-        let err = plan_level::<F>(&params, &gates).expect_err("trace gate not yet supported");
+        let err =
+            plan_level::<D>(&params, next_w_len, &gates).expect_err("trace gate not yet supported");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]
     fn plan_level_allows_zk_gate() {
         let params = sample_params();
+        let next_w_len = sample_next_w_len(&params);
         let gates = ProtocolGates {
             zk: true,
             ..ProtocolGates::default()
         };
         // ZK only switches the prover sink; the emitted plan is unchanged.
-        let with_zk = plan_level::<F>(&params, &gates).expect("zk plan");
-        let baseline = plan_level::<F>(&params, &ProtocolGates::default()).expect("baseline plan");
+        let with_zk = plan_level::<D>(&params, next_w_len, &gates).expect("zk plan");
+        let baseline =
+            plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("baseline plan");
         assert_eq!(with_zk, baseline);
     }
 
@@ -297,33 +330,65 @@ mod tests {
     fn plan_level_rejects_non_power_of_two_ring_dimension() {
         let mut params = sample_params();
         params.ring_dimension = 3;
-        let err = plan_level::<F>(&params, &ProtocolGates::default())
+        let err = plan_level::<3>(&params, 24, &ProtocolGates::default())
             .expect_err("non-power-of-two ring dimension rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
+    fn plan_level_rejects_ring_dimension_mismatch() {
+        let mut params = sample_params();
+        // params disagrees with the dispatched const D.
+        params.ring_dimension = 32;
+        let err = plan_level::<D>(
+            &params,
+            sample_next_w_len(&params),
+            &ProtocolGates::default(),
+        )
+        .expect_err("ring dimension mismatch rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn plan_level_round_count_follows_sumcheck_rounds_not_outer_vars() {
+        let params = sample_params();
+        // Five ring elements pad to col_bits = 3, not outer_vars() = 6.
+        let next_w_len = params.ring_dimension * 5;
+        let expected_rounds = sumcheck_rounds(D, next_w_len);
+        assert_ne!(expected_rounds, params.outer_vars() + 6);
+
+        let plan = plan_level::<D>(&params, next_w_len, &ProtocolGates::default()).expect("plan");
+        assert_eq!(plan.stages[0].instances[0].num_rounds, expected_rounds);
+        assert_eq!(
+            plan.transcript_schedule.events[1],
+            TranscriptEvent::SumcheckRounds {
+                num_rounds: expected_rounds
+            }
+        );
+    }
+
+    #[test]
     fn retains_eq_factored_format_only_for_standalone_eq_factored() {
         let eq_factored_instance = || {
-            let mut descriptor = stage2_descriptor::<F>(4);
+            let mut descriptor = stage2_descriptor(4);
             descriptor.kind = InstanceKind::EqFactored;
             descriptor
         };
 
-        let standalone = StagePlan::<F, _, _, _> {
+        let standalone = StagePlan {
             instances: vec![eq_factored_instance()],
             batching: BatchingScheme::Standalone,
         };
         assert!(standalone.retains_eq_factored_format(0));
 
-        let regular = StagePlan::<F, _, _, _> {
-            instances: vec![stage2_descriptor::<F>(4)],
+        let regular = StagePlan {
+            instances: vec![stage2_descriptor(4)],
             batching: BatchingScheme::Standalone,
         };
         assert!(!regular.retains_eq_factored_format(0));
 
-        let batched = StagePlan::<F, _, _, _> {
-            instances: vec![eq_factored_instance(), stage2_descriptor::<F>(4)],
+        let batched = StagePlan {
+            instances: vec![eq_factored_instance(), stage2_descriptor(4)],
             batching: BatchingScheme::GammaPowers {
                 gamma_powers: vec![0, 1],
             },

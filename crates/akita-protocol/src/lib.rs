@@ -10,9 +10,10 @@
 //!
 //! The same description is consumed by both sides of the protocol. The verifier
 //! computes its `expected_output_claim` by evaluating a stage descriptor (the
-//! generic, panic-free `SumcheckInstanceDescriptor::try_evaluate` helper); the
-//! prover runs the same descriptor through its kernel. Because both sides build
-//! their plan from [`plan::plan_level`], a pure function of `(LevelParams,
+//! generic, panic-free `SumcheckInstanceDescriptor::try_evaluate` helper, with
+//! the evaluation field chosen at that call); the prover runs the same
+//! descriptor through its kernel. Because both sides build their plan from
+//! [`plan::plan_level`], a pure function of `(const D, LevelParams, next_w_len,
 //! ProtocolGates)`, the Fiat-Shamir ordering, batching, and per-instance proof
 //! format agree by construction.
 //!
