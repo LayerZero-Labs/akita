@@ -72,6 +72,57 @@ MIN_LOG_BUCKET = 1
 MAX_LOG_BUCKET = 84
 SQUARED_BUCKETS = [1 << k for k in range(MIN_LOG_BUCKET, MAX_LOG_BUCKET + 1)]
 
+# Coefficient-L∞ buckets for derived L2 keys K = d · B². Keep in lockstep with
+# `COEFF_LINF_BUCKETS` in `crates/akita-types/src/sis/ajtai_key.rs`.
+COEFF_LINF_BUCKETS = [
+    2,
+    3,
+    7,
+    15,
+    31,
+    63,
+    127,
+    255,
+    511,
+    1023,
+    2047,
+    4095,
+    8191,
+    16383,
+    32767,
+    65535,
+    131071,
+    262143,
+    524287,
+    1048575,
+    2097151,
+    4194303,
+    8388607,
+    16777215,
+    33554431,
+    67108863,
+]
+
+RING_DIMS = [32, 64, 128, 256]
+
+
+def coeff_linf_bucket_sq(b: int) -> int:
+    """Return `B²` for a coefficient-L∞ bucket `B` without float rounding."""
+    if b <= 3:
+        return b * b
+    # Buckets after `3` are `2^k - 1`; square via bit shifts.
+    k = (b + 1).bit_length() - 1
+    return (1 << (2 * k)) - (1 << (k + 1)) + 1
+
+
+def derived_l2_collision_keys() -> list[int]:
+    keys: set[int] = set()
+    for d in RING_DIMS:
+        for b in COEFF_LINF_BUCKETS:
+            keys.add(d * coeff_linf_bucket_sq(b))
+    return sorted(keys)
+
+
 FAMILIES: dict[str, tuple[int, str, list[int], list[int]]] = {
     "q32": (
         (1 << 32) - 99,
@@ -378,6 +429,11 @@ def emit_rust_rows(
         print(f"//   D={dim}: &[{cs}]")
 
 
+def ladder_truncates_after_zero_width(args: argparse.Namespace) -> bool:
+    """Only the monotonic power-of-two family sweep truncates a D after all-zero widths."""
+    return args.dims is None and args.collisions is None
+
+
 def run_entries(
     args: argparse.Namespace,
     entries: list[tuple[int, int]],
@@ -389,8 +445,9 @@ def run_entries(
 
     rows: list[tuple[int, int, list[int]]] = []
     dead_dims: set[int] = set()
+    truncate_ladder = ladder_truncates_after_zero_width(args)
     for d, collision in entries:
-        if d in dead_dims:
+        if truncate_ladder and d in dead_dims:
             continue
 
         widths: list[int] = []
@@ -415,12 +472,13 @@ def run_entries(
                 )
 
         if all(w == 0 for w in widths):
-            dead_dims.add(d)
-            print(
-                f"        // (d={d}): no secure width at collision_l2_sq>={collision}; "
-                f"truncating ladder",
-                file=sys.stderr,
-            )
+            if truncate_ladder:
+                dead_dims.add(d)
+                print(
+                    f"        // (d={d}): no secure width at collision_l2_sq>={collision}; "
+                    f"truncating ladder",
+                    file=sys.stderr,
+                )
             continue
 
         rows.append((d, collision, widths))
@@ -446,8 +504,8 @@ def build_child_argv(args: argparse.Namespace, d: int, collision: int) -> list[s
         "--jobs", "1",
         "--max-rank", str(args.max_rank),
         "--target-bits", str(args.target_bits),
-        "--d", str(d),
-        "--collision", str(collision),
+        "--dims", str(d),
+        "--collisions", str(collision),
     ]
     if args.q is not None:
         argv.extend(["--q", str(args.q)])
@@ -507,13 +565,15 @@ def run_parallel_shards(
             results.append(fut.result())
 
     results.sort()
+    truncate_ladder = ladder_truncates_after_zero_width(args)
     dead_dims: set[int] = set()
     filtered: list[tuple[int, int, list[int]]] = []
     for d, collision, widths in results:
-        if d in dead_dims:
+        if truncate_ladder and d in dead_dims:
             continue
         if all(w == 0 for w in widths):
-            dead_dims.add(d)
+            if truncate_ladder:
+                dead_dims.add(d)
             continue
         filtered.append((d, collision, widths))
     return filtered

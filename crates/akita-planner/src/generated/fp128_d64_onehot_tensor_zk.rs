@@ -214,7 +214,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 32, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 11, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 11, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -226,7 +226,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 33, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 11, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 11, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -287,8 +287,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 38, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 12, n_a: 13, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 13, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 16, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -324,7 +324,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 41, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 12, n_a: 14, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 11, n_a: 7, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 11, n_a: 7, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -337,7 +337,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 42, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 12, n_a: 14, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -403,8 +403,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 47, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 29, r_vars: 12, n_a: 15, n_b: 2, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 9, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 12, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 15, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -415,9 +415,9 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 48, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 30, r_vars: 12, n_a: 15, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 14, n_a: 9, n_b: 2, n_d: 2 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 13, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 20, r_vars: 14, n_a: 9, n_b: 2, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 15, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 13, r_vars: 6, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -650,7 +650,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 30, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 8, n_a: 11, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 8, n_a: 11, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -662,7 +662,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 31, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 8, n_a: 11, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 8, n_a: 11, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -723,8 +723,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 36, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 10, n_a: 13, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 13, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 16, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -760,7 +760,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 39, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 10, n_a: 14, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 11, n_a: 7, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 11, n_a: 7, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -773,7 +773,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 40, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 10, n_a: 14, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
@@ -839,8 +839,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 45, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 29, r_vars: 10, n_a: 15, n_b: 2, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 9, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 12, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 15, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -851,9 +851,9 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES: &[GeneratedScheduleTable
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 46, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 30, r_vars: 10, n_a: 15, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 14, n_a: 9, n_b: 2, n_d: 2 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 13, r_vars: 7, n_a: 6, n_b: 2, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 20, r_vars: 14, n_a: 9, n_b: 2, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 15, r_vars: 9, n_a: 7, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 13, r_vars: 6, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),

@@ -25,7 +25,11 @@ pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
 
-pub use ajtai_key::{ceil_supported_collision, min_secure_rank, AjtaiKeyParams, SisModulusFamily};
+pub use ajtai_key::{
+    ceil_coeff_linf_bucket, ceil_supported_collision, collision_l2_sq_for_linf_envelope,
+    derived_collision_l2_sq_key, min_secure_rank, AjtaiKeyParams, SisModulusFamily,
+    COEFF_LINF_BUCKETS,
+};
 pub use decomposition_digits::{
     compute_num_digits, compute_num_digits_full_field, decomp_depths,
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,

@@ -31,6 +31,62 @@ pub const MIN_LOG_BUCKET: u32 = 1;
 /// ladder. Keep in lockstep with `MAX_LOG_BUCKET` in `scripts/gen_sis_table.py`.
 pub const MAX_LOG_BUCKET: u32 = 84;
 
+/// Coefficient-`L∞` collision buckets for norm-bound sizing.
+///
+/// Complements the power-of-two `collision_l2_sq` ladder in `generated_sis_table.rs`:
+/// derived keys `K = d · B²` for `B` in this table are the default lookup for
+/// collisions that enter through an `L∞` envelope (A/B/D norm_bound). Keep in
+/// lockstep with `COEFF_LINF_BUCKETS` in `scripts/gen_sis_table.py`.
+pub const COEFF_LINF_BUCKETS: &[u128] = &[
+    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
+    262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
+    67_108_863,
+];
+
+/// Smallest coefficient-`L∞` bucket with `B >= linf`.
+#[must_use]
+pub fn ceil_coeff_linf_bucket(linf: u128) -> Option<u128> {
+    if linf == 0 {
+        return None;
+    }
+    COEFF_LINF_BUCKETS
+        .iter()
+        .copied()
+        .find(|&bucket| linf <= bucket)
+}
+
+/// Derived squared-Euclidean table key `K = d · B²` for `B = ceil_coeff_linf_bucket(linf)`.
+///
+/// Returns `None` when `linf` is zero, arithmetic overflows, or the stitched table
+/// has no row for `(sis_family, d, K)`.
+#[must_use]
+pub fn derived_collision_l2_sq_key(
+    sis_family: SisModulusFamily,
+    d: u32,
+    linf: u128,
+) -> Option<u128> {
+    let bucket = ceil_coeff_linf_bucket(linf)?;
+    let key = bucket.checked_mul(bucket)?.checked_mul(u128::from(d))?;
+    sis_max_widths(sis_family, d, key).map(|_| key)
+}
+
+/// Default L2 collision bucket for an `L∞`-originating envelope.
+///
+/// Prefers the derived key `d · ceil(linf)²` when tabulated; otherwise rounds the
+/// raw `d · linf²` up to the next generated power-of-two bucket.
+#[must_use]
+pub fn collision_l2_sq_for_linf_envelope(
+    sis_family: SisModulusFamily,
+    d: u32,
+    linf: u128,
+) -> Option<u128> {
+    if let Some(key) = derived_collision_l2_sq_key(sis_family, d, linf) {
+        return Some(key);
+    }
+    let raw = linf.checked_mul(linf)?.checked_mul(u128::from(d))?;
+    ceil_supported_collision(sis_family, d, raw)
+}
+
 fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
     matches!(
         (sis_family, d),
@@ -257,5 +313,29 @@ mod tests {
                 Some(20)
             );
         }
+    }
+
+    #[test]
+    fn derived_key_prefers_exact_d_linf_bucket_sq_over_pow2_ceil() {
+        let linf = 1_048_575u128;
+        let derived = derived_collision_l2_sq_key(SisModulusFamily::Q32, 128, linf).unwrap();
+        let pow2 =
+            ceil_supported_collision(SisModulusFamily::Q32, 128, 128u128 * linf * linf).unwrap();
+        assert_ne!(derived, pow2);
+        assert_eq!(
+            min_secure_rank(SisModulusFamily::Q32, 128, derived, 32_768),
+            Some(10)
+        );
+        assert_eq!(
+            min_secure_rank(SisModulusFamily::Q32, 128, pow2, 32_768),
+            None
+        );
+    }
+
+    #[test]
+    fn coeff_linf_bucket_ladder_matches_main_ceiling() {
+        assert_eq!(ceil_coeff_linf_bucket(1_048_574), Some(1_048_575));
+        assert_eq!(ceil_coeff_linf_bucket(1_048_575), Some(1_048_575));
+        assert_eq!(ceil_coeff_linf_bucket(1_048_576), Some(2_097_151));
     }
 }

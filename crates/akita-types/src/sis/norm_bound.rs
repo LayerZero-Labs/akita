@@ -8,7 +8,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use super::ajtai_key::{ceil_supported_collision, SisModulusFamily};
+use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
 use crate::DecompositionParams;
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -136,8 +136,7 @@ pub fn committed_fold_collision_l2_sq(
         .checked_mul(challenge.l1_norm)?
         .checked_mul(fold_beta)?
         .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    let l2_sq = l2_sq_from_linf(u128::from(d), collision_linf).ok()?;
-    ceil_supported_collision(sis_family, d, l2_sq)
+    collision_l2_sq_for_linf_envelope(sis_family, d, collision_linf)
 }
 
 /// A-role (committed witness `s`) rounded-up SIS collision bucket for one
@@ -192,8 +191,7 @@ pub fn rounded_up_collision_norm_t(
     log_basis: u32,
 ) -> Option<u128> {
     let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
-    let l2_sq = l2_sq_from_linf(d as u128, linf).ok()?;
-    ceil_supported_collision(sis_family, d as u32, l2_sq)
+    collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf)
 }
 
 /// D-role (`ŵ`) rounded-up SIS collision bucket. Identical bound to the B role.
@@ -307,6 +305,8 @@ mod tests {
 
     #[test]
     fn committed_fold_collision_l2_sq_matches_lemma7_conversion() {
+        use super::super::ajtai_key::derived_collision_l2_sq_key;
+
         let challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
@@ -314,11 +314,20 @@ mod tests {
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let fold_beta = fold_witness_beta(2, 1, challenge, witness).unwrap();
         let collision_linf = 8u128 * challenge.l1_norm * fold_beta;
-        let expected_l2_sq = l2_sq_from_linf(64, collision_linf).unwrap();
+        let envelope =
+            collision_l2_sq_for_linf_envelope(SisModulusFamily::Q32, 64, collision_linf).unwrap();
         assert_eq!(
             committed_fold_collision_l2_sq(SisModulusFamily::Q32, 64, challenge, witness, 2, 1, 1,)
                 .unwrap(),
-            ceil_supported_collision(SisModulusFamily::Q32, 64, expected_l2_sq).unwrap(),
+            envelope,
+        );
+        assert_eq!(
+            envelope,
+            derived_collision_l2_sq_key(SisModulusFamily::Q32, 64, collision_linf).unwrap(),
+        );
+        assert!(
+            envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
+            "derived bucket ceilings L∞ before squaring",
         );
     }
 }
