@@ -173,8 +173,7 @@ impl SetupContributionFixture {
         } else {
             0
         };
-        let rows =
-            1 + shape.num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
+        let rows = 1 + shape.num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
@@ -183,7 +182,11 @@ impl SetupContributionFixture {
         // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
         // commits `tier_split·n_b·depth_open` decomposed digits.
         let f_stride = shape.tier_split * shape.n_b * shape.depth_open;
-        let b_inner_stride = if tiered { n_cols_t / shape.tier_split } else { 0 };
+        let b_inner_stride = if tiered {
+            n_cols_t / shape.tier_split
+        } else {
+            0
+        };
         let b_inner_required = shape.n_b * b_inner_stride;
         let f_required = shape.n_f * f_stride;
 

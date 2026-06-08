@@ -28,8 +28,8 @@ const TIERED_D: usize = TieredCfg::D;
 fn run_tiered_singleton(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 1)
-            .expect("singleton incidence");
+        let incidence =
+            akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence");
         let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
         assert!(
             layout.f_key.is_some(),
@@ -55,7 +55,9 @@ fn run_tiered_singleton(nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(&setup, &CpuBackend, &prepared, std::slice::from_ref(&poly))
+        >>::commit(
+            &setup, &CpuBackend, &prepared, std::slice::from_ref(&poly)
+        )
         .expect("commit");
         assert_eq!(
             commitment.u.len(),
