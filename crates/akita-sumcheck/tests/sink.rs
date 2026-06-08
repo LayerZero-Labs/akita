@@ -3,7 +3,6 @@
 
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::FieldCore;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::{
     prove_clear_eq_factored, prove_clear_regular, EqFactoredSumcheckInstanceProver,
