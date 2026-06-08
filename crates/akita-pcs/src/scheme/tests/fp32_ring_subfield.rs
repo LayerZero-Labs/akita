@@ -1,5 +1,5 @@
 use super::*;
-use akita_prover::{commit_multilinear_polynomials, MultilinearPolynomial, RootCommitPolys};
+use akita_prover::{MultilinearPolynomial, RootCommitPolys};
 
 /// Scale a per-polynomial root layout to a batched root layout without
 /// SIS-floor audit on the scaled B/D keys (synthetic fixture only).
@@ -632,7 +632,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 }
 
 #[test]
-fn commit_multilinear_polynomials_rejects_tensor_projection_schedule() {
+fn multilinear_wrapper_commit_uses_tensor_projection_schedule() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     const SMALL_D: usize = SmallCfg::D;
@@ -648,15 +648,14 @@ fn commit_multilinear_polynomials_rejects_tensor_projection_schedule() {
         <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
-    let wrapped = [MultilinearPolynomial::dense(&poly)];
-    let err = commit_multilinear_polynomials::<SmallCfg, SMALL_D, usize>(
-        &wrapped,
-        setup.expanded.as_ref(),
+    let wrapped = [MultilinearPolynomial::<SmallF, SMALL_D>::dense(poly)];
+    <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
+        RootCommitPolys::new(&wrapped),
         &CpuBackend,
         &prepared,
     )
-    .unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
+    .expect("multilinear commit through generic RootCommitBackend");
 }
 
 #[test]

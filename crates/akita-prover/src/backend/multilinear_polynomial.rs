@@ -35,165 +35,148 @@ use crate::{
     RootTensorProjectionPoly,
 };
 
-/// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
+/// Owned multilinear-polynomial wrapper for dense and one-hot batches.
 ///
 /// This is an Akita-owned private sum type (allowed by the polyops cutover
 /// spec): it erases `DensePoly` vs `OneHotPoly` for heterogeneous batches while
 /// exposing the source-typed view/kernel boundary (`RootCommitSource`,
 /// `RootOpeningSource`, `RootTensorSource`, and matching `CpuBackend` kernels).
-/// Call sites still bound on `AkitaPolyOps` until the cutover slice rewires them
-/// to `AkitaRootPoly` and operation contexts.
-#[derive(Debug, Clone, Copy)]
-pub enum MultilinearPolynomial<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+/// Wrappers take ownership of the inner polynomial by move so `P` has no lifetime
+/// parameter and participates in generic `commit<P, B>` like `DensePoly`.
+#[derive(Debug, Clone)]
+pub enum MultilinearPolynomial<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
-    Dense(&'a DensePoly<F, D>),
+    Dense(DensePoly<F, D>),
     /// One-hot multilinear polynomial.
-    OneHot(&'a OneHotPoly<F, D, I>),
+    OneHot(OneHotPoly<F, D, I>),
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a, F, D, I> {
+impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I> {
     /// Wrap a dense polynomial.
-    pub fn dense(poly: &'a DensePoly<F, D>) -> Self {
+    pub fn dense(poly: DensePoly<F, D>) -> Self {
         Self::Dense(poly)
     }
 
     /// Wrap a one-hot polynomial.
-    pub fn onehot(poly: &'a OneHotPoly<F, D, I>) -> Self {
+    pub fn onehot(poly: OneHotPoly<F, D, I>) -> Self {
         Self::OneHot(poly)
-    }
-}
-
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a DensePoly<F, D>>
-    for MultilinearPolynomial<'a, F, D, I>
-{
-    fn from(poly: &'a DensePoly<F, D>) -> Self {
-        Self::dense(poly)
-    }
-}
-
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a OneHotPoly<F, D, I>>
-    for MultilinearPolynomial<'a, F, D, I>
-{
-    fn from(poly: &'a OneHotPoly<F, D, I>) -> Self {
-        Self::onehot(poly)
     }
 }
 
 /// Borrowed dispatch view for an Akita-owned multilinear root wrapper.
 #[derive(Debug, Clone, Copy)]
-pub struct MultilinearPolynomialView<'a, 'p, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    poly: &'a MultilinearPolynomial<'p, F, D, I>,
+pub struct MultilinearPolynomialView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+    poly: &'a MultilinearPolynomial<F, D, I>,
 }
 
 /// Same-point batch dispatch view over multilinear root wrappers.
 #[derive(Debug, Clone, Copy)]
-pub struct MultilinearPolynomialBatchView<
-    'a,
-    'p,
-    F: FieldCore,
-    const D: usize,
-    I: OneHotIndex = usize,
-> {
-    polys: &'a [&'a MultilinearPolynomial<'p, F, D, I>],
+pub struct MultilinearPolynomialBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize>
+{
+    polys: &'a [&'a MultilinearPolynomial<F, D, I>],
 }
 
-impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<'_, F, D, I>
+impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_ring_elems(*poly),
-            Self::OneHot(poly) => RootPolyShape::num_ring_elems(*poly),
+            Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
+            Self::OneHot(poly) => RootPolyShape::num_ring_elems(poly),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_vars(*poly),
-            Self::OneHot(poly) => RootPolyShape::num_vars(*poly),
+            Self::Dense(poly) => RootPolyShape::num_vars(poly),
+            Self::OneHot(poly) => RootPolyShape::num_vars(poly),
         }
     }
 }
 
-impl<'p, F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<'p, F, D, I>
+impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore,
     I: OneHotIndex,
 {
-    type CommitView<'a>
-        = MultilinearPolynomialView<'a, 'p, F, D, I>
+    type CommitView<'view>
+        = MultilinearPolynomialView<'view, F, D, I>
     where
-        Self: 'a;
+        Self: 'view;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(MultilinearPolynomialView { poly: self })
     }
 }
 
-impl<'p, F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<'p, F, D, I>
+impl<F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore,
     I: OneHotIndex,
 {
-    type OpeningView<'a>
-        = MultilinearPolynomialView<'a, 'p, F, D, I>
+    type OpeningView<'view>
+        = MultilinearPolynomialView<'view, F, D, I>
     where
-        Self: 'a;
+        Self: 'view;
 
-    type OpeningBatchView<'a>
-        = MultilinearPolynomialBatchView<'a, 'p, F, D, I>
+    type OpeningBatchView<'view>
+        = MultilinearPolynomialBatchView<'view, F, D, I>
     where
-        Self: 'a;
+        Self: 'view;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
         Ok(MultilinearPolynomialView { poly: self })
     }
 
-    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+    fn opening_batch<'view>(
+        polys: &'view [&'view Self],
+    ) -> Result<Self::OpeningBatchView<'view>, AkitaError> {
         Ok(MultilinearPolynomialBatchView { polys })
     }
 }
 
-impl<'p, F, const D: usize, I> RootTensorSource<F, D> for MultilinearPolynomial<'p, F, D, I>
+impl<F, const D: usize, I> RootTensorSource<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore,
     I: OneHotIndex,
 {
-    type TensorView<'a>
-        = MultilinearPolynomialView<'a, 'p, F, D, I>
+    type TensorView<'view>
+        = MultilinearPolynomialView<'view, F, D, I>
     where
-        Self: 'a;
+        Self: 'view;
 
-    type TensorBatchView<'a>
-        = MultilinearPolynomialBatchView<'a, 'p, F, D, I>
+    type TensorBatchView<'view>
+        = MultilinearPolynomialBatchView<'view, F, D, I>
     where
-        Self: 'a;
+        Self: 'view;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
         Ok(MultilinearPolynomialView { poly: self })
     }
 
-    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+    fn tensor_batch<'view>(
+        polys: &'view [&'view Self],
+    ) -> Result<Self::TensorBatchView<'view>, AkitaError> {
         Ok(MultilinearPolynomialBatchView { polys })
     }
 }
 
-impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<'_, F, D, I>
+impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore,
     I: OneHotIndex,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(*poly),
-            Self::OneHot(poly) => DirectRootWitnessSource::direct_root_witness(*poly),
+            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
+            Self::OneHot(poly) => DirectRootWitnessSource::direct_root_witness(poly),
         }
     }
 }
 
-impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, '_, F, D, I>, F, D>
+impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -202,7 +185,7 @@ where
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         match source.poly {
@@ -227,7 +210,7 @@ where
     fn commit_inner_witness(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         match source.poly {
@@ -250,7 +233,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, '_, F, D, I>, F, D>
+impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -259,7 +242,7 @@ where
     fn evaluate_and_fold(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source.poly {
@@ -283,7 +266,7 @@ where
     fn decompose_fold(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         match source.poly {
@@ -305,7 +288,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, '_, F, D, I>, F, D>
+impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -314,17 +297,17 @@ where
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialBatchView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         let Some(first) = source.polys.first() else {
             return Ok(None);
         };
-        match **first {
+        match first {
             MultilinearPolynomial::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
                         MultilinearPolynomial::OneHot(_) => return Ok(None),
                     }
@@ -337,7 +320,7 @@ where
             MultilinearPolynomial::OneHot(_) => {
                 let mut onehot_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
                         MultilinearPolynomial::Dense(_) => return Ok(None),
                     }
@@ -355,7 +338,7 @@ where
 }
 
 impl<F, E, const D: usize, I>
-    TensorProjectionKernel<MultilinearPolynomialView<'_, '_, F, D, I>, F, E, D> for CpuBackend
+    TensorProjectionKernel<MultilinearPolynomialView<'_, F, D, I>, F, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,
@@ -364,7 +347,7 @@ where
     fn column_partials(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
@@ -393,7 +376,7 @@ where
     fn packed_witness(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         match source.poly {
             MultilinearPolynomial::Dense(poly) => {
@@ -416,7 +399,7 @@ where
     fn root_projection(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         E: RingSubfieldEncoding<F>,
@@ -441,8 +424,7 @@ where
 }
 
 impl<F, E, const D: usize, I>
-    TensorProjectionBatchKernel<MultilinearPolynomialBatchView<'_, '_, F, D, I>, F, E, D>
-    for CpuBackend
+    TensorProjectionBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,
@@ -451,7 +433,7 @@ where
     fn column_partials_batch(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialBatchView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialBatchView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
@@ -460,11 +442,11 @@ where
         let Some(first) = source.polys.first() else {
             return Ok(Vec::new());
         };
-        match **first {
+        match first {
             MultilinearPolynomial::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
                         MultilinearPolynomial::OneHot(_) => {
                             return source
@@ -472,7 +454,7 @@ where
                                 .iter()
                                 .map(|poly| {
                                     TensorProjectionKernel::<
-                                        MultilinearPolynomialView<'_, '_, F, D, I>,
+                                        MultilinearPolynomialView<'_, F, D, I>,
                                         F,
                                         E,
                                         D,
@@ -498,7 +480,7 @@ where
             MultilinearPolynomial::OneHot(_) => {
                 let mut onehot_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
                         MultilinearPolynomial::Dense(_) => {
                             return source
@@ -506,7 +488,7 @@ where
                                 .iter()
                                 .map(|poly| {
                                     TensorProjectionKernel::<
-                                        MultilinearPolynomialView<'_, '_, F, D, I>,
+                                        MultilinearPolynomialView<'_, F, D, I>,
                                         F,
                                         E,
                                         D,
@@ -535,17 +517,17 @@ where
     fn sparse_linear_combination(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
-        source: MultilinearPolynomialBatchView<'_, '_, F, D, I>,
+        source: MultilinearPolynomialBatchView<'_, F, D, I>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         let Some(first) = source.polys.first() else {
             return Ok(None);
         };
-        match **first {
+        match first {
             MultilinearPolynomial::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
                         MultilinearPolynomial::OneHot(_) => return Ok(None),
                     }
@@ -561,7 +543,7 @@ where
             MultilinearPolynomial::OneHot(_) => {
                 let mut onehot_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
-                    match **poly {
+                    match poly {
                         MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
                         MultilinearPolynomial::Dense(_) => return Ok(None),
                     }
@@ -578,7 +560,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> AkitaPolyOps<F, D> for MultilinearPolynomial<'_, F, D, I>
+impl<F, const D: usize, I> AkitaPolyOps<F, D> for MultilinearPolynomial<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
@@ -668,11 +650,11 @@ where
         log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
         let first = polys.first()?;
-        match **first {
+        match first {
             Self::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
-                    match **poly {
+                    match poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return None,
                     }
@@ -688,7 +670,7 @@ where
             Self::OneHot(_) => {
                 let mut onehot_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
-                    match **poly {
+                    match poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return None,
                     }
@@ -714,11 +696,11 @@ where
         let Some(first) = polys.first() else {
             return Ok(None);
         };
-        match **first {
+        match first {
             Self::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
-                    match **poly {
+                    match poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return Ok(None),
                     }
@@ -734,7 +716,7 @@ where
             Self::OneHot(_) => {
                 let mut onehot_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
-                    match **poly {
+                    match poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return Ok(None),
                     }
@@ -882,21 +864,28 @@ mod tests {
 
         let dense0 = sample_dense::<D>();
         let dense1 = sample_dense::<D>();
+        let num_vars = RootPolyShape::num_vars(&dense0);
         let wrapped = [
-            MultilinearPolynomial::dense(&dense0),
-            MultilinearPolynomial::dense(&dense1),
+            MultilinearPolynomial::dense(dense0),
+            MultilinearPolynomial::dense(dense1),
         ];
         let wrapped_refs = [&wrapped[0], &wrapped[1]];
-        let point = sample_point::<E>(RootPolyShape::num_vars(&dense0));
+        let point = sample_point::<E>(num_vars);
         let backend = CpuBackend;
 
-        let inner_refs = [&dense0, &dense1];
+        let inner_refs: Vec<&DensePoly<F, D>> = wrapped
+            .iter()
+            .map(|poly| match poly {
+                MultilinearPolynomial::Dense(dense) => dense,
+                MultilinearPolynomial::OneHot(_) => unreachable!(),
+            })
+            .collect();
         let expected =
             DensePoly::<F, D>::tensor_extension_column_partials_batch::<E>(&inner_refs, &point)
                 .unwrap();
         let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
         let got = TensorProjectionBatchKernel::<
-            MultilinearPolynomialBatchView<'_, '_, F, D>,
+            MultilinearPolynomialBatchView<'_, F, D>,
             F,
             E,
             D,
@@ -913,15 +902,22 @@ mod tests {
 
         let onehot0 = sample_onehot::<D>();
         let onehot1 = sample_onehot::<D>();
+        let num_vars = onehot0.num_vars();
         let wrapped = [
-            MultilinearPolynomial::onehot(&onehot0),
-            MultilinearPolynomial::onehot(&onehot1),
+            MultilinearPolynomial::onehot(onehot0),
+            MultilinearPolynomial::onehot(onehot1),
         ];
         let wrapped_refs = [&wrapped[0], &wrapped[1]];
-        let point = sample_point::<E>(onehot0.num_vars());
+        let point = sample_point::<E>(num_vars);
         let backend = CpuBackend;
 
-        let inner_refs = [&onehot0, &onehot1];
+        let inner_refs: Vec<&OneHotPoly<F, D>> = wrapped
+            .iter()
+            .map(|poly| match poly {
+                MultilinearPolynomial::OneHot(onehot) => onehot,
+                MultilinearPolynomial::Dense(_) => unreachable!(),
+            })
+            .collect();
         let expected =
             <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
                 &inner_refs,
@@ -930,7 +926,7 @@ mod tests {
             .unwrap();
         let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
         let got = TensorProjectionBatchKernel::<
-            MultilinearPolynomialBatchView<'_, '_, F, D>,
+            MultilinearPolynomialBatchView<'_, F, D>,
             F,
             E,
             D,
@@ -952,8 +948,8 @@ mod tests {
             .collect::<Vec<_>>();
         let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
         let wrapped = [
-            MultilinearPolynomial::dense(&dense),
-            MultilinearPolynomial::onehot(&onehot),
+            MultilinearPolynomial::dense(dense),
+            MultilinearPolynomial::onehot(onehot),
         ];
         let wrapped_refs = [&wrapped[0], &wrapped[1]];
         let point = sample_point::<E>(num_vars);
@@ -966,7 +962,7 @@ mod tests {
             .unwrap();
         let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
         let got = TensorProjectionBatchKernel::<
-            MultilinearPolynomialBatchView<'_, '_, F, D>,
+            MultilinearPolynomialBatchView<'_, F, D>,
             F,
             E,
             D,
@@ -988,8 +984,8 @@ mod tests {
             .collect::<Vec<_>>();
         let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
         let wrapped = [
-            MultilinearPolynomial::dense(&dense),
-            MultilinearPolynomial::onehot(&onehot),
+            MultilinearPolynomial::dense(dense),
+            MultilinearPolynomial::onehot(onehot),
         ];
         let wrapped_refs = [&wrapped[0], &wrapped[1]];
         let coeffs = vec![E::one(), E::one()];
@@ -997,7 +993,7 @@ mod tests {
 
         let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
         let got = TensorProjectionBatchKernel::<
-            MultilinearPolynomialBatchView<'_, '_, F, D>,
+            MultilinearPolynomialBatchView<'_, F, D>,
             F,
             E,
             D,

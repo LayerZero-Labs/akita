@@ -26,9 +26,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
-use akita_prover::{
-    commit_multilinear_polynomials, ComputeBackendSetup, CpuBackend, RootCommitPolys,
-};
+use akita_prover::{ComputeBackendSetup, CpuBackend, RootCommitPolys};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -295,10 +293,10 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let onehot_b = make_dense_cfg_onehot_poly(&layout, 0x4d10_1002);
 
         let polys = [
-            MultilinearPolynomial::dense(&dense_a),
-            MultilinearPolynomial::onehot(&onehot_a),
-            MultilinearPolynomial::dense(&dense_b),
-            MultilinearPolynomial::onehot(&onehot_b),
+            MultilinearPolynomial::dense(dense_a),
+            MultilinearPolynomial::onehot(onehot_a),
+            MultilinearPolynomial::dense(dense_b),
+            MultilinearPolynomial::onehot(onehot_b),
         ];
         let pt = random_point(NV, 0x4d10_ffff);
         let openings: Vec<F> = polys
@@ -318,11 +316,11 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let (commitment, hint) = commit_multilinear_polynomials::<DenseCfg, DENSE_D, u8>(
-            &polys,
-            setup.expanded.as_ref(),
-            &CpuBackend,
-            &prepared,
+        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::commit(
+            &setup, RootCommitPolys::new(&polys), &CpuBackend, &prepared
         )
         .expect("mixed aggregated commit");
         let commitments = [commitment];

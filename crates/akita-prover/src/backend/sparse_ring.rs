@@ -11,16 +11,14 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-};
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
 mod tensor_fold;
@@ -797,10 +795,10 @@ mod tests {
         DirectRootWitnessSource, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource,
         RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
     };
-    use crate::{CpuBackend, DensePoly};
+    use crate::{CpuBackend, DensePoly, RootTensorProjectionPoly};
     use akita_field::{
-        Prime128OffsetA7F7 as F, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4, TwoNr,
-        UnitNr,
+        ExtField, Prime128OffsetA7F7 as F, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4,
+        TwoNr, UnitNr,
     };
 
     #[test]

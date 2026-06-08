@@ -68,9 +68,6 @@ where
     /// proving `B: RootCommitBackend<F, P, …>`. Pass `&CpuBackend` as
     /// `backend`; do not pin `CpuBackend` in generic commit signatures.
     ///
-    /// Borrowed [`crate::MultilinearPolynomial`] batches that fail the generic
-    /// `P` HRTB should use [`crate::commit_multilinear_polynomials`] instead.
-    ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.

@@ -1,6 +1,5 @@
 //! Prover-owned commitment kernels.
 
-use crate::backend::MultilinearPolynomialView;
 use crate::compute::{
     CommitInnerPlan, CommitmentComputeBackend, OperationCtx, RootCommitBackend, RootCommitKernel,
     RootCommitPoly, RootCommitPolys, RootCommitSource, RootPolyShape, RootTensorSource,
@@ -9,10 +8,9 @@ use crate::compute::{
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::DigitRowsComputeBackend;
-use crate::{
-    CommitInnerWitness, CpuBackend, MultilinearPolynomial, OneHotIndex, RootTensorProjectionPoly,
-};
+#[cfg(test)]
+use crate::CpuBackend;
+use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
@@ -283,165 +281,6 @@ where
 {
     let view = poly.commit_view()?;
     RootCommitKernel::commit_inner_witness(ctx.backend(), ctx.prepared(), view, plan)
-}
-
-fn commit_multilinear_poly_inner_witness<'p, F, const D: usize, I>(
-    poly: &MultilinearPolynomial<'p, F, D, I>,
-    ctx: &OperationCtx<'_, F, CpuBackend, D>,
-    plan: CommitInnerPlan,
-) -> Result<CommitInnerWitness<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    I: OneHotIndex,
-{
-    let view = poly.commit_view()?;
-    <CpuBackend as RootCommitKernel<MultilinearPolynomialView<'_, 'p, F, D, I>, F, D>>::commit_inner_witness(
-        ctx.backend(),
-        ctx.prepared(),
-        view,
-        plan,
-    )
-}
-
-fn commit_multilinear_with_validated_params<'p, F, const D: usize, I>(
-    polys: &'p [MultilinearPolynomial<'p, F, D, I>],
-    ctx: &OperationCtx<'_, F, CpuBackend, D>,
-    params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide,
-    I: OneHotIndex,
-{
-    let plan = commit_inner_plan(params);
-    let b_input_len_per_poly = commit_inner_flat_digit_count(
-        params.num_blocks,
-        params.a_key.row_len(),
-        params.num_digits_open,
-    )?;
-    let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
-    let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
-    let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
-        .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
-        .collect::<Result<_, _>>()?;
-    let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
-        vec![Vec::new(); polys.len()];
-    cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
-        .zip(cfg_iter!(polys))
-        .zip(cfg_iter_mut!(decomposed_inner_rows))
-        .zip(cfg_iter_mut!(recomposed_inner_rows))
-        .try_for_each(
-            |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
-                let inner = commit_multilinear_poly_inner_witness(poly, ctx, plan)?;
-                validate_commit_inner_witness_shape(
-                    &inner,
-                    params.num_blocks,
-                    params.a_key.row_len(),
-                    params.num_digits_open,
-                    params.log_basis,
-                )?;
-                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
-                *decomposed = inner.decomposed_inner_rows;
-                *recomposed = inner.recomposed_inner_rows;
-                Ok(())
-            },
-        )?;
-    #[cfg(feature = "zk")]
-    let b_blinding_digits =
-        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
-    validate_commit_outer_input_nonempty(b_input_digits.len())?;
-    #[cfg(feature = "zk")]
-    let mut u: Vec<CyclotomicRing<F, D>> = ctx.backend().digit_rows::<D>(
-        ctx.prepared(),
-        params.b_key.row_len(),
-        &b_input_digits,
-        params.log_basis,
-    )?;
-    #[cfg(not(feature = "zk"))]
-    let u: Vec<CyclotomicRing<F, D>> = ctx.backend().digit_rows::<D>(
-        ctx.prepared(),
-        params.b_key.row_len(),
-        &b_input_digits,
-        params.log_basis,
-    )?;
-    #[cfg(feature = "zk")]
-    {
-        let blinding_rows = ctx.backend().zk_b_digit_rows::<D>(
-            ctx.prepared(),
-            params.b_key.row_len(),
-            b_blinding_digits.flat_digits().len(),
-            b_blinding_digits.flat_digits(),
-        )?;
-        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding;
-        }
-    }
-    if u.len() != params.b_key.row_len() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "backend returned {} B commitment rows, expected {}",
-            u.len(),
-            params.b_key.row_len()
-        )));
-    }
-    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-        #[cfg(feature = "zk")]
-        vec![b_blinding_digits],
-    );
-    Ok((RingCommitment { u }, hint))
-}
-
-/// Commit a borrowed [`MultilinearPolynomial`] batch on [`CpuBackend`].
-///
-/// Generic [`commit`] / [`CommitmentProver::commit`] require
-/// `for<'a> RootCommitKernel<<P as RootCommitSource>::CommitView<'a>>` with `P` still a type
-/// parameter. For [`MultilinearPolynomial`], `CommitView<'a>` carries a second lifetime tied
-/// to the wrapped dense/one-hot borrow, and the current trait solver then requires those borrows
-/// to be `'static`. This entry point keeps the wrapper lifetime explicit via UFCS on
-/// [`MultilinearPolynomialView`].
-///
-/// Root tensor projection is not supported here: configs whose schedule requires projection
-/// before commit return [`AkitaError::InvalidInput`]. Use generic [`commit`] with a
-/// homogeneous root type when projection is required.
-///
-/// # Errors
-///
-/// Returns an error if input validation, parameter selection, root tensor projection is
-/// required, or commitment execution fails.
-#[allow(clippy::type_complexity)]
-pub fn commit_multilinear_polynomials<Cfg, const D: usize, I>(
-    polys: &[MultilinearPolynomial<'_, Cfg::Field, D, I>],
-    expanded: &AkitaExpandedSetup<Cfg::Field>,
-    backend: &CpuBackend,
-    prepared: &<CpuBackend as crate::compute::ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>,
-) -> Result<
-    (
-        RingCommitment<Cfg::Field, D>,
-        AkitaCommitmentHint<Cfg::Field, D>,
-    ),
-    AkitaError,
->
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
-    I: OneHotIndex,
-{
-    let ctx = OperationCtx::new(backend, prepared, expanded)?;
-    let incidence =
-        prepare_commit_inputs::<Cfg::Field, D, MultilinearPolynomial<'_, Cfg::Field, D, I>>(
-            polys, expanded,
-        )?;
-    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
-        return Err(AkitaError::InvalidInput(
-            "commit_multilinear_polynomials does not support root tensor projection; use `commit` with owned roots or a homogeneous backend type".to_string(),
-        ));
-    }
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
-    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    commit_multilinear_with_validated_params(polys, &ctx, &params)
 }
 
 fn tensor_project_root<F, E, const D: usize, P, B>(
@@ -1104,5 +943,62 @@ mod tests {
 
         assert_eq!(via_params.0.u, via_commit.0.u);
         assert_eq!(via_params.1, via_commit.1);
+    }
+
+    #[test]
+    fn commit_with_params_accepts_borrowed_multilinear_polynomial() {
+        use crate::compute::ComputeBackendSetup;
+        use crate::{DensePoly, MultilinearPolynomial, OneHotPoly};
+        use akita_config::proof_optimized::fp64;
+        use akita_config::CommitmentConfig;
+
+        type Cfg = fp64::D32Full;
+        type PolyF = <Cfg as CommitmentConfig>::Field;
+        const POLY_D: usize = Cfg::D;
+        const NUM_VARS: usize = 8;
+
+        let len = 1usize << NUM_VARS;
+        let dense_evals: Vec<PolyF> = (0..len)
+            .map(|idx| PolyF::from_u64((idx as u64) + 1))
+            .collect();
+        let dense = DensePoly::<PolyF, POLY_D>::from_field_evals(NUM_VARS, &dense_evals).unwrap();
+        let incidence = ClaimIncidenceSummary::same_point(NUM_VARS, 2).unwrap();
+        let layout = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
+        let total_ring = layout.num_blocks * layout.block_len;
+        let onehot_indices: Vec<Option<u8>> = (0..total_ring)
+            .map(|idx| Some((idx % POLY_D) as u8))
+            .collect();
+        let onehot =
+            OneHotPoly::<PolyF, POLY_D, u8>::new(POLY_D, onehot_indices).expect("onehot poly");
+        let polys = [
+            MultilinearPolynomial::dense(dense),
+            MultilinearPolynomial::onehot(onehot),
+        ];
+
+        let setup = AkitaProverSetup::<PolyF, POLY_D>::generate_with_capacity(
+            NUM_VARS,
+            2,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 8192,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let expanded = &setup.expanded;
+        let params = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
+
+        commit_with_params::<PolyF, POLY_D, MultilinearPolynomial<PolyF, POLY_D, u8>, CpuBackend>(
+            &polys,
+            expanded,
+            &CpuBackend,
+            &prepared,
+            &params,
+        )
+        .expect("mixed multilinear commit_with_params");
     }
 }
