@@ -112,8 +112,8 @@ where
 /// One opening-point polynomial bundle passed to commit entry points.
 ///
 /// The wrapper pins the polynomial type `P` for inference through generic
-/// [`crate::api::commitment::commit`] and [`CommitmentProver::commit`]. Scheme-level
-/// [`CommitmentProver::commit`] takes this bundle before `backend` so `P` is known when the
+/// [`crate::api::commitment::commit`] and [`crate::api::CommitmentProver::commit`]. Scheme-level
+/// [`crate::api::CommitmentProver::commit`] takes this bundle before `backend` so `P` is known when the
 /// compiler checks [`RootCommitBackend`].
 #[derive(Clone, Copy, Debug)]
 pub struct RootCommitPolys<'a, P> {

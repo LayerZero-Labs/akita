@@ -304,8 +304,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
     poly: &P,
-    pt: &[Cfg::ClaimField],
-    opening: Cfg::ClaimField,
+    commit_output: (RingCommitment<FF, D>, AkitaCommitmentHint<FF, D>),
+    opening_claim: (&[Cfg::ClaimField], Cfg::ClaimField),
     plan: Option<&Schedule>,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
@@ -338,16 +338,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
-    let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
-        setup,
-        RootCommitPolys::from_ref(poly),
-        &CpuBackend,
-        prepared,
-    )
-    .unwrap();
-    report_timing(label, "commit", t0.elapsed().as_secs_f64());
-
+    let (commitment, hint) = commit_output;
+    let (pt, opening) = opening_claim;
     let poly_refs: [&P; 1] = [poly];
     let commitments = [commitment];
     let openings = [opening];
@@ -535,7 +527,25 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
+    let t0 = Instant::now();
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+        &setup,
+        RootCommitPolys::from_ref(&poly),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap();
+    report_timing(label, "commit", t0.elapsed().as_secs_f64());
+
+    run_prove::<FF, D, Cfg, _>(
+        label,
+        &setup,
+        &prepared,
+        &poly,
+        (commitment, hint),
+        (&original_pt, opening),
+        plan,
+    );
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -619,7 +629,25 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
+    let t0 = Instant::now();
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+        &setup,
+        RootCommitPolys::from_ref(&onehot_poly),
+        &CpuBackend,
+        &prepared,
+    )
+    .unwrap();
+    report_timing(label, "commit", t0.elapsed().as_secs_f64());
+
+    run_prove::<FF, D, Cfg, _>(
+        label,
+        &setup,
+        &prepared,
+        &onehot_poly,
+        (commitment, hint),
+        (&pt, opening),
+        plan,
+    );
 }
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -725,7 +753,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         &setup,
-        RootCommitPolys::new(&poly_refs),
+        RootCommitPolys::new(&polys),
         &CpuBackend,
         &prepared,
     )

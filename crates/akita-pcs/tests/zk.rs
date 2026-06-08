@@ -438,17 +438,17 @@ where
         let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
+            commit_input,
             &CpuBackend,
             &prepared,
-            commit_input,
         )
         .expect("first zk commit");
         let (rerandomized_commitment, _) =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
                 &setup,
+                RootCommitPolys::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                commit_input,
             )
             .expect("second zk commit");
         assert_ne!(
@@ -719,9 +719,9 @@ where
         let commit_input = RootCommitPolys::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
+            commit_input,
             &CpuBackend,
             &prepared,
-            commit_input,
         )
         .expect("first zk commit");
 
@@ -849,7 +849,7 @@ fn run_zk_dense_batched_shape_cases() {
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
-            &same_point_polys,
+            RootCommitPolys::new(&same_point_polys),
             &CpuBackend,
             &prepared,
         )

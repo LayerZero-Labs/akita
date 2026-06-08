@@ -12,6 +12,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_with_params, compute::RootCommitPolys, AkitaPolyOps, CommitmentProver, OneHotPoly,
+    RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{ClaimIncidenceSummary, RingSubfieldEncoding};
@@ -156,14 +157,15 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let start = Instant::now();
-                let committed = commit_with_params::<F, D, _, CpuBackend>(
-                    &transformed_polys,
-                    setup.expanded.as_ref(),
-                    &CpuBackend,
-                    &prepared,
-                    &params,
-                )
-                .expect("benchmark transformed commitment");
+                let committed =
+                    commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
+                        &transformed_polys,
+                        setup.expanded.as_ref(),
+                        &CpuBackend,
+                        &prepared,
+                        &params,
+                    )
+                    .expect("benchmark transformed commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

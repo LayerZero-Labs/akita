@@ -20,7 +20,7 @@ fn batched_commit_matches_individual_commits() {
         .map(|group| {
             <Scheme as CommitmentProver<F, D>>::commit(
                 &setup,
-                RootCommitPolys::new(*group),
+                RootCommitPolys::new(group),
                 &CpuBackend,
                 &prepared,
             )

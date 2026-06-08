@@ -891,7 +891,6 @@ mod tests {
         use crate::DensePoly;
         use akita_config::proof_optimized::fp64;
         use akita_config::CommitmentConfig;
-        use akita_field::FromPrimitiveInt;
 
         type Cfg = fp64::D32Full;
         type PolyF = <Cfg as CommitmentConfig>::Field;
