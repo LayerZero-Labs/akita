@@ -7,9 +7,10 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 use akita_prover::{
-    batched_commit,
-    compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys},
-    AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend, ProverClaims,
+    batched_commit, commit,
+    compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys, ZkHidingCommitBackend},
+    prove_batched, AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend,
+    ProverClaims, ProverComputeBackend, RootProveBackend, RootProvePoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -114,7 +115,7 @@ where
         B: RootCommitBackend<F, P, Cfg::ChallengeField, D>,
         B::PreparedSetup<D>: Send + Sync,
     {
-        bundle.commit_with::<Cfg, D, B>(setup.expanded.as_ref(), backend, prepared)
+        commit::<Cfg, D, P, B>(bundle, setup.expanded.as_ref(), backend, prepared)
     }
 
     #[allow(clippy::type_complexity)]
@@ -145,14 +146,14 @@ where
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,
-        P: akita_prover::RootProvePoly<F, D>,
-        B: akita_prover::ProverComputeBackend<F>
-            + akita_prover::RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>
-            + akita_prover::compute::ZkHidingCommitBackend<F, D>,
+        P: RootProvePoly<F, D>,
+        B: ProverComputeBackend<F>
+            + RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>
+            + ZkHidingCommitBackend<F, D>,
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        let proof = akita_prover::prove_batched::<Cfg, T, P, B, D>(
+        let proof = prove_batched::<Cfg, T, P, B, D>(
             &setup.expanded,
             backend,
             prepared,

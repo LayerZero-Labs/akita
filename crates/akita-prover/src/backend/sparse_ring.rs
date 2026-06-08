@@ -12,12 +12,13 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
+use akita_types::FlatDigitBlocks;
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan,
+    CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource, FlatBlockTable,
+    SparseRingCommitRowsPlan,
 };
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -473,7 +474,7 @@ where
                 actual: logical_point.len(),
             });
         }
-        let witness = self.direct_root_witness()?;
+        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
         let field_elems = witness.as_field_elements().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "root tensor partials require field-element root witness".to_string(),
@@ -491,7 +492,7 @@ where
         E: akita_field::ExtField<F>,
     {
         let num_vars = self.num_vars();
-        let witness = self.direct_root_witness()?;
+        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
         let field_elems = witness.as_field_elements().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "root tensor projection requires field-element root witness".to_string(),
@@ -539,25 +540,6 @@ where
             )?);
         }
         Ok(crate::backend::dense::DensePoly::<F, D>::from_ring_coeffs(rings).into())
-    }
-
-    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
-        })?;
-        let mut coeffs = vec![F::zero(); total_coeffs];
-        for entry in &self.coeffs {
-            let idx = (entry.ring_idx as usize)
-                .checked_mul(D)
-                .and_then(|base| base.checked_add(entry.coeff_idx as usize))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("sparse direct witness index overflow".to_string())
-                })?;
-            coeffs[idx] += F::from_i8(entry.value);
-        }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
     }
 }
 
@@ -1072,11 +1054,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            <SparseRingPoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&sparse)
-                .unwrap(),
-            SparseRingPoly::direct_root_witness(&sparse).unwrap()
-        );
+        let witness = DirectRootWitnessSource::direct_root_witness(&sparse).unwrap();
+        assert!(witness.as_field_elements().is_some());
     }
 
     #[test]

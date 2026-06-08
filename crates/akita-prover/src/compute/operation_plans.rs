@@ -1,6 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::FieldCore;
+use akita_types::LevelParams;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -45,6 +46,19 @@ pub struct CommitInnerPlan {
     pub num_digits_open: usize,
     /// Logarithm of the gadget basis.
     pub log_basis: u32,
+}
+
+impl CommitInnerPlan {
+    /// Build inner-commit parameters from a validated commitment layout.
+    pub fn from_level(params: &LevelParams) -> Self {
+        Self {
+            n_a: params.a_key.row_len(),
+            block_len: params.block_len,
+            num_digits_commit: params.num_digits_commit,
+            num_digits_open: params.num_digits_open,
+            log_basis: params.log_basis,
+        }
+    }
 }
 
 /// Fold parameters for a fused evaluate-and-fold opening.

@@ -2,7 +2,7 @@
 
 use crate::compute::{
     ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveBackend,
-    RootProvePoly,
+    RootProvePoly, ZkHidingCommitBackend,
 };
 use crate::ProverClaims;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -141,5 +141,5 @@ where
         P: RootProvePoly<F, D>,
         B: ProverComputeBackend<F>
             + RootProveBackend<F, P, Self::ClaimField, Self::TensorField, D>
-            + crate::compute::ZkHidingCommitBackend<F, D>;
+            + ZkHidingCommitBackend<F, D>;
 }

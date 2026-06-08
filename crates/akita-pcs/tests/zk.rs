@@ -28,7 +28,7 @@ use akita_types::{
     lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
     DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    SisModulusFamily,
+    RingOpeningPoint, SetupContributionMode, SisModulusFamily,
 };
 use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier, RingSwitchReplay};
 use common::*;
@@ -80,7 +80,7 @@ fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
 fn dense_evaluate_and_fold<const D: usize>(
     prepared: Option<&<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     poly: &DensePoly<F, D>,
-    ring_opening_point: &akita_types::RingOpeningPoint<F>,
+    ring_opening_point: &RingOpeningPoint<F>,
     block_len: usize,
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
     let OpeningFoldOutput { eval, folded } = OpeningFoldKernel::evaluate_and_fold(
@@ -345,7 +345,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk fp32 prove");
 
@@ -369,7 +369,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk fp32 extension-opening reduction verify");
 
@@ -393,7 +393,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitment),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
+                SetupContributionMode::Direct,
             )
             .is_err(),
             "zk verifier should reject tampered extension-opening partials"
@@ -492,7 +492,7 @@ where
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk prove");
 
@@ -514,7 +514,7 @@ where
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk verify");
 
@@ -536,7 +536,7 @@ where
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitments[0]),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
+                SetupContributionMode::Direct,
             )
             .is_err(),
             "zk verifier should reject unreferenced trailing hiding witness slots"
@@ -587,7 +587,7 @@ fn run_zk_dense_cursor_binding_negatives() {
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk prove");
         assert!(
@@ -613,7 +613,7 @@ fn run_zk_dense_cursor_binding_negatives() {
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk verify");
 
@@ -641,7 +641,7 @@ fn run_zk_dense_cursor_binding_negatives() {
                     &mut verifier_transcript,
                     verify_input(&point, &openings, &commitments[0]),
                     BasisMode::Lagrange,
-                    akita_types::SetupContributionMode::Direct,
+                    SetupContributionMode::Direct,
                 )
                 .is_err(),
                 "zk verifier should reject tampered {case}"
@@ -771,7 +771,7 @@ where
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk prove");
 
@@ -783,7 +783,7 @@ where
             &prepared,
             &mut second_prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("second zk prove");
         assert_folded_v_hiding::<D>(nv, &proof, &second_proof, &plain_root_v);
@@ -817,7 +817,7 @@ where
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("zk verify");
         let mut second_verifier_transcript = AkitaTranscript::<F>::new(label);
@@ -827,7 +827,7 @@ where
             &mut second_verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("second zk verify");
     });
@@ -887,7 +887,7 @@ fn run_zk_dense_batched_shape_cases() {
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("same-point zk batched prove");
         assert!(
@@ -922,7 +922,7 @@ fn run_zk_dense_batched_shape_cases() {
             &mut verifier_transcript,
             verify_input(&same_point, &same_point_openings, &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("same-point zk batched verify");
 
@@ -976,7 +976,7 @@ fn run_zk_dense_batched_shape_cases() {
             &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("multipoint zk batched prove");
         match &proof.root {
@@ -1007,7 +1007,7 @@ fn run_zk_dense_batched_shape_cases() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            SetupContributionMode::Direct,
         )
         .expect("multipoint zk batched verify");
     });

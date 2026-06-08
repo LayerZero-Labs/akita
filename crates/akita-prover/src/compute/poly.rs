@@ -3,11 +3,13 @@ use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
-use crate::{DensePoly, RootTensorProjectionPoly};
+#[cfg(feature = "zk")]
+use crate::DensePoly;
+use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
-};
+#[cfg(feature = "zk")]
+use akita_field::RandomSampling;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
 
 /// Shape metadata every root polynomial exposes.
@@ -299,42 +301,15 @@ where
 pub trait ZkHidingCommitBackend<F, const D: usize>:
     super::backend::ProverComputeBackend<F>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
 {
 }
 
 #[cfg(not(feature = "zk"))]
 impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     B: super::backend::ProverComputeBackend<F>,
-{
-}
-
-/// Umbrella marker for a fully capable Akita root polynomial.
-///
-/// Acceptable only as a convenience bundle on top-level APIs whose behavior can
-/// reach every root capability through config-selected schedules. Lower-level
-/// helpers should bound the smallest capability they actually use.
-pub trait AkitaRootPoly<F, const D: usize>:
-    RootPolyShape<F, D>
-    + RootCommitSource<F, D>
-    + RootOpeningSource<F, D>
-    + RootTensorSource<F, D>
-    + DirectRootWitnessSource<F, D>
-where
-    F: FieldCore,
-{
-}
-
-impl<F, const D: usize, P> AkitaRootPoly<F, D> for P
-where
-    F: FieldCore,
-    P: RootPolyShape<F, D>
-        + RootCommitSource<F, D>
-        + RootOpeningSource<F, D>
-        + RootTensorSource<F, D>
-        + DirectRootWitnessSource<F, D>,
 {
 }
 

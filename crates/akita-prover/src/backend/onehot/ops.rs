@@ -585,7 +585,7 @@ where
         E: akita_field::ExtField<F>,
     {
         let num_vars = self.num_vars();
-        let witness = self.direct_root_witness()?;
+        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
         let field_elems = witness.as_field_elements().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "root tensor projection requires field-element root witness".to_string(),
@@ -924,33 +924,5 @@ where
             recomposed_inner_rows: t,
             decomposed_inner_rows: t_hat,
         })
-    }
-
-    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
-        })?;
-        let mut evals = vec![F::zero(); total_evals];
-        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
-            let Some(raw) = opt else {
-                continue;
-            };
-            let field_pos = chunk_idx
-                .checked_mul(self.onehot_k)
-                .and_then(|base| base.checked_add(raw.as_usize()))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("onehot direct witness index overflow".to_string())
-                })?;
-            if field_pos >= evals.len() {
-                return Err(AkitaError::InvalidInput(format!(
-                    "onehot direct witness index {field_pos} out of range for {} evals",
-                    evals.len()
-                )));
-            }
-            evals[field_pos] = F::one();
-        }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(evals),
-        ))
     }
 }

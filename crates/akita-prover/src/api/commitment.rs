@@ -3,7 +3,7 @@
 use crate::compute::{
     tensor_root_projection, CommitInnerPlan, CommitmentComputeBackend, OperationCtx,
     RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitPolys, RootCommitSource,
-    RootPolyShape, RootTensorSource,
+    RootPolyShape,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
@@ -208,16 +208,6 @@ pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<
     Ok(())
 }
 
-fn commit_inner_plan(params: &LevelParams) -> CommitInnerPlan {
-    CommitInnerPlan {
-        n_a: params.a_key.row_len(),
-        block_len: params.block_len,
-        num_digits_commit: params.num_digits_commit,
-        num_digits_open: params.num_digits_open,
-        log_basis: params.log_basis,
-    }
-}
-
 /// Validate a singleton commitment request against prover setup capacity.
 ///
 /// # Errors
@@ -283,25 +273,6 @@ where
     RootCommitKernel::commit_inner_witness(ctx.backend(), ctx.prepared(), view, plan)
 }
 
-fn tensor_project_root<F, E, const D: usize, P, B>(
-    poly: &P,
-    ctx: &OperationCtx<'_, F, B, D>,
-) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: akita_field::ExtField<F> + RingSubfieldEncoding<F>,
-    P: RootTensorSource<F, D>,
-    B: CommitmentComputeBackend<F>
-        + for<'a> crate::compute::TensorProjectionKernel<
-            <P as RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            E,
-            D,
-        >,
-{
-    tensor_root_projection(ctx.backend(), Some(ctx.prepared()), poly)
-}
-
 fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B, D>,
@@ -313,7 +284,7 @@ where
     B: CommitmentComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
-    let plan = commit_inner_plan(params);
+    let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_blocks,
         params.a_key.row_len(),
@@ -444,7 +415,13 @@ where
 {
     let transformed = polys
         .iter()
-        .map(|poly| tensor_project_root::<Cfg::Field, Cfg::ChallengeField, D, P, B>(poly, ctx))
+        .map(|poly| {
+            tensor_root_projection::<Cfg::Field, P, Cfg::ChallengeField, B, D>(
+                ctx.backend(),
+                Some(ctx.prepared()),
+                poly,
+            )
+        })
         .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
     let params = Cfg::get_params_for_batched_commitment(incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
@@ -483,7 +460,11 @@ where
             polys
                 .iter()
                 .map(|poly| {
-                    tensor_project_root::<Cfg::Field, Cfg::ChallengeField, D, P, B>(poly, ctx)
+                    tensor_root_projection::<Cfg::Field, P, Cfg::ChallengeField, B, D>(
+                        ctx.backend(),
+                        Some(ctx.prepared()),
+                        poly,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -564,34 +545,6 @@ where
     let params = Cfg::get_params_for_batched_commitment(&incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     commit_with_validated_params::<Cfg::Field, D, P, B>(polys, &ctx, &params)
-}
-
-impl<'a, P> RootCommitPolys<'a, P> {
-    /// Commit this bundle with `P` fixed from `self`, for rustc inference at call sites.
-    #[allow(clippy::type_complexity)]
-    pub fn commit_with<Cfg, const D: usize, B>(
-        self,
-        expanded: &AkitaExpandedSetup<Cfg::Field>,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-    ) -> Result<
-        (
-            RingCommitment<Cfg::Field, D>,
-            AkitaCommitmentHint<Cfg::Field, D>,
-        ),
-        AkitaError,
-    >
-    where
-        Cfg: CommitmentConfig,
-        Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-        Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D>,
-        B: RootCommitBackend<Cfg::Field, P, Cfg::ChallengeField, D>,
-    {
-        commit::<Cfg, D, P, B>(self, expanded, backend, prepared)
-    }
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -890,6 +843,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn commit_matches_commit_with_params_on_dense_poly() {
         use crate::compute::{ComputeBackendSetup, RootCommitPolys};
         use crate::DensePoly;
@@ -908,17 +862,12 @@ mod tests {
         let poly = DensePoly::<PolyF, POLY_D>::from_field_evals(NUM_VARS, &evals).unwrap();
         let polys = [poly];
 
+        let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1, 1).unwrap();
         let setup = AkitaProverSetup::<PolyF, POLY_D>::generate_with_capacity(
             NUM_VARS,
             1,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 8192,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            setup_envelope,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -978,17 +927,12 @@ mod tests {
             MultilinearPolynomial::onehot(onehot),
         ];
 
+        let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 2, 1).unwrap();
         let setup = AkitaProverSetup::<PolyF, POLY_D>::generate_with_capacity(
             NUM_VARS,
             2,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 8192,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            setup_envelope,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();

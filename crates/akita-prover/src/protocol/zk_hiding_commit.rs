@@ -40,13 +40,7 @@ where
         root_params.num_digits_open,
         num_ring,
     )?;
-    let plan = CommitInnerPlan {
-        n_a: hiding_params.a_key.row_len(),
-        block_len: hiding_params.block_len,
-        num_digits_commit: hiding_params.num_digits_commit,
-        num_digits_open: hiding_params.num_digits_open,
-        log_basis: hiding_params.log_basis,
-    };
+    let plan = CommitInnerPlan::from_level(&hiding_params);
     let inner =
         RootCommitKernel::commit_inner_witness(backend, prepared, poly.commit_view()?, plan)?;
     let b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();

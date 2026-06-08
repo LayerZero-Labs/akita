@@ -683,13 +683,7 @@ mod tests {
 
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let prepared = CpuBackend.prepare_setup(setup).unwrap();
-                    let plan = CommitInnerPlan {
-                        n_a: lp.a_key.row_len(),
-                        block_len: lp.block_len,
-                        num_digits_commit: lp.num_digits_commit,
-                        num_digits_open: lp.num_digits_open,
-                        log_basis: lp.log_basis,
-                    };
+                    let plan = CommitInnerPlan::from_level(&lp);
                     let view = poly.commit_view().unwrap();
                     let inner =
                         RootCommitKernel::commit_inner_witness(&CpuBackend, &prepared, view, plan)

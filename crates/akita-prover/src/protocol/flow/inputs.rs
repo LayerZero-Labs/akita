@@ -1,4 +1,5 @@
 use super::*;
+use crate::compute::ZkHidingCommitBackend;
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
@@ -205,7 +206,7 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>
         + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>
-        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>,
+        + ZkHidingCommitBackend<Cfg::Field, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -407,7 +408,7 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>
         + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>
-        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>,
+        + ZkHidingCommitBackend<Cfg::Field, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 
