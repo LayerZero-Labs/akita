@@ -742,10 +742,8 @@ mod tests {
                 }
             })
             .collect();
-        let dense_root_refs: Vec<&DensePoly<F, D>> = dense_roots.iter().copied().collect();
         let expected =
-            DensePoly::tensor_extension_column_partials_batch::<E>(&dense_root_refs, &point)
-                .unwrap();
+            DensePoly::tensor_extension_column_partials_batch::<E>(&dense_roots, &point).unwrap();
         let batch_view = RootTensorProjectionPoly::<F, D>::tensor_batch(&root_refs).unwrap();
         let got = TensorProjectionBatchKernel::<RootTensorProjectionBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend,

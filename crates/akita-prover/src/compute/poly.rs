@@ -275,7 +275,7 @@ where
 /// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
 ///
 /// With `zk` enabled, requires `RootCommitKernel` on [`DensePoly`]. Without `zk`, this is a
-/// vacuous marker implemented for every [`ProverComputeBackend`].
+/// vacuous marker implemented for every `ProverComputeBackend`.
 #[cfg(feature = "zk")]
 pub trait ZkHidingCommitBackend<F, const D: usize>:
     super::backend::ProverComputeBackend<F>
