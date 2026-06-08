@@ -8,9 +8,9 @@ use crate::dispatch_ring_dim_result;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
+use crate::compute::{CommitmentComputeBackend, RingSwitchComputeBackend};
 use crate::{
-    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RingSwitchComputeBackend,
+    tensor_pack_recursive_witness, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;

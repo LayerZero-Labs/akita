@@ -658,7 +658,8 @@ mod tests {
                 use akita_config::CommitmentConfig;
                 use akita_prover::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
                 use akita_prover::DensePoly;
-                use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
+                use akita_prover::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
+                use akita_prover::CpuBackend;
 
                 const MAX_VARS: usize = 14;
 

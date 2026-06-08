@@ -3,16 +3,14 @@
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
 use crate::compute::{
-    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
-    RootOpeningSource,
+    CyclicRowsComputeBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DigitRowsComputeBackend,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRowsPlan, RootOpeningSource,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, RecursiveWitnessView,
-    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRowsPlan,
-};
+use crate::{DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{

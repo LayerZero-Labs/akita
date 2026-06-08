@@ -2,11 +2,11 @@
 #![cfg(feature = "zk")]
 
 use akita_prover::compute::{
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    DigitRowsComputeBackend, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootOpeningSource,
 };
 use akita_prover::{
-    ComputeBackendSetup, CpuBackend, DensePoly, DigitRowsComputeBackend, ProverComputeStack,
-    RootCommitPolys,
+    ComputeBackendSetup, CpuBackend, DensePoly, ProverComputeStack, RootCommitPolys,
 };
 
 mod common;

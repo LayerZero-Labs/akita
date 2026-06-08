@@ -25,14 +25,12 @@ pub use backend::{
     RootTensorProjectionPoly, SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly,
 };
 pub use compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
-    CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
+    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, DenseCommitInput, DenseCommitRowsPlan,
     FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
-    ProverComputeBackend, ProverComputeStack, RecursiveWitnessCommitRowsPlan,
-    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, RootCommitPolys, RootProveBackend, RootProveFlowBackend,
-    RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan, TensorProjectionBatchKernel,
-    UniformProverStack,
+    ProverComputeStack, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitPolys, RootProveBackend,
+    RootProveFlowBackend, RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan,
+    TensorProjectionBatchKernel, UniformProverStack,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
