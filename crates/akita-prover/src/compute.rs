@@ -23,7 +23,7 @@ use crate::kernels::linear::{
 use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;

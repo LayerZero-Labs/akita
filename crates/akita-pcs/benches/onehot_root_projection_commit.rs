@@ -4,10 +4,10 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::{HasOptimizedFold, HasWide, ReduceTo};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, HasUnreducedOps, PseudoMersenneField, RandomSampling,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};

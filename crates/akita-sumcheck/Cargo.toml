@@ -29,7 +29,6 @@ parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 zk = [
   "dep:akita-r1cs",
   "akita-algebra/zk",
-  "akita-field/zk",
   "akita-r1cs/zk",
   "akita-transcript/zk",
 ]

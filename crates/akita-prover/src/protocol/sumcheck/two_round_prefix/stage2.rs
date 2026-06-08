@@ -1,7 +1,7 @@
 use super::common::*;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
 

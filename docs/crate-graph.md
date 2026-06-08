@@ -20,7 +20,6 @@ graph TD
   Verifier["akita-verifier"]
   Prover["akita-prover"]
   Setup["akita-setup"]
-  Scheme["akita-scheme"]
   Pcs["akita-pcs"]
 
   Field --> Ser
@@ -65,21 +64,11 @@ graph TD
   Setup --> Prover
   Setup --> Ser
   Setup --> Types
-  Scheme --> Algebra
-  Scheme --> Config
-  Scheme --> Field
-  Scheme --> Prover
-  Scheme --> Setup
-  Scheme --> Ser
-  Scheme --> Transcript
-  Scheme --> Types
-  Scheme --> Verifier
   Pcs --> Algebra
   Pcs --> Challenges
   Pcs --> Config
   Pcs --> Field
   Pcs --> Prover
-  Pcs --> Scheme
   Pcs --> Ser
   Pcs --> Setup
   Pcs --> Sumcheck
@@ -111,10 +100,10 @@ graph TD
   opening-point and layout math, schedule contracts, generated table shapes,
   and transcript append traits. It should not grow planner search or prover
   algorithms.
-- `akita-scheme` wires config, setup, prover, and verifier into the end-to-end
-  `AkitaCommitmentScheme`.
 - `akita-pcs` is the broad umbrella crate for examples and applications that
-  want the full public surface. Verifier-only integrations should not use it.
+  want the full public surface. It also owns the end-to-end
+  `AkitaCommitmentScheme` orchestration. Verifier-only integrations should not
+  use it.
 
 CI runs `scripts/check-crate-deps.sh` to guard the important one-way
 boundaries. Add new forbidden edges there whenever a crate gets split further.

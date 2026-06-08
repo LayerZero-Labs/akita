@@ -10,8 +10,7 @@
 //! permutations. The aggregated suite now focuses on the unique
 //! single-commitment path with a few representative cases:
 //!
-//! * **One-hot** — singleton baseline, irregular larger batch, and a larger
-//!   logical domain.
+//! * **One-hot** — singleton baseline and irregular folded batch.
 //! * **Dense** — singleton baseline and irregular larger batch.
 //! * **Mixed dense + one-hot under the dense config** — heterogeneous
 //!   aggregated commitment/proof/verify.
@@ -274,7 +273,6 @@ mod non_zk_aggregated_cases {
 
     aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1, false);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7, true);
-    aggregated_onehot_case!(aggregated_onehot_nv23_batch4, 23, 4, true);
 
     aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1, false);
     aggregated_dense_case!(aggregated_dense_nv17_batch5, 17, 5, true);

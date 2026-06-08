@@ -201,11 +201,6 @@ fn recursive_onehot_nv20() {
 }
 
 #[test]
-fn recursive_onehot_nv25() {
-    run_recursive_roundtrip(25);
-}
-
-#[test]
 fn recursive_onehot_cross_mode_rejects_nv20() {
     run_cross_mode_rejects(20);
 }

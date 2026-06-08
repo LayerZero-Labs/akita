@@ -536,12 +536,12 @@ where
 mod tests {
     use super::{field_witness_eval, packed_witness_eval};
     use akita_field::{AkitaError, FieldCore};
-    use akita_field::{Fp2, NegOneNr, Prime128Offset275};
+    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
     type F = Prime128Offset275;
-    type E = Fp2<F, NegOneNr>;
+    type E = FpExt2<F, NegOneNr>;
     const D: usize = 4;
 
     fn build_w_evals<F: FieldCore>(

@@ -99,10 +99,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr};
+    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr};
 
     type F = Fp32<251>;
-    type E = Fp2<F, NegOneNr>;
+    type E = FpExt2<F, NegOneNr>;
 
     #[test]
     fn lifted_relation_claim_matches_base_for_constant_alpha() {

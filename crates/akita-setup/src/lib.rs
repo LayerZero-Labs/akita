@@ -5,7 +5,7 @@ mod recursion;
 pub use recursion::new_prover_setup_recursion;
 
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::HasWide;
+use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
 #[cfg(feature = "disk-persistence")]

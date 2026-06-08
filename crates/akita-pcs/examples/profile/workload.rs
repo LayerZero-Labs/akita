@@ -3,7 +3,7 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::HasWide;
+use akita_field::unreduced::HasWide;
 use akita_field::{
     CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,

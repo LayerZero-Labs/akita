@@ -4,7 +4,7 @@
 //! bind the same canonical [`AkitaInstanceDescriptor`] bytes into the
 //! Fiat-Shamir transcript before protocol replay. The function lives here
 //! (rather than in `akita-prover` or `akita-verifier`) so both sides reach
-//! it without crossing through `akita-scheme`, and so the descriptor
+//! it without crossing through `akita-pcs`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
 use crate::CommitmentConfig;

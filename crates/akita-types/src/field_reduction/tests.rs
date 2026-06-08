@@ -1,6 +1,8 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-use akita_field::{ExtField, Fp32, RingSubfieldFp4, RingSubfieldFp8, TowerBasisFp4, TwoNr, UnitNr};
+use akita_field::{
+    ExtField, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8, TowerBasisFpExt4, TwoNr, UnitNr,
+};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;
@@ -66,7 +68,7 @@ fn ring_subfield_coords<Fq: FieldCore, const D: usize, const K: usize>(
 }
 
 fn embed_tower_in_ring_subfield<const D: usize>(
-    x: TowerBasisFp4<AkitaF32, TwoNr, UnitNr>,
+    x: TowerBasisFpExt4<AkitaF32, TwoNr, UnitNr>,
 ) -> CyclotomicRing<AkitaF32, D> {
     let params = SubfieldParams::<D, 4>::new().unwrap();
     let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
@@ -436,7 +438,7 @@ fn naive_k4_basis_is_not_the_current_tower_power_basis() {
 #[test]
 fn ring_subfield_k4_contains_current_tower_after_base_change() {
     const D: usize = 8;
-    type E = TowerBasisFp4<AkitaF32, TwoNr, UnitNr>;
+    type E = TowerBasisFpExt4<AkitaF32, TwoNr, UnitNr>;
 
     let params = SubfieldParams::<D, 4>::new().unwrap();
     let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
@@ -468,15 +470,15 @@ fn ring_subfield_k4_contains_current_tower_after_base_change() {
     );
 }
 
-fn assert_ring_subfield_fp4_embedding_is_multiplicative<const D: usize>() {
+fn assert_ring_subfield_fp_ext4_embedding_is_multiplicative<const D: usize>() {
     let params = SubfieldParams::<D, 4>::new().unwrap();
-    let x = RingSubfieldFp4::new([
+    let x = RingSubfieldFpExt4::new([
         AkitaF32::from_u64(3),
         AkitaF32::from_u64(5),
         AkitaF32::from_u64(7),
         AkitaF32::from_u64(11),
     ]);
-    let y = RingSubfieldFp4::new([
+    let y = RingSubfieldFpExt4::new([
         AkitaF32::from_u64(13),
         AkitaF32::from_u64(17),
         AkitaF32::from_u64(19),
@@ -491,10 +493,10 @@ fn assert_ring_subfield_fp4_embedding_is_multiplicative<const D: usize>() {
 }
 
 #[test]
-fn ring_subfield_fp4_embedding_places_coefficients_in_ring_subfield_basis() {
+fn ring_subfield_fp_ext4_embedding_places_coefficients_in_ring_subfield_basis() {
     const D: usize = 8;
     let params = SubfieldParams::<D, 4>::new().unwrap();
-    let x = RingSubfieldFp4::new([
+    let x = RingSubfieldFpExt4::new([
         AkitaF32::from_u64(2),
         AkitaF32::from_u64(3),
         AkitaF32::from_u64(5),
@@ -514,15 +516,15 @@ fn ring_subfield_fp4_embedding_places_coefficients_in_ring_subfield_basis() {
 }
 
 #[test]
-fn ring_subfield_fp4_embedding_is_multiplicative_across_ring_dimensions() {
-    assert_ring_subfield_fp4_embedding_is_multiplicative::<8>();
-    assert_ring_subfield_fp4_embedding_is_multiplicative::<64>();
-    assert_ring_subfield_fp4_embedding_is_multiplicative::<128>();
+fn ring_subfield_fp_ext4_embedding_is_multiplicative_across_ring_dimensions() {
+    assert_ring_subfield_fp_ext4_embedding_is_multiplicative::<8>();
+    assert_ring_subfield_fp_ext4_embedding_is_multiplicative::<64>();
+    assert_ring_subfield_fp_ext4_embedding_is_multiplicative::<128>();
 }
 
-fn assert_ring_subfield_fp8_embedding_is_multiplicative<const D: usize>() {
+fn assert_ring_subfield_fp_ext8_embedding_is_multiplicative<const D: usize>() {
     let params = SubfieldParams::<D, 8>::new().unwrap();
-    let x = RingSubfieldFp8::new([
+    let x = RingSubfieldFpExt8::new([
         AkitaF32::from_u64(2),
         AkitaF32::from_u64(3),
         AkitaF32::from_u64(5),
@@ -532,7 +534,7 @@ fn assert_ring_subfield_fp8_embedding_is_multiplicative<const D: usize>() {
         AkitaF32::from_u64(17),
         AkitaF32::from_u64(19),
     ]);
-    let y = RingSubfieldFp8::new([
+    let y = RingSubfieldFpExt8::new([
         AkitaF32::from_u64(23),
         AkitaF32::from_u64(29),
         AkitaF32::from_u64(31),
@@ -551,10 +553,10 @@ fn assert_ring_subfield_fp8_embedding_is_multiplicative<const D: usize>() {
 }
 
 #[test]
-fn ring_subfield_fp8_embedding_places_coefficients_in_ring_subfield_basis() {
+fn ring_subfield_fp_ext8_embedding_places_coefficients_in_ring_subfield_basis() {
     const D: usize = 16;
     let params = SubfieldParams::<D, 8>::new().unwrap();
-    let x = RingSubfieldFp8::new([
+    let x = RingSubfieldFpExt8::new([
         AkitaF32::from_u64(2),
         AkitaF32::from_u64(3),
         AkitaF32::from_u64(5),
@@ -576,19 +578,21 @@ fn ring_subfield_fp8_embedding_places_coefficients_in_ring_subfield_basis() {
 }
 
 #[test]
-fn ring_subfield_fp8_embedding_is_multiplicative_across_ring_dimensions() {
-    assert_ring_subfield_fp8_embedding_is_multiplicative::<16>();
-    assert_ring_subfield_fp8_embedding_is_multiplicative::<64>();
-    assert_ring_subfield_fp8_embedding_is_multiplicative::<128>();
+fn ring_subfield_fp_ext8_embedding_is_multiplicative_across_ring_dimensions() {
+    assert_ring_subfield_fp_ext8_embedding_is_multiplicative::<16>();
+    assert_ring_subfield_fp_ext8_embedding_is_multiplicative::<64>();
+    assert_ring_subfield_fp_ext8_embedding_is_multiplicative::<128>();
 }
 
-/// Generate `D / 4` deterministic `RingSubfieldFp4` elements seeded by `tag`.
-fn deterministic_subfield_fp4_vector<const D: usize>(tag: u64) -> Vec<RingSubfieldFp4<AkitaF32>> {
+/// Generate `D / 4` deterministic `RingSubfieldFpExt4` elements seeded by `tag`.
+fn deterministic_subfield_fp_ext4_vector<const D: usize>(
+    tag: u64,
+) -> Vec<RingSubfieldFpExt4<AkitaF32>> {
     let m = D / 4;
     (0..m)
         .map(|i| {
             let i = i as u64;
-            RingSubfieldFp4::new([
+            RingSubfieldFpExt4::new([
                 AkitaF32::from_u64(2 + 7 * i + 11 * tag),
                 AkitaF32::from_u64(3 + 13 * i + 17 * tag),
                 AkitaF32::from_u64(5 + 19 * i + 23 * tag),
@@ -598,11 +602,11 @@ fn deterministic_subfield_fp4_vector<const D: usize>(tag: u64) -> Vec<RingSubfie
         .collect()
 }
 
-/// Flatten `D / 4` typed `RingSubfieldFp4` slots into the
+/// Flatten `D / 4` typed `RingSubfieldFpExt4` slots into the
 /// `[s_0[0], s_0[1], s_0[2], s_0[3], s_1[0], ...]` layout consumed by
 /// [`psi_embed`].
-fn flatten_subfield_fp4_vector<const D: usize>(
-    elements: &[RingSubfieldFp4<AkitaF32>],
+fn flatten_subfield_fp_ext4_vector<const D: usize>(
+    elements: &[RingSubfieldFpExt4<AkitaF32>],
 ) -> Vec<AkitaF32> {
     assert_eq!(elements.len(), D / 4);
     let mut coords = vec![AkitaF32::zero(); D];
@@ -615,19 +619,21 @@ fn flatten_subfield_fp4_vector<const D: usize>(
 /// Verify the trace inner-product relation
 /// `Tr_H(psi(s) * sigma_{-1}(psi(v))) = (D / k) * embed_subfield(<s, v>)`
 /// for the typed `k = 4` ring-subfield representation.
-fn assert_psi_trace_inner_product_identity_fp4<const D: usize>() {
+fn assert_psi_trace_inner_product_identity_fp_ext4<const D: usize>() {
     let params = SubfieldParams::<D, 4>::new().unwrap();
-    let s = deterministic_subfield_fp4_vector::<D>(0);
-    let v = deterministic_subfield_fp4_vector::<D>(1);
+    let s = deterministic_subfield_fp_ext4_vector::<D>(0);
+    let v = deterministic_subfield_fp_ext4_vector::<D>(1);
 
     // y = <s, v> in the ring-subfield.
     let y = s
         .iter()
         .zip(v.iter())
-        .fold(RingSubfieldFp4::zero(), |acc, (si, vi)| acc + (*si * *vi));
+        .fold(RingSubfieldFpExt4::zero(), |acc, (si, vi)| {
+            acc + (*si * *vi)
+        });
 
-    let s_flat = flatten_subfield_fp4_vector::<D>(&s);
-    let v_flat = flatten_subfield_fp4_vector::<D>(&v);
+    let s_flat = flatten_subfield_fp_ext4_vector::<D>(&s);
+    let v_flat = flatten_subfield_fp_ext4_vector::<D>(&v);
     let big_y = psi_embed::<AkitaF32, D, 4>(params, &s_flat).unwrap();
     let big_v = psi_embed::<AkitaF32, D, 4>(params, &v_flat).unwrap();
     let traced = trace_h(params, &(big_y * big_v.sigma_m1()));
@@ -639,20 +645,20 @@ fn assert_psi_trace_inner_product_identity_fp4<const D: usize>() {
 }
 
 #[test]
-fn psi_trace_inner_product_identity_fp4() {
-    assert_psi_trace_inner_product_identity_fp4::<8>();
-    assert_psi_trace_inner_product_identity_fp4::<64>();
-    assert_psi_trace_inner_product_identity_fp4::<128>();
+fn psi_trace_inner_product_identity_fp_ext4() {
+    assert_psi_trace_inner_product_identity_fp_ext4::<8>();
+    assert_psi_trace_inner_product_identity_fp_ext4::<64>();
+    assert_psi_trace_inner_product_identity_fp_ext4::<128>();
 }
 
 /// Subfield multiplication for `k = 2`: `e_1^2 = 2` for any valid `D`,
 /// so `R_q^H ≅ F_q[sqrt(2)]`.
-fn fp2_subfield_mul(a: [AkitaF32; 2], b: [AkitaF32; 2]) -> [AkitaF32; 2] {
+fn fp_ext2_subfield_mul(a: [AkitaF32; 2], b: [AkitaF32; 2]) -> [AkitaF32; 2] {
     let two = AkitaF32::from_u64(2);
     [a[0] * b[0] + two * a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
 }
 
-fn assert_psi_trace_inner_product_identity_fp2<const D: usize>() {
+fn assert_psi_trace_inner_product_identity_fp_ext2<const D: usize>() {
     let params = SubfieldParams::<D, 2>::new().unwrap();
     let m = params.packed_len();
 
@@ -679,7 +685,7 @@ fn assert_psi_trace_inner_product_identity_fp2<const D: usize>() {
         .iter()
         .zip(v.iter())
         .fold([AkitaF32::zero(); 2], |acc, (si, vi)| {
-            let prod = fp2_subfield_mul(*si, *vi);
+            let prod = fp_ext2_subfield_mul(*si, *vi);
             [acc[0] + prod[0], acc[1] + prod[1]]
         });
 
@@ -741,17 +747,19 @@ fn check_trace_inner_product_k_one_rejects_wrong_opening() {
 /// Verify [`check_trace_inner_product`] against the K-generic ring
 /// identity for `K = 4`, both on a true witness and on a perturbed
 /// witness, across all production ring sizes.
-fn assert_check_trace_inner_product_fp4<const D: usize>() {
+fn assert_check_trace_inner_product_fp_ext4<const D: usize>() {
     let params = SubfieldParams::<D, 4>::new().unwrap();
-    let s = deterministic_subfield_fp4_vector::<D>(0);
-    let v = deterministic_subfield_fp4_vector::<D>(1);
+    let s = deterministic_subfield_fp_ext4_vector::<D>(0);
+    let v = deterministic_subfield_fp_ext4_vector::<D>(1);
 
     let y = s
         .iter()
         .zip(v.iter())
-        .fold(RingSubfieldFp4::zero(), |acc, (si, vi)| acc + (*si * *vi));
-    let s_flat = flatten_subfield_fp4_vector::<D>(&s);
-    let v_flat = flatten_subfield_fp4_vector::<D>(&v);
+        .fold(RingSubfieldFpExt4::zero(), |acc, (si, vi)| {
+            acc + (*si * *vi)
+        });
+    let s_flat = flatten_subfield_fp_ext4_vector::<D>(&s);
+    let v_flat = flatten_subfield_fp_ext4_vector::<D>(&v);
     let big_y = psi_embed::<AkitaF32, D, 4>(params, &s_flat).unwrap();
     let big_v = psi_embed::<AkitaF32, D, 4>(params, &v_flat).unwrap();
     let trace_input = big_y * big_v.sigma_m1();
@@ -772,15 +780,15 @@ fn assert_check_trace_inner_product_fp4<const D: usize>() {
 }
 
 #[test]
-fn check_trace_inner_product_fp4_across_ring_dimensions() {
-    assert_check_trace_inner_product_fp4::<8>();
-    assert_check_trace_inner_product_fp4::<64>();
-    assert_check_trace_inner_product_fp4::<128>();
+fn check_trace_inner_product_fp_ext4_across_ring_dimensions() {
+    assert_check_trace_inner_product_fp_ext4::<8>();
+    assert_check_trace_inner_product_fp_ext4::<64>();
+    assert_check_trace_inner_product_fp_ext4::<128>();
 }
 
 #[test]
-fn psi_trace_inner_product_identity_fp2() {
-    assert_psi_trace_inner_product_identity_fp2::<8>();
-    assert_psi_trace_inner_product_identity_fp2::<64>();
-    assert_psi_trace_inner_product_identity_fp2::<128>();
+fn psi_trace_inner_product_identity_fp_ext2() {
+    assert_psi_trace_inner_product_identity_fp_ext2::<8>();
+    assert_psi_trace_inner_product_identity_fp_ext2::<64>();
+    assert_psi_trace_inner_product_identity_fp_ext2::<128>();
 }

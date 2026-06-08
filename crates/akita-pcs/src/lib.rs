@@ -24,7 +24,7 @@
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
 //! - `akita-prover` - Commitment and proving kernels
-//! - `akita-scheme` - End-to-end [`AkitaCommitmentScheme`] orchestration
+//! - `akita-pcs` - End-to-end [`AkitaCommitmentScheme`] orchestration plus public re-exports
 //!
 //! Verifier-only consumers should depend directly on `akita-verifier`,
 //! `akita-types`, and `akita-config`. This umbrella crate is convenient for
@@ -38,20 +38,23 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+mod scheme;
+
 pub use akita_algebra::Module;
 pub use akita_field::AkitaError;
+// Specialized field surfaces mirror akita-field's curated facades.
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
+pub use akita_field::{fft, packed, unreduced};
 pub use akita_field::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
-    AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp128Packing,
-    Fp2, Fp2Config, Fp32, Fp32Packing, Fp64, Fp64Packing, FromPrimitiveInt, HalvingField,
-    HasPacking, Invertible, LiftBase, NoPacking, PackedField, PackedValue, PowerBasisFp4,
-    PowerBasisFp4Config, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
+    AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp32, Fp64,
+    FpExt2, FpExt2Config, FromPrimitiveInt, HalvingField, Invertible, LiftBase, PowerBasisFpExt4,
+    PowerBasisFpExt4Config, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
     Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99,
     Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
-    PseudoMersenneField, RandomSampling, SmoothFftField, TowerBasisFp4, TowerBasisFp4Config,
+    PseudoMersenneField, RandomSampling, SmoothFftField, TowerBasisFpExt4, TowerBasisFpExt4Config,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
@@ -63,7 +66,7 @@ pub use akita_prover::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
 };
-pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
+pub use scheme::AkitaCommitmentScheme;

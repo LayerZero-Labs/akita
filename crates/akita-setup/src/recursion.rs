@@ -2,7 +2,7 @@ use crate::new_prover_setup;
 #[cfg(feature = "disk-persistence")]
 use crate::persist_prover_setup;
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::HasWide;
+use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
@@ -20,7 +20,7 @@ fn commit_setup_prefix_for_level<F, const D: usize, B>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     level_params: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    natural_len: usize,
     witness_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
@@ -37,7 +37,6 @@ where
     }
     let seed_digest = setup_seed_digest(setup.expanded.seed())
         .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let natural_len = active_setup_field_len(level_params, incidence, D)?;
     if witness_prefix_len < padded_setup_prefix_len(natural_len) {
         return Ok(());
     }
@@ -91,18 +90,24 @@ where
     let prepared = backend.prepare_setup(setup)?;
     let recursive_incidence = ClaimIncidenceSummary::same_point(0, 1)?;
 
-    for (idx, fold) in schedule.fold_steps().enumerate() {
+    let folds = schedule.fold_steps().collect::<Vec<_>>();
+    let terminal_fold_idx = folds.len().saturating_sub(1);
+    for (idx, fold) in folds.iter().enumerate() {
+        if idx >= terminal_fold_idx {
+            continue;
+        }
         let incidence = if idx == 0 {
             &root_incidence
         } else {
             &recursive_incidence
         };
         let active_len = active_setup_field_len(&fold.params, incidence, D)?;
+        let next_fold = folds[idx + 1];
         let minimum_prefix_len = padded_setup_prefix_len(active_len);
-        let witness_prefix_len = fold
+        let witness_prefix_len = next_fold
             .params
             .num_blocks
-            .checked_mul(fold.params.block_len)
+            .checked_mul(next_fold.params.block_len)
             .and_then(|n| n.checked_mul(D))
             .ok_or_else(|| AkitaError::InvalidSetup("setup prefix length overflow".to_string()))?;
         if witness_prefix_len < minimum_prefix_len {
@@ -119,8 +124,8 @@ where
             setup,
             &backend,
             &prepared,
-            &fold.params,
-            incidence,
+            &next_fold.params,
+            active_len,
             witness_prefix_len,
         )?;
     }

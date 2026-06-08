@@ -3,13 +3,16 @@
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend};
+use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
+use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
-    AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
-    RingCommitment,
+    root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
+    AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
+    RingSubfieldEncoding,
 };
 
 pub(crate) fn commit_inner_block_digit_count(
@@ -372,33 +375,81 @@ where
     commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
 }
 
-/// Commit a group of polynomials using caller-supplied config policy.
+/// Decide whether a root commitment must be tensor-projected before commit.
 ///
-/// The prover crate owns config-free input validation and commitment execution;
-/// the caller supplies only the layout-selection policy.
+/// Root tensor projection only applies when the field tower admits it and the
+/// config-selected schedule starts with a fold. This is the prover-owned
+/// analogue of the former scheme-local `should_transform_root_commitment`.
+///
+/// # Errors
+///
+/// Propagates [`CommitmentConfig::get_params_for_prove`].
+fn should_transform_root_commitment<Cfg, const D: usize>(
+    incidence: &ClaimIncidenceSummary,
+) -> Result<bool, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        incidence.num_vars(),
+    ) {
+        return Ok(false);
+    }
+    let schedule = Cfg::get_params_for_prove(incidence)?;
+    Ok(schedule_root_fold_step(&schedule).is_some())
+}
+
+/// Commit a group of polynomials under config `Cfg`.
+///
+/// The prover crate owns input validation, the root tensor-projection
+/// transform decision, config-driven layout selection, and commitment
+/// execution.
 ///
 /// # Errors
 ///
 /// Returns an error if input validation, parameter selection, or commitment
 /// execution fails.
-pub fn commit_with_policy<F, const D: usize, P, B, SelectParams>(
+#[allow(clippy::type_complexity)]
+pub fn commit<Cfg, const D: usize, P, B>(
     polys: &[P],
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
-    select_params: SelectParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<
+    (
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    ),
+    AkitaError,
+>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D>,
-    B: CommitmentComputeBackend<F>,
-    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    P: AkitaPolyOps<Cfg::Field, D>,
+    B: CommitmentComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    let incidence = prepare_commit_inputs::<F, D, P>(polys, expanded)?;
-    let params = select_params(&incidence)?;
-    validate_commit_level_params::<F, D>(&params, expanded)?;
-    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, &params)
+    let incidence = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
+        let transformed = polys
+            .iter()
+            .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
+        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+        validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+        return commit_with_validated_params::<
+            Cfg::Field,
+            D,
+            RootTensorProjectionPoly<Cfg::Field, D>,
+            B,
+        >(&transformed, backend, prepared, &params);
+    }
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -476,38 +527,71 @@ where
     ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
 }
 
-/// Commit one polynomial bundle per opening point using a caller-supplied
-/// layout-selection policy.
+/// Commit one polynomial bundle per opening point under config `Cfg`.
 ///
-/// The policy callback receives the full multipoint incidence and returns the
-/// shared root commitment layout. Every per-point bundle is then committed
-/// with that one layout via [`commit_with_params`], guaranteeing that the
+/// The config-selected schedule supplies the shared root commitment layout.
+/// Every per-point bundle is committed with that one layout, guaranteeing the
 /// produced commitments are compatible with the layout `batched_prove` will
-/// select for the same incidence.
+/// select for the same incidence. The root tensor-projection transform is
+/// applied internally when the field tower and schedule call for it.
 ///
 /// # Errors
 ///
 /// Returns an error if input validation, parameter selection, or any per-
 /// point commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, B, SelectParams>(
+pub fn batched_commit<Cfg, const D: usize, P, B>(
     polys_per_point: &[&[P]],
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
-    select_params: SelectParams,
-) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+) -> Result<
+    Vec<(
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    )>,
+    AkitaError,
+>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D>,
-    B: CommitmentComputeBackend<F>,
-    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    P: AkitaPolyOps<Cfg::Field, D>,
+    B: CommitmentComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
-    let params = select_params(&incidence)?;
-    validate_commit_level_params::<F, D>(&params, expanded)?;
-    batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, &params)
+    let incidence = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_point, expanded)?;
+    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
+        let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> = polys_per_point
+            .iter()
+            .map(|polys| {
+                polys
+                    .iter()
+                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<_, _>>()?;
+        let transformed_refs: Vec<&[RootTensorProjectionPoly<Cfg::Field, D>]> =
+            transformed.iter().map(Vec::as_slice).collect();
+        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+        validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+        return batched_commit_with_validated_params::<
+            Cfg::Field,
+            D,
+            RootTensorProjectionPoly<Cfg::Field, D>,
+            B,
+        >(&transformed_refs, backend, prepared, &params);
+    }
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
+    batched_commit_with_validated_params::<Cfg::Field, D, P, B>(
+        polys_per_point,
+        backend,
+        prepared,
+        &params,
+    )
 }
 
 #[allow(clippy::type_complexity)]
@@ -535,7 +619,7 @@ where
 /// level parameters.
 ///
 /// The caller has already resolved the shared root commitment layout (e.g.
-/// via [`batched_commit_with_policy`]); this function owns only the prover-
+/// via [`batched_commit`]); this function owns only the prover-
 /// side matrix work for the supplied concrete layout.
 ///
 /// # Errors

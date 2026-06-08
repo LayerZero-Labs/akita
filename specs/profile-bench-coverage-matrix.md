@@ -73,8 +73,9 @@ The ring degree differs by field, for two distinct reasons:
   `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
   and by the `best_full_schedule` / `best_onehot_schedule` selectors, which
   pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
-  proof-size optimal; the production-default ring dimension is D128, but the
-  benchmark matrix tracks the proof-size optimum.
+  proof-size optimal; D32/D64 are the planner optima (D32 is marginally
+  smaller for fp128). The benchmark matrix tracks D64; use
+  `best_onehot_schedule` / `best_full_schedule` to compare D32/D64/D128.
 
 D32/D128 profile modes still exist for direct local comparisons, and `main`
 adds a D64-only tensor-verifier profile mode, but neither the adaptive
@@ -293,7 +294,7 @@ mode surface is now explicit:
 - `onehot_fp{16,32,64,128}_d{32,64}`
 
 The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
-canonical profiling command at `AKITA_MODE=onehot_fp128_d128`. This is an
+canonical profiling command at `AKITA_MODE=onehot_fp128_d64`. This is an
 explicit per-field D cutover, not a renamed adaptive selector.
 
 After merging `main`, the profile example also exposes
@@ -405,7 +406,7 @@ verification, and folded-proof assertions.
 Documentation changes in this PR:
 
 - `AGENTS.md` updates the canonical profile command to
-  `AKITA_MODE=onehot_fp128_d128`.
+  `AKITA_MODE=onehot_fp128_d64`.
 - This spec records the active matrix, deferred long hosted-runner cells,
   reporting format, test cleanup, and verification.
 - The PR body must summarize the final active matrix, deferred long cells,
