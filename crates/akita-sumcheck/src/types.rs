@@ -1,5 +1,6 @@
-//! Sumcheck proof containers and round-message types.
+//! Sumcheck proof containers, wire-format selection, and round-message types.
 
+use crate::descriptor::InstanceKind;
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
@@ -9,6 +10,37 @@ use akita_serialization::{
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
+
+/// Transcript wire encoding for one sumcheck instance.
+///
+/// This is the proof-format axis: which serialized round-message type appears on
+/// the transcript. It is separate from how the prover computes round polynomials
+/// (for example split-eq internally on an eq-factored instance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireFormat {
+    /// Headerless compressed univariate per round ([`SumcheckProof`]).
+    Regular,
+    /// Inner `q` with linear term omitted per round ([`EqFactoredSumcheckProof`]).
+    EqFactored,
+}
+
+/// Select the transcript wire format for one instance in a stage.
+///
+/// Mirrors `StagePlan::retains_eq_factored_format` in `akita-protocol`: only a
+/// standalone [`InstanceKind::EqFactored`] instance
+/// keeps the eq-factored wire format; batching or multiple instances in the
+/// stage demote to the regular compressed format.
+pub fn wire_format_for_instance(
+    kind: InstanceKind,
+    instance_count_in_stage: usize,
+    standalone: bool,
+) -> WireFormat {
+    if matches!(kind, InstanceKind::EqFactored) && instance_count_in_stage == 1 && standalone {
+        WireFormat::EqFactored
+    } else {
+        WireFormat::Regular
+    }
+}
 
 /// Eq-factored round message storing `q(X)` without its linear coefficient.
 ///
@@ -493,5 +525,35 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::*;
+    use crate::descriptor::InstanceKind;
+
+    #[test]
+    fn wire_format_standalone_eq_factored() {
+        assert_eq!(
+            wire_format_for_instance(InstanceKind::EqFactored, 1, true),
+            WireFormat::EqFactored
+        );
+    }
+
+    #[test]
+    fn wire_format_regular_or_batched_demotes_eq_factored() {
+        assert_eq!(
+            wire_format_for_instance(InstanceKind::EqFactored, 2, true),
+            WireFormat::Regular
+        );
+        assert_eq!(
+            wire_format_for_instance(InstanceKind::EqFactored, 1, false),
+            WireFormat::Regular
+        );
+        assert_eq!(
+            wire_format_for_instance(InstanceKind::Regular, 1, true),
+            WireFormat::Regular
+        );
     }
 }

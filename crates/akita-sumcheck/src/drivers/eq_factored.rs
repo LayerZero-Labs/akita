@@ -121,7 +121,7 @@ where
     fn prove<F, T, S>(
         &mut self,
         transcript: &mut T,
-        mut sample_challenge: S,
+        sample_challenge: S,
     ) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -129,41 +129,7 @@ where
         E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
     {
-        let num_rounds = self.num_rounds();
-        let degree_bound = self.degree_bound();
-        let mut scaled_claim = self.input_claim();
-        let mut claim_scale = E::one();
-        let mut round_polys = Vec::with_capacity(num_rounds);
-        let mut challenges = Vec::with_capacity(num_rounds);
-
-        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
-
-        for round in 0..num_rounds {
-            let poly = self.compute_round_eq_factored(round);
-            if poly.degree() > degree_bound {
-                return Err(AkitaError::InvalidInput(format!(
-                    "eq-factored sumcheck round poly degree {} exceeds bound {}",
-                    poly.degree(),
-                    degree_bound
-                )));
-            }
-
-            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
-            let r_i = sample_challenge(transcript);
-            let (l_at_0, l_at_1) = self.current_linear_factor_evals();
-            (scaled_claim, claim_scale) =
-                advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
-            challenges.push(r_i);
-            self.ingest_challenge(round, r_i);
-            round_polys.push(poly);
-        }
-
-        self.finalize();
-        Ok((
-            EqFactoredSumcheckProof { round_polys },
-            challenges,
-            scaled_claim,
-        ))
+        crate::sink::prove_clear_eq_factored(self, transcript, sample_challenge)
     }
 }
 

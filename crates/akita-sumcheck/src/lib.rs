@@ -11,6 +11,7 @@ pub mod descriptor;
 pub mod drivers;
 pub mod engine;
 pub mod fast_path;
+pub mod sink;
 pub mod traits;
 pub mod types;
 
@@ -41,13 +42,14 @@ pub use fast_path::{
     OptimizedProverMatcher, OptimizedProverRegistry, OptimizedSumcheckProver,
     ResolvedSumcheckProver,
 };
+pub use sink::{prove_clear_eq_factored, prove_clear_regular};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 pub use types::{
-    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
-    EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
+    uniform_sumcheck_shape, wire_format_for_instance, EqFactoredSumcheckProof,
+    EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof, SumcheckProofShape, WireFormat,
 };
 #[cfg(feature = "zk")]
 pub use types::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
