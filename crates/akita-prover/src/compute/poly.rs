@@ -1,5 +1,8 @@
 use super::backend::CommitmentComputeBackend;
-use super::kernels::{RootCommitKernel, TensorProjectionKernel};
+use super::kernels::{
+    OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
+};
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
@@ -170,13 +173,82 @@ pub trait RootCommitBackend<F, P, E, const D: usize>: CommitmentComputeBackend<F
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F> + 'static,
+    E: ExtField<F>,
     P: RootCommitPoly<F, D>,
     Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
         + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
         + for<'a> RootCommitKernel<
             <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
             F,
+            D,
+        >,
+{
+}
+
+/// Marker bundle for scheme-level prove entry points.
+///
+/// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
+pub trait RootProvePoly<F, const D: usize>:
+    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, const D: usize, P> RootProvePoly<F, D> for P
+where
+    F: FieldCore,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
+{
+}
+
+/// Backend capability bundle for scheme-level prove.
+///
+/// Use as **`B: RootProveBackend<F, P, ClaimE, ChallengeE, D>`** on generic prove
+/// entry points. `ClaimE` covers extension-opening prepare batch partials at the
+/// claim field; `ChallengeE` covers post-transform tensor projection and opening
+/// fold paths at the challenge field.
+pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>: CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    Self: for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<
+            <P as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ClaimE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> OpeningFoldKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
+            F,
+            D,
+        > + for<'a> OpeningBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            D,
+        > + for<'a> TensorProjectionKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
             D,
         >,
 {

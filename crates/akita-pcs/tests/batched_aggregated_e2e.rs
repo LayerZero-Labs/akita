@@ -91,20 +91,21 @@ mod non_zk_aggregated_cases {
                 "single group should yield exactly one commitment"
             );
 
+            let poly_refs: Vec<_> = polys.iter().collect();
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
             let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
             >>::batched_prove(
                 &setup,
-                &CpuBackend,
-                &prepared,
                 prove_input(
                     &pt[..],
-                    &polys[..],
+                    &poly_refs[..],
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
+                &CpuBackend,
+                &prepared,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -194,20 +195,21 @@ mod non_zk_aggregated_cases {
                 "single group should yield exactly one commitment"
             );
 
+            let poly_refs: Vec<_> = polys.iter().collect();
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::batched_prove(
                 &setup,
-                &CpuBackend,
-                &prepared,
                 prove_input(
                     &pt[..],
-                    &polys[..],
+                    &poly_refs[..],
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
+                &CpuBackend,
+                &prepared,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -326,20 +328,22 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let commitments = [commitment];
         let hints = vec![hint];
 
+        let poly_refs: Vec<_> = polys.iter().collect();
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(
-            &setup, &CpuBackend,
-            &prepared,
+            &setup,
             prove_input(
                 &pt[..],
-                &polys[..],
+                &poly_refs[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

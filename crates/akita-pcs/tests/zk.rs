@@ -316,9 +316,9 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(label);
         let proof = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::batched_prove(
             &setup,
+            prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -463,9 +463,9 @@ where
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_input(&point, &poly_refs, &commitments[0], hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -558,9 +558,9 @@ fn run_zk_dense_cursor_binding_negatives() {
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_input(&point, &poly_refs, &commitments[0], hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -742,9 +742,9 @@ where
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -754,9 +754,9 @@ where
         let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_input(&point, &poly_refs, &commitments[0], hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut second_prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -858,9 +858,9 @@ fn run_zk_dense_batched_shape_cases() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/same-point");
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_input(&same_point, &same_point_poly_refs, &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&same_point, &same_point_poly_refs, &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -926,8 +926,8 @@ fn run_zk_dense_batched_shape_cases() {
                     .collect()
             })
             .collect();
-        let polys_per_point_refs: Vec<&[DensePoly<F, D>]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
+        let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
+        let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
         let openings_per_point_refs: Vec<&[F]> =
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
@@ -938,7 +938,7 @@ fn run_zk_dense_batched_shape_cases() {
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &setup,
-            &polys_per_point_refs,
+            &commit_polys_per_point,
             &CpuBackend,
             &prepared,
         )
@@ -947,9 +947,9 @@ fn run_zk_dense_batched_shape_cases() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/multipoint");
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
+            prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
             &CpuBackend,
             &prepared,
-            prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1016,15 +1016,15 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let opening_points_owned: Vec<Vec<F>> = (0..NUM_POINTS)
             .map(|point_idx| random_point(NV, 0xaaaa_9000 + point_idx as u64))
             .collect();
-        let polys_per_point_refs: Vec<&[DensePoly<F, D>]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
+        let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
+        let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
         let setup =
             <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, NUM_POINTS, NUM_POINTS)
                 .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare");
         let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &setup,
-            &polys_per_point_refs,
+            &commit_polys_per_point,
             &CpuBackend,
             &prepared,
         )

@@ -408,8 +408,6 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {
@@ -418,6 +416,8 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
                 hint,
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -547,6 +547,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_group = [poly_a, poly_b];
+    let poly_refs = [&poly_group[0], &poly_group[1]];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
         RootCommitPolys::new(&poly_group),
@@ -561,16 +562,16 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {
-                polynomials: &poly_group[..],
+                polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -719,17 +720,16 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let openings_a = [opening_a];
     let openings_b = [opening_b];
 
+    let poly_refs = [&poly];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![
             (
                 &point_a[..],
                 CommittedPolynomials {
-                    polynomials: std::slice::from_ref(&poly),
+                    polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint: hint.clone(),
                 },
@@ -737,12 +737,14 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             (
                 &point_b[..],
                 CommittedPolynomials {
-                    polynomials: std::slice::from_ref(&poly),
+                    polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint,
                 },
             ),
         ],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

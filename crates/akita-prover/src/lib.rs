@@ -37,7 +37,8 @@ pub use compute::{
     FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
     ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitPolys, SparseRingCommitRowsPlan,
+    RootCommitPolys, RootProveBackend, RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan,
+    TensorProjectionBatchKernel,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
@@ -60,7 +61,7 @@ pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
     /// Polynomials addressable by claim `poly_idx` values at this point.
-    pub polynomials: &'a [P],
+    pub polynomials: &'a [&'a P],
     /// Commitment for `polynomials`.
     pub commitment: &'a C,
     /// Prover-side hint for `commitment`.

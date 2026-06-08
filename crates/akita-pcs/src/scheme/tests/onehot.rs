@@ -46,8 +46,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {
@@ -56,6 +54,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

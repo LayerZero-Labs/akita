@@ -78,9 +78,9 @@ fn run_single_onehot_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -93,18 +93,18 @@ fn run_single_onehot_tensor(nv: usize) {
             let mut second_prover_transcript =
                 AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-                F,
-                TENSOR_D,
-            >>::batched_prove(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
-                &mut second_prover_transcript,
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .expect("second prove")
+                    F,
+                    TENSOR_D,
+                >>::batched_prove(
+                    &setup,
+                    prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+                    &CpuBackend,
+                    &prepared,
+                    &mut second_prover_transcript,
+                    BasisMode::Lagrange,
+                    akita_types::SetupContributionMode::Direct,
+                )
+                .expect("second prove")
         };
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);
@@ -234,9 +234,9 @@ fn run_single_dense_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -249,18 +249,18 @@ fn run_single_dense_tensor(nv: usize) {
             let mut second_prover_transcript =
                 AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-                F,
-                TENSOR_D,
-            >>::batched_prove(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
-                &mut second_prover_transcript,
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .expect("second prove")
+                    F,
+                    TENSOR_D,
+                >>::batched_prove(
+                    &setup,
+                    prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+                    &CpuBackend,
+                    &prepared,
+                    &mut second_prover_transcript,
+                    BasisMode::Lagrange,
+                    akita_types::SetupContributionMode::Direct,
+                )
+                .expect("second prove")
         };
         #[cfg(feature = "zk")]
         assert_zk_tensor_root_hiding(&proof, &second_proof);

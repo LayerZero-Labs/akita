@@ -106,7 +106,7 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 
 fn prove_input<'a, FF: FieldCore, P, C, H>(
     point: &'a [FF],
-    polynomials: &'a [P],
+    polynomials: &'a [&'a P],
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
@@ -242,14 +242,14 @@ where
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -390,14 +390,14 @@ fn full_d64_prove_verify() {
         let prove_start = Instant::now();
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -607,14 +607,14 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &opening_point[..],
                 &poly_refs[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -794,14 +794,14 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -966,14 +966,14 @@ fn batched_onehot_same_point_round_trip() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &pt[..],
                 &poly_group[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1087,14 +1087,14 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &pt[..],
                 &poly_group[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

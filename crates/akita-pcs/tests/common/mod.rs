@@ -59,7 +59,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 
 pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     point: &'a [FF],
-    polynomials: &'a [P],
+    polynomials: &'a [&'a P],
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
@@ -87,22 +87,29 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     )]
 }
 
+pub(super) fn build_poly_ref_storage<'a, P>(polynomials_by_point: &'a [Vec<P>]) -> Vec<Vec<&'a P>> {
+    polynomials_by_point
+        .iter()
+        .map(|point| point.iter().collect())
+        .collect()
+}
+
 pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
     points: &[&'a [FF]],
-    polynomials_by_point: &[&'a [P]],
+    poly_ref_storage: &'a [Vec<&'a P>],
     commitments: &'a [C],
     hints: Vec<H>,
 ) -> ProverClaims<'a, FF, P, C, H> {
     points
         .iter()
-        .zip(polynomials_by_point.iter())
+        .enumerate()
         .zip(commitments.iter())
         .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
+        .map(|(((point_idx, point), commitment), hint)| {
             (
                 *point,
                 CommittedPolynomials {
-                    polynomials,
+                    polynomials: poly_ref_storage[point_idx].as_slice(),
                     commitment,
                     hint,
                 },

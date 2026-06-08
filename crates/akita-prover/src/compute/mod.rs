@@ -24,12 +24,14 @@
 
 mod backend;
 mod cpu;
+mod dispatch;
 mod kernels;
 mod operation_plans;
 mod plans;
 mod poly;
 mod stack;
 
+pub(crate) use dispatch::tensor_root_projection;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
@@ -50,6 +52,7 @@ pub use plans::{
 };
 pub use poly::{
     AkitaRootPoly, DirectRootWitnessSource, RootCommitBackend, RootCommitPoly, RootCommitPolys,
-    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
+    RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly,
+    RootTensorSource,
 };
 pub use stack::{OperationCtx, ProverComputeStack};

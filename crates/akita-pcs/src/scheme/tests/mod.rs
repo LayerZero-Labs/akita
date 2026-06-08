@@ -241,8 +241,6 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &opening_point[..],
             CommittedPolynomials {
@@ -251,6 +249,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
                 hint,
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

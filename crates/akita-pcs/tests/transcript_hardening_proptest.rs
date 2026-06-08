@@ -62,8 +62,8 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         })
         .collect();
 
-    let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
-        polys_per_point.iter().map(Vec::as_slice).collect();
+    let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
+    let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
     let openings_per_point_refs: Vec<&[F]> = openings_per_point.iter().map(Vec::as_slice).collect();
     let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
@@ -78,7 +78,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let commit_outputs = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
         &setup,
-        &polys_per_point_refs,
+        &commit_polys_per_point,
         &CpuBackend,
         &prepared,
     )
@@ -89,9 +89,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
         &setup,
+        prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
         &CpuBackend,
         &prepared,
-        prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,

@@ -155,8 +155,6 @@ fn bench_dense_phases<
                     black_box(
                         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                             &setup,
-                            &CpuBackend,
-                            &prepared,
                             vec![(
                                 &pt[..],
                                 CommittedPolynomials {
@@ -165,6 +163,8 @@ fn bench_dense_phases<
                                     hint: h.into_iter().next().unwrap(),
                                 },
                             )],
+                            &CpuBackend,
+                            &prepared,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -179,8 +179,6 @@ fn bench_dense_phases<
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             vec![(
                 &pt[..],
                 CommittedPolynomials {
@@ -189,6 +187,8 @@ fn bench_dense_phases<
                     hint: hint.clone(),
                 },
             )],
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -229,8 +229,6 @@ fn bench_dense_phases<
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     vec![(
                         &pt[..],
                         CommittedPolynomials {
@@ -239,6 +237,8 @@ fn bench_dense_phases<
                             hint: h,
                         },
                     )],
+                    &CpuBackend,
+                    &prepared,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -366,8 +366,6 @@ fn bench_onehot_phases<
                     black_box(
                         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                             &setup,
-                            &CpuBackend,
-                            &prepared,
                             vec![(
                                 &pt[..],
                                 CommittedPolynomials {
@@ -376,6 +374,8 @@ fn bench_onehot_phases<
                                     hint: h.into_iter().next().unwrap(),
                                 },
                             )],
+                            &CpuBackend,
+                            &prepared,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -390,8 +390,6 @@ fn bench_onehot_phases<
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             vec![(
                 &pt[..],
                 CommittedPolynomials {
@@ -400,6 +398,8 @@ fn bench_onehot_phases<
                     hint: hint.clone(),
                 },
             )],
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -440,8 +440,6 @@ fn bench_onehot_phases<
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     vec![(
                         &pt[..],
                         CommittedPolynomials {
@@ -450,6 +448,8 @@ fn bench_onehot_phases<
                             hint: h,
                         },
                     )],
+                    &CpuBackend,
+                    &prepared,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,

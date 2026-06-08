@@ -327,10 +327,7 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-        &prover_setup,
-        &CpuBackend,
-        &prepared,
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(&prover_setup,
         vec![(
             &opening_point[..],
             CommittedPolynomials {
@@ -339,9 +336,15 @@ fn run() -> Result<(), String> {
                 hint,
             },
         )],
+        &CpuBackend,
+        &prepared,
+        
         &mut prover_transcript,
+        
         BasisMode::Lagrange,
+        
         setup_contribution_mode,
+        
     )
     .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");

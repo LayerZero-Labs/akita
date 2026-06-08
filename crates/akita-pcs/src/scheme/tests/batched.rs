@@ -109,8 +109,6 @@ fn batched_root_direct_fast_path_round_trip() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &opening_point[..],
             CommittedPolynomials {
@@ -119,6 +117,8 @@ fn batched_root_direct_fast_path_round_trip() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -201,8 +201,6 @@ fn batched_root_direct_rejects_wrong_opening() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &opening_point[..],
             CommittedPolynomials {
@@ -211,6 +209,8 @@ fn batched_root_direct_rejects_wrong_opening() {
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -252,6 +252,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [poly_a, poly_b];
+    let poly_refs = [&poly_group[0], &poly_group[1]];
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
         RootCommitPolys::new(&poly_group),
@@ -273,16 +274,16 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &opening_point[..],
             CommittedPolynomials {
-                polynomials: &poly_group[..],
+                polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

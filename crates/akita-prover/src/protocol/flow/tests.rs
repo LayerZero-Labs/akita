@@ -37,6 +37,7 @@ fn prover_claim_preparation_accepts_extension_points() {
         E::new(F::from_u64(3), F::from_u64(4)),
     ];
     let polys = [10usize, 11usize];
+    let poly_refs = [&polys[0], &polys[1]];
     let commitment = RingCommitment::<F, 2>::default();
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
@@ -49,7 +50,7 @@ fn prover_claim_preparation_accepts_extension_points() {
     let claims = vec![(
         &point[..],
         crate::CommittedPolynomials {
-            polynomials: &polys[..],
+            polynomials: &poly_refs[..],
             commitment: &commitment,
             hint,
         },

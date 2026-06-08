@@ -9,8 +9,7 @@ use akita_field::{
 use akita_prover::{
     batched_commit,
     compute::{RootCommitBackend, RootCommitPoly, RootCommitPolys},
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend,
-    ProverClaims, ProverComputeBackend,
+    AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend, ProverClaims,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -137,17 +136,18 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
+        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,
-        P: AkitaPolyOps<F, D>,
-        B: ProverComputeBackend<F>,
+        P: akita_prover::RootProvePoly<F, D>,
+        B: akita_prover::ProverComputeBackend<F>
+            + akita_prover::RootProveBackend<F, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;

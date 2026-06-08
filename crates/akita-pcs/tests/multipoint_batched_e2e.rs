@@ -95,8 +95,8 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             })
             .collect();
 
-        let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
+        let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
+        let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
         let openings_per_point_refs: Vec<&[F]> =
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
@@ -120,7 +120,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             F,
             DENSE_D,
         >>::batched_commit(
-            &setup, &polys_per_point_refs, &CpuBackend, &prepared
+            &setup, &commit_polys_per_point, &CpuBackend, &prepared
         )
         .expect("dense batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -130,9 +130,10 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             F,
             DENSE_D,
         >>::batched_prove(
-            &setup, &CpuBackend,
+            &setup,
+            prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
+            &CpuBackend,
             &prepared,
-            prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -213,8 +214,8 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             })
             .collect();
 
-        let polys_per_point_refs: Vec<&[OneHotTestPoly]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
+        let commit_polys_per_point: Vec<_> = polys_per_point.iter().map(Vec::as_slice).collect();
+        let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
         let openings_per_point_refs: Vec<&[F]> =
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
@@ -234,19 +235,25 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             F,
             ONEHOT_D,
         >>::batched_commit(
-            &setup, &polys_per_point_refs, &CpuBackend, &prepared
+            &setup, &commit_polys_per_point, &CpuBackend, &prepared
         )
         .expect("onehot batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&setup, &CpuBackend, &prepared, prove_inputs_from_groups(
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&setup,
+        prove_inputs_from_groups(
                     &opening_points,
-                    &polys_per_point_refs,
+                    &prove_poly_refs,
                     &commitments,
                     hints,
-                ), &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
+                ),
+        &CpuBackend,
+        &prepared,
+         &mut prover_transcript,
+         BasisMode::Lagrange,
+         akita_types::SetupContributionMode::Direct)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -341,14 +348,14 @@ fn multipoint_dense_shared_commitment_round_trip() {
             .expect("dense single commit");
 
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
-        let polys_slice = polys.as_slice();
+        let poly_refs: Vec<&DensePoly<F, DENSE_D>> = polys.iter().collect();
         let prover_claims: ProverClaims<F, DensePoly<F, DENSE_D>, _, _> = opening_points
             .iter()
             .map(|point| {
                 (
                     *point,
                     CommittedPolynomials {
-                        polynomials: polys_slice,
+                        polynomials: &poly_refs[..],
                         commitment: &commitment,
                         hint: hint.clone(),
                     },
@@ -362,9 +369,10 @@ fn multipoint_dense_shared_commitment_round_trip() {
             F,
             DENSE_D,
         >>::batched_prove(
-            &setup, &CpuBackend,
-            &prepared,
+            &setup,
             prover_claims,
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -460,8 +468,9 @@ mod non_zk_negative_cases {
                 })
                 .collect();
 
-            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+            let commit_polys_per_point: Vec<_> =
                 polys_per_point.iter().map(Vec::as_slice).collect();
+            let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
             let openings_per_point_refs: Vec<&[F]> =
                 openings_per_point.iter().map(Vec::as_slice).collect();
             let opening_points: Vec<&[F]> =
@@ -482,7 +491,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &setup, &polys_per_point_refs, &CpuBackend, &prepared
+                &setup, &commit_polys_per_point, &CpuBackend, &prepared
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -494,14 +503,9 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::batched_prove(
                 &setup,
+                prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
                 &CpuBackend,
                 &prepared,
-                prove_inputs_from_groups(
-                    &opening_points,
-                    &polys_per_point_refs,
-                    &commitments,
-                    hints,
-                ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -549,8 +553,9 @@ mod non_zk_negative_cases {
                         .collect()
                 })
                 .collect();
-            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+            let commit_polys_per_point: Vec<_> =
                 polys_per_point.iter().map(Vec::as_slice).collect();
+            let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
             let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
                 .map(|point_idx| random_point(NV, 0xaaaa_5000 + point_idx as u64))
                 .collect();
@@ -582,7 +587,7 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::batched_commit(
                 &commit_setup,
-                &polys_per_point_refs,
+                &commit_polys_per_point,
                 &CpuBackend,
                 &commit_prepared,
             )
@@ -595,14 +600,9 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::batched_prove(
                 &prove_setup,
+                prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
                 &CpuBackend,
                 &prove_prepared,
-                prove_inputs_from_groups(
-                    &opening_points,
-                    &polys_per_point_refs,
-                    &commitments,
-                    hints,
-                ),
                 &mut transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -658,8 +658,9 @@ mod non_zk_negative_cases {
                 })
                 .collect();
 
-            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+            let commit_polys_per_point: Vec<_> =
                 polys_per_point.iter().map(Vec::as_slice).collect();
+            let prove_poly_refs = build_poly_ref_storage(&polys_per_point);
             let opening_points: Vec<&[F]> =
                 opening_points_owned.iter().map(Vec::as_slice).collect();
 
@@ -678,7 +679,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &setup, &polys_per_point_refs, &CpuBackend, &prepared
+                &setup, &commit_polys_per_point, &CpuBackend, &prepared
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -690,14 +691,9 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::batched_prove(
                 &setup,
+                prove_inputs_from_groups(&opening_points, &prove_poly_refs, &commitments, hints),
                 &CpuBackend,
                 &prepared,
-                prove_inputs_from_groups(
-                    &opening_points,
-                    &polys_per_point_refs,
-                    &commitments,
-                    hints,
-                ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,

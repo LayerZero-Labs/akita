@@ -1,5 +1,9 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+use crate::compute::{
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource,
+    RootProveBackend, RootTensorSource, TensorProjectionBatchKernel,
+};
 use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
@@ -15,14 +19,14 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
-    RingRelationWitness, RootTensorProjectionPoly,
+    CommittedPolynomials, ProverClaims, ProverComputeBackend, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance, RingRelationWitness,
+    RootProvePoly, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
@@ -74,6 +78,7 @@ use std::array::from_fn;
 use std::sync::Arc;
 
 mod inputs;
+mod poly_kernels;
 mod recursive;
 mod root_extension;
 mod root_fold;

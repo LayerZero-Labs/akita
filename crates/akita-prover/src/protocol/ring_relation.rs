@@ -2,13 +2,16 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
+use crate::compute::{
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
+    RootOpeningSource,
+};
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
-    AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
-    RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRowsPlan,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, RecursiveWitnessView,
+    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRowsPlan,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -148,15 +151,18 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     })
 }
 
-fn build_point_decompose_fold_witness<F, P, const D: usize>(
+fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
+    backend: &B,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
     lp: &LevelParams,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
 where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
+    F: FieldCore + CanonicalField,
+    P: RootOpeningSource<F, D>,
+    B: for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     match challenges {
         Challenges::Sparse {
@@ -182,29 +188,38 @@ where
                     },
                 )?);
             }
-            if let Some(z_point) = P::decompose_fold_batched(
-                point_polys,
-                &point_challenges,
-                lp.block_len,
-                lp.num_digits_commit,
-                lp.log_basis,
-            ) {
-                Ok(z_point)
-            } else {
-                let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
-                    .iter()
-                    .zip(point_challenges.chunks(*num_blocks_per_claim))
-                    .map(|(poly, poly_challenges)| {
-                        poly.decompose_fold(
-                            poly_challenges,
-                            lp.block_len,
-                            lp.num_digits_commit,
-                            lp.log_basis,
-                        )
-                    })
-                    .collect();
-                aggregate_decompose_fold_witnesses(witnesses)
+            let batch_plan = DecomposeFoldBatchPlan::Sparse {
+                challenges: &point_challenges,
+                block_len: lp.block_len,
+                num_digits: lp.num_digits_commit,
+                log_basis: lp.log_basis,
+            };
+            if let Some(z_point) = OpeningBatchKernel::decompose_fold_batch(
+                backend,
+                None,
+                P::opening_batch(point_polys)?,
+                batch_plan,
+            )? {
+                return Ok(z_point);
             }
+            let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
+                .iter()
+                .zip(point_challenges.chunks(*num_blocks_per_claim))
+                .map(|(poly, poly_challenges)| {
+                    OpeningFoldKernel::decompose_fold(
+                        backend,
+                        None,
+                        poly.opening_view()?,
+                        DecomposeFoldPlan {
+                            challenges: poly_challenges,
+                            block_len: lp.block_len,
+                            num_digits: lp.num_digits_commit,
+                            log_basis: lp.log_basis,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            aggregate_decompose_fold_witnesses(witnesses)
         }
         Challenges::Tensor { factored: _ } => {
             let selected = challenges.select_claims::<D>(point_indices)?;
@@ -216,12 +231,16 @@ where
                     ))
                 }
             };
-            match P::decompose_fold_tensor_batched(
-                point_polys,
-                &point_factored,
-                lp.block_len,
-                lp.num_digits_commit,
-                lp.log_basis,
+            match OpeningBatchKernel::decompose_fold_batch(
+                backend,
+                None,
+                P::opening_batch(point_polys)?,
+                DecomposeFoldBatchPlan::Tensor {
+                    tensor: &point_factored,
+                    block_len: lp.block_len,
+                    num_digits: lp.num_digits_commit,
+                    log_basis: lp.log_basis,
+                },
             )? {
                 Some(witness) => Ok(witness),
                 None => Err(AkitaError::InvalidSetup(
@@ -325,8 +344,10 @@ impl RingRelationProver {
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
-        P: AkitaPolyOps<F, D>,
-        B: DigitRowsComputeBackend<F>,
+        P: RootOpeningSource<F, D>,
+        B: DigitRowsComputeBackend<F>
+            + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+            + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     {
         {
             let x: u8 = 0;
@@ -560,7 +581,8 @@ impl RingRelationProver {
             for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
                 let point_indices = &claim_indices_by_point[point_idx];
                 let point_claim_count = point_polys.len();
-                let witness = build_point_decompose_fold_witness::<F, P, D>(
+                let witness = build_point_decompose_fold_witness::<F, P, B, D>(
+                    backend,
                     &challenges,
                     point_polys,
                     point_indices,

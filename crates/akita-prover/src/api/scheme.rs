@@ -1,7 +1,10 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys};
-use crate::{AkitaPolyOps, ProverClaims};
+use crate::compute::{
+    ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootProveBackend,
+    RootProvePoly,
+};
+use crate::ProverClaims;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
@@ -14,8 +17,8 @@ use akita_types::{BasisMode, RingSubfieldEncoding, SetupContributionMode};
 ///
 /// Generic over base field `F` and cyclotomic ring degree `D`.
 /// Caller-provided root polynomials use [`RootCommitPoly`] with a backend `B` that
-/// implements [`RootCommitBackend`] for that `P`. Prove still accepts
-/// `impl AkitaPolyOps<F, D>` until the flow cutover lands.
+/// implements [`RootCommitBackend`] for that `P`. Prove accepts [`RootProvePoly`]
+/// with a backend implementing [`RootProveBackend`] for the same `P`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>
@@ -32,7 +35,7 @@ where
     /// Public opening point and claimed-evaluation field.
     type ClaimField: ExtField<F>;
     /// Extension field used for root tensor projection during commit.
-    type TensorField: ExtField<F> + RingSubfieldEncoding<F> + 'static;
+    type TensorField: ExtField<F> + RingSubfieldEncoding<F>;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -121,18 +124,21 @@ where
     ///
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
+    /// **Parameter order:** `claims` precedes `backend` and `prepared` so the
+    /// compiler fixes the polynomial type `P` before proving `B: RootProveBackend<F, P, …>`.
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
+        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,
-        P: AkitaPolyOps<F, D>,
-        B: ProverComputeBackend<F>;
+        P: RootProvePoly<F, D>,
+        B: ProverComputeBackend<F>
+            + RootProveBackend<F, P, Self::ClaimField, Self::TensorField, D>;
 }

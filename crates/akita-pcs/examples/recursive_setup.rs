@@ -111,8 +111,6 @@ fn run_mode(
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             point,
             CommittedPolynomials {
@@ -121,6 +119,8 @@ fn run_mode(
                 hint,
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         mode,

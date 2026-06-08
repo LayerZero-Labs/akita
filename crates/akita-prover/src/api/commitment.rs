@@ -1,9 +1,9 @@
 //! Prover-owned commitment kernels.
 
 use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, OperationCtx, RootCommitBackend, RootCommitKernel,
-    RootCommitPoly, RootCommitPolys, RootCommitSource, RootPolyShape, RootTensorSource,
-    TensorProjectionKernel,
+    tensor_root_projection, CommitInnerPlan, CommitmentComputeBackend, OperationCtx,
+    RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitPolys, RootCommitSource,
+    RootPolyShape, RootTensorSource,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
@@ -292,10 +292,14 @@ where
     E: akita_field::ExtField<F> + RingSubfieldEncoding<F>,
     P: RootTensorSource<F, D>,
     B: CommitmentComputeBackend<F>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+        + for<'a> crate::compute::TensorProjectionKernel<
+            <P as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            E,
+            D,
+        >,
 {
-    let view = poly.tensor_view()?;
-    TensorProjectionKernel::root_projection(ctx.backend(), Some(ctx.prepared()), view)
+    tensor_root_projection(ctx.backend(), Some(ctx.prepared()), poly)
 }
 
 fn commit_with_validated_params<F, const D: usize, P, B>(

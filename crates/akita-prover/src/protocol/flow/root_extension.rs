@@ -39,8 +39,10 @@ pub(in crate::protocol::flow) fn prepare_root_extension_opening_reduction<
     E,
     C,
     P,
+    B,
     const D: usize,
 >(
+    backend: &B,
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
     claim_points: &[&[E]],
@@ -49,7 +51,8 @@ where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F> + ExtField<E>,
-    P: AkitaPolyOps<F, D>,
+    P: RootTensorSource<F, D>,
+    B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span = tracing::info_span!(
         "prepare_root_extension_opening_reduction",
@@ -128,9 +131,12 @@ where
                 .iter()
                 .map(|&claim_idx| polys[claim_idx])
                 .collect::<Vec<_>>();
-            let point_partials = <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<
-                E,
-            >(&point_polys, logical_point)?;
+            let point_partials =
+                poly_kernels::tensor_extension_column_partials_batch::<F, P, E, B, D>(
+                    backend,
+                    &point_polys,
+                    logical_point,
+                )?;
             if point_partials.len() != claim_indices.len() {
                 return Err(AkitaError::InvalidSize {
                     expected: claim_indices.len(),
@@ -177,8 +183,10 @@ pub(in crate::protocol::flow) fn prove_prepared_root_extension_opening_reduction
     C,
     T,
     P,
+    B,
     const D: usize,
 >(
+    backend: &B,
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
     _root_params: &LevelParams,
@@ -189,7 +197,8 @@ pub(in crate::protocol::flow) fn prove_prepared_root_extension_opening_reduction
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<RootExtensionOpeningReduction<C>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + akita_field::unreduced::ReduceTo<F>,
     E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
@@ -198,7 +207,8 @@ where
         + HasOptimizedFold
         + AkitaSerialize,
     T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootProvePoly<F, D>,
+    B: RootProveBackend<F, P, E, C, D>,
 {
     let _span = tracing::info_span!(
         "prove_prepared_root_extension_opening_reduction",
@@ -289,7 +299,8 @@ where
                     num_terms = point_polys.len()
                 )
                 .entered();
-                <P as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<C>(
+                poly_kernels::tensor_packed_extension_sparse_linear_combination::<F, P, C, B, D>(
+                    backend,
                     &point_polys,
                     &point_coeffs,
                 )?
@@ -349,7 +360,8 @@ where
                 let point_idx = incidence_summary.claim_to_point()[claim_idx];
                 let tail_point = &padded_points[point_idx][split_bits..];
                 let factor_evals = tensor_equality_factor_evals::<F, C>(tail_point, &eta)?;
-                let witness_evals = poly.tensor_packed_extension_evals::<C>()?;
+                let witness_evals =
+                    poly_kernels::tensor_packed_extension_evals::<F, P, C, B, D>(backend, poly)?;
                 terms.push(ExtensionOpeningReductionTerm::new(
                     witness_evals,
                     factor_evals,

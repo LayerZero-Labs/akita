@@ -80,13 +80,13 @@ where
         .iter()
         .zip(incidence_summary.claim_poly_indices().iter())
         .map(|(&point_idx, &poly_idx)| {
-            &prepared_incidence.point_payloads[point_idx].polynomials[poly_idx]
+            prepared_incidence.point_payloads[point_idx].polynomials[poly_idx]
         })
         .collect();
     let group_polys: Vec<&P> = prepared_incidence
         .point_payloads
         .iter()
-        .flat_map(|payload| payload.polynomials.iter())
+        .flat_map(|payload| payload.polynomials.iter().copied())
         .collect();
     let flat_hints: Vec<AkitaCommitmentHint<F, D>> = prepared_incidence
         .point_payloads
@@ -117,7 +117,7 @@ pub fn prove_root_direct<F, L, const D: usize, P>(
 where
     F: FieldCore,
     L: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: DirectRootWitnessSource<F, D>,
 {
     let witnesses = polys
         .iter()
@@ -188,7 +188,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::ClaimField>
@@ -199,8 +202,9 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    P: RootProvePoly<Cfg::Field, D>,
+    B: ProverComputeBackend<Cfg::Field>
+        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -385,7 +389,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::ClaimField>
@@ -396,8 +403,9 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    P: RootProvePoly<Cfg::Field, D>,
+    B: ProverComputeBackend<Cfg::Field>
+        + RootProveBackend<Cfg::Field, P, Cfg::ClaimField, Cfg::ChallengeField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 

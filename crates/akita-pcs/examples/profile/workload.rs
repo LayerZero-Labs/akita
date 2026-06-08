@@ -356,8 +356,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
-        &CpuBackend,
-        prepared,
         vec![(
             pt,
             CommittedPolynomials {
@@ -366,6 +364,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
                 hint,
             },
         )],
+        &CpuBackend,
+        prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -773,8 +773,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         vec![(
             &pt[..],
             CommittedPolynomials {
@@ -783,6 +781,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 hint: hints.into_iter().next().unwrap(),
             },
         )],
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
