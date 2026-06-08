@@ -34,7 +34,6 @@ fn verify_passes_for_consistent_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
-    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
 
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
@@ -103,7 +102,6 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
     let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
 
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
@@ -322,7 +320,6 @@ fn monomial_basis_prove_verify_round_trip() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
-    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
 
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
@@ -397,7 +394,6 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
-    let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
     let prove_stack = uniform_prove_stack(&setup, &CpuBackend, &prepared);
 
     let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(

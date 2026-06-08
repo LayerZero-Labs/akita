@@ -1066,7 +1066,7 @@ fn batched_onehot_same_point_round_trip() {
         let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let truncated_result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                &proof,
+                &truncated,
                 &verifier_setup,
                 &mut truncated_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
