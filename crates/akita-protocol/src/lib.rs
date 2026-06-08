@@ -25,7 +25,7 @@ pub mod stage2;
 
 pub use ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
 pub use plan::{
-    plan_level, BatchingScheme, CarriedOpeningPlan, L2CertificateMode, LevelProtocolPlan,
-    ProtocolGates, StagePlan, TranscriptEvent, TranscriptSchedule,
+    plan_level, BatchingScheme, CarriedOpeningPlan, LevelProtocolPlan, ProtocolGates, StagePlan,
+    TranscriptEvent, TranscriptSchedule,
 };
 pub use stage2::{stage2_descriptor, stage2_expr, AkitaSumcheckDescriptor};

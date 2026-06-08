@@ -8,7 +8,7 @@
 //! descriptor is later evaluated.
 //!
 //! This PR ships the stage-2 stub: a single regular stage-2 instance. The
-//! y-ring trace term, the L2 certificate instance lists, and the setup-claim
+//! y-ring trace term, the folded-witness L2 certificate, and the setup-claim
 //! offloading Stage-3 instance are gate-driven additions made by later nodes;
 //! the stub rejects those gates rather than silently emitting the wrong
 //! schedule. The plan is also the single place gamma-power batching is
@@ -27,29 +27,28 @@ use crate::stage2::stage2_descriptor;
 /// `plan_level` is a pure function of these gates plus the level parameters and
 /// the schedule's `next_w_len`, so the prover and verifier obtain identical
 /// plans for identical inputs.
+///
+/// Each non-`zk` gate is a forward extension point. Today `plan_level` emits
+/// only the baseline stage-2 schedule and rejects an enabled gate rather than
+/// guessing a schedule; the feature nodes (`F-yring`, `F-l2`, `F-offload`) own
+/// the instance lists, transcript-schedule additions, and per-realization proof
+/// shapes those gates select when they rebase onto this plan. The gates live
+/// here only so the plan stays the single place gamma-power batching is
+/// allocated, so the features cannot collide on a power once they are added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ProtocolGates {
     /// Fuse the y-ring trace term into the stage-2 instance (node F-yring).
     pub trace: bool,
-    /// L2 certificate mode, gating the stage-1/stage-2 instance lists
-    /// (node F-l2).
-    pub l2_certificate: L2CertificateMode,
+    /// Emit the folded-witness L2 certificate instances (node F-l2). The
+    /// certificate's realization taxonomy and per-realization proof shape are
+    /// the F-l2 node's concern, defined when it wires this gate onto the plan;
+    /// the plan only records that the level requested a certificate.
+    pub l2_certificate: bool,
     /// Append a Stage-3 setup product-sumcheck instance (node F-offload).
     pub setup_offload: bool,
     /// Use ZK committed-round sinks. Does not change the instance list or the
     /// transcript schedule emitted here; only the prover's sink differs.
     pub zk: bool,
-}
-
-/// L2 certificate mode gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum L2CertificateMode {
-    /// Deterministic certificate: stage-1 `{Range}`, stage-2 `{S, Relation}`.
-    #[default]
-    Deterministic,
-    /// Realized certificate: stage-1 `{Range, L2}`, stage-2
-    /// `{S, Relation, Virtualization}`.
-    Realized,
 }
 
 /// How gamma powers are allocated across the instances batched in one stage.
@@ -158,7 +157,7 @@ pub struct LevelProtocolPlan<O, P, C> {
 ///
 /// Pure and panic-free: identical inputs yield identical plans on both sides.
 /// This stub emits the baseline stage-2 schedule (one regular fused instance)
-/// and rejects the trace, realized-L2, and setup-offload gates, which later
+/// and rejects the trace, L2-certificate, and setup-offload gates, which later
 /// nodes wire in.
 ///
 /// # Errors
@@ -172,13 +171,10 @@ pub fn plan_level<const D: usize>(
     next_w_len: usize,
     gates: &ProtocolGates,
 ) -> Result<LevelProtocolPlan<AkitaOpeningId, AkitaPublicId, AkitaChallengeId>, AkitaError> {
-    if gates.trace
-        || gates.setup_offload
-        || matches!(gates.l2_certificate, L2CertificateMode::Realized)
-    {
+    if gates.trace || gates.l2_certificate || gates.setup_offload {
         return Err(AkitaError::InvalidInput(
             "plan_level currently emits only the baseline stage-2 schedule; the trace, \
-             realized-L2, and setup-offload gates are wired by later nodes"
+             L2-certificate, and setup-offload gates are wired by later nodes"
                 .to_string(),
         ));
     }
@@ -302,13 +298,24 @@ mod tests {
     fn plan_level_rejects_unsupported_gates() {
         let params = sample_params();
         let next_w_len = sample_next_w_len(&params);
-        let gates = ProtocolGates {
-            trace: true,
-            ..ProtocolGates::default()
-        };
-        let err =
-            plan_level::<D>(&params, next_w_len, &gates).expect_err("trace gate not yet supported");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
+        for gates in [
+            ProtocolGates {
+                trace: true,
+                ..ProtocolGates::default()
+            },
+            ProtocolGates {
+                l2_certificate: true,
+                ..ProtocolGates::default()
+            },
+            ProtocolGates {
+                setup_offload: true,
+                ..ProtocolGates::default()
+            },
+        ] {
+            let err =
+                plan_level::<D>(&params, next_w_len, &gates).expect_err("gate not yet supported");
+            assert!(matches!(err, AkitaError::InvalidInput(_)));
+        }
     }
 
     #[test]
