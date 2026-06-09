@@ -267,6 +267,11 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
+    // Tiered levels carry the hidden decomposed concatenated slice images
+    // `û_concat` (one per commitment group); `0` for single-tier levels.
+    let u_concat_count = num_points
+        .checked_mul(lp.u_concat_ring_len_per_group())
+        .ok_or_else(|| AkitaError::InvalidSetup("witness u-concat width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
@@ -304,6 +309,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
         e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
             .and_then(|n| n.checked_add(z_pre_count))
@@ -314,6 +320,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     {
         e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
