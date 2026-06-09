@@ -95,7 +95,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test-non-zk:
-    name: Test (non-zk ${{ strategy.job-index }}/${{ strategy.job-total }})
+    name: Test (non-zk ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -114,7 +114,7 @@ jobs:
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all non-zk features)
         env:
-          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk-shard-${SHARD_INDEX}"
@@ -135,13 +135,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-non-zk-shard-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ strategy.job-index }}
+          name: ci-test-pass-non-zk-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 7
 
   test-all-features:
-    name: Test (all-features ${{ strategy.job-index }}/${{ strategy.job-total }})
+    name: Test (all-features ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -160,7 +160,7 @@ jobs:
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all features)
         env:
-          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features-shard-${SHARD_INDEX}"
@@ -184,8 +184,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-all-features-shard-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ strategy.job-index }}
+          name: ci-test-pass-all-features-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 7
 
