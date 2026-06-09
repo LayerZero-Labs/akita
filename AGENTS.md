@@ -19,8 +19,8 @@ cargo test
 Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
 showing per-pass wall time vs a main baseline, critical-path wall time when passes
 run in parallel, plus per-test outliers from the nextest JUnit output. CI runs the
-non-zk and all-features nextest passes in parallel matrix jobs (`slice:shard/N` per
-pass, `CI_TEST_SHARD_COUNT` in `.github/workflows/ci.yml`), with
+non-zk and all-features nextest passes in parallel matrix jobs (`slice:index/total`
+via `strategy.job-index` / `strategy.job-total`), with
 [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) per pass. The
 `test-timing` job merges shard JUnit and uploads artifact `ci-test-timing-data`
 containing `summary.json` and the rendered comment/report.

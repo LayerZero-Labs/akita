@@ -89,11 +89,11 @@ class CiTestTimingReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (shard_dir / "timing-shard-1.json").write_text(
-                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0}\n',
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":2}\n',
                 encoding="utf-8",
             )
             (shard_dir / "timing-shard-2.json").write_text(
-                '{"started_at_epoch":110,"finished_at_epoch":150,"exit_code":1}\n',
+                '{"started_at_epoch":110,"finished_at_epoch":150,"exit_code":1,"shard_index":2,"shard_total":2}\n',
                 encoding="utf-8",
             )
 
@@ -108,6 +108,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "timing_glob": "timing-shard-*.json",
                     "output_junit": str(merged_junit),
                     "output_timing": str(merged_timing),
+                    "expected_shard_count": 0,
                 },
             )()
             report.prepare_pass_command(args)
@@ -118,6 +119,38 @@ class CiTestTimingReportTests(unittest.TestCase):
             self.assertEqual(timing["started_at_epoch"], 100)
             self.assertEqual(timing["finished_at_epoch"], 150)
             self.assertEqual(timing["exit_code"], 1)
+
+    def test_prepare_pass_requires_expected_shard_count(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            shard_dir = pathlib.Path(tmp) / "shards"
+            shard_dir.mkdir()
+            (shard_dir / "junit-shard-1.xml").write_text(
+                (FIXTURES_DIR / "sample-non-zk.xml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (shard_dir / "timing-shard-1.json").write_text(
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":2}\n',
+                encoding="utf-8",
+            )
+
+            args = type(
+                "Args",
+                (),
+                {
+                    "input_dir": str(shard_dir),
+                    "junit_glob": "junit-shard-*.xml",
+                    "timing_glob": "timing-shard-*.json",
+                    "output_junit": str(pathlib.Path(tmp) / "merged.xml"),
+                    "output_timing": str(pathlib.Path(tmp) / "merged-timing.json"),
+                    "expected_shard_count": 0,
+                },
+            )()
+            status = report.prepare_pass_command(args)
+            self.assertEqual(status, 1)
+            timing = json.loads((pathlib.Path(tmp) / "merged-timing.json").read_text(encoding="utf-8"))
+            self.assertTrue(timing.get("missing_shards"))
 
 
 if __name__ == "__main__":

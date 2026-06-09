@@ -84,6 +84,12 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--timing-glob", default="timing-shard-*.json")
     prepare.add_argument("--output-junit", required=True)
     prepare.add_argument("--output-timing", required=True)
+    prepare.add_argument(
+        "--expected-shard-count",
+        type=int,
+        default=0,
+        help="Require this many shard JUnit and timing files (0 disables).",
+    )
 
     return parser.parse_args()
 
@@ -175,6 +181,21 @@ def combine_junit_files(junit_paths: list[pathlib.Path], output_path: pathlib.Pa
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(combined).write(output_path, encoding="utf-8", xml_declaration=True)
+
+
+def shard_totals_from_timing(timing_paths: list[pathlib.Path]) -> tuple[int, set[int]]:
+    totals: set[int] = set()
+    indices: set[int] = set()
+    for path in timing_paths:
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        totals.add(safe_int(str(data.get("shard_total", 0)), 0))
+        indices.add(safe_int(str(data.get("shard_index", 0)), 0))
+    totals.discard(0)
+    if len(totals) != 1:
+        return 0, indices
+    return next(iter(totals)), indices
 
 
 def aggregate_timing_files(timing_paths: list[pathlib.Path]) -> tuple[int, int, int]:
@@ -642,6 +663,29 @@ def prepare_pass_command(args: argparse.Namespace) -> int:
     timing_paths = sorted(input_dir.glob(args.timing_glob))
     output_junit = pathlib.Path(args.output_junit)
     output_timing = pathlib.Path(args.output_timing)
+    expected = int(args.expected_shard_count)
+    shard_total, shard_indices = shard_totals_from_timing(timing_paths)
+    if expected <= 0:
+        expected = shard_total
+
+    missing_shards = expected <= 0 or len(junit_paths) != expected or len(timing_paths) != expected
+    if not missing_shards:
+        missing_shards = shard_indices != set(range(1, expected + 1))
+    if missing_shards:
+        write_json(
+            output_timing,
+            {
+                "started_at_epoch": None,
+                "finished_at_epoch": None,
+                "exit_code": 1,
+                "missing_shards": True,
+                "expected_shard_count": expected or None,
+                "shard_total": shard_total or None,
+                "junit_shard_count": len(junit_paths),
+                "timing_shard_count": len(timing_paths),
+            },
+        )
+        return 1
 
     combine_junit_files(junit_paths, output_junit)
     started_at, finished_at, exit_code = aggregate_timing_files(timing_paths)
@@ -651,6 +695,7 @@ def prepare_pass_command(args: argparse.Namespace) -> int:
             "started_at_epoch": started_at or None,
             "finished_at_epoch": finished_at or None,
             "exit_code": exit_code,
+            "shard_total": expected,
         },
     )
     return 0

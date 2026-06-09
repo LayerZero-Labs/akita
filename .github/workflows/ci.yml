@@ -12,7 +12,6 @@ permissions:
 env:
   RUSTFLAGS: -D warnings
   CARGO_TERM_COLOR: always
-  CI_TEST_SHARD_COUNT: "2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -96,7 +95,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test-non-zk:
-    name: Test (non-zk ${{ matrix.shard }}/${{ env.CI_TEST_SHARD_COUNT }})
+    name: Test (non-zk ${{ strategy.job-index }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -114,33 +113,35 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all non-zk features)
+        env:
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
-          shard="${{ matrix.shard }}"
-          shard_count="${CI_TEST_SHARD_COUNT}"
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk-shard-${shard}"
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk-shard-${SHARD_INDEX}"
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
           cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence \
-            --partition "slice:${shard}/${shard_count}"
+            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit-shard-${shard}.xml"
-          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
-            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing-shard-${shard}.json"
+          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":%s,"shard_total":%s}\n' \
+            "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
+            > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
           exit "$status"
       - name: Upload non-zk shard artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-non-zk-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ matrix.shard }}
+          name: ci-test-pass-non-zk-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ strategy.job-index }}
           if-no-files-found: warn
           retention-days: 7
 
   test-all-features:
-    name: Test (all-features ${{ matrix.shard }}/${{ env.CI_TEST_SHARD_COUNT }})
+    name: Test (all-features ${{ strategy.job-index }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -158,10 +159,11 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all features)
+        env:
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
-          shard="${{ matrix.shard }}"
-          shard_count="${CI_TEST_SHARD_COUNT}"
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features-shard-${shard}"
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features-shard-${SHARD_INDEX}"
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
@@ -169,20 +171,21 @@ jobs:
           # already run in the non-zk leg above. Exclude them here to keep the zk
           # test coverage narrow (see #75).
           cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))' \
-            --partition "slice:${shard}/${shard_count}"
+            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${shard}.xml"
-          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
-            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing-shard-${shard}.json"
+          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":%s,"shard_total":%s}\n' \
+            "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
+            > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
           exit "$status"
       - name: Upload all-features shard artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-all-features-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ matrix.shard }}
+          name: ci-test-pass-all-features-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ strategy.job-index }}
           if-no-files-found: warn
           retention-days: 7
 
@@ -215,6 +218,8 @@ jobs:
       - name: Merge test timing artifact
         id: merge
         if: always()
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           read_timing() {
             local path="$1"
@@ -233,29 +238,39 @@ jobs:
           PY
           }
 
+          set +e
           python3 scripts/ci_test_timing_report.py prepare-pass \
             --input-dir "$RUNNER_TEMP/ci-test-pass-non-zk-shards" \
             --output-junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --output-timing "$RUNNER_TEMP/merged-non-zk-timing.json"
+          NON_ZK_PREPARE_STATUS=$?
           python3 scripts/ci_test_timing_report.py prepare-pass \
             --input-dir "$RUNNER_TEMP/ci-test-pass-all-features-shards" \
             --output-junit "$RUNNER_TEMP/merged-all-features-junit.xml" \
             --output-timing "$RUNNER_TEMP/merged-all-features-timing.json"
+          ALL_FEATURES_PREPARE_STATUS=$?
+          set -e
 
-          set -- $(read_timing "$RUNNER_TEMP/merged-non-zk-timing.json")
+          set -- "$(read_timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
           NON_ZK_START=$1 NON_ZK_END=$2 NON_ZK_STATUS=$3
-          set -- $(read_timing "$RUNNER_TEMP/merged-all-features-timing.json")
+          set -- "$(read_timing "$RUNNER_TEMP/merged-all-features-timing.json")"
           ALL_FEATURES_START=$1 ALL_FEATURES_END=$2 ALL_FEATURES_STATUS=$3
+          if [ "$NON_ZK_PREPARE_STATUS" -ne 0 ]; then
+            NON_ZK_STATUS=1
+          fi
+          if [ "$ALL_FEATURES_PREPARE_STATUS" -ne 0 ]; then
+            ALL_FEATURES_STATUS=1
+          fi
 
           mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
           python3 scripts/ci_test_timing_report.py merge \
             --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
             --source-sha "$GITHUB_SHA" \
-            --source-branch "${{ github.head_ref || github.ref_name }}" \
+            --source-branch "$SOURCE_BRANCH" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --passes-parallel \
             --passes-sharded \
-            --shard-count "${CI_TEST_SHARD_COUNT}" \
+            --shard-count "$(python3 -c 'import json; print(json.load(open("'"$RUNNER_TEMP/merged-non-zk-timing.json"'", encoding="utf-8")).get("shard_total", 0))')" \
             --pass non-zk \
             --junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --started-at "$NON_ZK_START" \
@@ -285,12 +300,20 @@ jobs:
           retention-days: 30
       - name: Fail if any test pass failed
         if: always()
+        env:
+          NON_ZK_STATUS: ${{ steps.merge.outputs.non_zk_status }}
+          ALL_FEATURES_STATUS: ${{ steps.merge.outputs.all_features_status }}
+          NON_ZK_NEEDS: ${{ needs.test-non-zk.result }}
+          ALL_FEATURES_NEEDS: ${{ needs.test-all-features.result }}
         run: |
-          if [ "${{ steps.merge.outputs.non_zk_status || '1' }}" -ne 0 ]; then
-            exit "${{ steps.merge.outputs.non_zk_status || '1' }}"
+          if [ "$NON_ZK_NEEDS" = "failure" ] || [ "$ALL_FEATURES_NEEDS" = "failure" ]; then
+            exit 1
           fi
-          if [ "${{ steps.merge.outputs.all_features_status || '1' }}" -ne 0 ]; then
-            exit "${{ steps.merge.outputs.all_features_status || '1' }}"
+          if [ "${NON_ZK_STATUS:-1}" != "0" ]; then
+            exit 1
+          fi
+          if [ "${ALL_FEATURES_STATUS:-1}" != "0" ]; then
+            exit 1
           fi
 
   typos:
