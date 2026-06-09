@@ -12,7 +12,19 @@ Akita is a lattice-based polynomial commitment scheme (PCS) with transparent set
 cargo fmt -q
 cargo clippy --all --message-format=short -q -- -D warnings
 cargo test
+./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
 ```
+
+## Documentation guardrails
+
+Canonical policy: [`docs/documentation.md`](docs/documentation.md). The [Akita Book](book/README.md)
+is the narrative; `specs/` is the design-record library until folded
+([`specs/PRUNING.md`](specs/PRUNING.md)).
+
+- **Hard (CI):** `Documentation guardrails` workflow — dead symbols in live specs,
+  `Book-chapter:` paths, `mdbook build` (`scripts/check-doc-guardrails.sh`).
+- **Soft (PR comment):** blast-radius advisory (`<!-- akita-doc-blast-radius -->`),
+  from `docs/doc-blast-radius.json` via `scripts/doc_blast_radius.py`.
 
 ## CI test timing
 

@@ -60,3 +60,13 @@ Structured review uses the detailed scoring rubric in [`specs/SPEC_REVIEW.md`](s
 Reviewers compute an ambiguity score from those dimensions. A spec can be approved when ambiguity is at most 20% and all hard gates in the review rubric pass.
 
 If the answers are unclear, keep the PR in `spec-review-request` and ask questions before implementation begins.
+
+## Documentation
+
+Implementation PRs must keep docs from drifting. See [`docs/documentation.md`](docs/documentation.md)
+for the full policy. In short:
+
+- Update the spec `Status` / acceptance criteria when the PR completes spec work.
+- Review the **documentation blast-radius** PR comment (`<!-- akita-doc-blast-radius -->`).
+- Run `./scripts/check-doc-guardrails.sh` before pushing when you touch book, specs, or `docs/`.
+- Fold shipped specs into the book and archive them per [`specs/PRUNING.md`](specs/PRUNING.md).

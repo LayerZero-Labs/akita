@@ -40,7 +40,10 @@ mdbook-katex is expected.
 - **`specs/`** holds design records. Implemented specs get their durable content
   folded into the book and are then archived (see `specs/PRUNING.md`).
 - **`AGENTS.md`** is the maintainer/agent runbook mirror.
-- **`docs/`** is shrinking toward generated reference tables only.
+- **`docs/`** holds maintainer policy (`documentation.md`), blast-radius map, and
+  generated reference tables.
+- **CI** runs hard doc checks (`scripts/check-doc-guardrails.sh`) and posts a
+  soft blast-radius PR comment. See [`docs/documentation.md`](../docs/documentation.md).
 
 Status: initial scaffold. Most pages are stubs that name the source files and
 specs their content should be folded from.

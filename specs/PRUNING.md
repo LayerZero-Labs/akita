@@ -1,60 +1,90 @@
-# Spec Lifecycle and Pruning
+# Spec lifecycle and pruning
 
 Akita accumulates design specs in `specs/`. Without pruning, the directory drifts
 into a mix of live design, shipped-and-forgotten records, and contradictory
-historical snapshots. This document defines how specs age, when their durable
-content moves into the [Akita Book](../book/README.md), and how stale specs are
-archived or removed.
+historical snapshots.
 
-The companion to this process is the book: **the book is the single canonical
-narrative; `specs/` is the design-record library.** Once a spec's durable
-content is folded into a book chapter, the spec is reference-only and should be
-archived.
+**Canonical policy:** [`docs/documentation.md`](../docs/documentation.md) (per-PR
+obligations, hard CI checks, blast-radius PR comments).
 
-## Lifecycle
+**Narrative home:** the [Akita Book](../book/README.md). Once durable content is
+folded into a book chapter, the spec is reference-only and must be archived.
 
-Every spec carries a `Status` header (see `specs/TEMPLATE.md`):
+## Three layers (no duplication)
 
-| Status | Meaning | Lives in |
-|--------|---------|----------|
-| `proposed` | Not approved / not started | `specs/` |
-| `approved` | `spec-approved`, awaiting implementation | `specs/` |
-| `active` | Approved, implementation in flight | `specs/` |
-| `implemented` | Shipped; durable reference value | `specs/` until folded, then `specs/archive/` |
-| `superseded` | Replaced by another spec (`Superseded-by:`) | `specs/archive/` |
-| `historical` | Retrospective/log of completed work | `specs/archive/` |
-| `archived` | Durable content folded into the book | `specs/archive/` |
+| Layer | Role | Update when |
+|-------|------|-------------|
+| **Book** | Explanations readers consume | Behavior or architecture is stable enough to teach |
+| **Specs** | Design records + acceptance criteria | Designing, implementing, or auditing a change |
+| **AGENTS.md / docs/** | Agent contracts, graphs, generated tables | Verifier-reachable contracts or repo structure changes |
 
-Target steady state: **at most ~10–15 `active`/`approved`/`proposed` specs** in
-`specs/` root. Everything else is `implemented` awaiting fold, or archived.
+Do not maintain the same fact in two places. The book wins for narrative; specs win
+for in-flight acceptance criteria until fold.
+
+## Status vocabulary (exactly one per spec)
+
+Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
+
+| Status | Meaning | Location | Next step |
+|--------|---------|----------|-----------|
+| `proposed` | Not approved | `specs/` | Review or delete |
+| `approved` | `spec-approved`, not started | `specs/` | Implement |
+| `active` | Implementation in flight | `specs/` | Land PRs; check acceptance criteria |
+| `implemented` | Shipped; still useful as reference | `specs/` | Fold into book, then archive |
+| `superseded` | Replaced (`Superseded-by:` set) | `specs/archive/` | Do not edit for current behavior |
+| `historical` | Retrospective only | `specs/archive/` | Do not edit |
+| `archived` | Folded into book | `specs/archive/` | Edit book chapter instead |
+
+**Ambiguity removed:**
+
+- `implemented` **≠** `archived`. Shipped work stays in `specs/` until its
+  durable content is folded into the book (or explicitly marked reference-only
+  with no fold planned).
+- `active` and `approved` must not remain on merged work. Update the header in
+  the implementation PR.
+- `proposed` on a fully checked acceptance list is a **process violation** (CI
+  blast-radius + reviewer duty).
+
+Target steady state: **≤15** specs in `specs/` root with status
+`proposed` / `approved` / `active` / `implemented`. Everything else is archived.
+
+## Status transitions (required actions)
+
+| Event | Author must |
+|-------|-------------|
+| Spec approved for implementation | `Status: approved` (or `active` when work starts) |
+| Implementation PR merges | `Status: implemented`, `PR:` set, acceptance boxes checked |
+| Durable content folded into book | `Book-chapter:` set to real path; `git mv` to `specs/archive/<quarter>/`; row in `specs/archive/README.md` |
+| New spec replaces old | Old: `Status: superseded`, `Superseded-by:`; new: `Supersedes:` |
+| Spec wrong but historically useful | `Status: historical`; archive without book fold |
 
 ## Staleness signals
 
-A spec is a pruning candidate when any of these hold:
+1. **Status drift** — header disagrees with merged reality.
+2. **Dead symbols** — cites removed crates/APIs (`akita-scheme`, `PlannerConfig`,
+   `schedule_policy.rs`, `_with_policy`, …). CI scans **live specs** via
+   `scripts/check-spec-references.sh` (see script for the current live list).
+3. **Contradiction with `AGENTS.md`** — architecture index wins for current structure.
+4. **Superseded** — newer spec covers the same ground (link both directions).
+5. **Folded** — `Book-chapter:` set and chapter prose landed → archive the spec.
 
-1. **Status drift** — header says `proposed`/`active` but all acceptance
-   criteria are checked and the work shipped.
-2. **Dead symbols** — the spec cites modules/types/crates that no longer exist
-   (e.g. `akita-scheme`, `akita-cfg`, `sis_offline`, `Fp16`/`Q16`,
-   `PlannerConfig`, `ScheduleProvider`, `_with_policy`). `scripts/check-spec-references.sh`
-   greps for a known dead-symbol list.
-3. **Contradiction with `AGENTS.md`** — `AGENTS.md` is the live architecture
-   index; when a spec disagrees with it about current structure, the spec is stale.
-4. **Superseded** — a newer spec covers the same ground (link both directions via
-   `Supersedes:` / `Superseded-by:`).
-5. **Folded into the book** — once `Book-chapter:` is set and the chapter is
-   written, the spec is reference-only.
+Run `scripts/check-spec-references.sh --all` quarterly on the full non-archive tree.
+
+### Live specs excluded from CI symbol scan (known stale refs)
+
+These remain **live design** but still mention removed names; scrub before adding
+back to the CI live list in `check-spec-references.sh`:
+
+- `specs/akita-compute-backend-metal.md` (`akita-scheme`, `_with_policy`)
+- `specs/transcript-immediate-fixes.md` (`akita-scheme`)
 
 ## Cadence
 
-- **Per PR (required):** when an implementation PR lands, the author updates the
-  spec `Status` (and `PR`), or opens an archive PR. Do not leave aspirational
-  architecture in a spec marked `implemented`; delete or rewrite contradicting
-  sections.
-- **Monthly (light):** a 15-minute index pass — does any spec `Status` disagree
-  with the code? Run `scripts/check-spec-references.sh`.
-- **Quarterly (full):** a classification audit (like the 2026-Q2 audit below),
-  tied to a book-chapter milestone. Fold durable content, then archive.
+| When | What |
+|------|------|
+| **Every PR** | Update spec headers if applicable; review blast-radius comment (`<!-- akita-doc-blast-radius -->`); keep hard checks green |
+| **Monthly (~15 min)** | Run `./scripts/check-doc-guardrails.sh`; run `check-spec-references.sh --all`; triage false negatives in `docs/doc-blast-radius.json` |
+| **Quarterly** | Execute an audit slice below; fold + archive; refresh `book/src/foundations/spec-index.md` |
 
 ## Archive layout
 
@@ -66,77 +96,92 @@ specs/archive/
     ...
 ```
 
-Archiving is a `git mv` into `specs/archive/<quarter>/` plus an entry in
-`specs/archive/README.md`. Update inbound links (other specs, `docs/`,
-`AGENTS.md`) in the same PR. The book's [Spec index](../book/src/foundations/spec-index.md)
-should reflect the archive.
+Archiving = `git mv` + archive index row + fix inbound links + update book spec index.
 
 ## Folding into the book
 
-1. Extract durable concepts (invariants, diagrams, formulas, contracts) — not
-   execution checklists or PR-era narration.
-2. Leave **one** canonical spec per ongoing design area.
-3. Set the spec's `Book-chapter:` header to the owning page.
-4. Archive the source spec. Never maintain the same content in two places.
+1. Extract durable concepts (invariants, diagrams, formulas, contracts). Omit PR
+   narration and execution checklists unless they are the contract.
+2. Land book prose (or stub refresh with accurate sources) in the owning chapter.
+3. Set `Book-chapter:` to a path under `book/src/` that **exists** (CI checks this).
+4. Archive the spec in the same PR or the immediately stacked follow-up.
 
-## 2026-Q2 audit (first pass — execute in the stacked archive PR)
+### Book chapter paths (consolidated outline)
 
-This classification comes from the council docs/specs audit that accompanied the
-initial book scaffold. The **archive moves are intentionally deferred to a
-follow-up PR** stacked on the scaffold, so the scaffold PR stays review-light.
+Use these targets (not the pre-consolidation folder paths):
 
-### Fold into the book, then archive (durable content)
+| Spec topic | Book chapter |
+|------------|--------------|
+| PCS decomposition / crate map | `book/src/how/architecture.md` |
+| Optimized verifier | `book/src/how/verification.md` |
+| Extension opening batching | `book/src/how/proving/extension-opening-reduction.md` |
+| Tensor / sparse challenges | `book/src/how/proving/root-fold-ring-switch.md` |
+| Terminal fold | `book/src/how/recursion.md` |
+| Weak binding / norm fix | `book/src/how/security.md` |
+| SIS consolidation | `book/src/how/security.md` |
+| Planner refactor | `book/src/how/configuration.md` |
+| Transcript hardening | `book/src/how/transcript.md` |
+| Security hardening / no-panic | `book/src/how/verification.md` |
+| remove-fp16 | `book/src/foundations/rings-and-fields.md` |
+| CRT accumulation | `book/src/how/optimizations.md` |
+| SIMD / fp31 | `book/src/how/optimizations.md` |
+| ZK hiding specs | `book/src/foundations/zero-knowledge.md` |
+| Profiling / CI timing | `book/src/usage/profiling.md` |
+| w-to-e notation | `book/src/foundations/glossary.md` |
+| Setup product sumcheck | `book/src/how/proving/sumcheck-stages.md` |
 
-| Spec | Book chapter target |
-|------|---------------------|
-| `akita-pcs-crate-decomposition.md` | `how/architecture/architecture.md` |
-| `optimized_verifier.md` | `how/verification/per-level-replay.md` |
-| `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` (trim stale `akita-scheme`/`sis_policy.rs` refs) |
-| `tensor-structured-folding-challenges.md`, `bounded-l1-sparse-challenge.md` | `how/proving/tensor-challenges.md` |
-| `terminal-fold-cutover.md` | `how/recursion/intermediate-vs-terminal.md` |
-| `weak-binding-norm-fix.md` (committed-fold section only) | `how/security/norm-bounds-weak-binding.md` |
-| `akita-sis-consolidation.md` | `how/security/sis-msis-sizing.md` |
-| `planner-refactor.md`, `planner-owns-schedule-expansion.md` | `how/config/planner-and-proof-size.md` |
-| `transcript-hardening.md` | `how/transcript/transcript.md` (keep deferred-items table as live spec) |
-| `security-hardening.md` | `how/verification/no-panic-contract.md` |
-| `remove-fp16.md` | `foundations/fields.md` |
-| `crt-ntt-accumulation-safety.md` | `how/optimizations/simd-and-packing.md` |
-| `avx-simd-port.md`, `fp31-field-optimization-retrospective.md` | `how/optimizations/simd-and-packing.md` |
+## 2026-Q2 audit (archive pass — follow-up PR)
+
+Classification from the initial book scaffold. **Execute in a stacked PR** after
+the scaffold lands.
+
+### Fold into book, then archive
+
+| Spec | Book chapter |
+|------|--------------|
+| `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
+| `optimized_verifier.md` | `how/verification.md` |
+| `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
+| `tensor-structured-folding-challenges.md`, `bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
+| `terminal-fold-cutover.md` | `how/recursion.md` |
+| `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
+| `akita-sis-consolidation.md` | `how/security.md` |
+| `planner-refactor.md`, `planner-owns-schedule-expansion.md` | `how/configuration.md` |
+| `transcript-hardening.md` | `how/transcript.md` |
+| `security-hardening.md` | `how/verification.md` |
+| `remove-fp16.md` | `foundations/rings-and-fields.md` |
+| `crt-ntt-accumulation-safety.md` | `how/optimizations.md` |
+| `avx-simd-port.md`, `fp31-field-optimization-retrospective.md` | `how/optimizations.md` |
 | `akita-zk-commitment-hiding.md`, `akita-zk-v-hiding.md`, `akita-zk-sumcheck-hiding-plain.md` | `foundations/zero-knowledge.md` |
-| `profile-bench-coverage-matrix.md` (Active Matrix section) | `usage/profiling.md` (keep matrix as live spec) |
+| `profile-bench-coverage-matrix.md` (Active Matrix) | `usage/profiling.md` |
 | `ci-test-timing.md` | `usage/profiling.md` |
-| `w-to-e-notation.md` | `foundations/notation.md` + `foundations/glossary.md` |
+| `w-to-e-notation.md` | `foundations/glossary.md` |
 | `setup-product-sumcheck.md` | `how/proving/sumcheck-stages.md` |
 
-### Archive directly (historical/superseded; little to fold)
+### Archive directly (little or no fold)
 
-| Spec | Reason / superseded by |
-|------|------------------------|
+| Spec | Reason |
+|------|--------|
 | `fp16-small-field-support.md` | superseded by `remove-fp16.md` |
-| `simd-ring-subfield-fp8.md` | primary consumer (Fp16) removed |
-| `planner-config-consolidation.md` | superseded by landed planner refactor + `AGENTS.md` (proposes `akita-cfg`/`akita-scheme`/triad that do not exist) |
-| `extension-field-trace-cutover.md` | superseded by `extension-field-opening-batching.md` |
-| `general-field-support.md` | extension-opening chain; self-labelled historical |
+| `simd-ring-subfield-fp8.md` | consumer removed |
+| `planner-config-consolidation.md` | superseded; proposes non-existent crates |
+| `extension-field-trace-cutover.md` | superseded by opening batching spec |
+| `general-field-support.md` | historical |
 | `extension-claim-incidence-cutover.md` | landed (PR #69) |
-| `small-field-prover-opening-optimization.md` | retrospective (PR #85) |
-| `akita-crate-followup-jolt-integration.md` | retrospective (PR #65) |
-| `core-protocol-naming-cleanup.md` | naming superseded by `w-to-e-notation.md` |
-| `rust-file-line-cap.md` | policy now in CI + CONTRIBUTING |
+| `small-field-prover-opening-optimization.md` | retrospective |
+| `akita-crate-followup-jolt-integration.md` | retrospective |
+| `core-protocol-naming-cleanup.md` | superseded by `w-to-e-notation.md` |
+| `rust-file-line-cap.md` | policy in CI + CONTRIBUTING |
 
-### Keep as live specs (active design frontier)
+### Keep as live specs
 
 `l2-msis-opnorm-folded-witness.md`, `setup-layout-repack.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
-`akita-compute-backend-metal.md` (Metal tail), `crt-ntt-prime-profiles.md`
-(revise Q16 sections), `transcript-immediate-fixes.md`,
-`eor-sumcheck-prover-acceleration.md`, `cross-repo-field-microbench.md`,
-plus `TEMPLATE.md`, `SPEC_REVIEW.md`, and this file.
+`akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
+`transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
+`cross-repo-field-microbench.md`, plus `TEMPLATE.md`, `SPEC_REVIEW.md`, and this file.
 
-> Status headers on many `implemented` specs currently say `proposed`/`in progress`.
-> The stacked archive PR should also correct those headers.
+## Never commit / never fold
 
-## Never fold
-
-Root-level `*-NEVER-COMMIT.md` planning scratch is local-only and must never be
-committed or folded into the book.
+Root-level `*-NEVER-COMMIT.md` scratch files are local-only.

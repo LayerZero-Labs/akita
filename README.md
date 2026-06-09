@@ -31,6 +31,7 @@ the scheme works, how to use it, and the foundations). Build it locally with
 `./scripts/serve-book.sh` (see [`book/README.md`](book/README.md) for the
 toolchain). `AGENTS.md` is the maintainer/agent runbook, and `specs/` holds the
 design records (lifecycle in [`specs/PRUNING.md`](specs/PRUNING.md)).
+Documentation guardrails (CI + PR comments) are in [`docs/documentation.md`](docs/documentation.md).
 
 ## Lineage
 

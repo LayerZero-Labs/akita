@@ -1,0 +1,33 @@
+name: Documentation guardrails
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**", main]
+
+permissions:
+  contents: read
+
+jobs:
+  guardrails:
+    name: Doc guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install mdbook toolchain (0.4.x)
+        run: |
+          cargo install mdbook --version 0.4.52 --locked
+          cargo install mdbook-katex --version 0.9.4 --locked
+          cargo install mdbook-mermaid --version 0.14.1 --locked
+          mdbook-mermaid install book
+
+      - name: Run documentation guardrails
+        run: ./scripts/check-doc-guardrails.sh
+
+      - name: Test blast-radius script
+        run: python3 scripts/tests/test_doc_blast_radius.py

@@ -80,7 +80,10 @@ What other approaches were evaluated? Why was this design chosen over them? This
 
 ## Documentation
 
-What README, spec, paper note, example, profile guide, crate docs, or developer-guide changes are required? List new pages, sections to update, or diagrams to add. If no documentation changes are needed, state why.
+What book, spec, `AGENTS.md`, or `docs/` changes are required? List owning book
+pages (`book/src/...`), spec header updates, and archive/fold plans. If none,
+state why. See [`docs/documentation.md`](../docs/documentation.md) and the
+blast-radius map [`docs/doc-blast-radius.json`](../docs/doc-blast-radius.json).
 
 ## Execution
 

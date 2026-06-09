@@ -257,9 +257,9 @@ The main current shape carriers are:
 - `find_optimal_schedule`.
 - `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the
   exact root profile counts.
-- Config-policy call sites in `crates/akita-config/src/lib.rs`,
-  `crates/akita-config/src/schedule_policy.rs`, and
-  `crates/akita-config/src/proof_optimized.rs`.
+- Config-policy call sites in `crates/akita-config/src/lib.rs` and
+  `crates/akita-config/src/proof_optimized.rs` (schedule resolution delegates to
+  `akita-planner::get_schedule`).
 
 The long-term direction should be:
 
