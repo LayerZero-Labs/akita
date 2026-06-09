@@ -42,6 +42,8 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "finished_ats": ["110", "260"],
                     "exit_codes": ["0", "1"],
                     "passes_parallel": True,
+                    "passes_sharded": False,
+                    "shard_count": 0,
                 },
             )()
             report.merge_command(args)
@@ -71,6 +73,51 @@ class CiTestTimingReportTests(unittest.TestCase):
             self.assertIn("CI test timing", comment)
             self.assertIn("Critical path", comment)
             self.assertTrue(summary.get("passes_parallel"))
+
+    def test_prepare_pass_combines_shard_artifacts(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            shard_dir = pathlib.Path(tmp) / "shards"
+            shard_dir.mkdir()
+            (shard_dir / "junit-shard-1.xml").write_text(
+                (FIXTURES_DIR / "sample-non-zk.xml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (shard_dir / "junit-shard-2.xml").write_text(
+                (FIXTURES_DIR / "sample-all-features.xml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (shard_dir / "timing-shard-1.json").write_text(
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0}\n',
+                encoding="utf-8",
+            )
+            (shard_dir / "timing-shard-2.json").write_text(
+                '{"started_at_epoch":110,"finished_at_epoch":150,"exit_code":1}\n',
+                encoding="utf-8",
+            )
+
+            merged_junit = pathlib.Path(tmp) / "merged.xml"
+            merged_timing = pathlib.Path(tmp) / "merged-timing.json"
+            args = type(
+                "Args",
+                (),
+                {
+                    "input_dir": str(shard_dir),
+                    "junit_glob": "junit-shard-*.xml",
+                    "timing_glob": "timing-shard-*.json",
+                    "output_junit": str(merged_junit),
+                    "output_timing": str(merged_timing),
+                },
+            )()
+            report.prepare_pass_command(args)
+
+            tests = report.parse_junit(merged_junit)
+            self.assertGreater(len(tests), 3)
+            timing = json.loads(merged_timing.read_text(encoding="utf-8"))
+            self.assertEqual(timing["started_at_epoch"], 100)
+            self.assertEqual(timing["finished_at_epoch"], 150)
+            self.assertEqual(timing["exit_code"], 1)
 
 
 if __name__ == "__main__":

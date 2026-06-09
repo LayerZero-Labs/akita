@@ -12,6 +12,7 @@ permissions:
 env:
   RUSTFLAGS: -D warnings
   CARGO_TERM_COLOR: always
+  CI_TEST_SHARD_COUNT: "2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -95,67 +96,93 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test-non-zk:
-    name: Test (non-zk)
+    name: Test (non-zk ${{ matrix.shard }}/${{ env.CI_TEST_SHARD_COUNT }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: ci-test-non-zk
+          add-job-id-key: false
+          cache-on-failure: true
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all non-zk features)
         run: |
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk"
+          shard="${{ matrix.shard }}"
+          shard_count="${CI_TEST_SHARD_COUNT}"
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk-shard-${shard}"
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
-          cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence
+          cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence \
+            --partition "slice:${shard}/${shard_count}"
           status=$?
           set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit.xml"
+          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit-shard-${shard}.xml"
           printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
-            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing.json"
+            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing-shard-${shard}.json"
           exit "$status"
-      - name: Upload non-zk pass artifact
+      - name: Upload non-zk shard artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-non-zk
-          path: ${{ runner.temp }}/ci-test-pass-non-zk
+          name: ci-test-pass-non-zk-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 7
 
   test-all-features:
-    name: Test (all-features)
+    name: Test (all-features ${{ matrix.shard }}/${{ env.CI_TEST_SHARD_COUNT }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: ci-test-all-features
+          add-job-id-key: false
+          cache-on-failure: true
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all features)
         run: |
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features"
+          shard="${{ matrix.shard }}"
+          shard_count="${CI_TEST_SHARD_COUNT}"
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features-shard-${shard}"
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
           # akita-field defines no zk feature; its tests are field-arithmetic only and
           # already run in the non-zk leg above. Exclude them here to keep the zk
           # test coverage narrow (see #75).
-          cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))'
+          cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))' \
+            --partition "slice:${shard}/${shard_count}"
           status=$?
           set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit.xml"
+          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${shard}.xml"
           printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
-            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing.json"
+            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing-shard-${shard}.json"
           exit "$status"
-      - name: Upload all-features pass artifact
+      - name: Upload all-features shard artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-all-features
-          path: ${{ runner.temp }}/ci-test-pass-all-features
+          name: ci-test-pass-all-features-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 7
 
@@ -171,18 +198,20 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Test timing script fixtures
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
-      - name: Download non-zk pass artifact
+      - name: Download non-zk shard artifacts
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ci-test-pass-non-zk
-          path: ${{ runner.temp }}/ci-test-pass-non-zk
-      - name: Download all-features pass artifact
+          pattern: ci-test-pass-non-zk-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci-test-pass-non-zk-shards
+      - name: Download all-features shard artifacts
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ci-test-pass-all-features
-          path: ${{ runner.temp }}/ci-test-pass-all-features
+          pattern: ci-test-pass-all-features-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci-test-pass-all-features-shards
       - name: Merge test timing artifact
         id: merge
         if: always()
@@ -204,9 +233,18 @@ jobs:
           PY
           }
 
-          set -- $(read_timing "$RUNNER_TEMP/ci-test-pass-non-zk/timing.json")
+          python3 scripts/ci_test_timing_report.py prepare-pass \
+            --input-dir "$RUNNER_TEMP/ci-test-pass-non-zk-shards" \
+            --output-junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
+            --output-timing "$RUNNER_TEMP/merged-non-zk-timing.json"
+          python3 scripts/ci_test_timing_report.py prepare-pass \
+            --input-dir "$RUNNER_TEMP/ci-test-pass-all-features-shards" \
+            --output-junit "$RUNNER_TEMP/merged-all-features-junit.xml" \
+            --output-timing "$RUNNER_TEMP/merged-all-features-timing.json"
+
+          set -- $(read_timing "$RUNNER_TEMP/merged-non-zk-timing.json")
           NON_ZK_START=$1 NON_ZK_END=$2 NON_ZK_STATUS=$3
-          set -- $(read_timing "$RUNNER_TEMP/ci-test-pass-all-features/timing.json")
+          set -- $(read_timing "$RUNNER_TEMP/merged-all-features-timing.json")
           ALL_FEATURES_START=$1 ALL_FEATURES_END=$2 ALL_FEATURES_STATUS=$3
 
           mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
@@ -216,13 +254,15 @@ jobs:
             --source-branch "${{ github.head_ref || github.ref_name }}" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --passes-parallel \
+            --passes-sharded \
+            --shard-count "${CI_TEST_SHARD_COUNT}" \
             --pass non-zk \
-            --junit "$RUNNER_TEMP/ci-test-pass-non-zk/junit.xml" \
+            --junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --started-at "$NON_ZK_START" \
             --finished-at "$NON_ZK_END" \
             --exit-code "$NON_ZK_STATUS" \
             --pass all-features \
-            --junit "$RUNNER_TEMP/ci-test-pass-all-features/junit.xml" \
+            --junit "$RUNNER_TEMP/merged-all-features-junit.xml" \
             --started-at "$ALL_FEATURES_START" \
             --finished-at "$ALL_FEATURES_END" \
             --exit-code "$ALL_FEATURES_STATUS"
