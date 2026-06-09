@@ -215,6 +215,9 @@ The primary protocol surfaces are:
 - [x] *(#155, S5b)* Runtime DP, `expand_to_level_params`, and shipped generated
       schedule tables size A-role ranks from `collision_l2_sq`; `num_digits_fold`
       still uses `β_inf`. Certificate-tier `B_l2` sizing waits for S6.
+- [x] *(#155, S5b)* ZK and non-ZK shipped schedule tables are separate DP optima under
+      different proof-byte accounting; drift guards run per feature set (see
+      [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) ZK vs non-ZK section).
 - [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
       and `cargo test` pass on the cutover branch *(CI gate for merge)*.
 - [ ] End-to-end prover/verifier tests fail if any one of the committed folded

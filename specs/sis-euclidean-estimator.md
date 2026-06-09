@@ -153,6 +153,29 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
   `gen_schedule_tables` so `assert_schedule_stays_within_audited_sis_widths` and
   `generated_schedule_tables_match_find_schedule` pass under L2 floors.
 
+### ZK vs non-ZK schedule tables (S5b)
+
+Shipped schedules are emitted in **two** passes: plain (`gen_schedule_tables`) and
+`--features zk` (`*_zk.rs`). `PlannerPolicy` and SIS collision lookup are identical;
+the DP objective differs because `level_proof_bytes` and recursive witness widths
+include ZK mask/blinding bytes under the `zk` feature.
+
+Structural divergence at the same `(preset, num_vars, incidence)` key is therefore
+**expected**, not table corruption. Example (`fp128_d128_full`, nv=30 singleton): non-zk
+tail `…(m=9,r=3)→(m=8,r=3)→(m=8,r=3)`; zk tail `…(m=9,r=3)→(m=9,r=3)→(m=8,r=3)` (same
+fold count, different byte-optimal geometry).
+
+Guards:
+- `generated_schedule_tables_match_find_schedule` runs in **both** CI passes (non-zk
+  and all-features) and compares each shipped table to `find_schedule` compiled under the
+  same features.
+- `generated_families_stay_within_audited_sis_widths` (zk only) spot-checks every shipped
+  family at `num_vars ∈ {8,16,28,30}` against `min_secure_rank` using stored
+  `collision_l2_sq` keys (no pow2 re-rounding).
+
+Regen both passes after SIS or proof-size changes; never expect `*_zk.rs` to mirror the
+plain table row-for-row.
+
 ### Testing Strategy
 
 - **Akita golden (committed):** CSV of `(q, d, collision_l2_sq, rank, width, log2_rop,
