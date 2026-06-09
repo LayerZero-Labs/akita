@@ -13,9 +13,9 @@
 // Regen derived rows only (merge into existing table):
 //   sage -python scripts/stitch_generated_sis_table.py --supplement-derived-only --jobs 6
 
+mod q128;
 mod q32;
 mod q64;
-mod q128;
 
 use super::SisModulusFamily;
 

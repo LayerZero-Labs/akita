@@ -167,7 +167,7 @@ def stitch_family_file(family: str, arm_lines: list[str]) -> str:
 def stitch_mod() -> str:
     parts = [
         TABLE_HEADER,
-        "\nmod q32;\nmod q64;\nmod q128;\n\n",
+        "\nmod q128;\nmod q32;\nmod q64;\n\n",
         "use super::SisModulusFamily;\n\n",
         "/// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the\n",
         "/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n",

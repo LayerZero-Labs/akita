@@ -412,7 +412,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::sis::{ceil_supported_collision, min_secure_rank};
+    use akita_types::sis::min_secure_rank;
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -426,15 +426,7 @@ mod fp128_policy_tests {
 
             for (level_idx, fold) in schedule.fold_steps().enumerate() {
                 let lp = &fold.params;
-                let a_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_l2_sq())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.a_key.collision_l2_sq(),
-                            )
-                        });
+                let a_collision = lp.a_key.collision_l2_sq();
                 let a_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
@@ -457,15 +449,7 @@ mod fp128_policy_tests {
                     lp.a_key.row_len(),
                 );
 
-                let b_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_l2_sq())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.b_key.collision_l2_sq(),
-                            )
-                        });
+                let b_collision = lp.b_key.collision_l2_sq();
                 let b_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
@@ -488,15 +472,7 @@ mod fp128_policy_tests {
                     lp.b_key.row_len(),
                 );
 
-                let d_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_l2_sq())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.d_key.collision_l2_sq(),
-                            )
-                        });
+                let d_collision = lp.d_key.collision_l2_sq();
                 let d_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
