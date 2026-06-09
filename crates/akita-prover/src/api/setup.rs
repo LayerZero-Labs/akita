@@ -87,16 +87,18 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 
     /// Derive a verifier setup from this prover setup.
-    #[must_use]
-    pub fn verifier_setup(&self) -> AkitaVerifierSetup<F> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if prover prefix-slot metadata cannot be converted into
+    /// verifier-visible prefix slots.
+    pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
-        prefix_slots
-            .replace_from_prover_registry(&self.prefix_slots)
-            .expect("prover prefix slots must have unique ids");
-        AkitaVerifierSetup {
+        prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
+        Ok(AkitaVerifierSetup {
             expanded: self.expanded.clone(),
             prefix_slots,
-        }
+        })
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.

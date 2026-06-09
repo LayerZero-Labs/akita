@@ -67,10 +67,10 @@ pub use setup::{
 #[cfg(feature = "zk")]
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use setup_prefix::{
-    active_setup_field_len, padded_setup_prefix_len, setup_prefix_level_params,
-    setup_prefix_slot_id, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_N_MIN,
+    active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
+    setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,

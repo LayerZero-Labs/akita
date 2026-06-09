@@ -106,7 +106,9 @@ where
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        setup.verifier_setup()
+        setup
+            .verifier_setup()
+            .expect("prover setup must convert to verifier setup")
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]

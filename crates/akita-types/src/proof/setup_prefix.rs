@@ -4,9 +4,10 @@
 //! coefficient prefixes of the shared setup vector `S`. It does not run a setup
 //! product sumcheck or change proof semantics.
 
-use crate::instance_descriptor::DescriptorDigest;
+use crate::instance_descriptor::{digest_level_params, setup_seed_digest, DescriptorDigest};
 use crate::proof::{
-    setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, FlatRingVec, RingCommitment,
+    setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
+    AkitaCommitmentHint, FlatRingVec, RingCommitment,
 };
 use crate::{ClaimIncidenceSummary, LevelParams};
 use akita_algebra::CyclotomicRing;
@@ -21,9 +22,6 @@ const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 
 /// Ring dimension used when delegating setup claims to a flat coefficient prefix.
 pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
-
-/// Minimum flat coefficient prefix length eligible for setup delegation.
-pub const SETUP_OFFLOAD_N_MIN: usize = 1 << 23;
 
 /// Identity for one committed setup-prefix slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -846,6 +844,59 @@ pub fn setup_prefix_slot_id(
     }
 }
 
+/// Select a setup-prefix slot that covers one setup-product footprint.
+///
+/// This centralizes the derivation shared by prover and verifier: setup seed
+/// digest, padded prefix length, prefix commitment parameters, slot id, coverage
+/// check, and the ring-slot evaluation length used for setup MLEs.
+pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
+    setup_seed: &AkitaSetupSeed,
+    setup_ring_slots_at_d: usize,
+    lookup_slot: Lookup,
+    level_params: &LevelParams,
+    natural_field_len: usize,
+    d_setup: usize,
+    coverage_error: &'static str,
+) -> Result<Option<(&'a Slot, usize)>, AkitaError>
+where
+    Slot: ?Sized,
+    Lookup: FnOnce(&SetupPrefixSlotId) -> Option<(&'a Slot, usize, usize)>,
+{
+    let seed_digest = setup_seed_digest(setup_seed)
+        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
+    let n_prefix = padded_setup_prefix_len(natural_field_len);
+    let setup_field_len = setup_ring_slots_at_d.checked_mul(d_setup).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
+    })?;
+    if natural_field_len > setup_field_len {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix request exceeds shared matrix capacity".to_string(),
+        ));
+    }
+    if n_prefix > setup_field_len {
+        return Ok(None);
+    }
+    let Some(prefix_params) = setup_prefix_level_params(level_params, n_prefix, d_setup)? else {
+        return Ok(None);
+    };
+    let slot_id = setup_prefix_slot_id(
+        seed_digest,
+        d_setup,
+        n_prefix,
+        digest_level_params(std::slice::from_ref(&prefix_params)),
+    );
+    let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(&slot_id) else {
+        return Ok(None);
+    };
+    if slot_natural_len < natural_field_len || slot_padded_len != n_prefix {
+        return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
+    }
+    let setup_eval_len = n_prefix.checked_div(d_setup).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
+    })?;
+    Ok(Some((slot, setup_eval_len)))
+}
+
 fn read_limited_usize<R: Read>(
     reader: R,
     compress: Compress,
@@ -904,6 +955,85 @@ mod tests {
         assert_eq!(
             active_setup_field_len(&lp, &incidence, SETUP_OFFLOAD_D_SETUP).expect("field len"),
             expected_ring_slots * SETUP_OFFLOAD_D_SETUP
+        );
+    }
+
+    #[test]
+    fn select_setup_prefix_slot_uses_canonical_id_and_checks_coverage() {
+        use akita_field::Prime32Offset99 as F;
+
+        let level_params = sample_level_params();
+        let d_setup = 32usize;
+        let natural_len = 33usize;
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        let seed = AkitaSetupSeed {
+            max_num_vars: 1,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            gen_ring_dim: d_setup,
+            max_setup_len: 2,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+            public_matrix_seed: [3u8; 32],
+        };
+        let prefix_params =
+            setup_prefix_level_params(&level_params, n_prefix, d_setup).expect("prefix params");
+        let id = setup_prefix_slot_id(
+            setup_seed_digest(&seed).expect("seed digest"),
+            d_setup,
+            n_prefix,
+            digest_level_params(std::slice::from_ref(
+                &prefix_params.expect("eligible prefix params"),
+            )),
+        );
+        let slot = SetupPrefixVerifierSlot {
+            id,
+            natural_len,
+            padded_len: n_prefix,
+            commitment: SetupPrefixPublicCommitment {
+                rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
+            },
+        };
+        let mut registry = SetupPrefixVerifierRegistry::<F>::new();
+        registry.insert(slot).expect("insert slot");
+
+        let selection = select_setup_prefix_slot(
+            &seed,
+            2,
+            |candidate| {
+                registry
+                    .get(candidate)
+                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
+            },
+            &level_params,
+            natural_len,
+            d_setup,
+            "slot does not cover request",
+        )
+        .expect("selection succeeds")
+        .expect("slot selected");
+        assert_eq!(selection.0.id, id);
+        assert_eq!(selection.1, 2);
+
+        let err = select_setup_prefix_slot(
+            &seed,
+            2,
+            |candidate| {
+                registry
+                    .get(candidate)
+                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
+            },
+            &level_params,
+            natural_len + 1,
+            d_setup,
+            "slot does not cover request",
+        )
+        .expect_err("short slot must be rejected");
+        assert_eq!(
+            err,
+            AkitaError::InvalidSetup("slot does not cover request".to_string())
         );
     }
 

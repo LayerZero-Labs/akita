@@ -1,4 +1,8 @@
 //! Config-backed prover setup construction.
+//!
+//! With `disk-persistence`, setup cache files store the expanded setup followed
+//! by setup-prefix slots. Caches written before setup-prefix persistence will
+//! fail to deserialize and should be regenerated.
 
 mod recursion;
 
@@ -493,7 +497,7 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
-        let verifier_setup = prover_setup.verifier_setup();
+        let verifier_setup = prover_setup.verifier_setup().unwrap();
 
         let mut bytes = Vec::new();
         prover_setup

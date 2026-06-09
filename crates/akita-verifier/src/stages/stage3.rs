@@ -8,12 +8,13 @@ use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND};
+use akita_transcript::labels::{
+    ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
+};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    digest_level_params, gadget_row_scalars, padded_setup_prefix_len, setup_prefix_level_params,
-    setup_prefix_slot_id, setup_seed_digest, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
-    SetupPrefixVerifierSlot, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
+    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `SetupSumcheckProver`: replays the setup product
@@ -95,6 +96,38 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + AkitaSerialize,
         T: Transcript<F>,
     {
+        let setup_len = setup
+            .expanded
+            .shared_matrix()
+            .total_ring_elements_at::<D>()?;
+        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+            let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
+            })?;
+            let setup_prefix_selection = select_setup_prefix_slot(
+                setup.expanded.seed(),
+                setup_len,
+                |id| {
+                    setup
+                        .prefix_slots
+                        .get(id)
+                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
+                },
+                setup_prefix_commit_params,
+                natural_field_len,
+                D,
+                "verifier setup-prefix slot does not cover setup product",
+            )?;
+            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+                setup_eval_len
+            } else {
+                setup_len
+            }
+        } else {
+            setup_len
+        };
+
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -104,22 +137,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
         let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
-
-        let setup_len = setup
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at::<D>()?;
-        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
-            let setup_prefix_selection =
-                self.setup_prefix_slot::<F, D>(setup, setup_prefix_commit_params)?;
-            if let Some((_, setup_eval_len)) = setup_prefix_selection {
-                setup_eval_len
-            } else {
-                setup_len
-            }
-        } else {
-            setup_len
-        };
 
         let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
@@ -136,58 +153,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             return Err(AkitaError::InvalidProof);
         }
         Ok(())
-    }
-
-    fn setup_prefix_slot<'a, F, const D: usize>(
-        &self,
-        setup: &'a AkitaVerifierSetup<F>,
-        level_params: &LevelParams,
-    ) -> Result<Option<(&'a SetupPrefixVerifierSlot<F>, usize)>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-    {
-        let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-        })?;
-        let n_prefix = padded_setup_prefix_len(natural_field_len);
-        let setup_len = setup
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at::<D>()?;
-        let setup_field_len = setup_len.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-        })?;
-        if natural_field_len > setup_field_len {
-            return Err(AkitaError::InvalidSetup(
-                "setup prefix request exceeds shared matrix capacity".to_string(),
-            ));
-        }
-        if n_prefix > setup_field_len {
-            return Ok(None);
-        }
-        let Some(prefix_params) = setup_prefix_level_params(level_params, n_prefix, D)? else {
-            return Ok(None);
-        };
-        let seed_digest = setup_seed_digest(setup.expanded.seed())
-            .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-        let id = setup_prefix_slot_id(
-            seed_digest,
-            D,
-            n_prefix,
-            digest_level_params(std::slice::from_ref(&prefix_params)),
-        );
-        let Some(slot) = setup.prefix_slots.get(&id) else {
-            return Ok(None);
-        };
-        if slot.natural_len < natural_field_len || slot.padded_len != n_prefix {
-            return Err(AkitaError::InvalidSetup(
-                "verifier setup-prefix slot does not cover setup product".to_string(),
-            ));
-        }
-        let setup_eval_len = n_prefix.checked_div(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
-        })?;
-        Ok(Some((slot, setup_eval_len)))
     }
 }
 

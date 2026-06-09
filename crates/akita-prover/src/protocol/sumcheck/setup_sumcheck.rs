@@ -12,12 +12,11 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
-use akita_transcript::Transcript;
+use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    digest_level_params, gadget_row_scalars, padded_setup_prefix_len, setup_prefix_level_params,
-    setup_prefix_slot_id, setup_seed_digest, AkitaExpandedSetup, LevelParams, RingRelationInstance,
-    RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SetupPrefixSlot, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, LevelParams,
+    RingRelationInstance, RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
@@ -128,13 +127,21 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
             ));
         }
         let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
-            let setup_prefix_selection = setup_prefix_slot::<F, D>(
-                expanded,
-                prefix_slots,
+            let setup_prefix_selection = select_setup_prefix_slot(
+                expanded.seed(),
+                setup_len,
+                |slot_id| {
+                    prefix_slots
+                        .get(slot_id)
+                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
+                },
                 setup_prefix_commit_params,
                 natural_field_len,
+                D,
+                "selected setup-prefix slot does not cover setup product",
             )?;
-            if let Some((_, setup_eval_len)) = setup_prefix_selection {
+            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
                 setup_eval_len
             } else {
                 setup_len
@@ -174,54 +181,6 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
             )?;
         Ok(SetupSumcheckProverOutput { claim, sumcheck })
     }
-}
-
-fn setup_prefix_slot<'a, F, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &'a SetupPrefixProverRegistry<F, D>,
-    level_params: &LevelParams,
-    natural_field_len: usize,
-) -> Result<Option<(&'a SetupPrefixSlot<F, D>, usize)>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let seed_digest = setup_seed_digest(expanded.seed())
-        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let n_prefix = padded_setup_prefix_len(natural_field_len);
-    let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-    let setup_field_len = setup_len.checked_mul(D).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-    })?;
-    if natural_field_len > setup_field_len {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix request exceeds shared matrix capacity".to_string(),
-        ));
-    }
-    if n_prefix > setup_field_len {
-        return Ok(None);
-    }
-    let Some(prefix_params) = setup_prefix_level_params(level_params, n_prefix, D)? else {
-        return Ok(None);
-    };
-    let slot_id = setup_prefix_slot_id(
-        seed_digest,
-        D,
-        n_prefix,
-        digest_level_params(std::slice::from_ref(&prefix_params)),
-    );
-    let Some(setup_prefix_slot) = prefix_slots.get(&slot_id) else {
-        return Ok(None);
-    };
-    if setup_prefix_slot.natural_len < natural_field_len || setup_prefix_slot.padded_len != n_prefix
-    {
-        return Err(AkitaError::InvalidSetup(
-            "selected setup-prefix slot does not cover setup product".to_string(),
-        ));
-    }
-    let setup_eval_len = n_prefix.checked_div(D).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
-    })?;
-    Ok(Some((setup_prefix_slot, setup_eval_len)))
 }
 
 impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {

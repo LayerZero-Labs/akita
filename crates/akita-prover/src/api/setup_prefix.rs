@@ -76,7 +76,8 @@ where
         ));
     }
 
-    let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots)?;
+    let ring_elems =
+        extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
     let block_slices =
         setup_prefix_block_slices(&ring_elems, level_params.num_blocks, level_params.block_len)?;
 
@@ -198,21 +199,26 @@ where
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     padded_ring_slots: usize,
+    natural_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
 {
-    let view = expanded
-        .shared_matrix()
-        .ring_view::<D>(padded_ring_slots, 1)?;
-    (0..padded_ring_slots)
-        .map(|row| {
-            let cols = view.row(row)?;
-            cols.first()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("empty setup prefix row".to_string()))
-        })
-        .collect()
+    let fields = expanded.shared_matrix().as_field_slice();
+    let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())
+    })?;
+    if natural_len > padded_field_len || padded_field_len > fields.len() {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix length exceeds shared matrix capacity".to_string(),
+        ));
+    }
+
+    let mut ring_elems = vec![CyclotomicRing::zero(); padded_ring_slots];
+    for (ring, coeffs) in ring_elems.iter_mut().zip(fields[..natural_len].chunks(D)) {
+        ring.coefficients_mut()[..coeffs.len()].copy_from_slice(coeffs);
+    }
+    Ok(ring_elems)
 }
 
 fn setup_prefix_block_slices<F, const D: usize>(
