@@ -120,6 +120,36 @@ class CiTestTimingReportTests(unittest.TestCase):
             self.assertEqual(timing["finished_at_epoch"], 150)
             self.assertEqual(timing["exit_code"], 1)
 
+    def test_prepare_pass_finds_nested_shard_artifacts(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nested = pathlib.Path(tmp) / "shards" / "ci-test-pass-non-zk-shard-1"
+            nested.mkdir(parents=True)
+            (nested / "junit-shard-1.xml").write_text(
+                (FIXTURES_DIR / "sample-non-zk.xml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (nested / "timing-shard-1.json").write_text(
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":1}\n',
+                encoding="utf-8",
+            )
+
+            args = type(
+                "Args",
+                (),
+                {
+                    "input_dir": str(pathlib.Path(tmp) / "shards"),
+                    "junit_glob": "junit-shard-*.xml",
+                    "timing_glob": "timing-shard-*.json",
+                    "output_junit": str(pathlib.Path(tmp) / "merged.xml"),
+                    "output_timing": str(pathlib.Path(tmp) / "merged-timing.json"),
+                    "expected_shard_count": 0,
+                },
+            )()
+            status = report.prepare_pass_command(args)
+            self.assertEqual(status, 0)
+
     def test_prepare_pass_requires_expected_shard_count(self) -> None:
         from scripts import ci_test_timing_report as report
 

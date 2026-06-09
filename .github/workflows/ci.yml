@@ -124,9 +124,10 @@ jobs:
           cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
-          set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          if [ -f target/nextest/ci-non-zk/junit.xml ]; then
+            cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          fi
           printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":%s,"shard_total":%s}\n' \
             "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
             > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
@@ -173,9 +174,10 @@ jobs:
           cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))' \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
-          set -e
           end_epoch=$(date +%s)
-          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          if [ -f target/nextest/ci-all-features/junit.xml ]; then
+            cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
+          fi
           printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":%s,"shard_total":%s}\n' \
             "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
             > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
@@ -249,7 +251,6 @@ jobs:
             --output-junit "$RUNNER_TEMP/merged-all-features-junit.xml" \
             --output-timing "$RUNNER_TEMP/merged-all-features-timing.json"
           ALL_FEATURES_PREPARE_STATUS=$?
-          set -e
 
           set -- "$(read_timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
           NON_ZK_START=$1 NON_ZK_END=$2 NON_ZK_STATUS=$3
@@ -262,7 +263,9 @@ jobs:
             ALL_FEATURES_STATUS=1
           fi
 
+          SHARD_COUNT="$(python3 -c 'import json, pathlib; path = pathlib.Path("'"$RUNNER_TEMP/merged-non-zk-timing.json"'"); data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}; print(int(data.get("shard_total") or 0))')"
           mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
+          set +e
           python3 scripts/ci_test_timing_report.py merge \
             --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
             --source-sha "$GITHUB_SHA" \
@@ -270,7 +273,7 @@ jobs:
             --workflow-run-id "$GITHUB_RUN_ID" \
             --passes-parallel \
             --passes-sharded \
-            --shard-count "$(python3 -c 'import json; print(json.load(open("'"$RUNNER_TEMP/merged-non-zk-timing.json"'", encoding="utf-8")).get("shard_total", 0))')" \
+            --shard-count "$SHARD_COUNT" \
             --pass non-zk \
             --junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --started-at "$NON_ZK_START" \
@@ -281,15 +284,22 @@ jobs:
             --started-at "$ALL_FEATURES_START" \
             --finished-at "$ALL_FEATURES_END" \
             --exit-code "$ALL_FEATURES_STATUS"
+          MERGE_STATUS=$?
           python3 scripts/ci_test_timing_report.py render \
             "$RUNNER_TEMP/ci-test-timing-artifact/summary.json" \
             --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
             --compact
-          cat "$RUNNER_TEMP/ci-test-timing-artifact/report.md" >> "$GITHUB_STEP_SUMMARY"
+          RENDER_STATUS=$?
+          if [ -f "$RUNNER_TEMP/ci-test-timing-artifact/report.md" ]; then
+            cat "$RUNNER_TEMP/ci-test-timing-artifact/report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
           {
             echo "non_zk_status=$NON_ZK_STATUS"
             echo "all_features_status=$ALL_FEATURES_STATUS"
           } >> "$GITHUB_OUTPUT"
+          if [ "$MERGE_STATUS" -ne 0 ] || [ "$RENDER_STATUS" -ne 0 ]; then
+            exit 1
+          fi
       - name: Upload test timing artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

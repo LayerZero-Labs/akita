@@ -659,8 +659,8 @@ def combine_junit_command(args: argparse.Namespace) -> int:
 
 def prepare_pass_command(args: argparse.Namespace) -> int:
     input_dir = pathlib.Path(args.input_dir)
-    junit_paths = sorted(input_dir.glob(args.junit_glob))
-    timing_paths = sorted(input_dir.glob(args.timing_glob))
+    junit_paths = sorted(input_dir.rglob(args.junit_glob))
+    timing_paths = sorted(input_dir.rglob(args.timing_glob))
     output_junit = pathlib.Path(args.output_junit)
     output_timing = pathlib.Path(args.output_timing)
     expected = int(args.expected_shard_count)
@@ -679,8 +679,8 @@ def prepare_pass_command(args: argparse.Namespace) -> int:
                 "finished_at_epoch": None,
                 "exit_code": 1,
                 "missing_shards": True,
-                "expected_shard_count": expected or None,
-                "shard_total": shard_total or None,
+                "expected_shard_count": expected or 0,
+                "shard_total": shard_total or 0,
                 "junit_shard_count": len(junit_paths),
                 "timing_shard_count": len(timing_paths),
             },
