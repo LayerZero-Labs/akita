@@ -489,6 +489,15 @@ mod sis_schedule_width_audit {
         }
     }
 
+}
+
+#[cfg(all(test, feature = "zk"))]
+mod zk_generated_family_sis_audit {
+    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
+    use super::*;
+
+    const GENERATED_FAMILY_NV_SAMPLES: &[usize] = &[8, 16, 28, 30];
+
     fn audit_generated_family_sparse(
         family: &generated_families::GeneratedFamily,
         nv_samples: &[usize],
@@ -502,10 +511,7 @@ mod sis_schedule_width_audit {
         }
     }
 
-    const GENERATED_FAMILY_NV_SAMPLES: &[usize] = &[8, 16, 28, 30];
-
     #[test]
-    #[cfg(feature = "zk")]
     fn generated_families_stay_within_audited_sis_widths() {
         for family in generated_families::ALL_GENERATED_FAMILIES {
             audit_generated_family_sparse(family, GENERATED_FAMILY_NV_SAMPLES);
