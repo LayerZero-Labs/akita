@@ -107,6 +107,11 @@ def main() -> int:
         action="store_true",
         help="print marker line only (for workflow debugging)",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="write report to this file instead of stdout",
+    )
     args = parser.parse_args()
 
     if not MAP_PATH.is_file():
@@ -133,6 +138,8 @@ def main() -> int:
     body = render_report(changed, matched)
     if args.marker_only:
         print(MARKER)
+    elif args.output is not None:
+        args.output.write_text(body, encoding="utf-8")
     else:
         print(body, end="")
     return 0

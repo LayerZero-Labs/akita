@@ -20,21 +20,26 @@ jobs:
           fetch-depth: 0
 
       - name: Render blast-radius report
-        id: report
         run: |
-          body="$(python3 scripts/doc_blast_radius.py --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}")"
-          {
-            echo "body<<EOF"
-            echo "$body"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          python3 scripts/doc_blast_radius.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --output "${{ runner.temp }}/doc-blast-radius-comment.md"
 
       - name: Upsert PR comment
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          AKITA_DOC_BLAST_RADIUS_COMMENT: ${{ runner.temp }}/doc-blast-radius-comment.md
         with:
           script: |
+            const fs = require('fs');
             const marker = process.env.AKITA_DOC_BLAST_RADIUS_MARKER;
-            const body = `${{ steps.report.outputs.body }}`;
+            const commentPath = process.env.AKITA_DOC_BLAST_RADIUS_COMMENT;
+            if (!fs.existsSync(commentPath)) {
+              core.warning('No blast-radius comment body found.');
+              return;
+            }
+            const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
