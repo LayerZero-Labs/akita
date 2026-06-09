@@ -31,6 +31,22 @@ def parse_args() -> argparse.Namespace:
     merge.add_argument("--started-at", dest="started_ats", action="append", default=[])
     merge.add_argument("--finished-at", dest="finished_ats", action="append", default=[])
     merge.add_argument("--exit-code", dest="exit_codes", action="append", default=[])
+    merge.add_argument(
+        "--passes-parallel",
+        action="store_true",
+        help="Passes ran in parallel CI jobs; report critical-path wall as max(pass wall).",
+    )
+    merge.add_argument(
+        "--passes-sharded",
+        action="store_true",
+        help="Each pass was split across parallel nextest slice shards.",
+    )
+    merge.add_argument(
+        "--shard-count",
+        type=int,
+        default=0,
+        help="Number of nextest shards per pass (for summary metadata).",
+    )
 
     render = subparsers.add_parser("render", help="Render comment.md/report.md from summary.json.")
     render.add_argument("summary", help="Path to current summary.json")
@@ -52,6 +68,33 @@ def parse_args() -> argparse.Namespace:
     failure.add_argument("--workflow-run-id", type=int, default=0)
     failure.add_argument("--error", required=True)
     failure.add_argument("--passes", nargs="+", default=["non-zk", "all-features"])
+
+    combine = subparsers.add_parser(
+        "combine-junit", help="Merge multiple nextest JUnit XML files into one."
+    )
+    combine.add_argument("--output", required=True)
+    combine.add_argument("--junit", dest="junits", action="append", default=[])
+
+    prepare = subparsers.add_parser(
+        "prepare-pass",
+        help="Combine sharded JUnit/timing files for one CI pass.",
+    )
+    prepare.add_argument("--input-dir", required=True)
+    prepare.add_argument("--junit-glob", default="junit-shard-*.xml")
+    prepare.add_argument("--timing-glob", default="timing-shard-*.json")
+    prepare.add_argument("--output-junit", required=True)
+    prepare.add_argument("--output-timing", required=True)
+    prepare.add_argument(
+        "--expected-shard-count",
+        type=int,
+        default=0,
+        help="Require this many shard JUnit and timing files (0 disables).",
+    )
+
+    read_timing = subparsers.add_parser(
+        "read-timing", help="Print started_at finished_at exit_code from timing JSON."
+    )
+    read_timing.add_argument("timing", help="Path to timing JSON")
 
     return parser.parse_args()
 
@@ -119,6 +162,62 @@ class TestCase:
     @property
     def match_key(self) -> tuple[str, str, str]:
         return (self.binary, self.test, self.classname)
+
+
+def junit_testsuites(path: pathlib.Path) -> list[ET.Element]:
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "testsuites":
+        return list(root.findall("testsuite"))
+    if root.tag == "testsuite":
+        return [root]
+    return list(root.findall(".//testsuite"))
+
+
+def combine_junit_files(junit_paths: list[pathlib.Path], output_path: pathlib.Path) -> None:
+    existing = [path for path in junit_paths if path.exists()]
+    if not existing:
+        raise FileNotFoundError("no JUnit inputs exist")
+
+    combined = ET.Element("testsuites")
+    for junit_path in existing:
+        for suite in junit_testsuites(junit_path):
+            combined.append(suite)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(combined).write(output_path, encoding="utf-8", xml_declaration=True)
+
+
+def shard_totals_from_timing(timing_paths: list[pathlib.Path]) -> tuple[int, set[int]]:
+    totals: set[int] = set()
+    indices: set[int] = set()
+    for path in timing_paths:
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        totals.add(safe_int(str(data.get("shard_total", 0)), 0))
+        indices.add(safe_int(str(data.get("shard_index", 0)), 0))
+    totals.discard(0)
+    if len(totals) != 1:
+        return 0, indices
+    return next(iter(totals)), indices
+
+
+def aggregate_timing_files(timing_paths: list[pathlib.Path]) -> tuple[int, int, int]:
+    starts: list[int] = []
+    ends: list[int] = []
+    exit_codes: list[int] = []
+    for path in timing_paths:
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        starts.append(safe_int(str(data.get("started_at_epoch", 0)), 0))
+        ends.append(safe_int(str(data.get("finished_at_epoch", 0)), 0))
+        exit_codes.append(safe_int(str(data.get("exit_code", 1)), 1))
+
+    if not starts:
+        return 0, 0, 1
+    return min(starts), max(ends), (1 if any(code != 0 for code in exit_codes) else 0)
 
 
 def parse_junit(junit_path: pathlib.Path) -> list[TestCase]:
@@ -250,6 +349,7 @@ def render_report(
         lines.append(f"- Previous run: {code_text(prev_sha[:7])}.")
     lines.append("")
 
+    passes_parallel = bool(current.get("passes_parallel"))
     pass_order = ["non-zk", "all-features"]
     lines.append("### Pass summary")
     lines.append("")
@@ -288,7 +388,45 @@ def render_report(
             )
             + " |"
         )
-    lines.append("")
+    if passes_parallel:
+        pass_walls = []
+        for pass_name in pass_order:
+            cur_pass = normalize_pass(current, pass_name) or {}
+            cur_wall = cur_pass.get("wall_s")
+            if cur_wall is not None:
+                pass_walls.append(float(cur_wall))
+        critical_path_s = max(pass_walls) if pass_walls else None
+        main_critical_path_s = None
+        if main is not None:
+            main_walls = []
+            for pass_name in pass_order:
+                main_pass = normalize_pass(main, pass_name) or {}
+                main_wall = main_pass.get("wall_s")
+                if main_wall is not None:
+                    main_walls.append(float(main_wall))
+            main_critical_path_s = max(main_walls) if main_walls else None
+        main_parallel = bool(main.get("passes_parallel")) if main is not None else False
+        critical_delta_pct = (
+            percent_delta(critical_path_s, main_critical_path_s) if main_parallel else None
+        )
+        sharded_note = ""
+        shard_count = current.get("shard_count")
+        if current.get("passes_sharded") and shard_count:
+            sharded_note = f", {shard_count} nextest slice shards per pass"
+        lines.append(
+            f"- Critical path (max pass wall, passes run in parallel{sharded_note}): "
+            f"{fmt_seconds(critical_path_s)} s"
+            + (
+                f" (main {fmt_seconds(main_critical_path_s)} s, {fmt_pct(critical_delta_pct)})."
+                if main_parallel and main_critical_path_s is not None
+                else "."
+            )
+        )
+        if main is not None and not main_parallel:
+            lines.append(
+                "_Main critical-path delta omitted (main baseline predates parallel CI passes)._"
+            )
+        lines.append("")
 
     def render_slowest(pass_name: str) -> None:
         cur_pass = normalize_pass(current, pass_name) or {}
@@ -411,6 +549,9 @@ def merge_command(args: argparse.Namespace) -> int:
         "source_sha": args.source_sha,
         "source_branch": args.source_branch,
         "workflow_run_id": int(args.workflow_run_id),
+        "passes_parallel": bool(args.passes_parallel),
+        "passes_sharded": bool(args.passes_sharded),
+        "shard_count": int(args.shard_count) if int(args.shard_count) > 0 else None,
         "passes": {},
     }
 
@@ -522,6 +663,72 @@ def render_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def combine_junit_command(args: argparse.Namespace) -> int:
+    junit_paths = [pathlib.Path(raw) for raw in args.junits]
+    combine_junit_files(junit_paths, pathlib.Path(args.output))
+    return 0
+
+
+def read_timing_command(args: argparse.Namespace) -> int:
+    path = pathlib.Path(args.timing)
+    if not path.exists():
+        print("0 0 1")
+        return 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    started = safe_int(str(data.get("started_at_epoch") or 0), 0)
+    finished = safe_int(str(data.get("finished_at_epoch") or 0), 0)
+    exit_code = data.get("exit_code")
+    if exit_code is None:
+        exit_code = 1
+    exit_code = safe_int(str(exit_code), 1)
+    print(f"{started} {finished} {exit_code}")
+    return 0
+
+
+def prepare_pass_command(args: argparse.Namespace) -> int:
+    input_dir = pathlib.Path(args.input_dir)
+    junit_paths = sorted(input_dir.rglob(args.junit_glob))
+    timing_paths = sorted(input_dir.rglob(args.timing_glob))
+    output_junit = pathlib.Path(args.output_junit)
+    output_timing = pathlib.Path(args.output_timing)
+    expected = int(args.expected_shard_count)
+    shard_total, shard_indices = shard_totals_from_timing(timing_paths)
+    if expected <= 0:
+        expected = shard_total
+
+    missing_shards = expected <= 0 or len(junit_paths) != expected or len(timing_paths) != expected
+    if not missing_shards:
+        missing_shards = shard_indices != set(range(1, expected + 1))
+    if missing_shards:
+        write_json(
+            output_timing,
+            {
+                "started_at_epoch": None,
+                "finished_at_epoch": None,
+                "exit_code": 1,
+                "missing_shards": True,
+                "expected_shard_count": expected or 0,
+                "shard_total": shard_total or 0,
+                "junit_shard_count": len(junit_paths),
+                "timing_shard_count": len(timing_paths),
+            },
+        )
+        return 1
+
+    combine_junit_files(junit_paths, output_junit)
+    started_at, finished_at, exit_code = aggregate_timing_files(timing_paths)
+    write_json(
+        output_timing,
+        {
+            "started_at_epoch": started_at or None,
+            "finished_at_epoch": finished_at or None,
+            "exit_code": exit_code,
+            "shard_total": expected,
+        },
+    )
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     if args.command == "merge":
@@ -530,6 +737,12 @@ def main() -> int:
         return render_command(args)
     if args.command == "failure-summary":
         return failure_summary_command(args)
+    if args.command == "combine-junit":
+        return combine_junit_command(args)
+    if args.command == "prepare-pass":
+        return prepare_pass_command(args)
+    if args.command == "read-timing":
+        return read_timing_command(args)
     raise ValueError(f"unknown command: {args.command}")
 
 
