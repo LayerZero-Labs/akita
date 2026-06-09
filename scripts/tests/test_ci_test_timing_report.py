@@ -120,6 +120,18 @@ class CiTestTimingReportTests(unittest.TestCase):
             self.assertEqual(timing["finished_at_epoch"], 150)
             self.assertEqual(timing["exit_code"], 1)
 
+    def test_read_timing_command(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            timing = pathlib.Path(tmp) / "timing.json"
+            timing.write_text(
+                '{"started_at_epoch":100,"finished_at_epoch":150,"exit_code":0}\n',
+                encoding="utf-8",
+            )
+            args = type("Args", (), {"timing": str(timing)})()
+            report.read_timing_command(args)
+
     def test_prepare_pass_finds_nested_shard_artifacts(self) -> None:
         from scripts import ci_test_timing_report as report
 

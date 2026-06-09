@@ -223,23 +223,6 @@ jobs:
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          read_timing() {
-            local path="$1"
-            if [ ! -f "$path" ]; then
-              echo "0 0 1"
-              return
-            fi
-            python3 - "$path" <<'PY'
-          import json, sys
-          data = json.load(open(sys.argv[1], encoding="utf-8"))
-          print(
-              data.get("started_at_epoch", 0),
-              data.get("finished_at_epoch", 0),
-              data.get("exit_code", 1),
-          )
-          PY
-          }
-
           set +e
           python3 scripts/ci_test_timing_report.py prepare-pass \
             --input-dir "$RUNNER_TEMP/ci-test-pass-non-zk-shards" \
@@ -252,10 +235,8 @@ jobs:
             --output-timing "$RUNNER_TEMP/merged-all-features-timing.json"
           ALL_FEATURES_PREPARE_STATUS=$?
 
-          set -- "$(read_timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
-          NON_ZK_START=$1 NON_ZK_END=$2 NON_ZK_STATUS=$3
-          set -- "$(read_timing "$RUNNER_TEMP/merged-all-features-timing.json")"
-          ALL_FEATURES_START=$1 ALL_FEATURES_END=$2 ALL_FEATURES_STATUS=$3
+          read -r NON_ZK_START NON_ZK_END NON_ZK_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
+          read -r ALL_FEATURES_START ALL_FEATURES_END ALL_FEATURES_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-all-features-timing.json")"
           if [ "$NON_ZK_PREPARE_STATUS" -ne 0 ]; then
             NON_ZK_STATUS=1
           fi
@@ -298,6 +279,9 @@ jobs:
             echo "all_features_status=$ALL_FEATURES_STATUS"
           } >> "$GITHUB_OUTPUT"
           if [ "$MERGE_STATUS" -ne 0 ] || [ "$RENDER_STATUS" -ne 0 ]; then
+            exit 1
+          fi
+          if [ -z "$NON_ZK_STATUS" ] || [ -z "$ALL_FEATURES_STATUS" ]; then
             exit 1
           fi
       - name: Upload test timing artifact

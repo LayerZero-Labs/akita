@@ -91,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         help="Require this many shard JUnit and timing files (0 disables).",
     )
 
+    read_timing = subparsers.add_parser(
+        "read-timing", help="Print started_at finished_at exit_code from timing JSON."
+    )
+    read_timing.add_argument("timing", help="Path to timing JSON")
+
     return parser.parse_args()
 
 
@@ -400,7 +405,10 @@ def render_report(
                 if main_wall is not None:
                     main_walls.append(float(main_wall))
             main_critical_path_s = max(main_walls) if main_walls else None
-        critical_delta_pct = percent_delta(critical_path_s, main_critical_path_s)
+        main_parallel = bool(main.get("passes_parallel")) if main is not None else False
+        critical_delta_pct = (
+            percent_delta(critical_path_s, main_critical_path_s) if main_parallel else None
+        )
         sharded_note = ""
         shard_count = current.get("shard_count")
         if current.get("passes_sharded") and shard_count:
@@ -410,7 +418,7 @@ def render_report(
             f"{fmt_seconds(critical_path_s)} s"
             + (
                 f" (main {fmt_seconds(main_critical_path_s)} s, {fmt_pct(critical_delta_pct)})."
-                if main_critical_path_s is not None
+                if main_parallel and main_critical_path_s is not None
                 else "."
             )
         )
@@ -657,6 +665,22 @@ def combine_junit_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def read_timing_command(args: argparse.Namespace) -> int:
+    path = pathlib.Path(args.timing)
+    if not path.exists():
+        print("0 0 1")
+        return 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    started = safe_int(str(data.get("started_at_epoch") or 0), 0)
+    finished = safe_int(str(data.get("finished_at_epoch") or 0), 0)
+    exit_code = data.get("exit_code")
+    if exit_code is None:
+        exit_code = 1
+    exit_code = safe_int(str(exit_code), 1)
+    print(f"{started} {finished} {exit_code}")
+    return 0
+
+
 def prepare_pass_command(args: argparse.Namespace) -> int:
     input_dir = pathlib.Path(args.input_dir)
     junit_paths = sorted(input_dir.rglob(args.junit_glob))
@@ -713,6 +737,8 @@ def main() -> int:
         return combine_junit_command(args)
     if args.command == "prepare-pass":
         return prepare_pass_command(args)
+    if args.command == "read-timing":
+        return read_timing_command(args)
     raise ValueError(f"unknown command: {args.command}")
 
 
