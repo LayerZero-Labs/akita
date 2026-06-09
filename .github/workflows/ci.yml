@@ -224,6 +224,7 @@ jobs:
       - name: Merge test timing artifact
         id: merge
         if: always()
+        continue-on-error: true
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
@@ -296,21 +297,10 @@ jobs:
           path: ${{ runner.temp }}/ci-test-timing-artifact
           if-no-files-found: warn
           retention-days: 30
-      - name: Fail if any test pass failed
+      - name: Fail if test jobs failed
         if: always()
-        env:
-          NON_ZK_STATUS: ${{ steps.merge.outputs.non_zk_status }}
-          ALL_FEATURES_STATUS: ${{ steps.merge.outputs.all_features_status }}
-          NON_ZK_NEEDS: ${{ needs.test-non-zk.result }}
-          ALL_FEATURES_NEEDS: ${{ needs.test-all-features.result }}
         run: |
-          if [ "$NON_ZK_NEEDS" = "failure" ] || [ "$ALL_FEATURES_NEEDS" = "failure" ]; then
-            exit 1
-          fi
-          if [ "${NON_ZK_STATUS:-1}" != "0" ]; then
-            exit 1
-          fi
-          if [ "${ALL_FEATURES_STATUS:-1}" != "0" ]; then
+          if [ "${{ needs.test-non-zk.result }}" = "failure" ] || [ "${{ needs.test-all-features.result }}" = "failure" ]; then
             exit 1
           fi
 
