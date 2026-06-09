@@ -489,17 +489,6 @@ mod sis_schedule_width_audit {
         }
     }
 
-    pub(super) fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
-        min_num_vars: usize,
-        max_num_vars: usize,
-    ) {
-        for num_vars in min_num_vars..=max_num_vars {
-            let schedule =
-                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
-            assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
-        }
-    }
-
     fn audit_generated_family_sparse(
         family: &generated_families::GeneratedFamily,
         nv_samples: &[usize],
@@ -527,8 +516,19 @@ mod sis_schedule_width_audit {
 #[cfg(all(test, not(feature = "zk")))]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
-    use super::sis_schedule_width_audit::assert_cfg_schedule_stays_within_audited_sis_widths;
+    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
     use super::*;
+
+    fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
+        min_num_vars: usize,
+        max_num_vars: usize,
+    ) {
+        for num_vars in min_num_vars..=max_num_vars {
+            let schedule =
+                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
+            assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
+        }
+    }
 
     #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
