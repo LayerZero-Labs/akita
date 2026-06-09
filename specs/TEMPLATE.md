@@ -1,11 +1,32 @@
 # Spec: [Feature Name]
 
-| Field       | Value                          |
-|-------------|--------------------------------|
-| Author(s)   |                                |
-| Created     | YYYY-MM-DD                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Field         | Value                          |
+|---------------|--------------------------------|
+| Author(s)     |                                |
+| Created       | YYYY-MM-DD                     |
+| Status        | proposed                       |
+| PR            |                                |
+| Supersedes    |                                |
+| Superseded-by |                                |
+| Book-chapter  |                                |
+
+`Status` must be one of the lifecycle values below. Keep it accurate after the
+spec lands; stale `proposed`/`in progress` headers on shipped work are the main
+signal `scripts/check-spec-references.sh` and the quarterly audit look for. See
+[`specs/PRUNING.md`](PRUNING.md) for the full lifecycle and archive workflow.
+
+| Status        | Meaning |
+|---------------|---------|
+| `proposed`    | Not approved / not started |
+| `approved`    | `spec-approved`, awaiting implementation |
+| `active`      | Approved, implementation in flight |
+| `implemented` | Shipped; durable reference value |
+| `superseded`  | Replaced by another spec (set `Superseded-by`) |
+| `historical`  | A retrospective/log of completed work; low forward value |
+| `archived`    | Moved to `specs/archive/`; the book owns the durable content |
+
+Fill `Book-chapter` with the Akita Book page that owns this spec's durable
+content once it is folded in (e.g. `book/src/how/security/security.md`).
 
 ## Summary
 

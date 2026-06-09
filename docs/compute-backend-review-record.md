@@ -1,5 +1,10 @@
 # Compute Backend Review Record
 
+> **Historical snapshot.** Pre-implementation design-review record; the CPU
+> cutover has landed. The current boundary is in `docs/compute-backends.md`; the
+> remaining Metal work is tracked in `specs/akita-compute-backend-metal.md`.
+> Scheduled to move to `docs/archive/` (see `specs/PRUNING.md`).
+
 This records the design review that narrowed
 `specs/akita-compute-backend-metal.md` into the first implementation slice.
 
