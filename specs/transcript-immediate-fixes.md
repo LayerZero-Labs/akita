@@ -16,8 +16,11 @@ proof-size overhead:
 1. `AkitaInstanceDescriptor` binds deterministic setup identity instead of the
    expanded setup artifact.
 2. Terminal folds use a terminal-specific transcript path: bind logical
-   `w_hat` before sparse-seed sampling, bind the terminal witness remainder
-   before `alpha`/`tau1`, and never squeeze terminal `tau0`.
+   `w_hat` before sparse-seed sampling, bind the terminal witness remainder,
+   and never squeeze terminal `tau0`. Sumcheck-terminal mode binds the
+   remainder before `alpha`/`tau1` and stage-2 challenges; direct-terminal mode
+   binds it before direct row checking and has no terminal `alpha`/`tau1` or
+   stage-2 challenge stream.
 
 The result is a smaller, cleaner first PR that can land before the grinding
 proof-format cutover.
@@ -36,7 +39,10 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 - Terminal sparse-fold inputs are bound before the challenges that depend on
   them. In particular, the logical `w_hat` segment is absorbed before the
   sparse challenge seed, and the remaining terminal witness digits are absorbed
-  before ring-switch `alpha`, grouped `tau1`, and stage-2 challenges.
+  before the terminal-mode-specific continuation. For `RingSwitchSumcheck` this
+  means before ring-switch `alpha`, grouped `tau1`, and stage-2 challenges; for
+  `DirectRingRelations` this means before direct row checking, with no terminal
+  ring-switch or stage-2 challenge squeezes.
 
 - Terminal replay has no `tau0` site. Terminal folds skip stage 1, so the
   stage-1 witness-table random point has no mathematical role and must not
@@ -60,7 +66,8 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 - Terminal direct witness binding is logical, not raw-byte slicing. The verifier
   must decode the canonical terminal witness into logical digits, derive the
   `w_hat` digit range from descriptor-bound layout data, absorb that segment
-  before the sparse seed, and absorb the complement before later challenges.
+  before the sparse seed, and absorb the complement before the selected terminal
+  continuation.
 
 - Verifier-reachable malformed setup, proof, descriptor, and terminal witness
   shapes reject with `AkitaError` or `SerializationError`, never with panics,
@@ -102,13 +109,15 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 - [ ] Any verifier guest path that bypasses `AkitaCommitmentScheme` to avoid
       host-only APIs must still bind the same canonical instance descriptor
       bytes before replaying proof challenges.
-- [ ] Terminal fold replay uses separate terminal and non-terminal ring-switch
-      helper paths. The terminal helper returns only `alpha` and grouped
-      `tau1`; it must not call the `tau0` squeeze path.
+- [ ] Terminal fold replay uses separate terminal and non-terminal transcript
+      helper paths. In `RingSwitchSumcheck` mode the terminal helper returns
+      only `alpha` and grouped `tau1`; it must not call the `tau0` squeeze path.
+      In `DirectRingRelations` mode replay stops after the terminal witness
+      remainder absorb and performs direct row checking.
 - [ ] Terminal sparse-seed sampling happens only after the logical `w_hat`
       segment has been absorbed.
-- [ ] Terminal ring-switch and stage-2 challenges happen only after all
-      remaining terminal witness digits have been absorbed.
+- [ ] Terminal ring-switch and stage-2 challenges, when present, happen only
+      after all remaining terminal witness digits have been absorbed.
 - [ ] Terminal prover and verifier logging streams contain no
       `CHALLENGE_TAU0` event. Tests assert this directly for terminal-root and
       recursive-terminal shapes where those shapes are reachable.
@@ -145,10 +154,13 @@ New or updated checks:
   `AkitaTranscript::unbound_verifier` and uses the same shared
   descriptor-binding and verifier-policy helpers as the normal verifier path.
 
-- Terminal transcript-order tests: assert the public event order is
-  "current commitment/opening context, terminal logical `w_hat` absorb, sparse
-  seed squeeze, terminal witness remainder absorb, `alpha`, grouped `tau1`,
-  stage-2 challenges" and contains no terminal `tau0` squeeze.
+- Terminal transcript-order tests: assert the common prefix is "current
+  commitment/opening context, terminal logical `w_hat` absorb, sparse seed
+  squeeze, terminal witness remainder absorb". In `RingSwitchSumcheck` mode that
+  prefix is followed by `alpha`, grouped `tau1`, and stage-2 challenges. In
+  `DirectRingRelations` mode it is followed by direct row checking and contains
+  no terminal `alpha`, `tau1`, or stage-2 challenges. Both modes contain no
+  terminal `tau0` squeeze.
 
 - Terminal tamper tests: mutate logical `w_hat`, mutate the remainder, truncate
   the packed witness, and alter layout metadata; all variants reject without
@@ -233,7 +245,7 @@ Intermediate fold:
 11. sample any needed stage-2 batching coefficient;
 12. run stage 2.
 
-Terminal fold:
+Terminal fold, `RingSwitchSumcheck` mode:
 
 1. absorb the current recursive commitment/opening context;
 2. compute the decomposed terminal segment `w_hat`;
@@ -247,10 +259,24 @@ Terminal fold:
 8. squeeze grouped `tau1` coordinates for the row-combination point;
 9. run relation-only stage 2.
 
+Terminal fold, `DirectRingRelations` mode:
+
+1. absorb the current recursive commitment/opening context;
+2. compute the decomposed terminal segment `w_hat`;
+3. absorb the cleartext logical `w_hat` segment before any sparse seed is
+   squeezed;
+4. absorb sparse-challenge context and squeeze the sparse seed;
+5. compute `z_pre` and build the cleartext final witness without `r_hat`;
+6. absorb the remaining final-witness digits;
+7. check the reduced terminal ring rows directly.
+
 Terminal folds must not squeeze `tau0`. They skip stage 1, so there is no
 stage-1 witness-table point, no `s_claim`, and no stage-2 batching coefficient.
+In `DirectRingRelations` mode they also skip terminal `alpha`, terminal
+`tau1`, and terminal stage-2 sumcheck round squeezes after the witness
+remainder absorb.
 
-Terminal stage 2 proves:
+In `RingSwitchSumcheck` mode, terminal stage 2 proves:
 
 ```text
 relation_claim
@@ -262,7 +288,7 @@ relation_claim
 The terminal direct witness remains one canonical proof object. Transcript
 replay binds it in two phases by deriving a logical `w_hat` range from
 descriptor-bound schedule data and the same terminal segment layout used by
-stage-2 direct-witness evaluation.
+terminal relation verification.
 
 All counts below are logical ring elements before converting through the packed
 digit representation:
@@ -302,6 +328,9 @@ short for the derived range, whose remainder length does not match the
 descriptor-bound final-witness shape, whose extracted `w_hat` digits are not
 representable in the scheduled digit basis, or whose event stream contains any
 terminal `CHALLENGE_TAU0` squeeze.
+When the descriptor-bound terminal proof mode is `DirectRingRelations`, replay
+also rejects any terminal `CHALLENGE_RING_SWITCH`, terminal `CHALLENGE_TAU1`, or
+terminal `CHALLENGE_SUMCHECK_ROUND` squeeze after the remainder absorb.
 
 ## Documentation
 
@@ -315,7 +344,9 @@ Update:
   changes, so host sanity checks and Jolt guest replay use verifier-side
   transcripts for verifier paths.
 - Transcript logging docs with the terminal event order and the "no terminal
-  `tau0`" invariant.
+  `tau0`" invariant. Direct terminal logging docs should additionally record
+  that terminal `alpha`, terminal `tau1`, and terminal stage-2 round challenges
+  are absent.
 
 ## Execution
 
