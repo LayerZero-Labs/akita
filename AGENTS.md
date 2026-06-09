@@ -17,8 +17,13 @@ cargo test
 ## CI test timing
 
 Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
-showing per-pass wall time vs a main baseline, plus per-test outliers from the
-nextest JUnit output. The CI test job uploads artifact `ci-test-timing-data`
+showing per-pass wall time vs a main baseline, critical-path wall time when passes
+run in parallel, plus per-test outliers from the nextest JUnit output. CI runs the
+non-zk and all-features nextest passes in parallel matrix jobs (`slice:index/total`
+via `matrix.shard` / `strategy.job-total`; 1-based index, not `strategy.job-index`),
+with [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) per pass (`cache: false`
+on `setup-rust-toolchain` so the explicit shared-key step owns `target/`). The
+`test-timing` job merges shard JUnit and uploads artifact `ci-test-timing-data`
 containing `summary.json` and the rendered comment/report.
 
 ## Crate Structure
@@ -82,7 +87,7 @@ Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardeni
 
 ## Profiling
 
-Canonical: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile`. D=128 is the proof-size optimum under the committed-fold A-role SIS pricing (resolved through the runtime DP; there is no shipped D128 table).
+Canonical: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`. Under committed-fold A-role SIS pricing the planner's `total_bytes` optimum is **D=32 or D=64** (D32 is marginally smaller; D128 is ~20% larger). Use `akita_config::proof_optimized::fp128::best_onehot_schedule` / `best_full_schedule` to pick across D32/D64/D128. D128 has no shipped table and is resolved via runtime DP only.
 
 Knobs (`AKITA_MODE`, `AKITA_NUM_VARS`, `AKITA_PROFILE_TRACE`, `AKITA_PROFILE_LOG`, `AKITA_PROFILE_ANSI`, `AKITA_PROFILE_SPAN_CLOSES`, `AKITA_ALLOW_DEBUG_PROFILE`): defaults and details in `examples/profile.rs`. `RAYON_NUM_THREADS` caps Rayon threads; `--no-default-features` disables `parallel`. The `--release` guard can be bypassed with `AKITA_ALLOW_DEBUG_PROFILE=1`.
 
