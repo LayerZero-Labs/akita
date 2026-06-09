@@ -18,14 +18,34 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::AkitaBatchedProof;
+use akita_types::{
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, SetupContributionMode,
+};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
 type TieredCfg = fp128::D64OneHotTiered;
 const TIERED_D: usize = TieredCfg::D;
 
-fn run_tiered_singleton(nv: usize) {
+/// Count of **non-terminal** fold levels — the levels that carry the recursive
+/// setup-product sumcheck under [`SetupContributionMode::Recursive`]. The root
+/// fold level is tiered (`f_key` present), so a positive count means the tiered
+/// prover-side setup-contribution path (`create_setup_contribution_inputs`) is
+/// genuinely exercised, not just the Direct scan.
+fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
+    let root_fold = match proof.root {
+        AkitaBatchedRootProof::Fold(_) => 1,
+        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => 0,
+    };
+    let suffix_fold = proof
+        .steps
+        .iter()
+        .filter(|step| matches!(step, AkitaProofStep::Intermediate(_)))
+        .count();
+    root_fold + suffix_fold
+}
+
+fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let incidence =
@@ -73,9 +93,17 @@ fn run_tiered_singleton(nv: usize) {
             prove_input(&pt[..], std::slice::from_ref(&poly), &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            mode,
         )
         .expect("prove");
+
+        if mode == SetupContributionMode::Recursive {
+            assert!(
+                setup_sumcheck_levels(&proof) > 0,
+                "recursive tiered nv={nv} singleton must fold so the (tiered) \
+                 setup-product sumcheck runs on at least one level"
+            );
+        }
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -98,17 +126,17 @@ fn run_tiered_singleton(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], std::slice::from_ref(&opening), &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            mode,
         );
         assert!(
             result.is_ok(),
-            "tiered nv={nv} singleton verification failed: {:?}",
+            "tiered nv={nv} singleton ({mode:?}) verification failed: {:?}",
             result.err()
         );
     });
 }
 
-fn run_tiered_batch(nv: usize, num_polys: usize) {
+fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, num_polys)
@@ -152,9 +180,17 @@ fn run_tiered_batch(nv: usize, num_polys: usize) {
             prove_input(&pt[..], &poly_refs[..], &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            mode,
         )
         .expect("prove");
+
+        if mode == SetupContributionMode::Recursive {
+            assert!(
+                setup_sumcheck_levels(&proof) > 0,
+                "recursive tiered nv={nv} batch={num_polys} must fold so the \
+                 (tiered) setup-product sumcheck runs on at least one level"
+            );
+        }
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -177,11 +213,11 @@ fn run_tiered_batch(nv: usize, num_polys: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], &openings[..], &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
+            mode,
         );
         assert!(
             result.is_ok(),
-            "tiered nv={nv} batch={num_polys} verification failed: {:?}",
+            "tiered nv={nv} batch={num_polys} ({mode:?}) verification failed: {:?}",
             result.err()
         );
     });
@@ -190,11 +226,27 @@ fn run_tiered_batch(nv: usize, num_polys: usize) {
 #[test]
 fn tiered_onehot_batch_nv14() {
     // Smallest natural tiering instance for fp128::D64OneHotTiered.
-    run_tiered_batch(14, 16);
+    run_tiered_batch(14, 16, SetupContributionMode::Direct);
 }
 
 #[test]
 fn tiered_onehot_singleton_nv34() {
     // Shipped table root has n_b'=2 but n_f=1; guards must accept u.len() == 1.
-    run_tiered_singleton(34);
+    run_tiered_singleton(34, SetupContributionMode::Direct);
+}
+
+/// Same tiered instances under [`SetupContributionMode::Recursive`]: the root
+/// fold level is tiered (`f_key`), so the stage-3 setup-product sumcheck runs on
+/// the tiered level and exercises the prover-side `create_setup_contribution_inputs`
+/// tiered path (which must size the `B'` width by `tier_split`, not the full B
+/// width). Guards against the recursive setup mode rejecting a valid tiered
+/// layout.
+#[test]
+fn tiered_onehot_batch_nv14_recursive() {
+    run_tiered_batch(14, 16, SetupContributionMode::Recursive);
+}
+
+#[test]
+fn tiered_onehot_singleton_nv34_recursive() {
+    run_tiered_singleton(34, SetupContributionMode::Recursive);
 }
