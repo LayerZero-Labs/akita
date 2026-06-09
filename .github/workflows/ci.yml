@@ -224,10 +224,9 @@ jobs:
       - name: Merge test timing artifact
         id: merge
         if: always()
+        continue-on-error: true
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
-          NON_ZK_NEEDS: ${{ needs.test-non-zk.result }}
-          ALL_FEATURES_NEEDS: ${{ needs.test-all-features.result }}
         run: |
           set +e
           python3 scripts/ci_test_timing_report.py prepare-pass \
@@ -243,14 +242,10 @@ jobs:
 
           read -r NON_ZK_START NON_ZK_END NON_ZK_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
           read -r ALL_FEATURES_START ALL_FEATURES_END ALL_FEATURES_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-all-features-timing.json")"
-          if [ "$NON_ZK_NEEDS" = "success" ]; then
-            NON_ZK_STATUS=0
-          elif [ "$NON_ZK_PREPARE_STATUS" -ne 0 ]; then
+          if [ "$NON_ZK_PREPARE_STATUS" -ne 0 ]; then
             NON_ZK_STATUS=1
           fi
-          if [ "$ALL_FEATURES_NEEDS" = "success" ]; then
-            ALL_FEATURES_STATUS=0
-          elif [ "$ALL_FEATURES_PREPARE_STATUS" -ne 0 ]; then
+          if [ "$ALL_FEATURES_PREPARE_STATUS" -ne 0 ]; then
             ALL_FEATURES_STATUS=1
           fi
 
