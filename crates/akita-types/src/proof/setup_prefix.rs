@@ -108,35 +108,6 @@ impl AkitaDeserialize for SetupPrefixSlotId {
     }
 }
 
-/// Policy for which prefix slots preprocessing should populate.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum SetupPrefixPopulatePolicy {
-    /// Do not generate setup-prefix commitments.
-    #[default]
-    Disabled,
-    /// Generate every power-of-two prefix in `[n_min, n_max]`.
-    FullLadder {
-        /// Minimum prefix length (inclusive).
-        n_min: usize,
-        /// Maximum prefix length (inclusive).
-        n_max: usize,
-    },
-    /// Generate only the listed padded prefix lengths.
-    SelectedSlots(Vec<usize>),
-}
-
-/// Behavior when a requested prefix slot is absent at runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MissingSetupPrefixSlotPolicy {
-    /// Fail with a setup/policy error.
-    #[default]
-    StrictError,
-    /// Prover-side convenience: create and persist the missing slot.
-    GenerateAndPersist,
-    /// Skip delegation and keep the direct setup scan.
-    DirectFallback,
-}
-
 /// Public commitment half of a setup-prefix slot, stored without `D` const generics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixPublicCommitment<F: FieldCore> {
@@ -748,37 +719,8 @@ where
     }
 }
 
-/// Why setup delegation fell back to the direct scan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetupPrefixDirectReason {
-    BelowMinimum {
-        n_prefix: usize,
-        n_min: usize,
-    },
-    DSetupMismatch {
-        ring_dimension: usize,
-        d_setup: usize,
-    },
-    MissingSlot(SetupPrefixSlotId),
-}
-
-/// Inputs needed to select a setup-prefix slot for one active shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetupPrefixSelectionRequest {
-    pub d_setup: usize,
-    pub natural_field_len: usize,
-    pub level_params_digest: DescriptorDigest,
-}
-
-/// Result of attempting to select a setup-prefix slot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetupPrefixSelectionOutcome<F: FieldCore, const D: usize> {
-    DirectScan { reason: SetupPrefixDirectReason },
-    Selected(SetupPrefixSlot<F, D>),
-}
-
 /// Return the packed role widths `(W_A, W_B, W_D)` for one active level shape.
-pub fn active_setup_role_widths(
+fn active_setup_role_widths(
     level_params: &LevelParams,
     incidence: &ClaimIncidenceSummary,
 ) -> Result<(usize, usize, usize), AkitaError> {
@@ -806,7 +748,7 @@ pub fn active_setup_role_widths(
 }
 
 /// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
-pub fn active_setup_ring_slots(
+fn active_setup_ring_slots(
     level_params: &LevelParams,
     incidence: &ClaimIncidenceSummary,
 ) -> Result<usize, AkitaError> {
@@ -844,41 +786,6 @@ pub fn active_setup_field_len(
 #[must_use]
 pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
     natural_field_len.max(1).next_power_of_two()
-}
-
-/// Return the eligible padded prefix length, if any.
-#[must_use]
-pub fn select_prefix_len(natural_field_len: usize, n_min: usize) -> Option<usize> {
-    let n_prefix = padded_setup_prefix_len(natural_field_len);
-    (n_prefix >= n_min).then_some(n_prefix)
-}
-
-/// Ring-slot count for a flat prefix of `n_prefix` field coefficients at `d_setup`.
-pub fn setup_prefix_commit_ring_slots(
-    n_prefix: usize,
-    d_setup: usize,
-) -> Result<usize, AkitaError> {
-    if d_setup == 0 || !n_prefix.is_multiple_of(d_setup) {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix length must be a positive multiple of d_setup".to_string(),
-        ));
-    }
-    Ok(n_prefix / d_setup)
-}
-
-/// Whether `level_params` witness shape matches one committed prefix length.
-#[must_use]
-pub fn level_params_matches_setup_prefix(
-    level_params: &LevelParams,
-    n_prefix: usize,
-    d_setup: usize,
-) -> bool {
-    setup_prefix_commit_ring_slots(n_prefix, d_setup).is_ok_and(|ring_slots| {
-        level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
-            .is_some_and(|witness| witness == ring_slots)
-    })
 }
 
 /// Repack `level_params` into a witness shape that commits a flat prefix of
@@ -924,42 +831,6 @@ pub fn setup_prefix_level_params(
     Ok(None)
 }
 
-/// Keep only prefix lengths compatible with the supplied commitment parameters.
-#[must_use]
-pub fn filter_prefix_lengths_for_level_params(
-    lengths: &[usize],
-    level_params: &LevelParams,
-    d_setup: usize,
-) -> Vec<usize> {
-    lengths
-        .iter()
-        .copied()
-        .filter(|&n_prefix| level_params_matches_setup_prefix(level_params, n_prefix, d_setup))
-        .collect()
-}
-
-/// Enumerate padded prefix lengths requested by a populate policy.
-pub fn prefix_lengths_for_policy(
-    policy: &SetupPrefixPopulatePolicy,
-) -> Result<Vec<usize>, AkitaError> {
-    match policy {
-        SetupPrefixPopulatePolicy::Disabled => Ok(Vec::new()),
-        SetupPrefixPopulatePolicy::FullLadder { .. } => Err(AkitaError::InvalidSetup(
-            "FullLadder policy not supported".to_string(),
-        )),
-        SetupPrefixPopulatePolicy::SelectedSlots(lengths) => {
-            for &len in lengths {
-                if len == 0 || !len.is_power_of_two() {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "selected setup prefix length {len} must be a non-zero power of two"
-                    )));
-                }
-            }
-            Ok(lengths.clone())
-        }
-    }
-}
-
 /// Build the slot id for one committed setup prefix.
 pub fn setup_prefix_slot_id(
     setup_seed_digest: DescriptorDigest,
@@ -991,48 +862,9 @@ fn read_limited_usize<R: Read>(
     Ok(len)
 }
 
-/// Select the tightest populated prover slot for one active shape.
-pub fn select_setup_prefix_slot<F: FieldCore, const D: usize>(
-    registry: &SetupPrefixProverRegistry<F, D>,
-    setup_seed_digest: DescriptorDigest,
-    ring_dimension: usize,
-    request: SetupPrefixSelectionRequest,
-    n_min: usize,
-) -> SetupPrefixSelectionOutcome<F, D> {
-    if ring_dimension != request.d_setup {
-        return SetupPrefixSelectionOutcome::DirectScan {
-            reason: SetupPrefixDirectReason::DSetupMismatch {
-                ring_dimension,
-                d_setup: request.d_setup,
-            },
-        };
-    }
-    let Some(n_prefix) = select_prefix_len(request.natural_field_len, n_min) else {
-        return SetupPrefixSelectionOutcome::DirectScan {
-            reason: SetupPrefixDirectReason::BelowMinimum {
-                n_prefix: padded_setup_prefix_len(request.natural_field_len),
-                n_min,
-            },
-        };
-    };
-    let id = setup_prefix_slot_id(
-        setup_seed_digest,
-        request.d_setup,
-        n_prefix,
-        request.level_params_digest,
-    );
-    match registry.get(&id) {
-        Some(slot) => SetupPrefixSelectionOutcome::Selected(slot.clone()),
-        None => SetupPrefixSelectionOutcome::DirectScan {
-            reason: SetupPrefixDirectReason::MissingSlot(id),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instance_descriptor::digest_level_params;
     use crate::{ClaimIncidenceSummary, LevelParams, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
 
@@ -1073,97 +905,6 @@ mod tests {
             active_setup_field_len(&lp, &incidence, SETUP_OFFLOAD_D_SETUP).expect("field len"),
             expected_ring_slots * SETUP_OFFLOAD_D_SETUP
         );
-    }
-
-    #[test]
-    fn select_prefix_len_honors_n_min_gate() {
-        assert_eq!(select_prefix_len(10, 17), None);
-        assert_eq!(select_prefix_len(10, 16), Some(16));
-        assert_eq!(select_prefix_len(100, SETUP_OFFLOAD_N_MIN), None);
-        assert_eq!(
-            select_prefix_len(SETUP_OFFLOAD_N_MIN, SETUP_OFFLOAD_N_MIN),
-            Some(SETUP_OFFLOAD_N_MIN)
-        );
-    }
-
-    #[test]
-    fn prefix_lengths_for_selected_slots_rejects_non_power_of_two() {
-        let err = prefix_lengths_for_policy(&SetupPrefixPopulatePolicy::SelectedSlots(vec![12]))
-            .expect_err("non power-of-two");
-        assert!(err.to_string().contains("power of two"));
-    }
-
-    #[test]
-    fn select_setup_prefix_slot_reports_below_minimum() {
-        use akita_field::Prime32Offset99 as F;
-
-        let registry = SetupPrefixProverRegistry::<F, 32>::new();
-        let outcome = select_setup_prefix_slot(
-            &registry,
-            [7u8; 32],
-            32,
-            SetupPrefixSelectionRequest {
-                d_setup: 32,
-                natural_field_len: 100,
-                level_params_digest: [1u8; 32],
-            },
-            SETUP_OFFLOAD_N_MIN,
-        );
-        match outcome {
-            SetupPrefixSelectionOutcome::DirectScan {
-                reason: SetupPrefixDirectReason::BelowMinimum { n_min, .. },
-            } => assert_eq!(n_min, SETUP_OFFLOAD_N_MIN),
-            other => panic!("expected below minimum, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn filter_prefix_lengths_keeps_only_matching_witness_shape() {
-        let lp = sample_level_params();
-        let witness_field_len = lp
-            .num_blocks
-            .checked_mul(lp.block_len)
-            .unwrap()
-            .checked_mul(SETUP_OFFLOAD_D_SETUP)
-            .unwrap();
-        let filtered = filter_prefix_lengths_for_level_params(
-            &[witness_field_len, witness_field_len * 2],
-            &lp,
-            SETUP_OFFLOAD_D_SETUP,
-        );
-        assert_eq!(filtered, vec![witness_field_len]);
-        assert!(level_params_matches_setup_prefix(
-            &lp,
-            witness_field_len,
-            SETUP_OFFLOAD_D_SETUP
-        ));
-    }
-
-    #[test]
-    fn select_setup_prefix_slot_reports_missing_slot() {
-        use akita_field::Prime32Offset99 as F;
-
-        let registry = SetupPrefixProverRegistry::<F, 32>::new();
-        let incidence = ClaimIncidenceSummary::same_point(4, 1).expect("incidence");
-        let lp = sample_level_params();
-        let natural = active_setup_field_len(&lp, &incidence, 32).expect("natural");
-        let outcome = select_setup_prefix_slot(
-            &registry,
-            [7u8; 32],
-            32,
-            SetupPrefixSelectionRequest {
-                d_setup: 32,
-                natural_field_len: natural,
-                level_params_digest: digest_level_params(&[lp]),
-            },
-            1,
-        );
-        match outcome {
-            SetupPrefixSelectionOutcome::DirectScan {
-                reason: SetupPrefixDirectReason::MissingSlot(_),
-            } => {}
-            other => panic!("expected missing slot, got {other:?}"),
-        }
     }
 
     #[test]

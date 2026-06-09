@@ -67,7 +67,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let openings_per_point_refs: Vec<&[F]> = openings_per_point.iter().map(Vec::as_slice).collect();
     let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-    let mut setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(
+    let setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(
         num_vars,
         total_claims,
         num_polys_per_point.len(),

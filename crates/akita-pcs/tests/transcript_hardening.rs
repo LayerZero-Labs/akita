@@ -47,7 +47,7 @@ fn event_stream_equality_small() {
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let mut setup =
+        let setup =
             <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
@@ -270,7 +270,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let mut setup =
+        let setup =
             <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
@@ -386,7 +386,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
-        let mut setup =
+        let setup =
             <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(

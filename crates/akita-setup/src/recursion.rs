@@ -1,6 +1,6 @@
 use crate::new_prover_setup;
 #[cfg(feature = "disk-persistence")]
-use crate::persist_prover_setup;
+use crate::save_prover_setup;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
@@ -149,7 +149,7 @@ where
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    persist_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)?;
+    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)?;
 
     Ok(setup)
 }

@@ -249,9 +249,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
-        setup_seed_digest, ClaimIncidenceSummary, SetupMatrixEnvelope, SetupPrefixSelectionOutcome,
-        SetupPrefixSelectionRequest, SisModulusFamily,
+        active_setup_field_len, setup_seed_digest, ClaimIncidenceSummary, SetupMatrixEnvelope,
+        SisModulusFamily,
     };
 
     fn prefix_level_params() -> LevelParams {
@@ -340,19 +339,6 @@ mod tests {
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
         setup.prefix_slots.insert(slot).expect("insert");
-        let natural_for_selection = n_prefix - 1;
-        assert_eq!(padded_setup_prefix_len(natural_for_selection), n_prefix);
-        let outcome = select_setup_prefix_slot(
-            &setup.prefix_slots,
-            seed_digest,
-            32,
-            SetupPrefixSelectionRequest {
-                d_setup: 32,
-                natural_field_len: natural_for_selection,
-                level_params_digest: digest_level_params(std::slice::from_ref(&level_params)),
-            },
-            1,
-        );
-        assert!(matches!(outcome, SetupPrefixSelectionOutcome::Selected(_)));
+        assert_eq!(setup.prefix_slots.len(), 1);
     }
 }

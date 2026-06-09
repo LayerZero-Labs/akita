@@ -47,11 +47,8 @@ fn run_single_onehot(nv: usize) {
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-            F,
-            ONEHOT_D,
-        >>::setup_prover(nv, 1, 1)
-        .unwrap();
+        let setup =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -129,11 +126,8 @@ fn run_single_dense(nv: usize) {
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::setup_prover(nv, 1, 1)
-        .unwrap();
+        let setup =
+            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(nv, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -263,11 +257,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-            F,
-            ONEHOT_D,
-        >>::setup_prover(setup_nv, 1, 1)
-        .unwrap();
+        let setup =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(setup_nv, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,

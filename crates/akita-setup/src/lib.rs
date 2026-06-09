@@ -138,35 +138,13 @@ where
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    if let Err(err) = persist_prover_setup::<F, D, Cfg>(
-        &setup,
-        max_num_vars,
-        max_num_batched_polys,
-        max_num_points,
-    ) {
+    if let Err(err) =
+        save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)
+    {
         tracing::warn!("Failed to persist setup cache: {err}");
     }
 
     Ok(setup)
-}
-
-/// Persist a prover setup, including any prover-ready setup-prefix slots, to
-/// the config-derived setup cache path.
-///
-/// Call this after `GenerateAndPersist` materializes prefix slots so later
-/// `new_prover_setup` calls can reload the preprocessed artifacts.
-#[cfg(feature = "disk-persistence")]
-pub fn persist_prover_setup<
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F>,
->(
-    setup: &AkitaProverSetup<F, D>,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    max_num_points: usize,
-) -> Result<(), AkitaError> {
-    save_prover_setup::<F, D, Cfg>(setup, max_num_vars, max_num_batched_polys, max_num_points)
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +247,7 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_prover_setup<
+pub(crate) fn save_prover_setup<
     F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
     const D: usize,
     Cfg: CommitmentConfig<Field = F>,
@@ -645,7 +623,7 @@ mod tests {
                         hint,
                     })
                     .unwrap();
-                persist_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1, 1).unwrap();
+                save_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1, 1).unwrap();
 
                 let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
