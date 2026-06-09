@@ -421,7 +421,7 @@ where
     if prepared_claims
         .commitments_by_point
         .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_step.params.effective_commit_rows())
     {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),

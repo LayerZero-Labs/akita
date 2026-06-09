@@ -128,10 +128,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
 
+        // `Σ_λ eq_lambda[λ] · weight(λ)`, mirroring `evaluate_direct`'s
+        // const-generic dispatch (the eq-weighted twin) so the tiered `B'`/`F`
+        // bindings are included identically while the non-tiered hot loop stays
+        // branch-free.
         let segments = self.segments();
+        let tiered = self.tiered.as_ref();
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
             .map(|idx| {
                 let segment = &segments[idx];
+                let (has_b_active, b_start) = if tiered.is_some() {
+                    (segment.has_b_inner, segment.b_inner_start_abs)
+                } else {
+                    (segment.has_b, segment.b_start_abs)
+                };
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
                         bar_omega_segment_eval::<E, $has_d, $has_b, $has_a>(
@@ -140,17 +150,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             segment.d_start_abs,
                             segment.d_weight,
                             &self.e_eq_slice,
-                            segment.b_start_abs,
+                            b_start,
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
                             segment.a_start_abs,
                             segment.a_weight,
                             &self.z_eq_slice,
+                            tiered,
+                            segment.b_inner_row,
+                            segment.has_f,
+                            segment.f_row,
                         )
                     };
                 }
 
-                match (segment.has_d, segment.has_b, segment.has_a) {
+                match (segment.has_d, has_b_active, segment.has_a) {
                     (true, true, true) => segment_sum!(true, true, true),
                     (true, true, false) => segment_sum!(true, true, false),
                     (true, false, true) => segment_sum!(true, false, true),
@@ -158,7 +172,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     (true, false, false) => segment_sum!(true, false, false),
                     (false, true, false) => segment_sum!(false, true, false),
                     (false, false, true) => segment_sum!(false, false, true),
-                    (false, false, false) => E::zero(),
+                    // A segment with no A/D/B may still carry the tiered F block.
+                    (false, false, false) => segment_sum!(false, false, false),
                 }
             })
             .collect();
@@ -242,6 +257,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         Ok(segment_sums.into_iter().sum())
     }
 
+    /// Canonical setup-contribution weight for shared-vector entry `lambda`
+    /// within `segment` — the multiplier the verifier applies to
+    /// `eval_ring_at_pows(setup_flat[lambda])` (see `packed_slice_inner_sum`,
+    /// which carries an identical const-generic copy for the hot direct scan).
+    ///
+    /// Single source of truth for the `bar_omega` paths
+    /// (`materialize_bar_omega`, `evaluate_bar_omega_with_eq`), so they include
+    /// the tiered first-tier `B'` (B_inner) and second-tier `F` bindings rather
+    /// than omitting them. For single-tier plans the tiered blocks are inert
+    /// (`self.tiered == None`), reproducing the former D/B/A weight exactly.
     fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
         let mut weight = E::zero();
         if segment.has_d {
@@ -254,6 +279,36 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         if segment.has_a {
             weight += segment.a_weight * self.z_eq_slice[lambda - segment.a_start_abs];
+        }
+        // Tiered first-tier `B'` (B_inner) and second-tier `F` (COMMIT) blocks,
+        // matching `packed_slice_inner_sum`. `has_b` (full single-tier B) and
+        // `has_b_inner` (tiered B') are mutually exclusive — `has_b` is always
+        // false under a tiered plan (`b_required == 0`) — so the two B branches
+        // never both fire. Inert when `self.tiered == None`.
+        if let Some(td) = self.tiered.as_ref() {
+            if segment.has_b_inner {
+                let col = lambda - segment.b_inner_start_abs;
+                for (g, t_eq_slice) in self.t_eq_slice_per_group.iter().enumerate() {
+                    weight += fold_reused_b_weight(
+                        segment.b_inner_row,
+                        col,
+                        td.tier_split,
+                        td.n_b_small,
+                        td.b_inner_stride,
+                        &td.b_inner_weights_by_group[g],
+                        t_eq_slice,
+                    );
+                }
+            }
+            if segment.has_f {
+                let col = lambda - segment.f_row * td.f_stride;
+                for (g, u_eq) in td.u_eq_slice_per_group.iter().enumerate() {
+                    let rw = td.f_weights_by_row[segment.f_row][g];
+                    if !rw.is_zero() {
+                        weight += rw * u_eq[col];
+                    }
+                }
+            }
         }
         weight
     }
@@ -926,6 +981,11 @@ where
     )
 }
 
+/// Eq-weighted twin of [`packed_slice_inner_sum`]: `Σ_λ eq_lambda[λ] · weight(λ)`
+/// over one segment, where `weight` is the identical A/D/B (or tiered B'/F)
+/// combination. Used by `evaluate_bar_omega_with_eq` (verifier stage-3); kept
+/// const-generic on `HAS_D`/`HAS_B`/`HAS_A` for a branch-free hot loop, with the
+/// tiered `B'`/`F` blocks added under the same runtime gates as the direct scan.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
@@ -940,6 +1000,12 @@ fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: 
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
+    // Tiered blocks, identical to `packed_slice_inner_sum`: `None` / `has_f ==
+    // false` for single-tier plans (inert, predictable branch).
+    tiered: Option<&TieredCommitmentData<E>>,
+    b_inner_row: usize,
+    has_f: bool,
+    f_row: usize,
 ) -> E
 where
     E: FieldCore,
@@ -953,12 +1019,38 @@ where
                 weight += d_weight * e_eq[lambda - d_start];
             }
             if HAS_B {
-                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                if let Some(td) = tiered {
+                    let col = lambda - b_start;
+                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                        weight += fold_reused_b_weight(
+                            b_inner_row,
+                            col,
+                            td.tier_split,
+                            td.n_b_small,
+                            td.b_inner_stride,
+                            &td.b_inner_weights_by_group[g],
+                            t_eq_slice,
+                        );
+                    }
+                } else {
+                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                        weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                    }
                 }
             }
             if HAS_A {
                 weight += a_weight * z_eq[lambda - a_start];
+            }
+            if has_f {
+                if let Some(td) = tiered {
+                    let col = lambda - f_row * td.f_stride;
+                    for (g, u_eq) in td.u_eq_slice_per_group.iter().enumerate() {
+                        let rw = td.f_weights_by_row[f_row][g];
+                        if !rw.is_zero() {
+                            weight += rw * u_eq[col];
+                        }
+                    }
+                }
             }
             if !weight.is_zero() {
                 acc += eq_lambda[lambda] * weight;

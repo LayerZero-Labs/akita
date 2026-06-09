@@ -404,7 +404,7 @@ impl RingRelationProver {
             }
         }
         for commitment in commitments {
-            if commitment.u.len() != lp.b_key.row_len() {
+            if commitment.u.len() != lp.effective_commit_rows() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));

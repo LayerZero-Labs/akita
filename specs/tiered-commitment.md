@@ -41,15 +41,22 @@ u_final = F · decompose(u_1 ‖ … ‖ u_f)
 ```
 
 The `u_i` become part of the witness; only `u_final` is sent (it replaces the
-old commitment `u`). The planner chooses `f` so that the shrunk
-`B_footprint <= A_footprint` and `F_footprint <= A_footprint`, making `A` the
-unique bottleneck. Net effect: a smaller shared preprocessing matrix, a
-faster verifier setup scan (≈ `f×` fewer ring evaluations), and proof size that
-stays in check because `F` replaces clear `u_i`.
+old commitment `u`). The planner chooses the smallest `f` whose shrunk
+`B_footprint' <= A_footprint`, making `A` the bottleneck for the shared
+preprocessing matrix. `F` commits to decomposed intermediate images `u_i`
+(balanced digits), so it stays very small in practice — sizing `F` under `A` is
+not a planner constraint and is not the optimization focus. Net effect: a smaller
+shared preprocessing matrix, a faster verifier setup scan (≈ `f×` fewer ring
+evaluations), and proof size that stays in check because `F` replaces clear
+`u_i`.
 
 This is gated by a new `CommitmentConfig` flag `TIERED_COMMITMENT` (default
-`false`, so existing configs and proofs are byte-for-byte unchanged) and a new
-preset `fp128::D64OneHotTiered` with the flag set.
+`false`; tiering is off for all existing presets) and a new preset
+`fp128::D64OneHotTiered` with the flag set. **Backward compatibility with
+historical `main` is not claimed:** this branch also lands the K256 one-hot
+schedule migration and a planner tie-break tweak (see Intent → Bundled planner
+changes), so regenerated non-tiered tables differ from pre-PR `main` even when
+`tiered == false`.
 
 ## Intent
 
@@ -69,8 +76,9 @@ Key abstractions / surfaces introduced or modified:
 - **`LevelParams.f_key: Option<AjtaiKeyParams>`** and
   **`LevelParams.tier_split: usize`** (`crates/akita-types/src/layout/params.rs`)
   — the second-tier matrix dimensions and the split factor `f`. `tier_split == 1`
-  and `f_key == None` is the current (non-tiered) layout and must be preserved
-  bit-for-bit.
+  and `f_key == None` is the non-tiered *relation layout* (single-tier A→B);
+  it does not imply schedule bytes match pre-PR `main` (see bundled planner
+  changes below).
 - **Canonical row-offset helpers** on `LevelParams` — `effective_commit_rows`,
   `b_inner_rows_per_group`, `d_start`/`f_start`/`b_inner_start`/`a_start` — the
   single source of the `M`-row layout that every offset site must call (Part 3),
@@ -97,12 +105,14 @@ Key abstractions / surfaces introduced or modified:
 
 ### Invariants
 
-- **Flag-off is a no-op.** With `TIERED_COMMITMENT == false` the planner emits
-  `tier_split == 1`, `f_key == None`, and every schedule, layout, proof, and
-  transcript byte is identical to today. Protected by the existing
-  `fp128_d64_onehot` generated-table drift tests
-  (`crates/akita-config/tests/generated_tables.rs`,
-  `crates/akita-config/tests/regen_diff.rs`) staying green and unchanged.
+- **Flag-off tiering is a no-op.** With `TIERED_COMMITMENT == false` the tiering
+  pass is skipped: every level gets `tier_split == 1`, `f_key == None`, and the
+  relation/setup layout collapses to single-tier A→B (no `F` block, no
+  `B_inner`). This does **not** mean schedules or proofs are byte-identical to
+  pre-PR `main` — see **Bundled planner changes** below. What stays true:
+  tiering fields are inert when the flag is off, and `generated_tables.rs` /
+  `regen_diff.rs` prove each shipped table matches the **current-branch** DP
+  (not a diff against historical `main`).
 - **B fits under A.** For every scheduled level under a tiered config,
   `n_b' · width_t' <= n_a · width_s` whenever a feasible `f` exists; and the
   resulting setup envelope `max_setup_len` equals the A footprint (not the B
@@ -158,11 +168,45 @@ Key abstractions / surfaces introduced or modified:
 - **ZK blinding of the F tier.** The first cut targets the non-`zk` path; the
   `zk` feature interplay (the `zk_b_matrix`/`zk_d_matrix` blinding domains) is a
   follow-up. `tiered_e2e` is gated `#![cfg(not(feature = "zk"))]`.
-- **Shipping a generated `fp128_d64_onehot_tiered` table in the first cut.** The
-  tiered policy resolves through the runtime DP fallback first; a shipped table
-  is a later optimization once the DP layout is stable.
-- **Backward compatibility of the wire format.** Per repo policy there is none;
-  `u_final` simply replaces `u` in `RingCommitment` for tiered configs.
+- **Backward compatibility with pre-PR `main` schedules/proofs.** Per repo
+  policy there is none. Bundled K256 migration + tie-break regenerate existing
+  tables; tiered configs additionally change the sent commitment wire shape
+  (`u_final` replaces `u`).
+
+### Bundled planner changes (intentional, rides with this PR)
+
+These land in the same branch as tiered commitment but are **independent of
+`TIERED_COMMITMENT`**. They regenerate the existing schedule tables (including
+`fp128_d64_onehot`) to new optima; the repo makes no backward-compatibility
+guarantee.
+
+1. **K256 one-hot schedules (`onehot_chunk_size = 256`).** fp128 D64 one-hot
+   presets (`D64OneHot`, `D64OneHotTiered`) require `K = 256` one-hot chunks
+   (`K/D = 4` ring elements per chunk). Witness norms in the planner use
+   `nonzeros = ⌈D/K⌉` instead of `D`, which lowers SIS ranks and often picks
+   smaller `log_basis` / `(m, r, n_a, n_b)` layouts — e.g. `fp128_d64_onehot`
+   nv=32 singleton first fold on this branch: `log_basis: 2, n_a: 5, n_b: 1` vs
+   pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `m_vars`/`r_vars`).
+2. **`optimal_m_r_split` / schedule-DP tie-break.** Fold split search iterates
+   `r` descending (`(1..reduced_vars).rev()` in
+   [`digit_math.rs`](crates/akita-types/src/layout/digit_math.rs) and
+   `(min_r_vars..=max_r_vars).rev()` in the root DP in
+   [`schedule_params.rs`](crates/akita-planner/src/schedule_params.rs)). When
+   fold-digit or proof-size scores tie, the first candidate wins — a
+   deterministic tie-break bundled here. **Primary schedule deltas vs pre-PR
+   `main` come from the K256 migration**, not this tie-break (e.g. nv=32
+   singleton first fold keeps the same `m_vars`/`r_vars` but changes
+   `log_basis`/`n_a`/`n_b`).
+
+**Drift guard scope:** `crates/akita-config/tests/generated_tables.rs` compares
+each shipped table against the **current-branch** pure DP for every covered
+key. It catches table/expand regressions on this branch but **cannot** detect
+divergence from historical `main`; that is expected and acceptable here.
+
+**Tiered table format:** compact `GeneratedFoldStep` rows gain optional
+`tier_split` / `n_f` columns for the new `fp128_d64_onehot_tiered` table.
+Non-tiered tables are **regenerated** with the K256 migration (not left as
+byte-identical copies of pre-PR `main`).
 
 ## Evaluation
 
@@ -171,11 +215,16 @@ Key abstractions / surfaces introduced or modified:
 - [ ] `CommitmentConfig::TIERED_COMMITMENT` exists (default `false`);
       `fp128::D64OneHotTiered` sets it `true`; `policy_of` carries it.
 - [ ] Planner emits `tier_split == 1` / `f_key == None` for every non-tiered
-      preset, and the `fp128_d64_onehot` shipped table regenerates unchanged.
+      preset when `TIERED_COMMITMENT == false`. Regenerated schedule tables
+      (including `fp128_d64_onehot`) match the **current-branch** DP via
+      `generated_tables.rs` / `regen_diff.rs`; they are **not** required to match
+      pre-PR `main` (K256 migration + tie-break ride along).
 - [ ] For `fp128::D64OneHotTiered`, for every scheduled level with a feasible
-      split: `b_footprint' <= a_footprint`, `f_footprint <= a_footprint`, and
+      split: `b_footprint' <= a_footprint` and
       `max_setup_matrix_size(...) == a_footprint` via **both** the per-level and
       the root-incidence-widening paths (skewed multipoint incidence exercised).
+      (`F` is not required to fit under `A`; it commits decomposed `u_i` and
+      stays small — the planner only searches on `B'`.)
 - [ ] Canonical row-offset helpers exist on `LevelParams`; an invariant test
       asserts they equal the open-coded offsets for every non-tiered preset, and
       every row-offset site calls them.
@@ -213,7 +262,8 @@ Key abstractions / surfaces introduced or modified:
 - **Must stay green:** all `Direct`-mode e2e suites (`single_poly_e2e`,
   `akita_e2e`, `multipoint_batched_e2e`, `batched_aggregated_e2e`,
   `transcript_hardening*`), the `setup_contribution` unit/equivalence fixtures,
-  and the generated-table drift tests (proving flag-off is a no-op).
+  and the generated-table drift tests (table vs current-branch DP; tiering
+  fields inert when `TIERED_COMMITMENT == false`).
 
 ### Performance
 
@@ -244,8 +294,8 @@ Direction and how to verify:
   `gen_schedule_tables` / profile comparison and keep it bounded.
 
 If this regresses proof size beyond a small constant, the `f`-selection should
-prefer the largest `f` that still satisfies `B' <= A` only up to the point where
-`F_footprint <= A_footprint` (so `F` and the added witness stay bounded by `A`).
+prefer the largest `f` that still satisfies `B' <= A`. (`F` is sized from
+decomposed `u_i` and is not a sizing bottleneck in practice.)
 
 ## Design
 
@@ -312,8 +362,8 @@ into each entry's coefficient (the `eval_ring_at_pows` call — the expensive
 Add to `CommitmentConfig` (`crates/akita-config/src/lib.rs`):
 
 ```rust
-/// Enable the second commitment tier (matrix F). Default false → current
-/// single-tier (A→B) layout, byte-for-byte unchanged.
+/// Enable the second commitment tier (matrix F). Default false → single-tier
+/// (A→B) relation layout; tiering pass skipped (`tier_split == 1`, `f_key == None`).
 const TIERED_COMMITMENT: bool = false;
 ```
 
@@ -377,19 +427,18 @@ if !policy.tiered || b_footprint <= a_footprint {
     // keep current B; tier_split = 1, f_key = None
 } else {
     // search f over powers of two that divide (num_blocks * t_vectors),
-    // largest first benefit / pick the f minimizing max(B', F):
+    // smallest first: pick the smallest f with b_foot' <= a_footprint
     for f in feasible_powers_of_two(num_blocks * t_vectors) {
         width_t' = width_t / f;                                  // shrink B width
         n_b'     = min_secure_rank(family, d, norm_t, width_t'); // rank may drop
         b_foot'  = n_b' * width_t';
         // F commits decompose(u_1 ‖ … ‖ u_f): width = f * n_b' * delta_open_F,
         // entries are balanced digits → digit-range collision bucket (norm_t).
+        // F is very small (commits to u, not t̂); no f_foot <= a_footprint check.
         width_F  = f * n_b' * delta_open;                         // delta_open at this level
         norm_F   = rounded_up_collision_norm_t(family, d, log_basis);
         n_F      = min_secure_rank(family, d, norm_F, width_F);
-        f_foot   = n_F * width_F;
-        // accept the smallest f with b_foot' <= a_footprint AND f_foot <= a_footprint;
-        // among those, prefer the one minimizing max(b_foot', f_foot).
+        // accept the smallest f with b_foot' <= a_footprint
     }
     // store: b_key' = AjtaiKeyParams::try_new(family, n_b', width_t', norm_t, d)
     //        f_key  = AjtaiKeyParams::try_new(family, n_F, width_F, norm_F, d)
@@ -423,10 +472,11 @@ Notes and edge cases:
   still in the same SIS bucket and `n_b'·width_t' > a`), fall back to
   `tier_split = 1`, `f_key = None` for that level. The acceptance criterion is
   conditional on feasibility; a planner warning/log is emitted.
-- **`F` exceeds `A`.** `width_F = f · n_b' · delta_open` grows with `f`, while
-  `b_foot'` shrinks with `f`; there is a crossover. Requiring both `<= A`
-  bounds the search to the window around the crossover. If the window is empty,
-  fall back to `tier_split = 1` for that level.
+- **`F` sizing is not a search constraint.** `F` commits decomposed
+  intermediate images `u_i` (balanced digits), so `n_F` and `width_F` stay very
+  small in practice — typically `n_F = 1`. The `f`-search only requires
+  `b_foot' <= a_footprint`; it does not cap `F` under `A` and does not fall back
+  when `F` would exceed `A` (which has not been observed in shipped schedules).
 - **Determinism.** The `f`-search is a pure function of `(policy, key, level
   geometry)` exactly like the rest of the DP, so prover and verifier (and a
   future shipped table) regenerate identical `LevelParams`.
@@ -438,11 +488,12 @@ Notes and edge cases:
   `with_layout` / `params_only` / `log_basis_stub` initialize them to
   `None` / `1`. `append_descriptor_bytes` serializes `tier_split` and the
   optional `f_key` (so Fiat-Shamir binds the tier).
-- `shipped_table` (`crates/akita-planner/src/resolve.rs`) keys on the new
-  `policy.tiered`: when `tiered == true` it returns `None` (DP fallback) in the
-  first cut, so a tiered policy never reuses the non-tiered
-  `fp128_d64_onehot` table. (Later: ship `fp128_d64_onehot_tiered` and add a
-  `GeneratedFamily` row + emitter branch, exactly as the tensor table did.)
+- `shipped_table` (`crates/akita-planner/src/resolve.rs`) keys on
+  `policy.tiered`: tiered presets select `fp128_d64_onehot_tiered`; non-tiered
+  presets keep their existing tables (`fp128_d64_onehot`, etc.), **regenerated**
+  on this branch for K256 + tie-break (not byte-identical to pre-PR `main`).
+  Compact `GeneratedFoldStep` rows add optional `tier_split` / `n_f`; non-tiered
+  entries store `None` / `None` and expansion leaves `tier_split == 1`.
 - The setup envelope has **two** paths in
   [`crates/akita-config/src/proof_optimized.rs`](crates/akita-config/src/proof_optimized.rs)
   and **both** must account for `F`/`B'`:
@@ -459,7 +510,8 @@ Notes and edge cases:
      ```
 
      With `tier_split == 1` / `f_key == None`, `f_len = 0` and `b'_len` is the
-     current `b_len` — bit-identical to today.
+     current single-tier `b_len` (relation layout unchanged; schedule bytes may
+     still differ from pre-PR `main` — see bundled planner changes).
 
   2. **Root incidence widening** (`accumulate_root_matrix_envelope_for_incidence`
      → `root_runtime_matrix_len_for_incidence`). This is a *separate* path that
@@ -495,7 +547,8 @@ single `"shared"` label). At runtime the verifier/prover take
 `shared_matrix.ring_view::<D>(n_F, width_F)` for `F`, the same way they take the
 A/B/D prefix views. Because all role views are prefixes of one vector and the
 setup only allocates `max_setup_len = max over levels of max(a,b',d,f)`, adding
-`F` does **not** grow the shared matrix once `f` is chosen so `f_len <= a_len`.
+`F` does **not** grow the shared matrix once `B'` is chosen so `b_foot' <= a_footprint`
+(`F` is negligible next to `A` in practice).
 
 Concretely:
 
@@ -845,11 +898,11 @@ flowchart TB
     subgraph after [Tiered]
         Bsmall["B' prefix: n_b' × (width_t / f)"]
         Fmat["F prefix: n_F × (f·n_b'·δ)"]
-        scanT["scan ≈ max(A, B', F, D) ≈ A_footprint"]
+        scanT["scan ≈ max(A, B', F, D) ≈ A_footprint (F negligible)"]
         Bsmall --> scanT
         Fmat --> scanT
     end
-    before -->|"choose f so B'≤A, F≤A"| after
+    before -->|"choose f so B'≤A"| after
 ```
 
 ### Alternatives Considered
@@ -887,18 +940,19 @@ no-ops for existing presets):
 
 1. **Flag + policy plumbing (no behavior):** add `TIERED_COMMITMENT` (default
    false), `PlannerPolicy.tiered`, `policy_of` mapping, `shipped_table` tiered
-   discriminator (returns `None`), and `fp128::D64OneHotTiered`. Extend
-   `runtime_fallback.rs`. Confirm all drift tests unchanged.
+   discriminator, and `fp128::D64OneHotTiered`. Extend `runtime_fallback.rs`.
+   Confirm `generated_tables.rs` / `regen_diff.rs` green (table vs current DP).
 2. **`LevelParams` fields + canonical helpers + descriptor:** add
    `f_key`/`tier_split` (defaults `None`/`1`); add `effective_commit_rows`,
    `b_inner_rows_per_group`, and the `d_start`/`f_start`/`b_inner_start`/
    `a_start` helpers; rewrite `m_row_count_for` on top of them; serialize
    `tier_split`/`f_key` in `append_descriptor_bytes`; thread through
    `with_decomp`/`with_layout`/`params_only`. Add the helper-vs-open-coded
-   invariant test. Confirm non-tiered descriptor bytes and row counts unchanged.
+   invariant test. Confirm flag-off levels omit tiered descriptor fields.
 3. **Planner `f`-search + `F` sizing:** implement the Part 1c algorithm in
-   `schedule_params.rs` (root + recursive); add planner unit tests. Confirm
-   `fp128_d64_onehot` regenerates unchanged.
+   `schedule_params.rs` (root + recursive); add planner unit tests. Regenerate
+   schedule tables (K256 + tie-break may change non-tiered entries vs pre-PR
+   `main`; drift tests compare table vs current-branch DP only).
 4. **Setup envelope (both paths):** include `b'`/`f` footprints in
    `accumulate_matrix_envelope_for_level` **and** `root_runtime_matrix_len_for_incidence`;
    add the envelope-shrinks test for a singleton **and** a skewed multipoint key.
@@ -977,8 +1031,9 @@ disable `B` in the packed D/B/A scan and add two prefix scans (one
 - `B_inner`: `for entry (row,col) in B' prefix:
   w = Σ_g Σ_j eq_tau1[b_inner_start+g·(f·n_b')+j·n_b'+row]·t_eq[g][j·width_small+col]`
   (this is `fold_reused_b_weight`, reusing the existing `t_eq_slice_per_group`).
-`required = max(d, a, f_required, b_inner_required)` (all ≤ A footprint by the
-planner). Plus a structured `-recompose(û_concat)` term for the `B_inner` RHS,
+`required = max(d, a, f_required, b_inner_required)` (with `B'` bounded by
+`A` via the planner; `F` is small because it commits decomposed `u_i`). Plus a
+structured `-recompose(û_concat)` term for the `B_inner` RHS,
 analogous to the consistency-row `z` recompose.
 
 **Verifier `eval_at_point`.** Add the `F`/`B_inner`/`û` contributions; derive all
