@@ -170,9 +170,9 @@ mod tests {
         SetupMatrixEnvelope {
             max_setup_len,
             #[cfg(feature = "zk")]
-            max_zk_b_len: 0,
+            max_zk_b_len: 1,
             #[cfg(feature = "zk")]
-            max_zk_d_len: 0,
+            max_zk_d_len: 1,
         }
     }
 
