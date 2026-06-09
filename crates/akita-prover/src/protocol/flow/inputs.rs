@@ -508,10 +508,10 @@ where
         T,
         P,
         B,
+        Cfg,
         D,
-        _,
     >(
-        expanded.as_ref(),
+        expanded,
         backend,
         prepared,
         transcript,
@@ -522,14 +522,13 @@ where
         prepared_claims.flat_hints,
         &root_step.params,
         root_step.next_w_len,
-        root_next_params.log_basis,
+        root_next_params,
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
         setup_contribution_mode,
-        |w| crate::commit_next_w::<Cfg, B, D>(root_next_params, expanded, backend, prepared, w),
     )?;
 
     build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(
