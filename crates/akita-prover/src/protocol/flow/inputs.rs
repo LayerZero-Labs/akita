@@ -167,6 +167,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     claims: ProverClaims<
@@ -251,6 +252,7 @@ where
 
     prove_folded_batched::<Cfg, T, P, B, D>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -368,6 +370,7 @@ where
 #[inline(never)]
 pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -501,6 +504,7 @@ where
         _,
     >(
         expanded.as_ref(),
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -510,6 +514,7 @@ where
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
         &root_step.params,
+        root_next_params,
         root_step.next_w_len,
         root_next_params.log_basis,
         #[cfg(feature = "zk")]
@@ -526,6 +531,7 @@ where
         |next_state| {
             crate::prove_recursive_suffix::<Cfg, T, B, D>(
                 expanded,
+                prefix_slots,
                 backend,
                 prepared,
                 num_vars,

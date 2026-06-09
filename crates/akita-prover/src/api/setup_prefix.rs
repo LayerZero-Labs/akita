@@ -8,17 +8,13 @@ use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRows
 use crate::kernels::linear::decompose_rows_i8_into;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    active_setup_field_len, digest_level_params, select_setup_prefix_slot, setup_prefix_slot_id,
-    setup_seed_digest, AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary,
-    FlatDigitBlocks, LevelParams, MissingSetupPrefixSlotPolicy, RingCommitment,
-    SetupPrefixDirectReason, SetupPrefixSelectionOutcome, SetupPrefixSelectionRequest,
-    SetupPrefixSlot, SETUP_OFFLOAD_D_SETUP,
+    digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
+    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -69,7 +65,7 @@ where
 
     let available_field_len = expanded
         .shared_matrix()
-        .total_ring_elements()
+        .total_ring_elements_at::<D>()?
         .checked_mul(D)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
@@ -199,69 +195,6 @@ where
     })
 }
 
-/// Select a prover-ready setup-prefix slot for one active shape.
-///
-/// `MissingSetupPrefixSlotPolicy` applies only when the eligible prefix length
-/// is known but the corresponding slot is absent. Below-threshold and
-/// `D_setup` mismatch outcomes always return [`SetupPrefixSelectionOutcome::DirectScan`].
-pub fn select_prover_setup_prefix_slot<F, const D: usize, B>(
-    setup: &mut AkitaProverSetup<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    level_params: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
-    n_min: usize,
-    missing_slot_policy: MissingSetupPrefixSlotPolicy,
-) -> Result<SetupPrefixSelectionOutcome<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<F>,
-{
-    let seed_digest = setup_seed_digest(setup.expanded.seed())
-        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let natural_len = active_setup_field_len(level_params, incidence, SETUP_OFFLOAD_D_SETUP)?;
-    let request = SetupPrefixSelectionRequest {
-        d_setup: SETUP_OFFLOAD_D_SETUP,
-        natural_field_len: natural_len,
-        level_params_digest: digest_level_params(std::slice::from_ref(level_params)),
-    };
-    let outcome = select_setup_prefix_slot(&setup.prefix_slots, seed_digest, D, request, n_min);
-    match (&outcome, missing_slot_policy) {
-        (
-            SetupPrefixSelectionOutcome::DirectScan {
-                reason: SetupPrefixDirectReason::MissingSlot(id),
-            },
-            MissingSetupPrefixSlotPolicy::StrictError,
-        ) => Err(AkitaError::InvalidSetup(format!(
-            "setup prefix slot missing for preprocessing policy: {id:?}"
-        ))),
-        (
-            SetupPrefixSelectionOutcome::DirectScan {
-                reason: SetupPrefixDirectReason::MissingSlot(_),
-            },
-            MissingSetupPrefixSlotPolicy::GenerateAndPersist,
-        ) => {
-            let n_prefix = akita_types::select_prefix_len(natural_len, n_min).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "cannot materialize setup prefix slot below delegation threshold".to_string(),
-                )
-            })?;
-            let slot = commit_setup_prefix::<F, D, B>(
-                &setup.expanded,
-                backend,
-                prepared,
-                level_params,
-                seed_digest,
-                n_prefix,
-                natural_len,
-            )?;
-            setup.prefix_slots.insert(slot.clone())?;
-            Ok(SetupPrefixSelectionOutcome::Selected(slot))
-        }
-        _ => Ok(outcome),
-    }
-}
-
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     padded_ring_slots: usize,
@@ -312,10 +245,12 @@ where
 mod tests {
     use super::*;
     use crate::compute::{ComputeBackendSetup, CpuBackend};
+    use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        padded_setup_prefix_len, select_setup_prefix_slot, SetupMatrixEnvelope,
+        active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
+        setup_seed_digest, ClaimIncidenceSummary, SetupMatrixEnvelope, SetupPrefixSelectionOutcome,
         SetupPrefixSelectionRequest, SisModulusFamily,
     };
 
@@ -419,86 +354,5 @@ mod tests {
             1,
         );
         assert!(matches!(outcome, SetupPrefixSelectionOutcome::Selected(_)));
-    }
-
-    fn aligned_prefix_fixture() -> (LevelParams, ClaimIncidenceSummary, usize) {
-        let level_params = LevelParams::params_only(
-            SisModulusFamily::Q128,
-            32,
-            3,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(1, 0, 1, 1, 1)
-        .expect("aligned level params");
-        let incidence = ClaimIncidenceSummary::same_point(2, 1).expect("incidence");
-        let n_prefix = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
-            .expect("witness")
-            .checked_mul(32)
-            .expect("prefix");
-        let natural_len = active_setup_field_len(&level_params, &incidence, 32).expect("natural");
-        assert_eq!(padded_setup_prefix_len(natural_len), n_prefix);
-        (level_params, incidence, n_prefix)
-    }
-
-    #[test]
-    fn select_prover_setup_prefix_slot_honors_missing_slot_policy() {
-        let (level_params, incidence, n_prefix) = aligned_prefix_fixture();
-        let mut setup = test_setup(&level_params, n_prefix);
-        let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<32>(&setup).expect("prepared");
-
-        let fallback = select_prover_setup_prefix_slot(
-            &mut setup,
-            &backend,
-            &prepared,
-            &level_params,
-            &incidence,
-            1,
-            MissingSetupPrefixSlotPolicy::DirectFallback,
-        )
-        .expect("fallback");
-        assert!(matches!(
-            fallback,
-            SetupPrefixSelectionOutcome::DirectScan {
-                reason: SetupPrefixDirectReason::MissingSlot(_)
-            }
-        ));
-
-        assert!(select_prover_setup_prefix_slot(
-            &mut setup,
-            &backend,
-            &prepared,
-            &level_params,
-            &incidence,
-            1,
-            MissingSetupPrefixSlotPolicy::StrictError,
-        )
-        .expect_err("strict")
-        .to_string()
-        .contains("setup prefix slot missing"));
-
-        let generated = select_prover_setup_prefix_slot(
-            &mut setup,
-            &backend,
-            &prepared,
-            &level_params,
-            &incidence,
-            1,
-            MissingSetupPrefixSlotPolicy::GenerateAndPersist,
-        )
-        .expect("generate");
-        assert!(matches!(
-            generated,
-            SetupPrefixSelectionOutcome::Selected(_)
-        ));
-        assert_eq!(setup.prefix_slots.len(), 1);
     }
 }

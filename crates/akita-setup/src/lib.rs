@@ -8,8 +8,6 @@ use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
-#[cfg(feature = "disk-persistence")]
-use akita_prover::{select_prover_setup_prefix_slot, CommitmentComputeBackend};
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{
@@ -20,8 +18,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    ClaimIncidenceSummary, FlatMatrix, LevelParams, MissingSetupPrefixSlotPolicy,
-    SetupPrefixProverRegistry, SetupPrefixSelectionOutcome,
+    FlatMatrix, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -170,62 +167,6 @@ pub fn persist_prover_setup<
     max_num_points: usize,
 ) -> Result<(), AkitaError> {
     save_prover_setup::<F, D, Cfg>(setup, max_num_vars, max_num_batched_polys, max_num_points)
-}
-
-/// Inputs for selecting a setup-prefix slot and writing the setup cache when
-/// `GenerateAndPersist` is active.
-#[cfg(feature = "disk-persistence")]
-#[derive(Debug, Clone, Copy)]
-pub struct SetupPrefixPersistRequest<'a> {
-    pub level_params: &'a LevelParams,
-    pub incidence: &'a ClaimIncidenceSummary,
-    pub n_min: usize,
-    pub missing_slot_policy: MissingSetupPrefixSlotPolicy,
-    pub max_num_vars: usize,
-    pub max_num_batched_polys: usize,
-    pub max_num_points: usize,
-}
-
-/// Select a setup-prefix slot and persist the setup cache if the
-/// `GenerateAndPersist` policy materializes a missing slot.
-#[cfg(feature = "disk-persistence")]
-pub fn select_or_persist_setup_prefix_slot<F, const D: usize, Cfg, B>(
-    setup: &mut AkitaProverSetup<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    request: SetupPrefixPersistRequest<'_>,
-) -> Result<SetupPrefixSelectionOutcome<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + akita_serialization::AkitaSerialize,
-    Cfg: CommitmentConfig<Field = F>,
-    B: CommitmentComputeBackend<F>,
-{
-    let slot_count_before = setup.prefix_slots.len();
-    let outcome = select_prover_setup_prefix_slot(
-        setup,
-        backend,
-        prepared,
-        request.level_params,
-        request.incidence,
-        request.n_min,
-        request.missing_slot_policy,
-    )?;
-    if matches!(
-        (&outcome, request.missing_slot_policy),
-        (
-            SetupPrefixSelectionOutcome::Selected(_),
-            MissingSetupPrefixSlotPolicy::GenerateAndPersist
-        )
-    ) && setup.prefix_slots.len() > slot_count_before
-    {
-        persist_prover_setup::<F, D, Cfg>(
-            setup,
-            request.max_num_vars,
-            request.max_num_batched_polys,
-            request.max_num_points,
-        )?;
-    }
-    Ok(outcome)
 }
 
 // ---------------------------------------------------------------------------
@@ -710,104 +651,6 @@ mod tests {
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
                 cleanup_setup_file(MAX_VARS);
-            });
-        }
-
-        #[test]
-        fn generate_and_persist_skips_preexisting_prefix_slot() {
-            with_test_cache_dir("generate-and-persist", || {
-                use akita_algebra::CyclotomicRing;
-                use akita_prover::{ComputeBackendSetup, CpuBackend};
-                use akita_types::{
-                    active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-                    setup_prefix_slot_id, setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks,
-                    RingCommitment, SetupPrefixSelectionOutcome, SetupPrefixSlot,
-                };
-
-                type PersistCfg = fp128::D32Full;
-                const PERSIST_D: usize = 32;
-                const MAX_VARS: usize = 12;
-                const MAX_BATCH: usize = 2;
-                const MAX_POINTS: usize = 2;
-
-                if let Some(path) = get_storage_path::<PersistCfg>(MAX_VARS, MAX_BATCH, MAX_POINTS)
-                {
-                    let _ = fs::remove_file(path);
-                }
-
-                let mut setup = new_prover_setup::<TestF, PERSIST_D, PersistCfg>(
-                    MAX_VARS, MAX_BATCH, MAX_POINTS,
-                )
-                .unwrap();
-                let incidence =
-                    ClaimIncidenceSummary::from_counts(MAX_VARS, MAX_POINTS, MAX_POINTS)
-                        .expect("incidence");
-                let level_params =
-                    PersistCfg::get_params_for_batched_commitment(&incidence).unwrap();
-                let natural_len =
-                    active_setup_field_len(&level_params, &incidence, PERSIST_D).unwrap();
-                let n_prefix = padded_setup_prefix_len(natural_len);
-                let slot_id = setup_prefix_slot_id(
-                    setup_seed_digest(setup.expanded.seed()).unwrap(),
-                    PERSIST_D,
-                    n_prefix,
-                    digest_level_params(std::slice::from_ref(&level_params)),
-                );
-                let decomposed = FlatDigitBlocks::<PERSIST_D>::from_blocks(vec![Vec::new()]);
-                let recomposed = vec![Vec::new()];
-                #[cfg(feature = "zk")]
-                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                    decomposed,
-                    recomposed,
-                    FlatDigitBlocks::empty(),
-                );
-                #[cfg(not(feature = "zk"))]
-                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                    decomposed, recomposed,
-                );
-                setup
-                    .prefix_slots
-                    .insert(SetupPrefixSlot {
-                        id: slot_id,
-                        natural_len,
-                        padded_len: n_prefix,
-                        commitment: RingCommitment {
-                            u: vec![CyclotomicRing::zero()],
-                        },
-                        hint,
-                    })
-                    .unwrap();
-                let backend = CpuBackend;
-                let prepared = backend.prepare_setup::<PERSIST_D>(&setup).unwrap();
-
-                let outcome =
-                    select_or_persist_setup_prefix_slot::<TestF, PERSIST_D, PersistCfg, _>(
-                        &mut setup,
-                        &backend,
-                        &prepared,
-                        SetupPrefixPersistRequest {
-                            level_params: &level_params,
-                            incidence: &incidence,
-                            n_min: 1,
-                            missing_slot_policy: MissingSetupPrefixSlotPolicy::GenerateAndPersist,
-                            max_num_vars: MAX_VARS,
-                            max_num_batched_polys: MAX_BATCH,
-                            max_num_points: MAX_POINTS,
-                        },
-                    )
-                    .unwrap();
-
-                assert!(matches!(outcome, SetupPrefixSelectionOutcome::Selected(_)));
-                let loaded = load_prover_setup::<TestF, PERSIST_D, PersistCfg>(
-                    MAX_VARS, MAX_BATCH, MAX_POINTS,
-                )
-                .unwrap();
-                assert!(loaded.prefix_slots.is_empty());
-
-                if let Some(path) = get_storage_path::<PersistCfg>(MAX_VARS, MAX_BATCH, MAX_POINTS)
-                {
-                    let _ = fs::remove_file(path);
-                }
             });
         }
 

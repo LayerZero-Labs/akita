@@ -162,6 +162,7 @@ where
         validate_field_roles_for_ring::<F, D, Cfg>()?;
         let proof = akita_prover::prove_batched::<Cfg, T, P, B, D>(
             &setup.expanded,
+            &setup.prefix_slots,
             backend,
             prepared,
             claims,

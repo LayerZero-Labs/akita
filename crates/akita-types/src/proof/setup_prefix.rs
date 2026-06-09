@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 
 /// Ring dimension used when delegating setup claims to a flat coefficient prefix.
-pub const SETUP_OFFLOAD_D_SETUP: usize = 32;
+pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 
 /// Minimum flat coefficient prefix length eligible for setup delegation.
 pub const SETUP_OFFLOAD_N_MIN: usize = 1 << 23;
@@ -879,6 +879,49 @@ pub fn level_params_matches_setup_prefix(
             .checked_mul(level_params.block_len)
             .is_some_and(|witness| witness == ring_slots)
     })
+}
+
+/// Repack `level_params` into a witness shape that commits a flat prefix of
+/// `n_prefix` setup coefficients at ring dimension `d_setup`.
+pub fn setup_prefix_level_params(
+    level_params: &LevelParams,
+    n_prefix: usize,
+    d_setup: usize,
+) -> Result<Option<LevelParams>, AkitaError> {
+    let ring_slots = n_prefix.checked_div(d_setup).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix length has invalid dimension".to_string())
+    })?;
+    let mut prefix_params = level_params.clone();
+    let mut num_blocks = 1usize;
+    while num_blocks <= ring_slots {
+        if ring_slots.is_multiple_of(num_blocks) {
+            let block_len = ring_slots / num_blocks;
+            let inner_width = block_len
+                .checked_mul(level_params.num_digits_commit)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("prefix inner width overflow".to_string())
+                })?;
+            let outer_width = num_blocks
+                .checked_mul(level_params.a_key.row_len())
+                .and_then(|n| n.checked_mul(level_params.num_digits_open))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("prefix outer width overflow".to_string())
+                })?;
+            if inner_width <= level_params.a_key.col_len()
+                && outer_width <= level_params.b_key.col_len()
+            {
+                prefix_params.num_blocks = num_blocks;
+                prefix_params.m_vars = num_blocks.trailing_zeros() as usize;
+                prefix_params.block_len = block_len;
+                prefix_params.r_vars = block_len.next_power_of_two().trailing_zeros() as usize;
+                return Ok(Some(prefix_params));
+            }
+        }
+        num_blocks = num_blocks
+            .checked_mul(2)
+            .ok_or_else(|| AkitaError::InvalidSetup("prefix block count overflow".to_string()))?;
+    }
+    Ok(None)
 }
 
 /// Keep only prefix lengths compatible with the supplied commitment parameters.

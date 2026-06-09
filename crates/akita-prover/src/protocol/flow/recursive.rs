@@ -11,6 +11,7 @@ use super::*;
 fn dispatch_prove_level<Cfg, T, B, const D: usize>(
     level_d: usize,
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     current_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
@@ -42,6 +43,7 @@ where
     if level_d == D {
         prove_recursive_level::<Cfg, T, B, D>(
             expanded,
+            prefix_slots,
             backend,
             prepared,
             transcript,
@@ -56,6 +58,7 @@ where
             let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
             prove_recursive_level::<Cfg, T, B, { D_LEVEL }>(
                 expanded,
+                &SetupPrefixProverRegistry::new(),
                 backend,
                 &level_prepared,
                 transcript,
@@ -147,6 +150,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn prove_recursive_suffix<Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
@@ -197,6 +201,7 @@ where
         let out = dispatch_prove_level::<Cfg, T, B, D>(
             level_params.ring_dimension,
             expanded,
+            prefix_slots,
             backend,
             prepared,
             current_state,
@@ -256,12 +261,14 @@ where
 #[inline(never)]
 pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     commitment_u: &[CyclotomicRing<F, D>],
     level: usize,
     lp: &LevelParams,
+    next_params: &LevelParams,
     next_log_basis: u32,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
@@ -291,6 +298,7 @@ where
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
+    let setup_prefix_commit_params = next_params;
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&logical_w)?
@@ -437,11 +445,11 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded,
+                prefix_slots,
                 lp,
+                setup_prefix_commit_params,
                 &instance,
                 &tau1,
                 alpha,
@@ -841,12 +849,14 @@ where
 #[inline(never)]
 pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     current_state: RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
+    next_params: &LevelParams,
     next_log_basis: u32,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
@@ -1024,12 +1034,14 @@ where
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     prove_fold_level_from_ring_relation::<F, L, T, B, D, _>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
         commitment_u,
         level,
         level_params,
+        next_params,
         next_log_basis,
         instance,
         witness,
@@ -1263,6 +1275,7 @@ where
 #[inline(never)]
 pub fn prove_recursive_level<Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -1296,12 +1309,14 @@ where
 
     prove_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, D, _>(
         expanded.as_ref(),
+        prefix_slots,
         backend,
         prepared,
         transcript,
         current_state,
         level,
         level_params,
+        next_params,
         next_params.log_basis,
         setup_contribution_mode,
         |w| crate::commit_next_w::<Cfg, B, D>(next_params, expanded, backend, prepared, w),

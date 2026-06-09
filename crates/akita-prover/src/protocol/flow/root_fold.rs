@@ -75,6 +75,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -83,6 +84,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
+    setup_prefix_commit_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
@@ -164,11 +166,13 @@ where
 
     let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
         commitment_rows,
         root_params,
+        setup_prefix_commit_params,
         expected_w_len,
         next_log_basis,
         #[cfg(feature = "zk")]
@@ -205,6 +209,7 @@ where
 #[inline(never)]
 pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -214,6 +219,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
+    root_next_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
@@ -237,6 +243,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
+    let setup_prefix_commit_params = root_next_params;
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
 
@@ -389,6 +396,7 @@ where
             _,
         >(
             expanded,
+            prefix_slots,
             backend,
             prepared,
             transcript,
@@ -397,6 +405,7 @@ where
             commitments,
             hints,
             root_params,
+            setup_prefix_commit_params,
             expected_w_len,
             next_log_basis,
             commit_w_for_next,
@@ -547,11 +556,13 @@ where
 
     prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
         commitment_rows,
         root_params,
+        setup_prefix_commit_params,
         expected_w_len,
         next_log_basis,
         #[cfg(feature = "zk")]
@@ -1065,11 +1076,13 @@ where
 #[inline(never)]
 pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
+    setup_prefix_commit_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
@@ -1258,11 +1271,11 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded,
+                prefix_slots,
                 lp,
+                setup_prefix_commit_params,
                 &instance,
                 &tau1,
                 alpha,

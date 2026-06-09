@@ -11,4 +11,4 @@ pub use commitment::{
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;
-pub use setup_prefix::{commit_setup_prefix, select_prover_setup_prefix_slot};
+pub use setup_prefix::commit_setup_prefix;
