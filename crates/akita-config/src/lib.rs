@@ -488,7 +488,6 @@ mod sis_schedule_width_audit {
             );
         }
     }
-
 }
 
 #[cfg(all(test, feature = "zk"))]
