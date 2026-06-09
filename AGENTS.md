@@ -17,9 +17,11 @@ cargo test
 ## CI test timing
 
 Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
-showing per-pass wall time vs a main baseline, plus per-test outliers from the
-nextest JUnit output. The CI test job uploads artifact `ci-test-timing-data`
-containing `summary.json` and the rendered comment/report.
+showing per-pass wall time vs a main baseline, critical-path wall time when passes
+run in parallel, plus per-test outliers from the nextest JUnit output. CI runs the
+non-zk and all-features nextest passes in parallel jobs; the `test-timing` job
+merges JUnit and uploads artifact `ci-test-timing-data` containing `summary.json`
+and the rendered comment/report.
 
 ## Crate Structure
 

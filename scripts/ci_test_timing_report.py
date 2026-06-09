@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     merge.add_argument("--started-at", dest="started_ats", action="append", default=[])
     merge.add_argument("--finished-at", dest="finished_ats", action="append", default=[])
     merge.add_argument("--exit-code", dest="exit_codes", action="append", default=[])
+    merge.add_argument(
+        "--passes-parallel",
+        action="store_true",
+        help="Passes ran in parallel CI jobs; report critical-path wall as max(pass wall).",
+    )
 
     render = subparsers.add_parser("render", help="Render comment.md/report.md from summary.json.")
     render.add_argument("summary", help="Path to current summary.json")
@@ -250,6 +255,7 @@ def render_report(
         lines.append(f"- Previous run: {code_text(prev_sha[:7])}.")
     lines.append("")
 
+    passes_parallel = bool(current.get("passes_parallel"))
     pass_order = ["non-zk", "all-features"]
     lines.append("### Pass summary")
     lines.append("")
@@ -288,7 +294,34 @@ def render_report(
             )
             + " |"
         )
-    lines.append("")
+    if passes_parallel:
+        pass_walls = []
+        for pass_name in pass_order:
+            cur_pass = normalize_pass(current, pass_name) or {}
+            cur_wall = cur_pass.get("wall_s")
+            if cur_wall is not None:
+                pass_walls.append(float(cur_wall))
+        critical_path_s = max(pass_walls) if pass_walls else None
+        main_critical_path_s = None
+        if main is not None:
+            main_walls = []
+            for pass_name in pass_order:
+                main_pass = normalize_pass(main, pass_name) or {}
+                main_wall = main_pass.get("wall_s")
+                if main_wall is not None:
+                    main_walls.append(float(main_wall))
+            main_critical_path_s = max(main_walls) if main_walls else None
+        critical_delta_pct = percent_delta(critical_path_s, main_critical_path_s)
+        lines.append(
+            f"- Critical path (max pass wall, passes run in parallel): "
+            f"{fmt_seconds(critical_path_s)} s"
+            + (
+                f" (main {fmt_seconds(main_critical_path_s)} s, {fmt_pct(critical_delta_pct)})."
+                if main_critical_path_s is not None
+                else "."
+            )
+        )
+        lines.append("")
 
     def render_slowest(pass_name: str) -> None:
         cur_pass = normalize_pass(current, pass_name) or {}
@@ -411,6 +444,7 @@ def merge_command(args: argparse.Namespace) -> int:
         "source_sha": args.source_sha,
         "source_branch": args.source_branch,
         "workflow_run_id": int(args.workflow_run_id),
+        "passes_parallel": bool(args.passes_parallel),
         "passes": {},
     }
 

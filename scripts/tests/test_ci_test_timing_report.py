@@ -41,6 +41,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "started_ats": ["100", "200"],
                     "finished_ats": ["110", "260"],
                     "exit_codes": ["0", "1"],
+                    "passes_parallel": True,
                 },
             )()
             report.merge_command(args)
@@ -68,6 +69,8 @@ class CiTestTimingReportTests(unittest.TestCase):
             comment = comment_path.read_text(encoding="utf-8")
             self.assertIn(report.MARKER, comment)
             self.assertIn("CI test timing", comment)
+            self.assertIn("Critical path", comment)
+            self.assertTrue(summary.get("passes_parallel"))
 
 
 if __name__ == "__main__":

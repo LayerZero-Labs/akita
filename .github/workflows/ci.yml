@@ -94,36 +94,49 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  test:
-    name: Test
+  test-non-zk:
+    name: Test (non-zk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
-      - name: Test timing script fixtures
-        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
       - name: Run tests (all non-zk features)
-        id: test-non-zk
-        continue-on-error: true
         run: |
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk"
+          mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
           cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence
           status=$?
           set -e
           end_epoch=$(date +%s)
-          {
-            echo "AKITA_TEST_TIMING_NON_ZK_START=$start_epoch"
-            echo "AKITA_TEST_TIMING_NON_ZK_END=$end_epoch"
-            echo "AKITA_TEST_TIMING_NON_ZK_STATUS=$status"
-          } >> "$GITHUB_ENV"
+          cp target/nextest/ci-non-zk/junit.xml "$artifact_dir/junit.xml"
+          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
+            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing.json"
           exit "$status"
+      - name: Upload non-zk pass artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-test-pass-non-zk
+          path: ${{ runner.temp }}/ci-test-pass-non-zk
+          if-no-files-found: warn
+          retention-days: 7
+
+  test-all-features:
+    name: Test (all-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all features)
-        id: test-all-features
-        continue-on-error: true
         run: |
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features"
+          mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
           # akita-field defines no zk feature; its tests are field-arithmetic only and
@@ -133,36 +146,95 @@ jobs:
           status=$?
           set -e
           end_epoch=$(date +%s)
-          {
-            echo "AKITA_TEST_TIMING_ALL_FEATURES_START=$start_epoch"
-            echo "AKITA_TEST_TIMING_ALL_FEATURES_END=$end_epoch"
-            echo "AKITA_TEST_TIMING_ALL_FEATURES_STATUS=$status"
-          } >> "$GITHUB_ENV"
+          cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit.xml"
+          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s}\n' \
+            "$start_epoch" "$end_epoch" "$status" > "$artifact_dir/timing.json"
           exit "$status"
+      - name: Upload all-features pass artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-test-pass-all-features
+          path: ${{ runner.temp }}/ci-test-pass-all-features
+          if-no-files-found: warn
+          retention-days: 7
+
+  test-timing:
+    name: Test timing
+    needs: [test-non-zk, test-all-features]
+    if: >-
+      always() &&
+      needs.test-non-zk.result != 'cancelled' &&
+      needs.test-all-features.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test timing script fixtures
+        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
+      - name: Download non-zk pass artifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ci-test-pass-non-zk
+          path: ${{ runner.temp }}/ci-test-pass-non-zk
+      - name: Download all-features pass artifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ci-test-pass-all-features
+          path: ${{ runner.temp }}/ci-test-pass-all-features
       - name: Merge test timing artifact
+        id: merge
         if: always()
         run: |
+          read_timing() {
+            local path="$1"
+            if [ ! -f "$path" ]; then
+              echo "0 0 1"
+              return
+            fi
+            python3 - "$path" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(
+              data.get("started_at_epoch", 0),
+              data.get("finished_at_epoch", 0),
+              data.get("exit_code", 1),
+          )
+          PY
+          }
+
+          set -- $(read_timing "$RUNNER_TEMP/ci-test-pass-non-zk/timing.json")
+          NON_ZK_START=$1 NON_ZK_END=$2 NON_ZK_STATUS=$3
+          set -- $(read_timing "$RUNNER_TEMP/ci-test-pass-all-features/timing.json")
+          ALL_FEATURES_START=$1 ALL_FEATURES_END=$2 ALL_FEATURES_STATUS=$3
+
           mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
           python3 scripts/ci_test_timing_report.py merge \
             --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
             --source-sha "$GITHUB_SHA" \
             --source-branch "${{ github.head_ref || github.ref_name }}" \
             --workflow-run-id "$GITHUB_RUN_ID" \
+            --passes-parallel \
             --pass non-zk \
-            --junit target/nextest/ci-non-zk/junit.xml \
-            --started-at "${AKITA_TEST_TIMING_NON_ZK_START:-0}" \
-            --finished-at "${AKITA_TEST_TIMING_NON_ZK_END:-0}" \
-            --exit-code "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}" \
+            --junit "$RUNNER_TEMP/ci-test-pass-non-zk/junit.xml" \
+            --started-at "$NON_ZK_START" \
+            --finished-at "$NON_ZK_END" \
+            --exit-code "$NON_ZK_STATUS" \
             --pass all-features \
-            --junit target/nextest/ci-all-features/junit.xml \
-            --started-at "${AKITA_TEST_TIMING_ALL_FEATURES_START:-0}" \
-            --finished-at "${AKITA_TEST_TIMING_ALL_FEATURES_END:-0}" \
-            --exit-code "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}"
+            --junit "$RUNNER_TEMP/ci-test-pass-all-features/junit.xml" \
+            --started-at "$ALL_FEATURES_START" \
+            --finished-at "$ALL_FEATURES_END" \
+            --exit-code "$ALL_FEATURES_STATUS"
           python3 scripts/ci_test_timing_report.py render \
             "$RUNNER_TEMP/ci-test-timing-artifact/summary.json" \
             --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
             --compact
           cat "$RUNNER_TEMP/ci-test-timing-artifact/report.md" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "non_zk_status=$NON_ZK_STATUS"
+            echo "all_features_status=$ALL_FEATURES_STATUS"
+          } >> "$GITHUB_OUTPUT"
       - name: Upload test timing artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -174,11 +246,11 @@ jobs:
       - name: Fail if any test pass failed
         if: always()
         run: |
-          if [ "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}" -ne 0 ]; then
-            exit "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}"
+          if [ "${{ steps.merge.outputs.non_zk_status || '1' }}" -ne 0 ]; then
+            exit "${{ steps.merge.outputs.non_zk_status || '1' }}"
           fi
-          if [ "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}" -ne 0 ]; then
-            exit "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}"
+          if [ "${{ steps.merge.outputs.all_features_status || '1' }}" -ne 0 ]; then
+            exit "${{ steps.merge.outputs.all_features_status || '1' }}"
           fi
 
   typos:
