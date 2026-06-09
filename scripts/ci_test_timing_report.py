@@ -422,6 +422,10 @@ def render_report(
                 else "."
             )
         )
+        if main is not None and not main_parallel:
+            lines.append(
+                "_Main critical-path delta omitted (main baseline predates parallel CI passes)._"
+            )
         lines.append("")
 
     def render_slowest(pass_name: str) -> None:

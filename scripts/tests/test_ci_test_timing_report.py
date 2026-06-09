@@ -122,6 +122,8 @@ class CiTestTimingReportTests(unittest.TestCase):
 
     def test_read_timing_command(self) -> None:
         from scripts import ci_test_timing_report as report
+        import io
+        import contextlib
 
         with tempfile.TemporaryDirectory() as tmp:
             timing = pathlib.Path(tmp) / "timing.json"
@@ -130,7 +132,33 @@ class CiTestTimingReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             args = type("Args", (), {"timing": str(timing)})()
-            report.read_timing_command(args)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                report.read_timing_command(args)
+            self.assertEqual(buf.getvalue().strip(), "100 150 0")
+
+    def test_critical_path_omits_main_delta_without_parallel_baseline(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        current = {
+            "passes_parallel": True,
+            "passes_sharded": False,
+            "passes": {
+                "non-zk": {"wall_s": 500.0},
+                "all-features": {"wall_s": 200.0},
+            },
+        }
+        main = {
+            "passes_parallel": False,
+            "passes": {
+                "non-zk": {"wall_s": 600.0},
+                "all-features": {"wall_s": 250.0},
+            },
+        }
+        comment, _ = report.render_report(current, main, None, compact=True)
+        self.assertIn("Critical path", comment)
+        self.assertIn("predates parallel CI passes", comment)
+        self.assertNotIn("main 600", comment)
 
     def test_prepare_pass_finds_nested_shard_artifacts(self) -> None:
         from scripts import ci_test_timing_report as report
