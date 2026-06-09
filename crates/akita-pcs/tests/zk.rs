@@ -391,7 +391,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         let mut verifier_transcript = AkitaTranscript::<fp32::Field>::new(label);
         assert!(
             <Scheme<D, Cfg> as CommitmentVerifier<fp32::Field, D>>::batched_verify(
-                &proof,
+                &tampered,
                 &verifier_setup,
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitment),
