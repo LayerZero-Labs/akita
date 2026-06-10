@@ -54,6 +54,50 @@ macro_rules! dispatch_ring_dim {
 /// [`AkitaError`](akita_field::AkitaError) for unsupported dimensions.
 #[macro_export]
 macro_rules! dispatch_ring_dim_result {
+    (
+        $d:expr,
+        $current_D:ident,
+        $current_prepared:expr,
+        |$D:ident, $prepared:ident| $body:block,
+        $prepare:expr
+    ) => {{
+        let __d = $d;
+        if __d == $current_D {
+            let $prepared = $current_prepared;
+            $body
+        } else {
+            match __d {
+                32 => {
+                    const $D: usize = 32;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                64 => {
+                    const $D: usize = 64;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                128 => {
+                    const $D: usize = 128;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                256 => {
+                    const $D: usize = 256;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                _ => Err(akita_field::AkitaError::InvalidInput(format!(
+                    "unsupported ring dimension: {__d}"
+                ))),
+            }
+        }
+    }};
+
     ($d:expr, |$D:ident| $body:expr) => {{
         let __d = $d;
         match __d {

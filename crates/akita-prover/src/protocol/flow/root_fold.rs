@@ -55,7 +55,7 @@ where
     Ok(poly.evaluate_and_fold_ring(b, a, block_len))
 }
 
-pub(in crate::protocol::flow) fn evaluate_recursive_witness_at_multiplier_point<F, const D: usize>(
+pub(in crate::protocol::flow) fn evaluate_witness_at_multiplier_point<F, const D: usize>(
     witness: &RecursiveWitnessView<'_, F, D>,
     point: &RingMultiplierOpeningPoint<F, D>,
     block_len: usize,
