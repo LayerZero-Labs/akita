@@ -4,7 +4,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope,
+    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    SetupPrefixVerifierRegistry,
 };
 #[cfg(feature = "zk")]
 use akita_types::{derive_zk_b_matrix, derive_zk_d_matrix};
@@ -18,6 +19,8 @@ use std::sync::Arc;
 pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+    /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
+    pub prefix_slots: SetupPrefixProverRegistry<F, D>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
@@ -77,15 +80,25 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             ),
         );
 
-        Ok(Self { expanded })
+        Ok(Self {
+            expanded,
+            prefix_slots: SetupPrefixProverRegistry::new(),
+        })
     }
 
     /// Derive a verifier setup from this prover setup.
-    #[must_use]
-    pub fn verifier_setup(&self) -> AkitaVerifierSetup<F> {
-        AkitaVerifierSetup {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if prover prefix-slot metadata cannot be converted into
+    /// verifier-visible prefix slots.
+    pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
+        Ok(AkitaVerifierSetup {
             expanded: self.expanded.clone(),
-        }
+            prefix_slots,
+        })
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -186,7 +199,10 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
             expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
         }
-        Ok(Self { expanded })
+        Ok(Self {
+            expanded,
+            prefix_slots: SetupPrefixProverRegistry::new(),
+        })
     }
 
     /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup.
@@ -206,7 +222,8 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Val
     for AkitaProverSetup<F, D>
 {
     fn check(&self) -> Result<(), SerializationError> {
-        self.expanded.check()
+        self.expanded.check()?;
+        self.prefix_slots.check()
     }
 }
 
@@ -254,5 +271,62 @@ mod tests {
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("max_setup_len"));
+    }
+
+    #[test]
+    fn prover_setup_check_validates_prefix_slots() {
+        use akita_algebra::CyclotomicRing;
+        use akita_types::{
+            AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, SetupPrefixSlot,
+            SetupPrefixSlotId,
+        };
+
+        let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+            8,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .expect("generate setup");
+        let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
+        let recomposed = vec![Vec::new()];
+        #[cfg(feature = "zk")]
+        let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+            decomposed,
+            recomposed,
+            FlatDigitBlocks::empty(),
+        );
+        #[cfg(not(feature = "zk"))]
+        let hint =
+            AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
+        setup
+            .prefix_slots
+            .insert(SetupPrefixSlot {
+                id: SetupPrefixSlotId {
+                    setup_seed_digest: [1u8; 32],
+                    d_setup: 32,
+                    natural_len: 1,
+                    n_prefix: 3,
+                    level_params_digest: [2u8; 32],
+                },
+                natural_len: 1,
+                padded_len: 3,
+                commitment: RingCommitment {
+                    u: vec![CyclotomicRing::zero()],
+                },
+                hint,
+            })
+            .expect("insert malformed slot");
+
+        let err = setup
+            .check()
+            .expect_err("prover setup check must reject invalid prefix slots");
+        assert!(err.to_string().contains("n_prefix"));
     }
 }
