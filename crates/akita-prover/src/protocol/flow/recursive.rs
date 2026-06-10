@@ -408,6 +408,8 @@ where
 
     #[cfg(not(feature = "zk"))]
     let proof_y_rings = y_rings;
+    #[cfg(feature = "zk")]
+    let proof_y_rings = y_rings_masked;
     let mut level_proof = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
         proof_y_rings,
         extension_opening_reduction,
