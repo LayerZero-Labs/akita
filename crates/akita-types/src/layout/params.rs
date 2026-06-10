@@ -758,7 +758,7 @@ mod tests {
         // Per-point layout: consistency (np) | public (np) | D (n_d=3) |
         // COMMIT (n_b=4 · nc) | A (np · n_a=2). At np=1 this collapses to the
         // historical single-point layout (byte-identical).
-        assert_eq!(lp.m_row_count(1, 1).unwrap(), 1 + 1 + 3 + 4 + 1 * 2);
+        assert_eq!(lp.m_row_count(1, 1).unwrap(), 1 + 1 + 3 + 4 + 2);
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 5 + 5 + 3 + 4 * 2 + 5 * 2);
         assert_eq!(lp.m_row_count(4, 4).unwrap(), 4 + 4 + 3 + 4 * 4 + 4 * 2);
         assert_eq!(

@@ -672,7 +672,12 @@ mod tests {
         // Per-(point, t-vector) routed challenge carry summaries.
         let mut challenge_block_summaries =
             vec![[F::zero(); 2]; p.num_public_rows * p.num_t_vectors];
-        for claim_idx in 0..p.num_claims {
+        for (claim_idx, (&point_idx, &t_vec_idx)) in p
+            .claim_to_point
+            .iter()
+            .zip(claim_to_t_vector.iter())
+            .enumerate()
+        {
             let start = claim_idx * p.num_blocks;
             let summary = summarize_pow2_block_carries(
                 &eq_low,
@@ -680,7 +685,7 @@ mod tests {
                 &c_alphas[start..(start + p.num_blocks)],
             )
             .unwrap();
-            let dst = p.claim_to_point[claim_idx] * p.num_t_vectors + claim_to_t_vector[claim_idx];
+            let dst = point_idx * p.num_t_vectors + t_vec_idx;
             challenge_block_summaries[dst][0] += summary[0];
             challenge_block_summaries[dst][1] += summary[1];
         }
