@@ -752,6 +752,89 @@ where
     )
 }
 
+/// Verify a batched proof against a caller-supplied folded schedule.
+///
+/// Test-only seam mirroring [`verify_batched`] but accepting the schedule
+/// explicitly instead of deriving it from `Cfg::get_params_for_prove`. This
+/// exists so exit tests can drive a multi-source carried-opening batch through
+/// a recursive fold, whose schedule the production planner never emits on its
+/// own. The supplied schedule must be folded (carried batches require a
+/// recursive fold to consume them); the root-direct rewrite is intentionally
+/// not applied here.
+///
+/// # Errors
+///
+/// Returns an error if the schedule is not folded, the proof shape disagrees
+/// with the schedule, or proof replay rejects.
+#[cfg(feature = "test-support")]
+#[allow(clippy::too_many_arguments)]
+pub fn verify_batched_with_schedule<'a, Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    claims: VerifierClaims<'a, Cfg::ClaimField, RingCommitment<Cfg::Field, D>>,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+    schedule: &Schedule,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + ExtField<Cfg::ClaimField>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
+    check_batched_proof_step_shape(proof)?;
+
+    let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
+    if schedule_root_fold_step(schedule).is_none() {
+        return Err(AkitaError::InvalidProof);
+    }
+    validate_schedule_onehot_chunk_size::<Cfg>(schedule)?;
+
+    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+        &setup.expanded,
+        &prepared_claims.incidence_summary,
+        schedule,
+        basis,
+        transcript,
+    )?;
+
+    let schedule_context =
+        prepare_batched_verifier_schedule_context(num_vars, schedule, |_next_inputs| {
+            scheduled_next_level_params(schedule, 1)
+        })
+        .map_err(|_| AkitaError::InvalidProof)?;
+
+    verify_batched_proof_with_schedule::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, D, _>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        basis,
+        schedule,
+        schedule_context,
+        setup_contribution_mode,
+        |witnesses, commitments, incidence_summary, direct_commitment_payload| {
+            let params = Cfg::get_params_for_batched_commitment(incidence_summary)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            verify_root_direct_commitments_with_params::<Cfg::Field, D>(
+                witnesses,
+                setup,
+                commitments,
+                incidence_summary,
+                &params,
+                direct_commitment_payload,
+            )
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

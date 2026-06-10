@@ -3,7 +3,10 @@ use super::*;
 mod carried;
 
 struct PreparedRecursiveFold<F: FieldCore, L: FieldCore, const D: usize> {
-    commitment: FlatRingVec<F>,
+    /// Concatenated commitment rows across all carried claims (claim order),
+    /// fed into the relation claim. For the singleton case this is just the
+    /// recursive witness commitment.
+    commitment_rows: Vec<CyclotomicRing<F, D>>,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     reduction: Option<RecursiveExtensionOpeningReduction<L>>,
@@ -21,14 +24,6 @@ struct PreparedRecursiveFold<F: FieldCore, L: FieldCore, const D: usize> {
 type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
 #[cfg(feature = "zk")]
 type TerminalFoldResult<F, L> = (TerminalLevelProof<F, L>, ZkHidingProverState<F>);
-
-type PreparedRecursiveOpenings<F, L, const D: usize> = (
-    Option<RecursiveExtensionOpeningReduction<L>>,
-    Vec<PreparedRecursiveOpeningPoint<F, L, D>>,
-);
-
-type EvaluatedRecursiveWitness<F, const D: usize> =
-    (Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>);
 
 /// Drive the recursive fold suffix (after the root) under config `Cfg`.
 ///
@@ -262,7 +257,7 @@ where
     Cfg: CommitmentConfig<Field = F, ChallengeField = L>,
 {
     let PreparedRecursiveFold {
-        commitment,
+        commitment_rows,
         instance,
         witness,
         reduction,
@@ -273,7 +268,7 @@ where
         #[cfg(feature = "zk")]
         mut zk_hiding,
     } = prepared_fold;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
+    let commitment_u = commitment_rows.as_slice();
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let next_commitment = {
@@ -549,7 +544,7 @@ where
     B: ProverComputeBackend<F>,
 {
     let PreparedRecursiveFold {
-        commitment,
+        commitment_rows,
         instance,
         witness,
         reduction,
@@ -560,7 +555,7 @@ where
         #[cfg(feature = "zk")]
         mut zk_hiding,
     } = prepared_fold;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
+    let commitment_u = commitment_rows.as_slice();
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let terminal_layout = terminal_witness_segment_layout(
         lp,
@@ -846,124 +841,6 @@ where
     })
 }
 
-fn prepare_openings<F, L, T, const D: usize>(
-    logical_w: &RecursiveWitnessFlat,
-    opening_point: &[L],
-    expected_opening: L,
-    transcript: &mut T,
-    level: usize,
-    level_params: &LevelParams,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
-) -> Result<PreparedRecursiveOpenings<F, L, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    let (reduction, protocol_point) = if <L as ExtField<F>>::EXT_DEGREE == 1 {
-        (None, opening_point.to_vec())
-    } else {
-        let reduction = prove_extension_opening_reduction::<F, L, T>(
-            logical_w,
-            opening_point,
-            expected_opening,
-            transcript,
-            #[cfg(feature = "zk")]
-            zk_hiding,
-        )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        (Some(reduction), protocol_point)
-    };
-
-    let prepared_points = {
-        let _span = tracing::info_span!("ring_opening_point", level).entered();
-        vec![prepare_recursive_opening_point_ext::<F, L, D>(
-            &protocol_point,
-            BasisMode::Lagrange,
-            level_params,
-            alpha,
-            BlockOrder::ColumnMajor,
-        )?]
-    };
-
-    Ok((reduction, prepared_points))
-}
-
-fn evaluate_witness<F, L, const D: usize>(
-    witness_view: &RecursiveWitnessView<'_, F, D>,
-    prepared_points: &[PreparedRecursiveOpeningPoint<F, L, D>],
-    level: usize,
-    level_params: &LevelParams,
-) -> Result<EvaluatedRecursiveWitness<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    L: FieldCore,
-{
-    let _span = tracing::info_span!(
-        "evaluate_and_fold",
-        level,
-        num_ring_elems = witness_view.num_ring_elems(),
-        num_points = prepared_points.len()
-    )
-    .entered();
-    let mut y_rings = Vec::with_capacity(prepared_points.len());
-    let mut folded = Vec::with_capacity(prepared_points.len());
-    for prepared_point in prepared_points {
-        let (y_ring, e_folded) = evaluate_witness_at_multiplier_point(
-            witness_view,
-            &prepared_point.ring_multiplier_point,
-            level_params.block_len,
-            level_params.num_blocks,
-        )?;
-        y_rings.push(y_ring);
-        folded.push(e_folded);
-    }
-    Ok((y_rings, folded))
-}
-
-/// Fail-fast prover guard tying the folded witness back to the carried claim.
-///
-/// The opening recovered from the folded `y_ring` must equal the carried claim
-/// (degree-one challenge field) or be consistent with the extension-opening
-/// reduction's final claim (proper extension). This writes nothing to the
-/// transcript: the verifier re-derives the same relation, and the root path
-/// performs the analogous check in `root_fold.rs`.
-fn check_recursive_opening_consistency<F, L, const D: usize>(
-    reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
-    y_ring: &CyclotomicRing<F, D>,
-    inner_reduction: &CyclotomicRing<F, D>,
-    expected_opening: L,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt + Invertible,
-    L: RingSubfieldEncoding<F>,
-{
-    let recovered = recover_ring_subfield_inner_product::<F, L, D>(y_ring, inner_reduction)?;
-    match reduction {
-        Some(reduction) => check_extension_opening_reduction_output(
-            reduction.final_claim,
-            recovered,
-            reduction.final_factor,
-        ),
-        None => {
-            if recovered != expected_opening {
-                return Err(AkitaError::InvalidInput(
-                    "recursive opening does not match carried claim".to_string(),
-                ));
-            }
-            Ok(())
-        }
-    }
-}
-
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
 ///
@@ -1020,42 +897,148 @@ where
         logical_w,
         commitment,
         hint,
-        sumcheck_challenges,
-        opening: expected_opening,
+        sumcheck_challenges: _,
+        opening: _,
         log_basis: _,
-        carried_openings: _carried_openings,
-        extra_carried_sources: _extra_carried_sources,
+        carried_openings,
+        extra_carried_sources,
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
     let witness_view = w.view::<F, D>()?;
     let logical_w = logical_w.as_ref().unwrap_or(&w);
+    let committed_w_len = logical_w.len();
     let typed_hint = hint.to_typed::<D>()?;
-    let opening_point = &sumcheck_challenges;
     #[cfg(feature = "zk")]
     let mut zk_hiding = zk_hiding;
 
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
 
-    let (reduction, prepared_points) = prepare_openings::<F, L, T, D>(
-        logical_w,
-        opening_point,
-        expected_opening,
-        transcript,
-        level,
-        level_params,
-        #[cfg(feature = "zk")]
-        &mut zk_hiding,
-    )?;
+    // Bind the carried-opening batch (sources + per-claim metadata) into the
+    // transcript before any fold challenge is sampled. Source 0 is the folded
+    // recursive witness; extras are proof-visible carried sources.
+    let mut carried_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    carried_sources.push(CarriedOpeningSource {
+        commitment: &commitment,
+    });
+    carried_sources.extend(
+        extra_carried_sources
+            .iter()
+            .map(|source| CarriedOpeningSource {
+                commitment: &source.commitment,
+            }),
+    );
+    let carried_claims = carried_openings
+        .iter()
+        .map(|claim| CarriedOpeningClaim {
+            source_idx: claim.source_idx,
+            point: &claim.opening_point,
+            value: claim.transcript_opening(),
+            basis: claim.basis,
+            natural_len: claim.natural_len,
+            padded_len: claim.padded_len,
+            kind: claim.kind,
+        })
+        .collect::<Vec<_>>();
+    append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
 
-    let (y_rings, e_folded_by_claim) =
-        evaluate_witness(&witness_view, &prepared_points, level, level_params)?;
-    check_recursive_opening_consistency::<F, L, D>(
-        &reduction,
-        &y_rings[0],
-        &prepared_points[0].inner_reduction,
-        expected_opening,
-    )?;
+    let mut source_views = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_views.push(witness_view);
+    let mut source_logical_lens = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_logical_lens.push(committed_w_len);
+    for source in &extra_carried_sources {
+        source_views.push(source.w.view::<F, D>()?);
+        source_logical_lens.push(source.logical_w.as_ref().unwrap_or(&source.w).len());
+    }
+    if carried_openings.is_empty()
+        || carried_openings.iter().any(|claim| {
+            (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
+                && claim.natural_len != committed_w_len)
+                || claim.natural_len > claim.padded_len
+                || source_logical_lens
+                    .get(claim.source_idx)
+                    .is_none_or(|&source_len| claim.natural_len > source_len)
+        })
+        || carried_incidence.num_claims() != carried_openings.len()
+    {
+        return Err(AkitaError::InvalidInput(
+            "recursive carried openings must share the current witness domain".to_string(),
+        ));
+    }
+    if <L as ExtField<F>>::EXT_DEGREE != 1 && carried_openings.len() != 1 {
+        return Err(AkitaError::InvalidInput(
+            "batched recursive extension-opening reduction is not implemented".to_string(),
+        ));
+    }
+
+    // Claim 0 uses the extension-opening reduction only for proper extension
+    // fields; extra claims always open directly at their carried point.
+    let reduction = if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        None
+    } else {
+        let claim = &carried_openings[0];
+        Some(prove_extension_opening_reduction::<F, L, T>(
+            logical_w,
+            &claim.opening_point,
+            claim.opening,
+            transcript,
+            #[cfg(feature = "zk")]
+            &mut zk_hiding,
+        )?)
+    };
+    let prepared_points = {
+        let _span = tracing::info_span!("ring_opening_point", level).entered();
+        let mut prepared = Vec::with_capacity(carried_openings.len());
+        for (claim_idx, claim) in carried_openings.iter().enumerate() {
+            let protocol_point = match (&reduction, claim_idx) {
+                (Some(reduction), 0) => ring_subfield_packed_extension_opening_point::<F, L, D>(
+                    reduction.rho.len(),
+                    &reduction.rho,
+                )?,
+                (Some(_), _) => {
+                    return Err(AkitaError::InvalidInput(
+                        "batched recursive extension-opening reduction is not implemented"
+                            .to_string(),
+                    ))
+                }
+                (None, _) => claim.opening_point.clone(),
+            };
+            prepared.push(prepare_recursive_opening_point_ext::<F, L, D>(
+                &protocol_point,
+                claim.basis,
+                level_params,
+                alpha,
+                BlockOrder::ColumnMajor,
+            )?);
+        }
+        prepared
+    };
+
+    let (y_rings, e_folded_by_claim) = {
+        let _span = tracing::info_span!(
+            "evaluate_and_fold",
+            level,
+            num_points = prepared_points.len()
+        )
+        .entered();
+        let mut y_rings = Vec::with_capacity(prepared_points.len());
+        let mut folded = Vec::with_capacity(prepared_points.len());
+        for (claim, prepared_point) in carried_openings.iter().zip(prepared_points.iter()) {
+            let source_view = source_views.get(claim.source_idx).ok_or_else(|| {
+                AkitaError::InvalidInput("carried source index out of range".to_string())
+            })?;
+            let (y_ring, e_folded) = evaluate_witness_at_multiplier_point(
+                source_view,
+                &prepared_point.ring_multiplier_point,
+                level_params.block_len,
+                level_params.num_blocks,
+            )?;
+            y_rings.push(y_ring);
+            folded.push(e_folded);
+        }
+        (y_rings, folded)
+    };
     #[cfg(feature = "zk")]
     let y_rings_masked = y_rings
         .iter()
@@ -1077,7 +1060,63 @@ where
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
+
+    // Fail-fast: the opening recovered from each folded `y_ring` must match the
+    // carried claim (degree-one) or the extension-opening reduction's final
+    // claim (proper extension). The verifier re-derives the same relation.
+    let internal_claims = y_rings
+        .iter()
+        .zip(prepared_points.iter())
+        .map(|(y_ring, prepared_point)| {
+            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match &reduction {
+        Some(reduction) => {
+            check_extension_opening_reduction_output(
+                reduction.final_claim,
+                internal_claims[0],
+                reduction.final_factor,
+            )?;
+        }
+        None => {
+            for (claim, &internal_claim) in carried_openings.iter().zip(internal_claims.iter()) {
+                if internal_claim != claim.opening {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive opening does not match carried claim".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Build the quadratic sources and the concatenated commitment rows in claim
+    // order. Source 0 is the recursive witness; extras follow.
     let commitment_u = commitment.as_ring_slice::<D>()?;
+    let mut quadratic_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    quadratic_sources.push(RecursiveQuadraticSource {
+        witness: witness_view,
+        commitment: commitment_u,
+        hint: typed_hint,
+    });
+    for source in &extra_carried_sources {
+        quadratic_sources.push(RecursiveQuadraticSource {
+            witness: source.w.view::<F, D>()?,
+            commitment: source.commitment.as_ring_slice::<D>()?,
+            hint: source.hint.to_typed::<D>()?,
+        });
+    }
+    let claim_to_source = carried_openings
+        .iter()
+        .map(|claim| claim.source_idx)
+        .collect::<Vec<_>>();
+    let mut commitment_rows = Vec::new();
+    for claim in &carried_openings {
+        let source = quadratic_sources
+            .get(claim.source_idx)
+            .ok_or_else(|| AkitaError::InvalidInput("carried source index out of range".into()))?;
+        commitment_rows.extend_from_slice(source.commitment);
+    }
 
     let ring_opening_points = prepared_points
         .iter()
@@ -1092,23 +1131,22 @@ where
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        &witness_view,
+        quadratic_sources,
+        claim_to_source,
         e_folded_by_claim,
         level_params.clone(),
-        typed_hint,
         transcript,
-        commitment_u,
         &y_rings,
         m_row_layout,
     )?;
 
     Ok(PreparedRecursiveFold {
-        commitment,
+        commitment_rows,
         instance,
         witness,
         reduction,
         y_rings,
-        extra_carried_sources: _extra_carried_sources,
+        extra_carried_sources,
         #[cfg(feature = "zk")]
         y_rings_masked,
         #[cfg(feature = "zk")]

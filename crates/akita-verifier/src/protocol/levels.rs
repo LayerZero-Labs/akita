@@ -36,9 +36,8 @@ use akita_sumcheck::SumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 #[cfg(feature = "zk")]
 use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, ABSORB_ZK_HIDING_COMMITMENT};
@@ -48,8 +47,9 @@ use akita_types::check_tensor_extension_opening_claim;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_trace_inner_product_check;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript,
+    append_batched_commitments_to_transcript, append_carried_opening_batch_to_transcript,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, carried_opening_incidence_summary,
     flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
@@ -57,7 +57,8 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
+    CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSource,
+    CarriedOpeningSourceProof, ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
     ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
     RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
     SetupSumcheckProof, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
@@ -92,21 +93,75 @@ fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
 
 /// Verifier state carried between recursive fold levels.
 pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
-    /// Current opening point for the committed recursive witness.
-    pub opening_point: Vec<L>,
-    /// Claimed opening value for the current commitment.
-    pub opening: L,
-    /// Hidden mask added to `opening` in the public proof.
-    #[cfg(feature = "zk")]
-    pub opening_mask: ZkR1csLinearCombination<L>,
-    /// Current recursive witness commitment.
+    /// Current recursive witness commitment (carried source 0).
     pub commitment: &'a FlatRingVec<F>,
-    /// Basis used to interpret the current opening point.
-    pub basis: BasisMode,
-    /// Current recursive witness length in field elements.
-    pub w_len: usize,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
+    /// Opening claims carried into this recursive level. Claim 0 is the
+    /// ordinary recursive witness; extras reference `extra_carried_sources`.
+    pub carried_openings: Vec<RecursiveVerifierCarriedOpening<'a, F, L>>,
+    /// Extra proof-visible carried commitments. Source index 0 is `commitment`.
+    pub extra_carried_sources: Vec<RecursiveVerifierCarriedSource<'a, F>>,
+}
+
+/// Extra committed source carried into a recursive fold (verifier view).
+pub(crate) struct RecursiveVerifierCarriedSource<'a, F: FieldCore> {
+    pub commitment: &'a FlatRingVec<F>,
+}
+
+/// One opening claim carried into a recursive fold (verifier view).
+pub(crate) struct RecursiveVerifierCarriedOpening<'a, F: FieldCore, L: FieldCore> {
+    pub source_idx: usize,
+    pub opening_point: Vec<L>,
+    pub opening: L,
+    #[cfg(feature = "zk")]
+    pub opening_mask: ZkR1csLinearCombination<L>,
+    pub commitment: &'a FlatRingVec<F>,
+    pub basis: BasisMode,
+    pub natural_len: usize,
+    pub padded_len: usize,
+    pub kind: CarriedOpeningKind,
+}
+
+impl<'a, F: FieldCore, L: FieldCore> RecursiveVerifierState<'a, F, L> {
+    fn recursive_witness_claim(
+        &self,
+    ) -> Result<&RecursiveVerifierCarriedOpening<'a, F, L>, AkitaError> {
+        self.carried_openings
+            .iter()
+            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    pub(crate) fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
+        Ok(self.recursive_witness_claim()?.natural_len)
+    }
+
+    pub(crate) fn common_padded_len(&self) -> Result<usize, AkitaError> {
+        let first = self
+            .carried_openings
+            .first()
+            .ok_or(AkitaError::InvalidProof)?;
+        if self
+            .carried_openings
+            .iter()
+            .any(|claim| claim.padded_len != first.padded_len)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(first.padded_len)
+    }
+
+    pub(crate) fn source_commitments(&self) -> Result<Vec<&'a FlatRingVec<F>>, AkitaError> {
+        let mut sources = Vec::with_capacity(self.extra_carried_sources.len() + 1);
+        sources.push(self.commitment);
+        sources.extend(
+            self.extra_carried_sources
+                .iter()
+                .map(|source| source.commitment),
+        );
+        Ok(sources)
+    }
 }
 
 struct TerminalWitnessReplay {

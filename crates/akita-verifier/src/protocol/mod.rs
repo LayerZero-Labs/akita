@@ -8,6 +8,8 @@ pub(crate) mod levels;
 pub(crate) mod ring_switch;
 mod slice_mle;
 
+#[cfg(feature = "test-support")]
+pub use batched::verify_batched_with_schedule;
 pub use batched::{
     verify_batched, verify_root_direct_commitments_with_params, RootDirectBlindingPayload,
 };

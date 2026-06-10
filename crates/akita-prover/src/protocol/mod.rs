@@ -23,6 +23,8 @@ pub use flow::{
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RootLevelRawOutput,
 };
-pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
+pub use ring_relation::{
+    compute_relation_quotient, generate_y, RecursiveQuadraticSource, RingRelationProver,
+};
 pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{commit_next_w, RingSwitchOutput};

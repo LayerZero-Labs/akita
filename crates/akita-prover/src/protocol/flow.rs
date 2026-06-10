@@ -13,7 +13,7 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
-use crate::protocol::RingRelationProver;
+use crate::protocol::{RecursiveQuadraticSource, RingRelationProver};
 use crate::{
     AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
@@ -37,13 +37,14 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    append_batched_commitments_to_transcript, append_carried_opening_batch_to_transcript,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, basis_weights, carried_opening_incidence_summary,
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
@@ -59,12 +60,12 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSourceProof, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, CleartextWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSource,
+    CarriedOpeningSourceProof, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
