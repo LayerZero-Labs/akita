@@ -1,4 +1,5 @@
 use super::*;
+use cfg_if::cfg_if;
 
 struct PreparedRecursiveFold<F: FieldCore, L: FieldCore, const D: usize> {
     commitment: FlatRingVec<F>,
@@ -365,39 +366,45 @@ where
         commitment_u,
         &prepared_fold.y_rings,
     )?;
-    #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        relation_rows,
-        commitment_u,
-        &prepared_fold.y_rings_masked,
-    )?;
-    #[cfg(feature = "zk")]
-    let stage2_round_pads;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
+                &rs.tau1,
+                rs.alpha,
+                relation_rows,
+                commitment_u,
+                &prepared_fold.y_rings_masked,
+            )?;
+            let stage2_round_pads;
+        }
+    }
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
-        #[cfg(feature = "zk")]
-        {
-            stage2_round_pads =
-                zk_hiding.take_compressed_rounds::<L>(rs.col_bits + rs.ring_bits, 3)?;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                stage2_round_pads =
+                    zk_hiding.take_compressed_rounds::<L>(rs.col_bits + rs.ring_bits, 3)?;
+            }
         }
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())
     } else {
-        #[cfg(feature = "zk")]
-        let (stage1_round_pads, stage1_child_claim_masks, next_stage2_round_pads) =
-            zk_hiding.take_current_level_pads::<L>(rs.col_bits + rs.ring_bits, rs.b)?;
-        #[cfg(feature = "zk")]
-        {
-            stage2_round_pads = next_stage2_round_pads;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let (stage1_round_pads, stage1_child_claim_masks, next_stage2_round_pads) =
+                    zk_hiding.take_current_level_pads::<L>(rs.col_bits + rs.ring_bits, rs.b)?;
+                stage2_round_pads = next_stage2_round_pads;
+                let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(
+                    transcript,
+                    &rs,
+                    stage1_round_pads,
+                    stage1_child_claim_masks,
+                )?;
+            } else {
+                let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(
+                    transcript,
+                    &rs,
+                )?;
+            }
         }
-        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(
-            transcript,
-            &rs,
-            #[cfg(feature = "zk")]
-            stage1_round_pads,
-            #[cfg(feature = "zk")]
-            stage1_child_claim_masks,
-        )?;
         transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
         (Some(stage1_proof), stage1_point, s_claim)
     };
@@ -409,60 +416,71 @@ where
     let ring_bits = rs.ring_bits;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
-    let stage2_result = prove_stage2::<F, L, T>(
-        transcript,
-        batching_coeff,
-        rs,
-        &stage1_point,
-        s_claim,
-        relation_claim,
-        #[cfg(feature = "zk")]
-        relation_claim_public,
-        #[cfg(feature = "zk")]
-        stage1_proof
-            .as_ref()
-            .map(|proof| proof.s_claim)
-            .unwrap_or_else(L::zero),
-        #[cfg(feature = "zk")]
-        stage2_round_pads,
-    )?;
-    #[cfg(not(feature = "zk"))]
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let stage1_s_claim = stage1_proof
+                .as_ref()
+                .map(|proof| proof.s_claim)
+                .unwrap_or_else(L::zero);
+            let stage2_result = prove_stage2::<F, L, T>(
+                transcript,
+                batching_coeff,
+                rs,
+                &stage1_point,
+                s_claim,
+                relation_claim,
+                relation_claim_public,
+                stage1_s_claim,
+                stage2_round_pads,
+            )?;
+        } else {
+            let stage2_result = prove_stage2::<F, L, T>(
+                transcript,
+                batching_coeff,
+                rs,
+                &stage1_point,
+                s_claim,
+                relation_claim,
+            )?;
+        }
+    }
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = stage2_result;
-    #[cfg(feature = "zk")]
-    let (stage2_sumcheck_proof_masked, sumcheck_challenges, stage2_prover) = stage2_result;
     if is_terminal_fold {
         let final_witness = final_witness.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold did not bind a final witness".to_string())
         })?;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let proof_y_rings = prepared_fold.y_rings_masked;
+            } else {
+                let proof_y_rings = prepared_fold.y_rings;
+            }
+        }
         let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-            #[cfg(not(feature = "zk"))]
-            prepared_fold.y_rings,
-            #[cfg(feature = "zk")]
-            prepared_fold.y_rings_masked,
+            proof_y_rings,
             extension_opening_reduction,
-            #[cfg(not(feature = "zk"))]
             stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
             final_witness,
         );
-        #[cfg(not(feature = "zk"))]
-        {
-            Ok(FoldProveOutput::Terminal(Box::new(proof)))
-        }
-        #[cfg(feature = "zk")]
-        {
-            Ok(FoldProveOutput::Terminal(Box::new((proof, zk_hiding))))
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                Ok(FoldProveOutput::Terminal(Box::new((proof, zk_hiding))))
+            } else {
+                Ok(FoldProveOutput::Terminal(Box::new(proof)))
+            }
         }
     } else {
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
-        #[cfg(not(feature = "zk"))]
-        let proof_w_eval = w_eval;
-        #[cfg(feature = "zk")]
-        let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
+            } else {
+                let proof_w_eval = w_eval;
+            }
+        }
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
         let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
             setup_contribution_mode,
@@ -488,20 +506,20 @@ where
             AkitaError::InvalidInput("intermediate fold did not bind a next commitment".to_string())
         })?;
         let w_commitment_proof = committed_commitment.clone();
-        #[cfg(not(feature = "zk"))]
-        let proof_y_rings = prepared_fold.y_rings;
-        #[cfg(feature = "zk")]
-        let proof_y_rings = prepared_fold.y_rings_masked;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let proof_y_rings = prepared_fold.y_rings_masked;
+            } else {
+                let proof_y_rings = prepared_fold.y_rings;
+            }
+        }
         let mut level_proof =
             AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
                 proof_y_rings,
                 extension_opening_reduction,
                 prepared_fold.instance.v,
                 stage1_proof,
-                #[cfg(not(feature = "zk"))]
                 stage2_sumcheck_proof,
-                #[cfg(feature = "zk")]
-                stage2_sumcheck_proof_masked,
                 w_commitment_proof,
                 proof_w_eval,
             );
@@ -598,15 +616,14 @@ where
         rs.col_bits,
         rs.ring_bits,
     )?;
-    #[cfg(feature = "zk")]
-    {
-        stage1_prover.prove::<F, T>(transcript, stage1_round_pads, stage1_child_claim_masks)
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        Ok((stage1_proof, stage1_point, s_claim))
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            stage1_prover.prove::<F, T>(transcript, stage1_round_pads, stage1_child_claim_masks)
+        } else {
+            let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+            let s_claim = stage1_proof.s_claim;
+            Ok((stage1_proof, stage1_point, s_claim))
+        }
     }
 }
 
@@ -646,29 +663,28 @@ where
         rs.ring_bits,
         relation_claim,
     )?;
-    #[cfg(feature = "zk")]
-    {
-        let stage2_public_input = batching_coeff * stage1_s_claim + relation_claim_public;
-        let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-            .prove_zk::<F, T, _>(
-                stage2_public_input,
-                transcript,
-                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                stage2_round_pads,
-            )?;
-        Ok((
-            stage2_sumcheck_proof_masked,
-            sumcheck_challenges,
-            stage2_prover,
-        ))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
-            .prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let stage2_public_input = batching_coeff * stage1_s_claim + relation_claim_public;
+            let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
+                .prove_zk::<F, T, _>(
+                    stage2_public_input,
+                    transcript,
+                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                    stage2_round_pads,
+                )?;
+            Ok((
+                stage2_sumcheck_proof_masked,
+                sumcheck_challenges,
+                stage2_prover,
+            ))
+        } else {
+            let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+                .prove::<F, T, _>(transcript, |tr| {
+                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                })?;
+            Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
+        }
     }
 }
 
@@ -783,21 +799,24 @@ where
         expected_opening,
         &tensor.column_partials,
     )?;
-    #[cfg(feature = "zk")]
-    let (partial_masks, sumcheck_pads) = zk_hiding.take_extension_opening_reduction_pads::<L>(
-        tensor.column_partials.len(),
-        num_vars - split_bits,
-    )?;
-    #[cfg(feature = "zk")]
-    let proof_partials = tensor
-        .column_partials
-        .iter()
-        .copied()
-        .zip(partial_masks)
-        .map(|(partial, mask)| partial + mask)
-        .collect::<Vec<_>>();
-    #[cfg(not(feature = "zk"))]
-    let proof_partials = tensor.column_partials.clone();
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let (partial_masks, sumcheck_pads) =
+                zk_hiding.take_extension_opening_reduction_pads::<L>(
+                    tensor.column_partials.len(),
+                    num_vars - split_bits,
+                )?;
+            let proof_partials = tensor
+                .column_partials
+                .iter()
+                .copied()
+                .zip(partial_masks)
+                .map(|(partial, mask)| partial + mask)
+                .collect::<Vec<_>>();
+        } else {
+            let proof_partials = tensor.column_partials.clone();
+        }
+    }
     for partial in &proof_partials {
         append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
     }
@@ -833,17 +852,20 @@ where
         num_rounds = prover.num_rounds()
     )
     .entered();
-    #[cfg(not(feature = "zk"))]
-    let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-    })?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
-        input_claim,
-        transcript,
-        |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-        sumcheck_pads,
-    )?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let (sumcheck_proof, rho) = prover.prove_zk::<F, T, _>(
+                input_claim,
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                sumcheck_pads,
+            )?;
+        } else {
+            let (sumcheck_proof, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        }
+    }
     let (final_witness, final_factor_from_table) =
         prover.final_witness_and_factor_evals().ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -856,16 +878,19 @@ where
             "extension-opening reduction transparent factor mismatch".to_string(),
         ));
     }
-    #[cfg(feature = "zk")]
-    let final_claim = final_witness * final_factor;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let final_claim = final_witness * final_factor;
+        }
+    }
     check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
     Ok(RecursiveExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
             partials: proof_partials,
             #[cfg(not(feature = "zk"))]
-            sumcheck,
+            sumcheck: sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_proof_masked,
+            sumcheck_proof_masked: sumcheck_proof,
         },
         rho,
         final_claim,
@@ -1081,26 +1106,32 @@ where
         &prepared_points[0].inner_reduction,
         expected_opening,
     )?;
-    #[cfg(feature = "zk")]
-    let y_rings_masked = y_rings
-        .iter()
-        .map(|y_ring| {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-            Ok(*y_ring + y_garbage)
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let y_rings_masked = y_rings
+                .iter()
+                .map(|y_ring| {
+                    let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
+                    Ok(*y_ring + y_garbage)
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+        }
+    }
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            for y_ring in &y_rings_masked {
+                transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+            }
+        } else {
+            for y_ring in &y_rings {
+                transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+            }
+        }
     }
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
