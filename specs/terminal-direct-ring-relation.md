@@ -188,7 +188,8 @@ Those row targets are:
 - D rows are absent.
 
 The current quotient builder has a real singleton-vs-multipoint B-row fork.
-If `commitment_row_count == n_b` and `num_points == 1`, the direct checker may use the current singleton relation-B-row path.
+If the layout is not tiered and `commitment_row_count == n_b` and `num_points == 1`, the direct checker may use the current singleton relation-B-row path.
+Tiered layouts use separate F and inner-B row semantics instead; they must not take this shortcut.
 Otherwise it must mirror the current `repeated_b_commitment_rows` semantics and compare against flattened commitment rows in the same incidence order used by terminal-root verification.
 
 `TerminalWitnessSegmentLayout` (`crates/akita-types/src/proof/terminal_witness.rs:10`) is not enough for this checker by itself because it only describes the transcript `e_hat` slice.
