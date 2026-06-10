@@ -99,7 +99,7 @@ pub fn optimal_m_r_split(
 
     let mut best: Option<(u64, usize, u32)> = None;
 
-    for r in 1..reduced_vars {
+    for r in (1..reduced_vars).rev() {
         let num_blocks = 1u64 << r;
         let block_len: u64 = if num_ring > 0 {
             num_ring.div_ceil(1usize << r) as u64
