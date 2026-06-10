@@ -24,7 +24,10 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::D64OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-pub(super) const ONEHOT_K: usize = ONEHOT_D;
+// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+// ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
+// per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
+pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::D128Full;
 pub(super) const DENSE_D: usize = DenseCfg::D;
@@ -171,9 +174,12 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
-    let total_ring = layout.num_blocks * layout.block_len;
+    // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
+    // `2^nv / K` one-hot chunks of size `K`.
+    let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+    let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring)
+    let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
     OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
