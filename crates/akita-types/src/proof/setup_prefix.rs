@@ -1081,7 +1081,7 @@ mod tests {
             n_prefix: 32,
             level_params_digest: [9u8; 32],
         };
-        let slot = |natural_len| {
+        let slot = || {
             let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
             #[cfg(feature = "zk")]
@@ -1095,7 +1095,7 @@ mod tests {
                 AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
             SetupPrefixSlot {
                 id,
-                natural_len,
+                natural_len: id.natural_len,
                 padded_len: id.n_prefix,
                 commitment: RingCommitment {
                     u: vec![CyclotomicRing::<F, 32>::zero()],
@@ -1105,12 +1105,12 @@ mod tests {
         };
 
         let mut registry = SetupPrefixProverRegistry::<F, 32>::new();
-        registry.insert(slot(1)).expect("first insert");
+        registry.insert(slot()).expect("first insert");
         registry
-            .insert(slot(2))
+            .insert(slot())
             .expect_err("duplicate insert must fail");
 
-        assert_eq!(registry.get(&id).expect("stored slot").natural_len, 1);
+        assert_eq!(registry.len(), 1);
     }
 
     #[test]
@@ -1124,9 +1124,9 @@ mod tests {
             n_prefix: 32,
             level_params_digest: [9u8; 32],
         };
-        let slot = |natural_len| SetupPrefixVerifierSlot {
+        let slot = || SetupPrefixVerifierSlot {
             id,
-            natural_len,
+            natural_len: id.natural_len,
             padded_len: id.n_prefix,
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
@@ -1134,11 +1134,11 @@ mod tests {
         };
 
         let mut registry = SetupPrefixVerifierRegistry::<F>::new();
-        registry.insert(slot(1)).expect("first insert");
+        registry.insert(slot()).expect("first insert");
         registry
-            .insert(slot(2))
+            .insert(slot())
             .expect_err("duplicate insert must fail");
 
-        assert_eq!(registry.get(&id).expect("stored slot").natural_len, 1);
+        assert_eq!(registry.len(), 1);
     }
 }
