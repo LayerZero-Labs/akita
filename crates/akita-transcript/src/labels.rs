@@ -31,6 +31,8 @@ pub const ABSORB_SPARSE_CHALLENGE: &[u8] = b"ak/a/sp";
 pub const CHALLENGE_SPARSE_CHALLENGE: &[u8] = b"ak/c/sp";
 /// Absorb the initial sumcheck claim before round messages begin.
 pub const ABSORB_SUMCHECK_CLAIM: &[u8] = b"ak/a/sc";
+/// Absorb the selected setup-prefix slot id before delegated setup sumcheck replay.
+pub const ABSORB_SETUP_PREFIX_SLOT: &[u8] = b"ak/a/sps";
 /// Absorb per-round sumcheck messages (paper §4.3).
 pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 /// Challenge sampled per sumcheck round (paper §4.3).
@@ -103,6 +105,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SPARSE_CHALLENGE,
     CHALLENGE_SPARSE_CHALLENGE,
     ABSORB_SUMCHECK_CLAIM,
+    ABSORB_SETUP_PREFIX_SLOT,
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_SUMCHECK_S_CLAIM,

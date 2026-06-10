@@ -31,9 +31,6 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
 pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<L>,
-    /// Extension-field inner tensor weights over the `D` coefficients of the
-    /// folded ring.
-    pub inner_weights: Vec<L>,
     /// Ring-level outer opening point.
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
@@ -253,42 +250,6 @@ where
         .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RingMultiplierOpeningPoint::from_ring(a, b))
-}
-
-/// Evaluate the inner `D` coefficient slice of a folded base-field ring at an
-/// extension-field inner point.
-///
-/// Root psi-packed claims use the trace/subfield reduction because their ring
-/// coefficients encode extension slots. Recursive witnesses are different:
-/// their ring coefficients are ordinary base-field digits, opened over the
-/// extension challenge field. This helper is the explicit field-reduction
-/// boundary for that case.
-///
-/// # Errors
-///
-/// Returns an invalid-size error when `inner_weights` does not contain exactly
-/// one extension-field weight per ring coefficient.
-pub fn ring_inner_product_with_extension_weights<F, L, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    inner_weights: &[L],
-) -> Result<L, AkitaError>
-where
-    F: FieldCore,
-    L: RingSubfieldEncoding<F>,
-{
-    if inner_weights.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: inner_weights.len(),
-        });
-    }
-    Ok(ring
-        .coefficients()
-        .iter()
-        .zip(inner_weights.iter())
-        .fold(L::zero(), |acc, (&coeff, &weight)| {
-            acc + weight.mul_base(coeff)
-        }))
 }
 
 /// Flatten commitment rows in group order.
@@ -668,15 +629,8 @@ where
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
-        let inner_weights = base_point[..alpha_bits]
-            .iter()
-            .copied()
-            .map(L::lift_base)
-            .collect::<Vec<_>>();
-        let inner_weights = basis_weights(&inner_weights, basis)?;
         return Ok(PreparedRecursiveOpeningPoint {
             padded_point,
-            inner_weights,
             ring_opening_point,
             ring_multiplier_point,
             inner_reduction,
@@ -690,8 +644,6 @@ where
         ));
     }
 
-    let inner_point = &padded_point[..alpha_bits];
-    let inner_weights = basis_weights(inner_point, basis)?;
     let trace_inner_point_len = (D / L::EXT_DEGREE).trailing_zeros() as usize;
     if padded_point[trace_inner_point_len..alpha_bits]
         .iter()
@@ -726,7 +678,6 @@ where
 
     Ok(PreparedRecursiveOpeningPoint {
         padded_point,
-        inner_weights,
         ring_opening_point,
         ring_multiplier_point,
         inner_reduction,

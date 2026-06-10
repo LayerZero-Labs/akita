@@ -8,10 +8,13 @@ use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND};
+use akita_transcript::labels::{
+    ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
+};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
+    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `SetupSumcheckProver`: replays the setup product
@@ -84,7 +87,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// by setup-ring index bits (`lambda`).
     pub(crate) fn verify<F, T, const D: usize>(
         &self,
-        setup: &AkitaExpandedSetup<F>,
+        setup: &AkitaVerifierSetup<F>,
+        next_fold_level_params: &LevelParams,
         proof: &SetupSumcheckProof<E>,
         transcript: &mut T,
     ) -> Result<(), AkitaError>
@@ -93,6 +97,38 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + AkitaSerialize,
         T: Transcript<F>,
     {
+        let setup_len = setup
+            .expanded
+            .shared_matrix()
+            .total_ring_elements_at::<D>()?;
+        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+            let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
+            })?;
+            let setup_prefix_selection = select_setup_prefix_slot(
+                setup.expanded.seed(),
+                setup_len,
+                |id| {
+                    setup
+                        .prefix_slots
+                        .get(id)
+                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
+                },
+                next_fold_level_params,
+                natural_field_len,
+                D,
+                "verifier setup-prefix slot does not cover setup product",
+            )?;
+            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+                setup_eval_len
+            } else {
+                setup_len
+            }
+        } else {
+            setup_len
+        };
+
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -105,8 +141,13 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
 
         let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val =
-            setup_mle_at_eq_tables::<F, E, D>(setup, self.plan.required(), &eq_lambda, &eq_y)?;
+        let setup_val = setup_mle_at_eq_tables::<F, E, D>(
+            &setup.expanded,
+            self.plan.required(),
+            setup_eval_len,
+            &eq_lambda,
+            &eq_y,
+        )?;
         let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         if final_claim != setup_val * omega * alpha_val {
@@ -161,6 +202,7 @@ fn eval_dense_table_with_eq<E: FieldCore>(evals: &[E], eq: &[E]) -> Result<E, Ak
 fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     required: usize,
+    setup_eval_len: usize,
     eq_lambda: &[E],
     eq_y: &[E],
 ) -> Result<E, AkitaError>
@@ -168,10 +210,9 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-    if required > setup_len {
+    if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
-            "shared matrix is too small for selected verifier layout".into(),
+            "setup prefix is too small for selected verifier layout".into(),
         ));
     }
     let lambda_len = required
@@ -189,7 +230,7 @@ where
             actual: eq_y.len(),
         });
     }
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
+    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
     let setup_entries = setup_view.as_slice();
 
     Ok(cfg_fold_reduce!(
