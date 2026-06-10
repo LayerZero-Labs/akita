@@ -194,10 +194,22 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
     let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    // Tiered `û_concat` segment column count (flat, after `t̂`); `0` single-tier.
+    let u_seg_len = if lp.f_key.is_some() {
+        opening_points
+            .len()
+            .checked_mul(lp.tier_split)
+            .and_then(|w| w.checked_mul(n_b))
+            .and_then(|w| w.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("tiered û segment overflow".to_string()))?
+    } else {
+        0
+    };
     #[cfg(feature = "zk")]
     let total_cols = w_len
         .checked_add(d_blinding_segment_len)
         .and_then(|cols| cols.checked_add(t_len))
+        .and_then(|cols| cols.checked_add(u_seg_len))
         .and_then(|cols| cols.checked_add(b_blinding_segment_len))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
@@ -205,6 +217,7 @@ where
     #[cfg(not(feature = "zk"))]
     let total_cols = w_len
         .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(u_seg_len))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
@@ -262,7 +275,30 @@ where
     let b_message_width = max_group_poly_count
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    let b_width = b_message_width;
+    // Tiered: the stored first-tier matrix is `B'` of width `b_message_width /
+    // tier_split`, reused across `tier_split` column-slices; the second-tier
+    // `F` (`f_view`) commits the decomposed concatenated images `û_concat`.
+    let tiered = lp.f_key.is_some();
+    let tier_split = lp.tier_split;
+    let n_f = lp.f_key.as_ref().map_or(0, |fk| fk.row_len());
+    let b_width = if tiered {
+        if tier_split == 0 || !b_message_width.is_multiple_of(tier_split) {
+            return Err(AkitaError::InvalidSetup(
+                "tiered B' width does not divide the per-group B width".to_string(),
+            ));
+        }
+        b_message_width / tier_split
+    } else {
+        b_message_width
+    };
+    let width_f = if tiered {
+        tier_split
+            .checked_mul(n_b)
+            .and_then(|w| w.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("tiered F width overflow".to_string()))?
+    } else {
+        0
+    };
     let a_width = inner_width;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
@@ -270,16 +306,28 @@ where
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
+    let f_rows: Vec<_> = if tiered {
+        setup
+            .shared_matrix
+            .ring_view::<D>(n_f, width_f)?
+            .rows()
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    // Row layout: consistency (1) | public (num_public_rows) | D (n_d_active)
-    //             | B (n_b * num_points) | A (n_a). At terminal layout
-    // `n_d_active == 0`, collapsing the D-block out of the offset chain.
-    let commitment_row_count = n_b * num_points;
+    // Canonical row layout: consistency (1) | public (num_public_rows) |
+    //   D (n_d_active) | COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+    let commit_rows_pg = if tiered { n_f } else { n_b };
+    let b_inner_rows_pg = if tiered { tier_split * n_b } else { 0 };
     let consistency_weight = eq_tau1[0];
     let public_weights = &eq_tau1[1..(1 + num_public_rows)];
     let d_start = 1 + num_public_rows;
-    let b_start = d_start + n_d_active;
-    let a_start = b_start + commitment_row_count;
+    let f_start = d_start + n_d_active;
+    let b_inner_start = f_start + commit_rows_pg * num_points;
+    let a_start = b_inner_start + b_inner_rows_pg * num_points;
+    // Non-tiered alias used by the single-tier B-block scan below.
+    let b_start = f_start;
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
 
@@ -391,17 +439,61 @@ where
             let phys_claim_offset =
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = poly_idx_within_group * t_cols_per_vector + phys_claim_offset;
-            let commitment_weights =
-                &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
-            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+            if tiered {
+                // B_inner block: the stored B' is reused across `tier_split`
+                // slices; `local_col` selects the slice and the within-slice
+                // stored-B' column.
+                let slice = local_col / b_width;
+                let within = local_col % b_width;
+                let base = b_inner_start + point_idx * (tier_split * n_b) + slice * n_b;
+                for row_idx in 0..n_b {
+                    let eq_i = eq_tau1[base + row_idx];
+                    if !eq_i.is_zero() {
+                        acc += eq_i * eval_ring_at_pows(&b_rows[row_idx][within], alpha_pows);
+                    }
+                }
+            } else {
+                let commitment_weights =
+                    &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
+                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+                    }
                 }
             }
             acc
         })
         .collect();
+
+    // Tiered `û_concat` segment (flat, contiguous, right after `t̂`): the
+    // second-tier `F` commit-block image plus the `B_inner` `-recompose(û)`
+    // term, per `û` column. Empty for single-tier.
+    let u_segment: Vec<E> = if tiered {
+        let u_seg_len = num_points * width_f;
+        cfg_into_iter!(0..u_seg_len)
+            .map(|c| {
+                let group = c / width_f;
+                let c_in_group = c % width_f;
+                let slice_row = c_in_group / depth_open;
+                let digit = c_in_group % depth_open;
+                let mut acc = E::zero();
+                // F (commit) block: F·û_concat.
+                for f_row in 0..n_f {
+                    let eq_i = eq_tau1[f_start + group * n_f + f_row];
+                    if !eq_i.is_zero() {
+                        acc += eq_i * eval_ring_at_pows(&f_rows[f_row][c_in_group], alpha_pows);
+                    }
+                }
+                // B_inner RHS: -recompose(û) = -Σ_digit base^digit · û[digit].
+                let b_inner_w = eq_tau1[b_inner_start + group * (tier_split * n_b) + slice_row];
+                acc -= b_inner_w * g1_open[digit];
+                acc
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     #[cfg(feature = "zk")]
     let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_point == 0 {
@@ -483,6 +575,7 @@ where
         out.extend(z_segment);
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(u_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
         #[cfg(feature = "zk")]
@@ -490,6 +583,7 @@ where
     } else {
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(u_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
         #[cfg(feature = "zk")]

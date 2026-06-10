@@ -165,6 +165,10 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_d: usize,
     pub(crate) m_row_layout: MRowLayout,
     pub(crate) n_b: usize,
+    /// Tiered split factor `f` (`1` = single-tier).
+    pub(crate) tier_split: usize,
+    /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
+    pub(crate) n_f: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
     pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
@@ -512,7 +516,14 @@ where
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    if lp.b_key.col_len() < expected_b_width {
+    // Tiered: the stored first-tier `B'` is the full B width divided by the
+    // reuse factor `tier_split`.
+    let expected_stored_b_width = if lp.f_key.is_some() {
+        expected_b_width.div_ceil(lp.tier_split.max(1))
+    } else {
+        expected_b_width
+    };
+    if lp.b_key.col_len() < expected_stored_b_width {
         return Err(AkitaError::InvalidSetup(
             "B-key column width is too small for verifier layout".to_string(),
         ));
@@ -603,6 +614,8 @@ where
         n_d,
         m_row_layout,
         n_b,
+        tier_split: lp.tier_split,
+        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         num_points,
         rows,
         claim_to_commitment_group_poly,
@@ -655,6 +668,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             rows: self.rows,
             num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
             num_public_rows: self.num_public_rows,
+            tier_split: self.tier_split,
+            n_f: self.n_f,
         }
     }
 
@@ -843,10 +858,26 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             .evaluate()
         };
 
+        // Canonical A-block start (tiered-aware): consistency | public | D |
+        // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+        let commit_rows_pg = if self.tier_split > 1 {
+            self.n_f
+        } else {
+            self.n_b
+        };
+        let b_inner_rows_pg = if self.tier_split > 1 {
+            self.tier_split * self.n_b
+        } else {
+            0
+        };
+        let a_start = 1
+            + self.num_public_rows
+            + self.n_d_active()
+            + (commit_rows_pg + b_inner_rows_pg) * self.num_points;
+
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
-            let a_start = 1 + self.num_public_rows + self.n_d_active() + self.n_b * self.num_points;
             TStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: layout.offset_t >> offset_low_bits,
@@ -875,6 +906,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     layout.offset_e,
                     layout.offset_t,
                     layout.offset_z,
+                    layout.offset_u,
                 );
                 match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
                     SetupEvaluation::Direct(value) => Ok(value),
@@ -944,12 +976,51 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             compute_r_contribution(self, x_challenges, layout.offset_r, denom, &r_gadget)?
         };
 
+        // ----- Tiered B_inner RHS: -recompose(û_concat) ----------------------
+        // The B_inner block enforces `B'·t̂_slice - recompose(û) = 0`. The B'
+        // matrix part is in `setup_contribution`; this is the witness-side
+        // `-recompose(û)` term (a constant gadget map on the `û_concat`
+        // columns), weighted by the B_inner row eq. Zero for single-tier.
+        let u_recompose_contribution = if self.tier_split > 1 {
+            let n_d_active = self.n_d_active();
+            let f_start = 1 + self.num_public_rows + n_d_active;
+            let b_inner_start = f_start + commit_rows_pg * self.num_points;
+            let n_b_small = self.n_b;
+            let inner_rows_pg = self.tier_split * n_b_small;
+            let width_f = inner_rows_pg * self.depth_open;
+            let offset_u = layout.offset_u;
+            let mut acc = E::zero();
+            for g in 0..self.num_points {
+                for slice_row in 0..inner_rows_pg {
+                    let row = b_inner_start + g * inner_rows_pg + slice_row;
+                    let row_w = self.eq_tau1[row];
+                    if row_w.is_zero() {
+                        continue;
+                    }
+                    let base_col = offset_u + g * width_f + slice_row * self.depth_open;
+                    let mut recomp = E::zero();
+                    for (digit, &gd) in g1_open.iter().enumerate().take(self.depth_open) {
+                        let eq_col = akita_algebra::offset_eq::eq_eval_at_index(
+                            x_challenges,
+                            base_col + digit,
+                        );
+                        recomp += eq_col.mul_base(gd);
+                    }
+                    acc -= row_w * recomp;
+                }
+            }
+            acc
+        } else {
+            E::zero()
+        };
+
         #[allow(unused_mut)]
         let mut total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution
-            + r_contribution;
+            + r_contribution
+            + u_recompose_contribution;
 
         #[cfg(feature = "zk")]
         {
