@@ -225,7 +225,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
-    relation_claim: E,
+    relation_trace_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
     prefix_r_stage1: Option<Vec<E>>,

@@ -79,11 +79,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             }
         }
 
-        let has_trace = trace_compact.is_some();
-        let mut input_claim = batching_coeff * s_claim + relation_claim;
-        if has_trace {
-            input_claim += trace_opening_claim;
-        }
+        let relation_trace_claim = relation_claim + trace_opening_claim;
+        let input_claim = batching_coeff * s_claim + relation_trace_claim;
 
         Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
@@ -98,10 +95,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             live_x_cols,
             col_bits,
             num_vars,
-            relation_claim,
+            relation_trace_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: (can_use_stage2_two_round_prefix(ring_bits, b) && !has_trace)
+            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
                 .then(|| stage1_point.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
@@ -184,7 +181,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(crate) fn can_use_two_round_prefix(&self) -> bool {
-        self.prefix_r_stage1.is_some() && self.trace_compact.is_none()
+        self.prefix_r_stage1.is_some()
     }
 
     #[inline]
@@ -265,6 +262,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 w_compact,
                 &self.alpha_compact,
                 &self.m_compact,
+                self.trace_compact.as_deref(),
                 &stage1_point,
                 self.b,
                 self.live_x_cols,
@@ -276,7 +274,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 &proof,
                 &stage1_point,
                 self.s_claim,
-                self.relation_claim,
+                self.relation_trace_claim,
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");

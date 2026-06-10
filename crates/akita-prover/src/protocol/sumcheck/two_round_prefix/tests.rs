@@ -235,6 +235,7 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     w_compact: &[i8],
     alpha_evals_y: &[F],
     m_evals_x: &[F],
+    trace_compact: Option<&[F]>,
     stage1_point: &[F],
     b: usize,
     live_x_cols: usize,
@@ -247,6 +248,9 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
 
     let y_len = 1usize << ring_bits;
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
+    if let Some(trace) = trace_compact {
+        assert_eq!(trace.len(), live_x_cols * y_len);
+    }
     let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
         .expect("stage-2 reference two-round prefix dimensions are prevalidated");
     let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
@@ -258,18 +262,25 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
 
     for x_idx in 0..live_x_cols {
         let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
+        let trace_column = trace_compact.map(|trace| &trace[x_idx * y_len..(x_idx + 1) * y_len]);
         let row_val = m_evals_x[x_idx];
         let eq_x_weight = eq_x[x_idx];
         for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
             let base = 4 * y_quad;
             let w_quad = std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
             let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
+            let trace_quad = trace_column
+                .map(|trace_column| std::array::from_fn(|offset| trace_column[base + offset]));
             let norm_weight = eq_y_weight * eq_x_weight;
             for idx in 0..9 {
                 let x = points[idx / 3];
                 let y = points[idx % 3];
                 norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
                 relation_full[idx] += stage2_local_relation_eval(w_quad, alpha_quad, row_val, x, y);
+                if let Some(trace_quad) = trace_quad {
+                    relation_full[idx] +=
+                        stage2_local_relation_eval(w_quad, trace_quad, F::one(), x, y);
+                }
             }
         }
     }
@@ -438,6 +449,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
+            None,
             &stage1_point,
             8,
             5,
@@ -448,11 +460,60 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
+            None,
             &stage1_point,
             8,
             5,
             3,
             1,
+        ),
+    );
+}
+
+#[test]
+fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
+    let live_x_cols = 5usize;
+    let col_bits = 3usize;
+    let ring_bits = 2usize;
+    let y_len = 1usize << ring_bits;
+    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
+        .map(|i| ((5 * i + 3) % 8) as i8 - 4)
+        .collect();
+    let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
+        .map(|i| F::from_u64((7 * i as u64) + 11))
+        .collect();
+    let alpha_evals_y: Vec<F> = (0..y_len)
+        .map(|i| F::from_u64((13 * i as u64) + 17))
+        .collect();
+    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+        .map(|i| F::from_u64((19 * i as u64) + 23))
+        .collect();
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+        .map(|i| F::from_u64((29 * i as u64) + 31))
+        .collect();
+
+    assert_eq!(
+        build_stage2_bivariate_skip_proof_from_compact(
+            &w_compact,
+            &alpha_evals_y,
+            &m_evals_x,
+            Some(&trace_compact),
+            &stage1_point,
+            8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        ),
+        build_stage2_bivariate_skip_proof_from_compact_reference(
+            &w_compact,
+            &alpha_evals_y,
+            &m_evals_x,
+            Some(&trace_compact),
+            &stage1_point,
+            8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
         ),
     );
 }
@@ -498,6 +559,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
+            None,
             &stage1_point,
             8,
             live_x_cols,
@@ -508,6 +570,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
+            None,
             &stage1_point,
             8,
             live_x_cols,
