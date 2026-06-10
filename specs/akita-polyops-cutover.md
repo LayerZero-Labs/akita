@@ -1261,8 +1261,7 @@ materialization) was already made to work against the pre-cutover monolithic
 poly-ops trait, and exactly how that maps onto the source-typed boundary. It is
 deliberately not distilled: it exists so the design is not rediscovered or
 re-litigated. The prior art is the `lz/integrate-hachi` branch of the `jolt` repo
-(local worktree `/Users/quang.dao/Documents/SNARKs/jolt-hachi`; "hachi" is Akita's
-former name), files
+("hachi" is Akita's former name), files
 `jolt-core/src/poly/commitment/hachi/{commitment_scheme.rs, packed_poly.rs, packed_layout.rs}`
 and `jolt-core/src/zkvm/prover.rs`.
 
@@ -1392,15 +1391,17 @@ materialization model:
 - Minimal-materialization (re-walk the trace per block, never build an entry
   vector): generalize `onehot_commit_rows` / `inner_ajtai_wide_*` to consume a
   per-block entry *iterator* instead of `&[Entry]`. This pull source is the only
-  genuinely new abstraction, and the only place the orphan-rule blanket impl matters.
+  genuinely new abstraction, and the only place the `CommitTraversal` blanket impl
+  (a strategy-reuse convenience, not an orphan-rule requirement) matters.
 
-#### The load-bearing constraint: orphan rule (only on the pull path)
+#### Coherence on the pull path: per-view impls are allowed, the blanket is reuse
 
-For the minimal-materialization path only (a foreign source type that drives the
-kernel by pull, rather than producing an Akita-owned `OneHotBlocks`), Rust coherence
-decides whether a downstream crate (Jolt) can plug in. The single-materialization
-path above sidesteps this entirely. Given the current kernel shape in
-`crates/akita-prover/src/compute/kernels.rs`:
+For the minimal-materialization path (a foreign source type that drives the
+kernel by pull, rather than producing an Akita-owned `OneHotBlocks`), the
+question is how a downstream crate (Jolt) plugs a custom source into a CpuBackend
+kernel. The single-materialization path above sidesteps it entirely, because the
+foreign crate produces Akita-owned types and calls an Akita entry point. Given
+the current kernel shape in `crates/akita-prover/src/compute/kernels.rs`:
 
 ```rust
 pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F> {
@@ -1410,17 +1411,26 @@ pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F> {
 }
 ```
 
-If `CpuBackend` implements `RootCommitKernel<S>` only for Akita's own concrete view
-types, a downstream crate cannot add `impl RootCommitKernel<JoltPackedView> for
-CpuBackend`: both the trait and `CpuBackend` are foreign to that crate, so the orphan
-rule forbids it. A trace-only Jolt source would then be impossible without editing
-Akita.
+The orphan rule does not forbid the direct per-view impl. The source is the
+trait's first type parameter, so in
+`impl RootCommitKernel<JoltPackedView, F, D> for CpuBackend` the downstream
+crate's local `JoltPackedView` is a local type in the trait reference, appearing
+before the only uncovered parameter `F`. That is the same coherence-allowed shape
+as `impl From<LocalType> for ForeignType`, and it is exactly the main-body
+extension mechanism (`impl OpeningFoldKernel<MySparseView<'a>, ...> for
+CpuBackend`). A downstream crate can therefore implement any kernel for
+`CpuBackend` over its own local source view without editing Akita, and such an
+impl never overlaps Akita's concrete per-view impls because the source type
+differs.
 
-The resolution is the same move that keeps the encoding palette non-load-bearing:
-the traversal is a trait, and the backend has a blanket impl over it.
+What a direct per-view impl does not give downstream is reuse of CpuBackend's
+commit strategy zoo: it would have to re-implement `commit_inner` itself. The
+optional convenience that fixes that is a traversal trait plus a backend blanket
+impl over it:
 
 ```rust
-// in akita-prover (orphan-rule-safe for downstream extension)
+// in akita-prover: a downstream source implements `CommitTraversal` and
+// inherits CpuBackend's strategy zoo instead of re-implementing commit_inner.
 impl<S, F, const D: usize> RootCommitKernel<S, F, D> for CpuBackend
 where
     S: CommitTraversal<F, D>,
@@ -1429,17 +1439,20 @@ where
 
 Then Jolt writes `impl CommitTraversal for JoltPackedView` in its own crate (a
 foreign trait on a local type, which coherence allows) and reuses
-`CpuBackend::commit_inner` unchanged.
+`CpuBackend::commit_inner` unchanged, without re-deriving the accumulate
+schedule.
 
-Coherence caveat that makes this a now-or-later-refactor decision: concrete per-view
-impls (`impl RootCommitKernel<DenseCommitView> for CpuBackend`, etc.) and a later
+The genuine constraint is coherence between the two forms, which makes the
+blanket a now-or-later decision: concrete per-view impls
+(`impl RootCommitKernel<DenseCommitView> for CpuBackend`, etc.) and a later
 blanket `impl<S: CommitTraversal> ...` overlap and cannot coexist. Enabling the
 blanket form later therefore means routing the built-in views through
-`CommitTraversal` too. That is an internal akita-prover refactor (it does not change
-the public kernel signature or any call site, and there is no downstream consumer
-in-repo yet), so it is reversible, but it is not free: it touches every built-in
-commit kernel impl. The one thing that would make it irreversible is leaking a
-*closed input-source enum* into the kernel signature; that must not happen.
+`CommitTraversal` too. That is an internal akita-prover refactor (it does not
+change the public kernel signature or any call site, and there is no downstream
+consumer in-repo yet), so it is reversible, but it is not free: it touches every
+built-in commit kernel impl. The one thing that would make downstream extension
+impossible is leaking a *closed input-source enum* into the kernel signature in
+place of the generic `S`; that must not happen.
 
 #### The enum is the backend's accumulate vocabulary, not the extension point
 
@@ -1459,8 +1472,9 @@ The correct reading: the palette enumerates the backend's *accumulate primitives
 downstream source either maps onto an existing primitive (Jolt's packed one-hot is
 exactly "one-hot with monomial rotation", which already exists as
 `inner_ajtai_wide_single_chunk` / `_multi_chunk`) or needs a new primitive, which is
-an additive Akita-side change. The traversal trait is the extension point; the enum
-is just what the CpuBackend knows how to fold. This is why it stays provisional, and
+an additive Akita-side change. The generic source `S` is the extension point (the
+traversal trait is one convenience for reusing CpuBackend's fold); the enum is just
+what the CpuBackend knows how to fold. This is why it stays provisional, and
 note that "one-hot with monomial rotation" is already the built-in CpuBackend
 primitive, not a new palette entry a consumer must add.
 
