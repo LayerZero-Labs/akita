@@ -102,8 +102,9 @@ Key abstractions and surfaces:
       `new` + `verify` split.
 - [ ] `recursive_setup_e2e` tests pass: recursive round-trip at folding arities
       and cross-mode rejection.
-- [ ] `cargo run -p akita-pcs --example recursive_setup` proves + verifies under
-      both modes and reports the per-mode setup-contribution treatment.
+- [ ] `cargo run --release -p akita-pcs --example profile` with
+      `AKITA_SETUP_MODE=recursive` (and `direct` for comparison) exercises the
+      recursive setup-contribution path with per-mode proof-size reporting.
 - [ ] `cargo fmt`, `cargo clippy --all -- -D warnings`, and `cargo test` are
       green.
 
@@ -180,7 +181,8 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
 ## Documentation
 
 - This spec.
-- `crates/akita-pcs/examples/recursive_setup.rs` (new runnable example).
+- `crates/akita-pcs/examples/profile` with `AKITA_SETUP_MODE=recursive` (runnable
+  harness for recursive vs direct setup-contribution).
 - `profile/akita-recursion/README.md` already documents the harness flow; the new
   `--setup-mode` flag is self-describing via `--help`.
 

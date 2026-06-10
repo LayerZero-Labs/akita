@@ -3,6 +3,7 @@
 pub mod commitment;
 mod scheme;
 pub mod setup;
+pub mod setup_prefix;
 
 pub use commitment::{
     batched_commit, batched_commit_with_params, commit, commit_with_params,
@@ -10,3 +11,4 @@ pub use commitment::{
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;
+pub use setup_prefix::commit_setup_prefix;
