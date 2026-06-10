@@ -297,6 +297,8 @@ where
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ChallengeField = L>,
 {
+    #[cfg(feature = "zk")]
+    let mut zk_hiding = prepared_fold.zk_hiding;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
     let extension_opening_reduction = prepared_fold.reduction.map(|reduction| reduction.proof);
     let logical_w = ring_switch_build_w::<F, B, D>(
@@ -431,7 +433,7 @@ where
             #[cfg(not(feature = "zk"))]
             prepared_fold.y_rings,
             #[cfg(feature = "zk")]
-            y_rings_masked,
+            prepared_fold.y_rings_masked,
             extension_opening_reduction,
             #[cfg(not(feature = "zk"))]
             stage2_sumcheck_proof,
