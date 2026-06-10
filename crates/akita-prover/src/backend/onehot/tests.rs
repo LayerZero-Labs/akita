@@ -756,6 +756,39 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
 }
 
 #[test]
+fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
+    type F = Prime24Offset3;
+    const D: usize = 64;
+
+    let n_a = 1;
+    let num_digits_commit = 1;
+    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
+    let a_matrix = [vec![dense_ring]];
+
+    let coeffs = vec![0u16; MAX_WIDE_SHIFT_ACCUMULATIONS + 1];
+    let bucket = vec![MultiChunkEntry::new(0, coeffs)];
+    let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
+    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
+        .map(|i| multi_chunk_blocks.block(i))
+        .collect();
+
+    let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
+    let a_view = a_flat.ring_view::<D>(n_a, num_digits_commit).unwrap();
+
+    let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
+        &a_view,
+        &views,
+        n_a,
+        num_digits_commit,
+        num_digits_commit,
+    );
+    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
+
+    assert_eq!(got[0], reference);
+}
+
+#[test]
 fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     type F = Prime24Offset3;
     const D: usize = 64;

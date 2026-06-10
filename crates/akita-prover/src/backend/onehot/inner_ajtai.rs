@@ -83,23 +83,29 @@ where
     let mut shift_accumulations = 0usize;
 
     for entry in entries {
-        let coeff_count = entry.coeffs().len();
-        if shift_accumulations + coeff_count > MAX_WIDE_SHIFT_ACCUMULATIONS {
-            let t = t.get_or_insert_with(|| vec![CyclotomicRing::<F, D>::zero(); n_a]);
-            for (dst, src) in t.iter_mut().zip(t_wide.iter_mut()) {
-                *dst += std::mem::replace(src, WideCyclotomicRing::zero()).reduce();
-            }
-            shift_accumulations = 0;
-        }
-
         let col = entry.commit_col(num_digits);
-        for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
-            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-            for &ci in entry.coeffs() {
-                a_wide.shift_accumulate_into(t_w, ci as usize);
+        let mut coeffs = entry.coeffs();
+        while !coeffs.is_empty() {
+            if shift_accumulations == MAX_WIDE_SHIFT_ACCUMULATIONS {
+                let t = t.get_or_insert_with(|| vec![CyclotomicRing::<F, D>::zero(); n_a]);
+                for (dst, src) in t.iter_mut().zip(t_wide.iter_mut()) {
+                    *dst += std::mem::replace(src, WideCyclotomicRing::zero()).reduce();
+                }
+                shift_accumulations = 0;
             }
+
+            let remaining = MAX_WIDE_SHIFT_ACCUMULATIONS - shift_accumulations;
+            let take = remaining.min(coeffs.len());
+            let (current, rest) = coeffs.split_at(take);
+            for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
+                let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
+                for &ci in current {
+                    a_wide.shift_accumulate_into(t_w, ci as usize);
+                }
+            }
+            shift_accumulations += take;
+            coeffs = rest;
         }
-        shift_accumulations += coeff_count;
     }
 
     if let Some(mut t) = t {
