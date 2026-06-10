@@ -425,7 +425,7 @@ where
     }
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())
     {
         return Err(AkitaError::InvalidProof);
     }

@@ -1,6 +1,10 @@
 //! Guard test: for every `(family, key)` covered by the shipped schedule
 //! tables, the **table-hit** expansion must reproduce exactly the schedule
-//! the pure DP regenerates.
+//! the pure DP regenerates **on this branch**.
+//!
+//! This compares shipped tables against the current planner DP only — it does
+//! **not** detect divergence from historical `main` (expected when bundled
+//! planner changes such as the K256 one-hot migration regenerate tables).
 //!
 //! Coverage is metadata-driven: every entry in
 //! [`akita_config::generated_families::ALL_GENERATED_FAMILIES`] is checked,

@@ -39,5 +39,6 @@ pub use four_square::four_squares;
 pub use norm_bound::{
     committed_fold_collision_l2_sq, fold_witness_beta, l2_sq_from_linf,
     ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessNorms,
+    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
+    FoldWitnessNorms,
 };

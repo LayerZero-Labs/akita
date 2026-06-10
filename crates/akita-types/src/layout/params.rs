@@ -81,6 +81,19 @@ pub struct LevelParams {
     /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
     /// this is only ever set on a root level whose `log_commit_bound == 1`.
     pub onehot_chunk_size: usize,
+    /// Tiered-commitment split factor `f` (number of equal column-slices the
+    /// first-tier matrix `B` is reused across). `1` means single-tier (the
+    /// historical layout); `> 1` means the level reuses a smaller `B` (`b_key`
+    /// already holds the shrunk `B'` dimensions) across `f` slices and commits
+    /// the partial images with the second-tier matrix [`Self::f_key`].
+    pub tier_split: usize,
+    /// Second-tier commitment matrix `F`, present iff the level is tiered
+    /// (`tier_split > 1`). `F` commits `decompose(u_1 ‖ … ‖ u_f)` to the sent
+    /// commitment `u_final`; its `row_len` is the sent-commitment length
+    /// ([`Self::effective_commit_rows`]) and its `col_len` is
+    /// `tier_split · b_key.row_len() · num_digits_open` (the decomposed
+    /// concatenated slice images). `None` is the single-tier layout.
+    pub f_key: Option<AjtaiKeyParams>,
 }
 
 impl LevelParams {
@@ -114,6 +127,8 @@ impl LevelParams {
             num_digits_commit: 0,
             num_digits_open: 0,
             onehot_chunk_size: 0,
+            tier_split: 1,
+            f_key: None,
         }
     }
 
@@ -158,6 +173,8 @@ impl LevelParams {
             num_digits_commit: 0,
             num_digits_open: 0,
             onehot_chunk_size: 0,
+            tier_split: 1,
+            f_key: None,
         }
     }
 
@@ -268,6 +285,20 @@ impl LevelParams {
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.onehot_chunk_size);
+        // Tier binding is appended only when the level is tiered, so non-tiered
+        // descriptors stay byte-for-byte identical to the historical layout
+        // (the flag-off no-op invariant). When tiered, bind the split factor
+        // and the second-tier `F` key into the Fiat-Shamir digest.
+        if self.f_key.is_some() || self.tier_split != 1 {
+            push_usize(bytes, self.tier_split);
+            match &self.f_key {
+                Some(fk) => {
+                    bytes.push(1);
+                    fk.append_descriptor_bytes(bytes);
+                }
+                None => bytes.push(0),
+            }
+        }
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -306,12 +337,135 @@ impl LevelParams {
             })
     }
 
+    // ---- Canonical M-row layout offsets (single source of truth) ----
+    //
+    // Row layout: consistency (1) | public (num_public_outputs) |
+    //   D (n_d_active) | COMMIT (effective_commit_rows · nc) |
+    //   B_inner (b_inner_rows_per_group · nc) | A (n_a).
+    //
+    // `COMMIT` is the sent-commitment block (the second-tier `F` rows when
+    // tiered, the first-tier `B` rows otherwise); `B_inner` is the inner
+    // `B`-consistency block, present only when tiered. With `tier_split == 1`
+    // / `f_key == None` this collapses to the historical
+    // `consistency | public | D | B | A` layout (COMMIT == the B block,
+    // B_inner == 0). Every row-offset site (prover quotient/`generate_y`,
+    // setup-contribution `prepare`, the relation claim, the verifier
+    // ring-switch row eval) must derive its block starts from these helpers
+    // rather than recompute the layout inline.
+
+    /// Sent-commitment row count per commitment group: the second-tier `F`
+    /// rows (`f_key.row_len()`) when tiered, else the first-tier `B` rows
+    /// (`b_key.row_len()`). This is the length of `RingCommitment.u`.
+    #[inline]
+    pub fn effective_commit_rows(&self) -> usize {
+        match &self.f_key {
+            Some(fk) => fk.row_len(),
+            None => self.b_key.row_len(),
+        }
+    }
+
+    /// Inner `B`-consistency rows per commitment group: `0` when not tiered,
+    /// else `tier_split · b_key.row_len()` (the `f` reused-`B'` slice images,
+    /// hidden in the witness `w`).
+    #[inline]
+    pub fn b_inner_rows_per_group(&self) -> usize {
+        if self.f_key.is_some() {
+            self.tier_split.saturating_mul(self.b_key.row_len())
+        } else {
+            0
+        }
+    }
+
+    /// Ring-element length of the decomposed concatenated slice images
+    /// `û_concat = decompose(u_1 ‖ … ‖ u_f)` carried in the witness `w`, per
+    /// commitment group: `tier_split · b_key.row_len() · num_digits_open` when
+    /// tiered, else `0`. Multiply by the commitment-group count for the total
+    /// witness contribution. This must agree across the planner, the prover's
+    /// `build_w_coeffs`, and the verifier so the recursive witness length is
+    /// consistent.
+    #[inline]
+    pub fn u_concat_ring_len_per_group(&self) -> usize {
+        self.b_inner_rows_per_group()
+            .saturating_mul(self.num_digits_open)
+    }
+
+    /// Active D-block rows for an M-row layout (dropped at a terminal fold).
+    #[inline]
+    pub fn n_d_active_for(&self, layout: MRowLayout) -> usize {
+        match layout {
+            MRowLayout::WithDBlock => self.d_key.row_len(),
+            MRowLayout::WithoutDBlock => 0,
+        }
+    }
+
+    #[inline]
+    fn m_row_overflow() -> AkitaError {
+        AkitaError::InvalidSetup("M-row count overflow".to_string())
+    }
+
+    /// Absolute start row of the D block (after consistency + public rows).
+    #[inline]
+    pub fn d_start(&self, num_public_outputs: usize) -> Result<usize, AkitaError> {
+        1usize
+            .checked_add(num_public_outputs)
+            .ok_or_else(Self::m_row_overflow)
+    }
+
+    /// Absolute start row of the COMMIT block (the `F` block when tiered, the
+    /// `B` block otherwise).
+    #[inline]
+    pub fn f_start(
+        &self,
+        num_public_outputs: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        self.d_start(num_public_outputs)?
+            .checked_add(self.n_d_active_for(layout))
+            .ok_or_else(Self::m_row_overflow)
+    }
+
+    /// Absolute start row of the inner `B`-consistency block (== `a_start`
+    /// when not tiered, since the inner block is empty).
+    #[inline]
+    pub fn b_inner_start(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        let commit_rows = self
+            .effective_commit_rows()
+            .checked_mul(num_commitments)
+            .ok_or_else(Self::m_row_overflow)?;
+        self.f_start(num_public_outputs, layout)?
+            .checked_add(commit_rows)
+            .ok_or_else(Self::m_row_overflow)
+    }
+
+    /// Absolute start row of the A block.
+    #[inline]
+    pub fn a_start(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        let inner_rows = self
+            .b_inner_rows_per_group()
+            .checked_mul(num_commitments)
+            .ok_or_else(Self::m_row_overflow)?;
+        self.b_inner_start(num_commitments, num_public_outputs, layout)?
+            .checked_add(inner_rows)
+            .ok_or_else(Self::m_row_overflow)
+    }
+
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
     /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// B (n_b · num_commitments) | A (n_a).  The batched CWSS protocol
-    /// uses one public y-row per distinct opening point.
+    /// COMMIT (effective_commit_rows · num_commitments) |
+    /// B_inner (b_inner_rows_per_group · num_commitments) | A (n_a).  The
+    /// batched CWSS protocol uses one public y-row per distinct opening point.
     #[inline]
     pub fn m_row_count(
         &self,
@@ -332,21 +486,9 @@ impl LevelParams {
         num_public_outputs: usize,
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
-        let n_d_active = match layout {
-            MRowLayout::WithDBlock => self.d_key.row_len(),
-            MRowLayout::WithoutDBlock => 0,
-        };
-        n_d_active
-            .checked_add(
-                self.b_key
-                    .row_len()
-                    .checked_mul(num_commitments)
-                    .ok_or_else(|| AkitaError::InvalidSetup("M-row count overflow".to_string()))?,
-            )
-            .and_then(|rows| rows.checked_add(num_public_outputs))
-            .and_then(|rows| rows.checked_add(1))
-            .and_then(|rows| rows.checked_add(self.a_key.row_len()))
-            .ok_or_else(|| AkitaError::InvalidSetup("M-row count overflow".to_string()))
+        self.a_start(num_commitments, num_public_outputs, layout)?
+            .checked_add(self.a_key.row_len())
+            .ok_or_else(Self::m_row_overflow)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -426,6 +568,12 @@ impl LevelParams {
             num_digits_commit,
             num_digits_open,
             onehot_chunk_size: self.onehot_chunk_size,
+            // `with_decomp` recomputes only the A/B/D widths; it does not
+            // re-derive the tier (callers that build tiered levels construct
+            // `LevelParams` directly in the planner). Preserve self's tier so a
+            // tiered level passed through here keeps its split/`f_key`.
+            tier_split: self.tier_split,
+            f_key: self.f_key.clone(),
         })
     }
 
@@ -478,6 +626,11 @@ impl LevelParams {
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             onehot_chunk_size: other.onehot_chunk_size,
+            // The tier (split factor + `f_key` rank/bucket) is sized against the
+            // same SIS floor as the ranks, so it stays with `self`, matching the
+            // placement of `b_key`'s `row_len`/`collision_inf`.
+            tier_split: self.tier_split,
+            f_key: self.f_key.clone(),
         }
     }
 }
@@ -593,5 +746,38 @@ mod tests {
             lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
             4 * 2 + 5 + 1 + 2
         );
+    }
+
+    #[test]
+    fn canonical_row_offsets_match_open_coded_non_tiered() {
+        let lp = sample_params_only().with_layout(&sample_layout_lp());
+        let n_a = lp.a_key.row_len();
+        let n_b = lp.b_key.row_len();
+        let n_d = lp.d_key.row_len();
+
+        // Non-tiered: COMMIT == B, B_inner empty.
+        assert_eq!(lp.tier_split, 1);
+        assert!(lp.f_key.is_none());
+        assert_eq!(lp.effective_commit_rows(), n_b);
+        assert_eq!(lp.b_inner_rows_per_group(), 0);
+
+        for (nc, np) in [(1usize, 1usize), (2, 5), (4, 3)] {
+            for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+                let n_d_active = match layout {
+                    MRowLayout::WithDBlock => n_d,
+                    MRowLayout::WithoutDBlock => 0,
+                };
+                // Open-coded historical offsets: 1 | public | D | B | A.
+                let d_start = 1 + np;
+                let b_start = d_start + n_d_active;
+                let a_start = b_start + n_b * nc;
+
+                assert_eq!(lp.d_start(np).unwrap(), d_start);
+                assert_eq!(lp.f_start(np, layout).unwrap(), b_start);
+                assert_eq!(lp.b_inner_start(nc, np, layout).unwrap(), a_start);
+                assert_eq!(lp.a_start(nc, np, layout).unwrap(), a_start);
+                assert_eq!(lp.m_row_count_for(nc, np, layout).unwrap(), a_start + n_a);
+            }
+        }
     }
 }
