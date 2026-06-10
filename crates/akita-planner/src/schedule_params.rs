@@ -255,6 +255,9 @@ fn derive_candidate_level_params(
             tier_split,
             f_key,
         };
+        if candidate_params.audit_fold_challenge_entropy().is_err() {
+            continue;
+        }
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
@@ -718,6 +721,7 @@ fn compute_root_direct_level_params(
         tier_split,
         f_key,
     };
+    root_direct_params.audit_fold_challenge_entropy()?;
     Ok(Some(root_direct_params))
 }
 
@@ -916,6 +920,9 @@ pub fn find_schedule(
                 tier_split,
                 f_key,
             };
+            if candidate_params.audit_fold_challenge_entropy().is_err() {
+                continue;
+            }
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(

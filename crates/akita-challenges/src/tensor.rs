@@ -43,6 +43,63 @@ pub enum ChallengeShape {
     Tensor,
 }
 
+/// Aggregate `log2` support for one logical fold challenge under `shape`.
+///
+/// Flat: one independent sparse draw per block. Tensor: left and right factors
+/// are sampled independently (see [`sample_folding_challenges`]).
+#[inline]
+#[must_use]
+pub fn aggregate_fold_challenge_log2_support_bits<const D: usize>(
+    cfg: &SparseChallengeConfig,
+    shape: ChallengeShape,
+) -> f64 {
+    let per_factor = cfg.log2_support_bits::<D>();
+    match shape {
+        ChallengeShape::Flat => per_factor,
+        ChallengeShape::Tensor => per_factor + per_factor,
+    }
+}
+
+/// Reject `(cfg, shape)` pairs whose aggregate fold support is below
+/// `required_bits`.
+///
+/// # Errors
+///
+/// Returns an error when [`aggregate_fold_challenge_log2_support_bits`] is
+/// strictly below `required_bits`.
+pub fn validate_aggregate_fold_min_entropy<const D: usize>(
+    cfg: &SparseChallengeConfig,
+    shape: ChallengeShape,
+    required_bits: u32,
+) -> Result<(), &'static str> {
+    if aggregate_fold_challenge_log2_support_bits::<D>(cfg, shape) < f64::from(required_bits) {
+        return Err(
+            "sparse challenge family has insufficient aggregate fold min-entropy for security floor",
+        );
+    }
+    Ok(())
+}
+
+/// Runtime ring-dimension dispatch for [`validate_aggregate_fold_min_entropy`].
+///
+/// # Errors
+///
+/// Returns an error when `ring_dim` is unsupported or the aggregate floor fails.
+pub fn validate_aggregate_fold_min_entropy_for_ring_dim(
+    cfg: &SparseChallengeConfig,
+    shape: ChallengeShape,
+    ring_dim: usize,
+    required_bits: u32,
+) -> Result<(), &'static str> {
+    match ring_dim {
+        32 => validate_aggregate_fold_min_entropy::<32>(cfg, shape, required_bits),
+        64 => validate_aggregate_fold_min_entropy::<64>(cfg, shape, required_bits),
+        128 => validate_aggregate_fold_min_entropy::<128>(cfg, shape, required_bits),
+        256 => validate_aggregate_fold_min_entropy::<256>(cfg, shape, required_bits),
+        _ => Err("unsupported ring dimension for fold-challenge entropy audit"),
+    }
+}
+
 impl ChallengeShape {
     /// Effective per-logical-block integer L1 mass for this shape.
     ///

@@ -186,8 +186,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
-    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(TerminalWitnessReplay { parts })
 }
 
@@ -663,6 +662,13 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?
     };
+    // `y_ring` is standalone wire data pinned at the EOR output point ρ (see
+    // `ExtensionOpeningReductionVerifier::expected_output_claim`). A future
+    // hardening could absorb `y_rings` before the EOR sumcheck so EOR is
+    // transcript-self-contained; that is a breaking prover/verifier reorder and
+    // must ship with coordinated prover edits plus a full round-trip test. Today
+    // the downstream relation sumcheck challenges are sampled after this absorb,
+    // so the current order is not exploitable.
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
@@ -1005,8 +1011,7 @@ where
         }
     };
     if let RootStageInput::Intermediate { next_w_eval, .. } = &stage_input {
-        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
-        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
     }
     if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
         let setup_prepared_row_eval = setup_prepared_row_eval

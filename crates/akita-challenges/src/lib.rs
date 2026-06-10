@@ -27,10 +27,12 @@ mod sampler;
 mod tensor;
 
 pub use challenge::{IntegerChallenge, SparseChallenge};
-pub use config::SparseChallengeConfig;
+pub use config::{SparseChallengeConfig, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
-    sample_folding_challenges, stage1_fold_challenge_labels, tensor_left_digest, tensor_split,
+    aggregate_fold_challenge_log2_support_bits, sample_folding_challenges,
+    stage1_fold_challenge_labels, tensor_left_digest, tensor_split,
+    validate_aggregate_fold_min_entropy, validate_aggregate_fold_min_entropy_for_ring_dim,
     ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges,
     TensorChallenges,
 };

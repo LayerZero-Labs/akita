@@ -4,6 +4,10 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
+use akita_challenges::{
+    validate_aggregate_fold_min_entropy_for_ring_dim, TensorChallengeShape,
+    MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+};
 use akita_field::AkitaError;
 use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4};
 use akita_types::ClaimIncidenceSummary;
@@ -34,24 +38,53 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
 ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-    match d {
-        32 => Ok(akita_challenges::SparseChallengeConfig::BoundedL1Norm),
-        64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
+    let cfg = match d {
+        32 => akita_challenges::SparseChallengeConfig::BoundedL1Norm,
+        64 => akita_challenges::SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
-        }),
-        128 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
+        },
+        128 => akita_challenges::SparseChallengeConfig::Uniform {
             weight: 31,
             nonzero_coeffs: vec![-1, 1],
-        }),
-        256 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
+        },
+        256 => akita_challenges::SparseChallengeConfig::Uniform {
             weight: 23,
             nonzero_coeffs: vec![-1, 1],
-        }),
-        _ => Err(AkitaError::InvalidSetup(format!(
-            "unsupported proof-optimized ring dim {d}"
-        ))),
+        },
+        _ => {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported proof-optimized ring dim {d}"
+            )));
+        }
+    };
+    validate_proof_optimized_fold_entropy(&cfg, d)?;
+    Ok(cfg)
+}
+
+fn validate_proof_optimized_fold_entropy(
+    cfg: &akita_challenges::SparseChallengeConfig,
+    d: usize,
+) -> Result<(), AkitaError> {
+    match d {
+        32 => cfg.validate::<32>(),
+        64 => cfg.validate::<64>(),
+        128 => cfg.validate::<128>(),
+        256 => cfg.validate::<256>(),
+        _ => {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported proof-optimized ring dim {d}"
+            )));
+        }
     }
+    .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
+    validate_aggregate_fold_min_entropy_for_ring_dim(
+        cfg,
+        TensorChallengeShape::Flat,
+        d,
+        MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+    )
+    .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))
 }
 
 // ---------------------------------------------------------------------------

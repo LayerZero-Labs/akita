@@ -181,6 +181,50 @@ impl AjtaiKeyParams {
         }
     }
 
+    /// Re-audit an already-constructed key against the SIS floor for its
+    /// current `(col_len, collision_inf, row_len)`.
+    ///
+    /// [`Self::new_unchecked`] is used by layout transforms ([`crate::LevelParams::with_decomp`],
+    /// [`crate::LevelParams::with_layout`]) that recompute `col_len` (the message
+    /// width) while preserving the `row_len` that was audited against the *old*
+    /// width. Because [`min_secure_rank`] grows with width, a widened key can
+    /// silently fall below the secure floor. Call this after any such transform.
+    ///
+    /// Placeholder keys (`col_len == 0` or `collision_inf == 0`, as produced by
+    /// `params_only`/intermediate construction) are not yet audit-ready and pass
+    /// through; only fully-populated keys are checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SIS-floor tables do not cover the configuration
+    /// or if `row_len` is below the audited floor.
+    pub fn audit_sis_floor(&self, ring_dimension: usize) -> Result<(), AkitaError> {
+        if self.col_len == 0 || self.collision_inf == 0 {
+            return Ok(());
+        }
+        let floor = min_secure_rank(
+            self.sis_family,
+            ring_dimension as u32,
+            self.collision_inf,
+            self.col_len as u64,
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "AjtaiKeyParams: no audited SIS rank for family={:?} d={ring_dimension} \
+                 collision_inf={} col_len={} (re-audit after width recompute)",
+                self.sis_family, self.collision_inf, self.col_len
+            ))
+        })?;
+        if self.row_len < floor {
+            return Err(AkitaError::InvalidSetup(format!(
+                "AjtaiKeyParams: row_len {} < SIS floor {floor} after width recompute \
+                 (family={:?}, d={ring_dimension}, collision_inf={}, col_len={})",
+                self.row_len, self.sis_family, self.collision_inf, self.col_len
+            )));
+        }
+        Ok(())
+    }
+
     /// Number of rows.
     #[inline]
     pub fn row_len(&self) -> usize {

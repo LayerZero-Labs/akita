@@ -309,6 +309,21 @@ pub fn s_l2_max_squared(
 /// Mirrors [`fold_witness_beta`]'s fold-arity guard so the L2 and L∞ betas share
 /// the same overflow contract.
 ///
+/// # ⚠ Soundness precondition (not currently deployed)
+///
+/// `gamma` is the *operator-norm cap* `Γ` of the writeup's Appendix C — the
+/// tighter Euclidean pricing that assumes every sampled fold challenge `c`
+/// satisfies `gamma(c) <= Γ`. That guarantee only holds if the challenge
+/// sampler performs operator-norm rejection sampling
+/// (`akita_challenges::sampler::op_norm::OpNormTable::accept_strict`), which is
+/// **not wired in** today. The live binding path instead prices the A-role at
+/// `‖c‖₁` (see [`fold_witness_beta`]), a true upper bound on `gamma(c)` that
+/// needs no rejection sampling. This function and [`l2_bound_squared`]
+/// therefore have **no production callers**. Do not route either into
+/// verifier/setup sizing without enabling `accept_strict` rejection sampling in
+/// the same change — otherwise a challenge with `gamma(c) > Γ` would be priced
+/// as if `<= Γ` and binding would break.
+///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `r_vars >= 127` or the squared

@@ -4,7 +4,10 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::{
+    validate_aggregate_fold_min_entropy_for_ring_dim, SparseChallengeConfig,
+    TensorChallengeShape, MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u32, push_usize};
@@ -535,7 +538,7 @@ impl LevelParams {
             .checked_mul(num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let d = self.ring_dimension;
-        Ok(Self {
+        let rebuilt = Self {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
@@ -574,7 +577,12 @@ impl LevelParams {
             // tiered level passed through here keeps its split/`f_key`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
-        })
+        };
+        // The recomputed widths invalidate the SIS audit that sized the
+        // preserved `row_len`s against the old widths; re-check the floor so a
+        // widened key cannot silently drop below SIS security.
+        rebuilt.audit_sis_security()?;
+        Ok(rebuilt)
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
@@ -593,7 +601,7 @@ impl LevelParams {
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
-        Self {
+        let rebuilt = Self {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
@@ -631,7 +639,58 @@ impl LevelParams {
             // placement of `b_key`'s `row_len`/`collision_inf`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
+        };
+        // `with_layout` borrows `other`'s widths onto `self`'s preserved ranks,
+        // so the SIS audit that sized those ranks no longer matches the layout.
+        // This is infallible by signature; surface a mismatch loudly in debug
+        // builds (production callers go through `with_decomp`, which returns the
+        // audit as an error). See [`AjtaiKeyParams::audit_sis_floor`].
+        debug_assert!(
+            rebuilt.audit_sis_security().is_ok(),
+            "with_layout produced a SIS-insecure level"
+        );
+        rebuilt
+    }
+
+    /// Re-audit every populated commitment key against its SIS floor.
+    ///
+    /// Skips placeholder keys (`col_len == 0` or `collision_inf == 0`). Used
+    /// after layout transforms ([`Self::with_decomp`], [`Self::with_layout`])
+    /// that recompute message widths while preserving audited ranks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any populated key's `row_len` is below the SIS floor
+    /// for its current width, or the floor tables do not cover it.
+    pub fn audit_sis_security(&self) -> Result<(), AkitaError> {
+        let d = self.ring_dimension;
+        self.a_key.audit_sis_floor(d)?;
+        self.b_key.audit_sis_floor(d)?;
+        self.d_key.audit_sis_floor(d)?;
+        if let Some(f_key) = self.f_key.as_ref() {
+            f_key.audit_sis_floor(d)?;
         }
+        Ok(())
+    }
+
+    /// Reject stage-1 fold challenge configs whose aggregate support is below
+    /// [`MIN_FOLD_CHALLENGE_ENTROPY_BITS`].
+    ///
+    /// Tensor folds count left and right factor entropies separately; flat folds
+    /// count a single draw per block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the aggregate floor fails or `ring_dimension` is
+    /// unsupported.
+    pub fn audit_fold_challenge_entropy(&self) -> Result<(), AkitaError> {
+        validate_aggregate_fold_min_entropy_for_ring_dim(
+            &self.stage1_config,
+            self.fold_challenge_shape,
+            self.ring_dimension,
+            MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+        )
+        .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))
     }
 }
 

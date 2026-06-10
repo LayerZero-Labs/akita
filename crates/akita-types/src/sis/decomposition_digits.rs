@@ -23,8 +23,24 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
 }
 
-/// Minimum number of balanced base-`2^log_basis` digits needed to represent any
-/// value in `[-V, V]` with `V < 2^log_bound`, using symmetric centering.
+/// Minimum number of balanced base-`2^log_basis` digits needed to represent a
+/// `log_bound`-bit *signed* coefficient, using symmetric centering.
+///
+/// Following [`crate::DecompositionParams::log_commit_bound`], a bound of `k`
+/// bits denotes the centered range `[-2^(k-1), 2^(k-1) - 1]`, i.e. one sign bit
+/// plus `k-1` magnitude bits. The binding constraint is the positive end,
+/// `2^(k-1) - 1`, since the balanced digit range `[-b/2, b/2 - 1]` reaches
+/// further on the negative side. This is *not* `2^log_bound - 1`: the leading
+/// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
+/// `log_bound = m + 1` (this is exactly what [`num_digits_fold`] does).
+///
+/// The digit count starts at `ceil(log_bound / log_basis)`. When
+/// `n · log_basis <= log_bound`, an extra digit is added if the balanced-digit
+/// positive reach still falls short of `2^(log_bound-1) - 1`. When
+/// `n · log_basis > log_bound`, the extra-digit pass is skipped (the shipped
+/// schedule tables rely on this branch; see [`tests::digits_basic`]). The
+/// signed-range contract for the guarded branch is pinned by
+/// [`tests::compute_num_digits_covers_signed_range`].
 ///
 /// # Panics
 ///
@@ -203,6 +219,33 @@ mod tests {
         assert_eq!(compute_num_digits(128, 3), 43);
         assert_eq!(compute_num_digits(1, 2), 1);
         assert_eq!(compute_num_digits(0, 2), 1);
+    }
+
+    /// The returned digit count must actually cover the signed range
+    /// `[-2^(log_bound-1), 2^(log_bound-1) - 1]` its contract promises, for
+    /// every production base and bound. This pins the invariant the previous
+    /// conditional guard left unchecked whenever `log_basis ∤ log_bound`.
+    #[test]
+    fn compute_num_digits_covers_signed_range() {
+        for log_basis in 2u32..=8 {
+            for log_bound in 1u32..=120 {
+                let n = compute_num_digits(log_bound, log_basis);
+                let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
+                assert!(
+                    balanced_digit_max(log_basis, n) >= required_positive,
+                    "log_bound={log_bound} log_basis={log_basis} n={n} \
+                     reach={} < required={required_positive}",
+                    balanced_digit_max(log_basis, n),
+                );
+                // Minimality: one fewer digit must be insufficient (unless n==1).
+                if n > 1 {
+                    assert!(
+                        balanced_digit_max(log_basis, n - 1) < required_positive,
+                        "non-minimal: log_bound={log_bound} log_basis={log_basis} n={n}",
+                    );
+                }
+            }
+        }
     }
 
     #[test]
