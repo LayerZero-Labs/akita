@@ -71,6 +71,7 @@ type BoundNextWitness<F> = (
 #[allow(clippy::too_many_arguments)]
 pub fn prove_suffix<Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
@@ -119,24 +120,48 @@ where
         let (level_params, next_params) =
             scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
         let level_d = level_params.ring_dimension;
-        let out = dispatch_ring_dim_result!(
-            level_d,
-            D,
-            prepared,
-            |D, level_prepared| {
-                let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
-                    backend,
-                    level_prepared,
-                    transcript,
-                    current_state,
-                    level,
-                    &level_params,
-                    MRowLayout::WithDBlock,
-                )?;
-                prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+        let out = if level_d == D {
+            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+                backend,
+                prepared,
+                transcript,
+                current_state,
+                level,
+                &level_params,
+                MRowLayout::WithDBlock,
+            )?;
+            prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+                expanded,
+                prefix_slots,
+                backend,
+                prepared,
+                transcript,
+                level,
+                &level_params,
+                &next_params,
+                prepared_fold,
+                setup_contribution_mode,
+                false,
+            )
+        } else {
+            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+                let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+                let level_prefix_slots = SetupPrefixProverRegistry::new();
+                let prepared_fold =
+                    prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
+                        backend,
+                        &level_prepared,
+                        transcript,
+                        current_state,
+                        level,
+                        &level_params,
+                        MRowLayout::WithDBlock,
+                    )?;
+                prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, { D_LEVEL }>(
                     expanded,
+                    &level_prefix_slots,
                     backend,
-                    level_prepared,
+                    &level_prepared,
                     transcript,
                     level,
                     &level_params,
@@ -145,9 +170,8 @@ where
                     setup_contribution_mode,
                     false,
                 )
-            },
-            backend.prepare_expanded::<D>(expanded.clone())?
-        )?;
+            })
+        }?;
         let out = out.get_intermediate()?;
         intermediate_levels.push(out.level_proof);
         current_state = out.next_state;
@@ -163,24 +187,48 @@ where
     let (level_params, next_params) =
         scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
     let level_d = level_params.ring_dimension;
-    let terminal_result = dispatch_ring_dim_result!(
-        level_d,
-        D,
-        prepared,
-        |D, level_prepared| {
-            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
-                backend,
-                level_prepared,
-                transcript,
-                current_state,
-                level,
-                &level_params,
-                MRowLayout::WithoutDBlock,
-            )?;
-            prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+    let terminal_result = if level_d == D {
+        let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+            backend,
+            prepared,
+            transcript,
+            current_state,
+            level,
+            &level_params,
+            MRowLayout::WithoutDBlock,
+        )?;
+        prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+            expanded,
+            prefix_slots,
+            backend,
+            prepared,
+            transcript,
+            level,
+            &level_params,
+            &next_params,
+            prepared_fold,
+            setup_contribution_mode,
+            true,
+        )
+    } else {
+        dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            let level_prefix_slots = SetupPrefixProverRegistry::new();
+            let prepared_fold =
+                prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
+                    backend,
+                    &level_prepared,
+                    transcript,
+                    current_state,
+                    level,
+                    &level_params,
+                    MRowLayout::WithoutDBlock,
+                )?;
+            prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, { D_LEVEL }>(
                 expanded,
+                &level_prefix_slots,
                 backend,
-                level_prepared,
+                &level_prepared,
                 transcript,
                 level,
                 &level_params,
@@ -189,13 +237,12 @@ where
                 setup_contribution_mode,
                 true,
             )
-        },
-        backend.prepare_expanded::<D>(expanded.clone())?
-    );
+        })
+    }?;
     #[cfg(not(feature = "zk"))]
-    let terminal = terminal_result?.get_terminal()?;
+    let terminal = terminal_result.get_terminal()?;
     #[cfg(feature = "zk")]
-    let (terminal, zk_hiding) = terminal_result?.get_terminal()?;
+    let (terminal, zk_hiding) = terminal_result.get_terminal()?;
 
     Ok(RecursiveSuffixOutcome {
         intermediate_levels,
@@ -221,6 +268,7 @@ where
 #[inline(never)]
 fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -412,7 +460,9 @@ where
         let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
             setup_contribution_mode,
             expanded.as_ref(),
+            prefix_slots,
             lp,
+            next_level_params,
             &prepared_fold.instance,
             &tau1,
             alpha,
@@ -619,7 +669,9 @@ where
 fn prove_stage3<F, L, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     lp: &LevelParams,
+    next_level_params: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     tau1: &[L],
     alpha: L,
@@ -634,11 +686,11 @@ where
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded,
+                prefix_slots,
                 lp,
+                next_level_params,
                 instance,
                 tau1,
                 alpha,
@@ -658,6 +710,11 @@ where
 pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: FieldCore> {
     pub(in crate::protocol::flow) proof: ExtensionOpeningReductionProof<L>,
     pub(in crate::protocol::flow) rho: Vec<L>,
+    /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
+    /// the prepare step can fail-fast cross-check the folded y-ring opening
+    /// against the reduction output; the verifier enforces the same relation.
+    pub(in crate::protocol::flow) final_claim: L,
+    pub(in crate::protocol::flow) final_factor: L,
 }
 
 pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
@@ -804,6 +861,8 @@ where
             sumcheck_proof_masked,
         },
         rho,
+        final_claim,
+        final_factor,
     })
 }
 
@@ -890,6 +949,41 @@ where
     Ok((y_rings, folded))
 }
 
+/// Fail-fast prover guard tying the folded witness back to the carried claim.
+///
+/// The opening recovered from the folded `y_ring` must equal the carried claim
+/// (degree-one challenge field) or be consistent with the extension-opening
+/// reduction's final claim (proper extension). This writes nothing to the
+/// transcript: the verifier re-derives the same relation, and the root path
+/// performs the analogous check in `root_fold.rs`.
+fn check_recursive_opening_consistency<F, L, const D: usize>(
+    reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
+    y_ring: &CyclotomicRing<F, D>,
+    inner_reduction: &CyclotomicRing<F, D>,
+    expected_opening: L,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    L: RingSubfieldEncoding<F>,
+{
+    let recovered = recover_ring_subfield_inner_product::<F, L, D>(y_ring, inner_reduction)?;
+    match reduction {
+        Some(reduction) => check_extension_opening_reduction_output(
+            reduction.final_claim,
+            recovered,
+            reduction.final_factor,
+        ),
+        None => {
+            if recovered != expected_opening {
+                return Err(AkitaError::InvalidInput(
+                    "recursive opening does not match carried claim".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
 ///
@@ -974,6 +1068,12 @@ where
 
     let (y_rings, e_folded_by_claim) =
         evaluate_witness(&witness_view, &prepared_points, level, level_params)?;
+    check_recursive_opening_consistency::<F, L, D>(
+        &reduction,
+        &y_rings[0],
+        &prepared_points[0].inner_reduction,
+        expected_opening,
+    )?;
     #[cfg(feature = "zk")]
     let y_rings_masked = y_rings
         .iter()

@@ -52,6 +52,20 @@ macro_rules! dispatch_ring_dim {
 
 /// Bridge a runtime `d: usize` to a const-generic `D` context, returning an
 /// [`AkitaError`](akita_field::AkitaError) for unsupported dimensions.
+///
+/// Two forms are provided:
+///
+/// * `dispatch_ring_dim_result!(d, |D| expr)` — the plain form, matching `d`
+///   against the supported dimensions and evaluating `expr` with `D` bound as a
+///   const.
+/// * `dispatch_ring_dim_result!(d, current_D, current_prepared, |D, prepared| { .. }, prepare)`
+///   — the prepared-setup form used by the recursive fold loop. When `d` equals
+///   the caller's already-instantiated `current_D`, it reuses `current_prepared`
+///   on the fast path (no re-preparation). Otherwise it re-enters the matched
+///   const-`D` arm, evaluates `prepare` to build that dimension's prepared setup,
+///   and runs the body. `D` (the body's const) and the `D` referenced inside
+///   `prepare` share the caller's hygiene context, so both resolve to the same
+///   per-arm const.
 #[macro_export]
 macro_rules! dispatch_ring_dim_result {
     (

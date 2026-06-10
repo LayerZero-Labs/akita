@@ -170,6 +170,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     claims: ProverClaims<
@@ -264,6 +265,7 @@ where
 
     prove_folded_batched::<Cfg, T, P, B, D>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -286,6 +288,7 @@ where
 pub fn build_folded_batched_proof_with_suffix<Cfg, T, B, const D: usize>(
     root_output: RootLevelProverOutput<Cfg::Field, Cfg::ChallengeField, D>,
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
@@ -321,6 +324,7 @@ where
     } = root_output;
     let suffix = crate::prove_suffix::<Cfg, T, B, D>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         num_vars,
@@ -386,6 +390,7 @@ where
 #[inline(never)]
 pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -519,6 +524,7 @@ where
         D,
     >(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -541,6 +547,7 @@ where
     build_folded_batched_proof_with_suffix::<Cfg, T, B, D>(
         raw,
         expanded,
+        prefix_slots,
         backend,
         prepared,
         num_vars,

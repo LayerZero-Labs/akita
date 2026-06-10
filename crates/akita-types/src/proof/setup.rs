@@ -1,5 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
+use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
@@ -144,6 +145,8 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+    /// Public setup-prefix commitment metadata for setup-claim offloading.
+    pub prefix_slots: SetupPrefixVerifierRegistry<F>,
 }
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {
@@ -736,7 +739,8 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
 
 impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.expanded.check()
+        self.expanded.check()?;
+        self.prefix_slots.check()
     }
 }
 
@@ -746,11 +750,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.expanded.serialize_with_mode(writer, compress)
+        let mut writer = writer;
+        self.expanded.serialize_with_mode(&mut writer, compress)?;
+        self.prefix_slots.serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.expanded.serialized_size(compress)
+        self.expanded.serialized_size(compress) + self.prefix_slots.serialized_size(compress)
     }
 }
 
@@ -764,13 +770,20 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let mut reader = reader;
         Ok(Self {
             expanded: Arc::new(AkitaExpandedSetup::deserialize_with_mode(
-                reader,
+                &mut reader,
                 compress,
                 validate,
                 &(),
             )?),
+            prefix_slots: SetupPrefixVerifierRegistry::deserialize_with_mode(
+                reader,
+                compress,
+                validate,
+                &(),
+            )?,
         })
     }
 }
@@ -809,6 +822,55 @@ mod tests {
     }
 
     #[test]
+    fn verifier_setup_prefix_slots_roundtrip() {
+        use crate::proof::{
+            FlatRingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
+        };
+
+        let setup_seed = seed([7u8; 32]);
+        let shared_matrix = derive_public_matrix_flat::<F, D>(2, &setup_seed.public_matrix_seed);
+        #[cfg(feature = "zk")]
+        let (zk_b_matrix, zk_d_matrix) = zk_matrices(&setup_seed.public_matrix_seed);
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        let slot = SetupPrefixVerifierSlot {
+            id: SetupPrefixSlotId {
+                setup_seed_digest: [1u8; 32],
+                d_setup: D,
+                natural_len: D - 1,
+                n_prefix: D,
+                level_params_digest: [2u8; 32],
+            },
+            natural_len: D - 1,
+            padded_len: D,
+            commitment: SetupPrefixPublicCommitment {
+                rows: vec![FlatRingVec::from_coeffs(vec![F::zero(); D])],
+            },
+        };
+        prefix_slots.insert(slot).expect("insert prefix slot");
+        let setup = AkitaVerifierSetup {
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    setup_seed,
+                    shared_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_b_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_d_matrix,
+                ),
+            ),
+            prefix_slots,
+        };
+
+        let mut bytes = Vec::new();
+        setup.serialize_compressed(&mut bytes).expect("serialize");
+        let decoded =
+            AkitaVerifierSetup::<F>::deserialize_compressed(&bytes[..], &()).expect("deserialize");
+
+        assert_eq!(decoded.prefix_slots.len(), 1);
+        assert_eq!(decoded, setup);
+    }
+
+    #[test]
     fn strict_verifier_setup_decode_rejects_matrix_not_derived_from_seed() {
         let setup_seed = seed([7u8; 32]);
         let wrong_seed = [9u8; 32];
@@ -826,6 +888,7 @@ mod tests {
                     zk_d_matrix,
                 ),
             ),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         };
 
         let mut bytes = Vec::new();
@@ -854,6 +917,7 @@ mod tests {
                     zk_d_matrix,
                 ),
             ),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         };
 
         let mut bytes = Vec::new();
