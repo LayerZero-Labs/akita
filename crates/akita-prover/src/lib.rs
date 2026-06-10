@@ -153,6 +153,15 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         total.trailing_zeros() as usize
     }
 
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation. Configs
+    /// that use a non-default one-hot security policy validate this value at
+    /// commit/prove boundaries before relying on the tighter SIS schedule.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
+    }
+
     /// Prover per-block fold.
     ///
     /// For each contiguous block of `block_len` ring elements, computes
@@ -554,6 +563,10 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        <P as AkitaPolyOps<F, D>>::onehot_chunk_size(*self)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {

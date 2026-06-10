@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::commitment::validate_onehot_chunk_size_for_params;
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
@@ -226,6 +227,16 @@ where
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
+    let root_commit_params = match schedule.steps.first() {
+        Some(Step::Fold(root)) => Some(&root.params),
+        Some(Step::Direct(root)) => root.params.as_ref(),
+        None => None,
+    }
+    .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
+    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
+        &prepared_claims.group_polys,
+        root_commit_params,
+    )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
@@ -410,7 +421,7 @@ where
     if prepared_claims
         .commitments_by_point
         .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_step.params.effective_commit_rows())
     {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
