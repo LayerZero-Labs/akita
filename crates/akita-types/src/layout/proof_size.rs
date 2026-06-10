@@ -116,6 +116,8 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .m_row_count(1, 1)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
+    // Tiered single-group `û_concat` (one commitment group); `0` single-tier.
+    let u_concat_count = lp.u_concat_ring_len_per_group();
 
     #[cfg(feature = "zk")]
     {
@@ -133,6 +135,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         );
         e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
             .and_then(|n| n.checked_add(z_pre_count))
@@ -143,6 +146,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     {
         e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))

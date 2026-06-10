@@ -34,9 +34,17 @@ fn emit_key(key: GeneratedScheduleKey) -> String {
 }
 
 fn emit_fold_struct(p: &LevelParams) -> String {
+    let (tier_split, n_f) = match p.f_key.as_ref() {
+        Some(fk) => (
+            format!("Some({})", p.tier_split),
+            format!("Some({})", fk.row_len()),
+        ),
+        None => ("None".to_string(), "None".to_string()),
+    };
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
+         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
+         tier_split: {}, n_f: {} }}",
         p.ring_dimension,
         p.log_basis,
         p.log_block_len(),
@@ -44,6 +52,8 @@ fn emit_fold_struct(p: &LevelParams) -> String {
         p.a_key.row_len(),
         p.b_key.row_len(),
         p.d_key.row_len(),
+        tier_split,
+        n_f,
     )
 }
 
