@@ -4,7 +4,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
-    pub fn new(
+    pub(crate) fn new(
         batching_coeff: E,
         w_evals_compact: Vec<i8>,
         stage1_point: &[E],
@@ -16,7 +16,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
-        trace_compact: Option<Vec<E>>,
+        trace_table: Option<TraceTable<E>>,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -70,7 +70,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: m_evals_x.len(),
             });
         }
-        if let Some(trace) = &trace_compact {
+        if let Some(TraceTable::Dense(trace)) = &trace_table {
             if trace.len() != witness_len {
                 return Err(AkitaError::InvalidSize {
                     expected: witness_len,
@@ -91,7 +91,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
-            trace_compact,
+            trace_table,
             live_x_cols,
             col_bits,
             num_vars,
@@ -173,7 +173,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.trace_compact.is_none()
+        self.trace_table.is_none()
             && self.rounds_completed >= self.ring_bits()
             && self.x_rounds_completed() + 1 < self.col_bits
             && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
@@ -262,7 +262,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 w_compact,
                 &self.alpha_compact,
                 &self.m_compact,
-                self.trace_compact.as_deref(),
+                self.trace_table.as_ref(),
                 &stage1_point,
                 self.b,
                 self.live_x_cols,

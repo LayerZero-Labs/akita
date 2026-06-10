@@ -3,6 +3,7 @@ use super::stage1::*;
 use super::stage2::*;
 use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
 use crate::protocol::sumcheck::akita_stage1::AkitaStage1Prover;
+use crate::protocol::sumcheck::akita_stage2::{SparseTraceColumn, TraceTable};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -493,11 +494,71 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
         .collect();
 
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        {
+            let trace_table = TraceTable::dense(trace_compact.clone());
+            build_stage2_bivariate_skip_proof_from_compact(
+                &w_compact,
+                &alpha_evals_y,
+                &m_evals_x,
+                Some(&trace_table),
+                &stage1_point,
+                8,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            )
+        },
+        build_stage2_bivariate_skip_proof_from_compact_reference(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
             Some(&trace_compact),
+            &stage1_point,
+            8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        ),
+    );
+}
+
+#[test]
+fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
+    let live_x_cols = 5usize;
+    let col_bits = 3usize;
+    let ring_bits = 2usize;
+    let y_len = 1usize << ring_bits;
+    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
+        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
+        .collect();
+    let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
+        .map(|i| F::from_u64((11 * i as u64) + 13))
+        .collect();
+    let sparse_trace = TraceTable::sparse(
+        (0..live_x_cols)
+            .map(|col| SparseTraceColumn {
+                col,
+                values: trace_compact[col * y_len..(col + 1) * y_len].to_vec(),
+            })
+            .collect(),
+        live_x_cols,
+        y_len,
+    );
+    let alpha_evals_y: Vec<F> = (0..y_len)
+        .map(|i| F::from_u64((17 * i as u64) + 19))
+        .collect();
+    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+        .map(|i| F::from_u64((23 * i as u64) + 29))
+        .collect();
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+        .map(|i| F::from_u64((31 * i as u64) + 37))
+        .collect();
+    assert_eq!(
+        build_stage2_bivariate_skip_proof_from_compact(
+            &w_compact,
+            &alpha_evals_y,
+            &m_evals_x,
+            Some(&sparse_trace),
             &stage1_point,
             8,
             live_x_cols,

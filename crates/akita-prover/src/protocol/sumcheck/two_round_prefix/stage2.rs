@@ -1,4 +1,5 @@
 use super::common::*;
+use crate::protocol::sumcheck::akita_stage2::TraceTable;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;
@@ -228,7 +229,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     w_compact: &[i8],
     alpha_evals_y: &[E],
     m_evals_x: &[E],
-    trace_compact: Option<&[E]>,
+    trace_table: Option<&TraceTable<E>>,
     stage1_point: &[E],
     b: usize,
     live_x_cols: usize,
@@ -242,7 +243,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     let y_len = 1usize << ring_bits;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
-    if let Some(trace) = trace_compact {
+    if let Some(TraceTable::Dense(trace)) = trace_table {
         assert_eq!(trace.len(), live_x_cols * y_len);
     }
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
@@ -301,8 +302,6 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         },
         |(mut norm_pos, mut norm_neg, mut rel_accum, mut trace_pos, mut trace_neg), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-            let trace_column =
-                trace_compact.map(|trace| &trace[x_idx * y_len..(x_idx + 1) * y_len]);
             let eq_x_weight = eq_x[x_idx];
             let row_val = m_evals_x[x_idx];
             let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
@@ -329,8 +328,9 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                     &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
-                if let Some(trace_column) = trace_column {
-                    let trace_quad = std::array::from_fn(|offset| trace_column[base + offset]);
+                if let Some(trace_table) = trace_table {
+                    let trace_quad =
+                        std::array::from_fn(|offset| trace_table.get(x_idx, base + offset, y_len));
                     let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
                     accum_pointwise_signed(
                         &mut trace_pos,

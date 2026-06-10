@@ -63,6 +63,7 @@ use akita_sumcheck::{
 };
 use std::mem;
 use std::time::Instant;
+pub(crate) use trace_table::{SparseTraceColumn, TraceTable};
 
 enum WTable<E: FieldCore> {
     Compact(Vec<i8>),
@@ -221,7 +222,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 
     alpha_compact: Vec<E>,
     m_compact: Vec<E>,
-    trace_compact: Option<Vec<E>>,
+    trace_table: Option<TraceTable<E>>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -241,6 +242,7 @@ mod dense_terms;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
+mod trace_table;
 mod x_prefix;
 mod y_prefix;
 
@@ -258,9 +260,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_compact {
-            let t0 = trace.get(trace_idx0).copied().unwrap_or_else(E::zero);
-            let t1 = trace.get(trace_idx1).copied().unwrap_or_else(E::zero);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let t0 = trace.get_flat(trace_idx0, y_len);
+            let t1 = trace.get_flat(trace_idx1, y_len);
             accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
         }
     }
@@ -278,9 +281,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_compact {
-            let t0 = trace.get(trace_idx0).copied().unwrap_or_else(E::zero);
-            let t1 = trace.get(trace_idx1).copied().unwrap_or_else(E::zero);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let t0 = trace.get_flat(trace_idx0, y_len);
+            let t1 = trace.get_flat(trace_idx1, y_len);
             accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
         }
     }
@@ -300,9 +304,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         _current_x_mask: usize,
     ) {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_compact {
-            let t0 = trace.get(2 * j).copied().unwrap_or_else(E::zero);
-            let t1 = trace.get(2 * j + 1).copied().unwrap_or_else(E::zero);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let t0 = trace.get_flat(2 * j, y_len);
+            let t1 = trace.get_flat(2 * j + 1, y_len);
             accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
         }
     }
@@ -322,9 +327,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         _current_x_mask: usize,
     ) {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_compact {
-            let t0 = trace.get(2 * j).copied().unwrap_or_else(E::zero);
-            let t1 = trace.get(2 * j + 1).copied().unwrap_or_else(E::zero);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let t0 = trace.get_flat(2 * j, y_len);
+            let t1 = trace.get_flat(2 * j + 1, y_len);
             accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
         }
     }

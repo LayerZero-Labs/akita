@@ -138,6 +138,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
+    #[cfg(all(test, not(feature = "zk")))]
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_trace_compact_to_round2")]
     pub(super) fn fold_trace_compact_to_round2(
         trace_compact: &[E],
@@ -175,14 +176,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     fn add_trace_pair_to_relation_factor(
-        trace_column: Option<&[E]>,
+        trace_table: Option<&TraceTable<E>>,
+        x: usize,
         left: usize,
+        y_len: usize,
         p0: &mut E,
         p1: &mut E,
     ) {
-        if let Some(trace_column) = trace_column {
-            *p0 += trace_column[left];
-            *p1 += trace_column[left + 1];
+        if let Some(trace_table) = trace_table {
+            *p0 += trace_table.get(x, left, y_len);
+            *p1 += trace_table.get(x, left + 1, y_len);
         }
     }
 
@@ -194,7 +197,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         &self,
         w_compact: &[i8],
         alpha_round2: &[E],
-        trace_round2: Option<&[E]>,
+        trace_round2: Option<&TraceTable<E>>,
         r0: E,
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
@@ -204,9 +207,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         debug_assert_eq!(alpha_round2.len(), y_len >> 2);
 
         let next_y_len = y_len >> 2;
-        if let Some(trace) = trace_round2 {
-            debug_assert_eq!(trace.len(), self.live_x_cols * next_y_len);
-        }
         let current_y_half = next_y_len >> 1;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -233,9 +233,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .map(|(x, column_out)| {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let trace_start = x * next_y_len;
-                    let trace_column =
-                        trace_round2.map(|trace| &trace[trace_start..trace_start + next_y_len]);
                     let m = m_compact[x];
                     let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 2];
@@ -270,8 +267,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let mut p0 = alpha_round2[left] * m;
                             let mut p1 = alpha_round2[left + 1] * m;
                             Self::add_trace_pair_to_relation_factor(
-                                trace_column,
+                                trace_round2,
+                                x,
                                 left,
+                                next_y_len,
                                 &mut p0,
                                 &mut p1,
                             );
@@ -306,9 +305,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let trace_start = x * next_y_len;
-                    let trace_column =
-                        trace_round2.map(|trace| &trace[trace_start..trace_start + next_y_len]);
                     let m = m_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
@@ -341,8 +337,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let mut p0 = alpha_round2[left] * m;
                             let mut p1 = alpha_round2[left + 1] * m;
                             Self::add_trace_pair_to_relation_factor(
-                                trace_column,
+                                trace_round2,
+                                x,
                                 left,
+                                next_y_len,
                                 &mut p0,
                                 &mut p1,
                             );
@@ -367,9 +365,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .map(|(x, column_out)| {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let trace_start = x * next_y_len;
-                    let trace_column =
-                        trace_round2.map(|trace| &trace[trace_start..trace_start + next_y_len]);
                     let m = m_compact[x];
                     let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 3];
@@ -406,8 +401,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let mut p0 = alpha_round2[left] * m;
                             let mut p1 = alpha_round2[left + 1] * m;
                             Self::add_trace_pair_to_relation_factor(
-                                trace_column,
+                                trace_round2,
+                                x,
                                 left,
+                                next_y_len,
                                 &mut p0,
                                 &mut p1,
                             );
@@ -443,9 +440,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let trace_start = x * next_y_len;
-                    let trace_column =
-                        trace_round2.map(|trace| &trace[trace_start..trace_start + next_y_len]);
                     let m = m_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
@@ -480,8 +474,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let mut p0 = alpha_round2[left] * m;
                             let mut p1 = alpha_round2[left + 1] * m;
                             Self::add_trace_pair_to_relation_factor(
-                                trace_column,
+                                trace_round2,
+                                x,
                                 left,
+                                next_y_len,
                                 &mut p0,
                                 &mut p1,
                             );

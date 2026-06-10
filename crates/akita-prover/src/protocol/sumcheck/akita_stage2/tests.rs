@@ -122,7 +122,38 @@ fn new_stage2_test_prover_with_trace(
         params.col_bits,
         params.ring_bits,
         relation_claim,
-        Some(trace_compact),
+        Some(TraceTable::dense(trace_compact)),
+        trace_opening_claim,
+    )
+    .unwrap()
+}
+
+fn new_stage2_test_prover_with_trace_table(
+    batching_coeff: F,
+    w_compact: Vec<i8>,
+    alpha_evals_y: Vec<F>,
+    m_evals_x: Vec<F>,
+    trace_table: TraceTable<F>,
+    trace_claim_table: &[F],
+    params: Stage2Params<'_>,
+) -> AkitaStage2Prover<F> {
+    let s_claim = s_claim_from_compact_rows(&w_compact, &params);
+    let relation_claim =
+        relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
+    let trace_opening_claim = trace_claim_from_compact_rows(&w_compact, trace_claim_table, &params);
+    AkitaStage2Prover::new(
+        batching_coeff,
+        w_compact,
+        params.stage1_point,
+        s_claim,
+        params.b,
+        alpha_evals_y,
+        m_evals_x,
+        params.live_x_cols,
+        params.col_bits,
+        params.ring_bits,
+        relation_claim,
+        Some(trace_table),
         trace_opening_claim,
     )
     .unwrap()
@@ -646,6 +677,92 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
 }
 
 #[test]
+fn stage2_sparse_trace_table_matches_dense_trace_table() {
+    let col_bits = 5usize;
+    let ring_bits = 4usize;
+    let live_x_cols = 19usize;
+    let b = 8usize;
+    let half = (b / 2) as i8;
+    let y_len = 1usize << ring_bits;
+    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+        .map(|i| ((i * 41 + 17) % b) as i8 - half)
+        .collect();
+    let active_cols = [1usize, 4, 11, 17];
+    let mut trace_compact = vec![F::zero(); live_x_cols * y_len];
+    for &col in &active_cols {
+        for y in 0..y_len {
+            trace_compact[col * y_len + y] = F::from_u64((43 * (col * y_len + y) as u64) + 109);
+        }
+    }
+    let sparse_trace = TraceTable::sparse(
+        active_cols
+            .iter()
+            .map(|&col| SparseTraceColumn {
+                col,
+                values: trace_compact[col * y_len..(col + 1) * y_len].to_vec(),
+            })
+            .collect(),
+        live_x_cols,
+        y_len,
+    );
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+        .map(|i| F::from_u64((47 * i as u64) + 113))
+        .collect();
+    let alpha_evals_y: Vec<F> = (0..y_len)
+        .map(|i| F::from_u64((53 * i as u64) + 127))
+        .collect();
+    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+        .map(|i| F::from_u64((59 * i as u64) + 131))
+        .collect();
+    let params = Stage2Params {
+        stage1_point: &stage1_point,
+        b,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    };
+
+    let mut dense = new_stage2_test_prover_with_trace_table(
+        F::from_u64(137),
+        w_prefix.clone(),
+        alpha_evals_y.clone(),
+        m_evals_x.clone(),
+        TraceTable::dense(trace_compact.clone()),
+        &trace_compact,
+        params,
+    );
+    let mut sparse = new_stage2_test_prover_with_trace_table(
+        F::from_u64(137),
+        w_prefix,
+        alpha_evals_y,
+        m_evals_x,
+        sparse_trace,
+        &trace_compact,
+        params,
+    );
+
+    let mut dense_claim = dense.input_claim();
+    let mut sparse_claim = sparse.input_claim();
+    assert_eq!(dense_claim, sparse_claim);
+    for round in 0..(col_bits + ring_bits) {
+        let dense_poly = dense.compute_round_univariate(round, dense_claim);
+        let sparse_poly = sparse.compute_round_univariate(round, sparse_claim);
+        assert_eq!(
+            dense_poly, sparse_poly,
+            "sparse trace mismatch at round {round}"
+        );
+
+        let challenge = F::from_u64((61 * round as u64) + 139);
+        dense_claim = dense_poly.evaluate(&challenge);
+        sparse_claim = sparse_poly.evaluate(&challenge);
+        dense.ingest_challenge(round, challenge);
+        sparse.ingest_challenge(round, challenge);
+    }
+    assert_eq!(dense_claim, sparse_claim);
+    assert_eq!(dense.final_w_eval(), sparse.final_w_eval());
+}
+
+#[test]
 fn stage2_trace_two_round_prefix_matches_padded_reference() {
     let col_bits = 5usize;
     let ring_bits = 4usize;
@@ -801,7 +918,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
-    expected.trace_compact = Some(expected_trace_round2.clone());
+    expected.trace_table = Some(TraceTable::dense(expected_trace_round2.clone()));
     expected.rounds_completed = 2;
     expected.m_compact = expected_m_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -816,8 +933,8 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     }
     assert_eq!(prover.alpha_compact, expected_alpha_round2);
     assert_eq!(
-        prover.trace_compact.as_ref(),
-        Some(&expected_trace_round2),
+        prover.trace_table.as_ref(),
+        Some(&TraceTable::dense(expected_trace_round2)),
         "two-round handoff must preserve the folded trace table"
     );
     assert_eq!(prover.m_compact, expected_m_compact);
