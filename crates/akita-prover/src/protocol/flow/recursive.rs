@@ -76,7 +76,7 @@ pub fn prove_suffix<Cfg, T, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
     transcript: &mut T,
-    initial_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
+    starting_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ChallengeField>, AkitaError>
@@ -108,7 +108,7 @@ where
     let terminal_level = planned_num_levels - 1;
 
     let mut intermediate_levels = Vec::new();
-    let mut current_state = initial_state;
+    let mut current_state = starting_state;
     let mut level = 1usize;
 
     while level < terminal_level {
@@ -244,9 +244,14 @@ where
     #[cfg(feature = "zk")]
     let (terminal, zk_hiding) = terminal_result.get_terminal()?;
 
+    let mut steps = intermediate_levels
+        .into_iter()
+        .map(AkitaProofStep::Intermediate)
+        .collect::<Vec<_>>();
+    steps.push(AkitaProofStep::Terminal(terminal));
+
     Ok(RecursiveSuffixOutcome {
-        intermediate_levels,
-        terminal,
+        steps,
         #[cfg(feature = "zk")]
         zk_hiding,
         num_levels: planned_num_levels,

@@ -80,8 +80,8 @@ mod root_fold;
 mod tests;
 
 pub use inputs::{
-    build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof,
-    prepare_batched_prove_inputs, prove_batched, prove_folded_batched, prove_root_direct,
+    build_terminal_root_batched_proof, prepare_batched_prove_inputs, prove_batched,
+    prove_folded_batched, prove_root_direct,
 };
 pub use recursive::prove_suffix;
 #[cfg(test)]
@@ -308,11 +308,8 @@ pub struct RootLevelProverOutput<F: FieldCore, L: FieldCore, const D: usize> {
 
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
-    /// Per-level intermediate fold proofs, in order. Does not include the
-    /// root proof or the terminal-level proof.
-    pub intermediate_levels: Vec<AkitaLevelProof<F, L>>,
-    /// Terminal fold proof shipping `final_witness` in cleartext.
-    pub terminal: TerminalLevelProof<F, L>,
+    /// Recursive suffix proof steps: intermediate folds followed by terminal.
+    pub steps: Vec<AkitaProofStep<F, L>>,
     /// Proof-level ZK hiding witness state after all suffix masks are consumed.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -444,28 +441,6 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     pub group_polys: Vec<&'a P>,
     /// Commitment hints flattened in claim-group order.
     pub flat_hints: Vec<AkitaCommitmentHint<F, D>>,
-}
-
-/// Assemble intermediate fold-level proofs followed by the terminal-level
-/// proof.
-///
-/// The terminal proof already carries the cleartext `final_witness` (in
-/// place of the prior `next_w_commitment`), so the recursive suffix is
-/// `Intermediate(...) × N + Terminal(...)`.
-pub fn build_final_proof_steps<F, L>(
-    intermediate_levels: Vec<AkitaLevelProof<F, L>>,
-    terminal: TerminalLevelProof<F, L>,
-) -> Vec<AkitaProofStep<F, L>>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    let mut steps = intermediate_levels
-        .into_iter()
-        .map(AkitaProofStep::Intermediate)
-        .collect::<Vec<_>>();
-    steps.push(AkitaProofStep::Terminal(terminal));
-    steps
 }
 
 #[cfg(feature = "zk")]

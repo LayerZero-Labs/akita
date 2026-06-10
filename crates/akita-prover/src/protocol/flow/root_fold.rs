@@ -1283,7 +1283,7 @@ where
         SetupContributionMode::Direct => None,
     };
 
-    Ok(RootLevelProverOutput {
+    let raw = RootLevelProverOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         raw: RootLevelRawOutput {
@@ -1313,7 +1313,8 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
         },
-    })
+    };
+    Ok(raw)
 }
 
 /// Terminal-root analogue of [`prove_root_fold_from_ring_relation`] used when the

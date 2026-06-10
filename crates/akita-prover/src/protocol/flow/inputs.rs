@@ -8,8 +8,6 @@ struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize
     summary: ClaimIncidenceSummary,
 }
 
-type FoldedProofWithLevelCount<F, L> = (AkitaBatchedProof<F, L>, usize);
-
 fn prover_claims_to_incidence<'a, F, E, P, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
@@ -278,84 +276,6 @@ where
     .map(|(proof, _total_levels)| proof)
 }
 
-/// Build the recursive suffix from an intermediate-root handoff, then
-/// assemble the final folded batched proof.
-///
-/// # Errors
-///
-/// Returns an error if suffix construction fails.
-#[allow(clippy::too_many_arguments)]
-pub fn build_folded_batched_proof_with_suffix<Cfg, T, B, const D: usize>(
-    root_output: RootLevelProverOutput<Cfg::Field, Cfg::ChallengeField, D>,
-    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    num_vars: usize,
-    transcript: &mut T,
-    schedule: &Schedule,
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<FoldedProofWithLevelCount<Cfg::Field, Cfg::ChallengeField>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<Cfg::Field>,
-    T: Transcript<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
-{
-    let RootLevelProverOutput {
-        #[cfg(feature = "zk")]
-        zk_hiding_commitment,
-        raw,
-        next_state,
-    } = root_output;
-    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
-        expanded,
-        prefix_slots,
-        backend,
-        prepared,
-        num_vars,
-        transcript,
-        next_state,
-        schedule,
-        setup_contribution_mode,
-    )?;
-    let RecursiveSuffixOutcome {
-        intermediate_levels,
-        terminal,
-        #[cfg(feature = "zk")]
-        zk_hiding,
-        num_levels,
-    } = suffix;
-    #[cfg(feature = "zk")]
-    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
-    let root = AkitaBatchedRootProof::new::<D>(raw);
-    let steps =
-        build_final_proof_steps::<Cfg::Field, Cfg::ChallengeField>(intermediate_levels, terminal);
-    Ok((
-        AkitaBatchedProof {
-            #[cfg(feature = "zk")]
-            zk_hiding,
-            root,
-            steps,
-        },
-        num_levels,
-    ))
-}
-
 /// Assemble the 1-fold batched proof when the root level is itself the
 /// terminal fold (no recursive suffix follows).
 pub fn build_terminal_root_batched_proof<F, L>(
@@ -513,7 +433,7 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<
+    let root = prove_root_fold_with_params::<
         Cfg::Field,
         Cfg::ClaimField,
         Cfg::ChallengeField,
@@ -543,16 +463,40 @@ where
         basis,
         setup_contribution_mode,
     )?;
-
-    build_folded_batched_proof_with_suffix::<Cfg, T, B, D>(
+    let RootLevelProverOutput {
+        #[cfg(feature = "zk")]
+        zk_hiding_commitment,
         raw,
+        next_state: starting_state,
+    } = root;
+    let root = AkitaBatchedRootProof::new::<D>(raw);
+
+    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
         expanded,
         prefix_slots,
         backend,
         prepared,
         num_vars,
         transcript,
+        starting_state,
         schedule,
         setup_contribution_mode,
-    )
+    )?;
+    let RecursiveSuffixOutcome {
+        steps,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        num_levels,
+    } = suffix;
+    #[cfg(feature = "zk")]
+    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
+    Ok((
+        AkitaBatchedProof {
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            root,
+            steps,
+        },
+        num_levels,
+    ))
 }
