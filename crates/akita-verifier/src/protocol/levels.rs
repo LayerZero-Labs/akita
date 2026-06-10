@@ -224,6 +224,7 @@ pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -257,6 +258,7 @@ where
         basis,
         root_lp,
         batched_lp,
+        next_fold_level_params,
         RootStageInput::Intermediate {
             next_w_commitment: &stage2.next_w_commitment,
             next_w_eval: stage2.next_w_eval(),
@@ -332,6 +334,7 @@ where
         basis,
         root_lp,
         batched_lp,
+        root_lp,
         RootStageInput::Terminal {
             final_witness,
             final_w_len,
@@ -372,6 +375,7 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     basis: BasisMode,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
     stage_input: RootStageInput<'_, F, C>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
@@ -1022,7 +1026,12 @@ where
             &sumcheck_challenges[rs.ring_bits..],
             rs.alpha,
         )?;
-        verifier.verify::<F, T, D>(&setup.expanded, stage3_sumcheck_proof, transcript)?;
+        verifier.verify::<F, T, D>(
+            setup,
+            next_fold_level_params,
+            stage3_sumcheck_proof,
+            transcript,
+        )?;
     }
     Ok(sumcheck_challenges)
 }

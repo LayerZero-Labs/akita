@@ -528,6 +528,85 @@ impl<const D: usize> FlatDigitBlocks<D> {
     }
 }
 
+impl<const D: usize> Valid for FlatDigitBlocks<D> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if D == 0 {
+            return Err(SerializationError::InvalidData(
+                "flat digit blocks require a non-zero ring dimension".to_string(),
+            ));
+        }
+        let expected = self.block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                SerializationError::InvalidData("flat digit block size overflow".to_string())
+            })
+        })?;
+        if expected != self.flat_digits.len() {
+            return Err(SerializationError::InvalidData(format!(
+                "flat digit block sizes sum to {expected}, but digit stream has {} planes",
+                self.flat_digits.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl<const D: usize> AkitaSerialize for FlatDigitBlocks<D> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.block_sizes
+            .serialize_with_mode(&mut writer, compress)?;
+        for plane in &self.flat_digits {
+            for digit in plane {
+                digit.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.block_sizes.serialized_size(compress) + self.flat_digits.len() * D
+    }
+}
+
+impl<const D: usize> AkitaDeserialize for FlatDigitBlocks<D> {
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let block_sizes =
+            Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                SerializationError::InvalidData("flat digit block size overflow".to_string())
+            })
+        })?;
+        let mut flat_digits = Vec::new();
+        super::reserve_shape_len(&mut flat_digits, total_planes)?;
+        for _ in 0..total_planes {
+            let mut plane = [0i8; D];
+            for digit in &mut plane {
+                *digit = i8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            }
+            flat_digits.push(plane);
+        }
+        let out = Self {
+            flat_digits,
+            block_sizes,
+        };
+        if validate == Validate::Yes {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
     type Item = &'a [[i8; D]];
 

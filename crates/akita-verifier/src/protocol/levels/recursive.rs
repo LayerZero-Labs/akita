@@ -21,6 +21,7 @@ pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -42,6 +43,7 @@ where
         current_state,
         None,
         lp,
+        next_fold_level_params,
         block_order,
         setup_contribution_mode,
         #[cfg(feature = "zk")]
@@ -94,6 +96,7 @@ where
         current_state,
         Some(final_w_len),
         lp,
+        lp,
         block_order,
         setup_contribution_mode,
         #[cfg(feature = "zk")]
@@ -131,6 +134,7 @@ fn verify_one_level_inner<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     final_w_len: Option<usize>,
     lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -609,7 +613,12 @@ where
             &challenges[rs.ring_bits..],
             rs.alpha,
         )?;
-        verifier.verify::<F, T, D>(&setup.expanded, stage3_sumcheck_proof, transcript)?;
+        verifier.verify::<F, T, D>(
+            setup,
+            next_fold_level_params,
+            stage3_sumcheck_proof,
+            transcript,
+        )?;
     }
     Ok(challenges)
 }
@@ -644,13 +653,14 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_verify_intermediate_level<F, L, T>(
+fn dispatch_verify_intermediate_level<F, L, T, const D: usize>(
     level_d: usize,
     level_proof: &AkitaLevelProof<F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -673,6 +683,7 @@ where
                 transcript,
                 current_state,
                 lp,
+                next_fold_level_params,
                 block_order,
                 setup_contribution_mode,
                 #[cfg(feature = "zk")]
@@ -788,6 +799,9 @@ where
 
         match step {
             AkitaProofStep::Intermediate(level_proof) => {
+                let scheduled_next_params =
+                    scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
+                let next_fold_level_params = scheduled_next_params.clone();
                 if is_last {
                     // The terminal slot must be a Terminal variant.
                     return Err(AkitaError::InvalidProof);
@@ -806,6 +820,7 @@ where
                         transcript,
                         &current_state,
                         &current_lp,
+                        &next_fold_level_params,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -814,13 +829,14 @@ where
                         zk_relations,
                     )?
                 } else {
-                    dispatch_verify_intermediate_level::<F, L, T>(
+                    dispatch_verify_intermediate_level::<F, L, T, D>(
                         level_d,
                         level_proof,
                         setup,
                         transcript,
                         &current_state,
                         &current_lp,
+                        &next_fold_level_params,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -830,8 +846,6 @@ where
                     )?
                 };
 
-                let scheduled_next_params =
-                    scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
                 let next_level_d = scheduled_next_params.ring_dimension;
                 if next_level_d == 0
                     || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
@@ -947,6 +961,7 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     schedule: &Schedule,
     root_lp: &LevelParams,
     next_level_params: &LevelParams,
+    root_next_fold_level_params: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
@@ -1079,6 +1094,7 @@ where
                 &mut zk_relations,
                 root_lp,
                 &root_step.params,
+                root_next_fold_level_params,
             )?;
 
             let first_level_d = next_level_params.ring_dimension;
