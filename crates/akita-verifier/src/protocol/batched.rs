@@ -336,6 +336,17 @@ fn recommit_direct_witness_group<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
+    // Root-direct commitments are single-tier only: the sent commitment is the
+    // plain `B·t̂`. Tiering is never planned on the root-direct (small-instance)
+    // path.
+    if params.f_key.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "root-direct recommitment does not support tiered commitment \
+             (f_key must be absent on the root-direct path)"
+                .to_string(),
+        ));
+    }
+
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
         let field_witness = witness
@@ -450,8 +461,8 @@ pub(crate) struct FoldVerifierLayouts {
     pub(crate) root_lp: LevelParams,
     /// First recursive-level params reached by the root fold.
     pub(crate) next_level_params: LevelParams,
-    /// Commitment params for the root setup-prefix slot carried into level 1.
-    pub(crate) root_setup_prefix_commit_params: LevelParams,
+    /// Next-fold params used to derive the root setup-prefix slot.
+    pub(crate) root_next_fold_level_params: LevelParams,
 }
 
 /// Schedule context selected by the root scheme/config layer.
@@ -488,17 +499,36 @@ where
             current_w_len: root_step.next_w_len,
         };
         let next_level_params = next_params(next_inputs)?;
-        let root_setup_prefix_commit_params = next_level_params.clone();
+        let root_next_fold_level_params = next_level_params.clone();
         Ok(BatchedVerifierScheduleContext::Fold(Box::new(
             FoldVerifierLayouts {
                 root_lp: root_step.params.clone(),
                 next_level_params,
-                root_setup_prefix_commit_params,
+                root_next_fold_level_params,
             },
         )))
     } else {
         Err(AkitaError::InvalidProof)
     }
+}
+
+fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
+    schedule: &Schedule,
+) -> Result<(), AkitaError> {
+    let expected = Cfg::onehot_chunk_size();
+    if Cfg::decomposition().log_commit_bound != 1 || expected <= 1 {
+        return Ok(());
+    }
+    let root_params = match schedule.steps.first() {
+        Some(akita_types::Step::Fold(root)) => Some(&root.params),
+        Some(akita_types::Step::Direct(root)) => root.params.as_ref(),
+        None => None,
+    }
+    .ok_or(AkitaError::InvalidProof)?;
+    if root_params.onehot_chunk_size != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
 }
 
 /// Verify a batched proof after root schedule selection.
@@ -607,7 +637,7 @@ where
                 schedule,
                 &layouts.root_lp,
                 &layouts.next_level_params,
-                &layouts.root_setup_prefix_commit_params,
+                &layouts.root_next_fold_level_params,
                 setup_contribution_mode,
             )?;
         }
@@ -679,6 +709,7 @@ where
             root_direct_params = Some(params);
         }
     }
+    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         &setup.expanded,

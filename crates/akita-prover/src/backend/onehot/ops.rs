@@ -24,6 +24,10 @@ where
         self.num_vars
     }
 
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        Some(self.onehot_k)
+    }
+
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
             .blocks_for(block_len)

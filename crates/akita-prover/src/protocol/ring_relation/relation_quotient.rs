@@ -85,6 +85,11 @@ where
     Ok(out)
 }
 
+/// Relation quotient `r` plus the tiered `û_concat` digit planes (empty for
+/// single-tier levels) returned by [`compute_relation_quotient`].
+pub(crate) type RelationQuotientOutput<F, const D: usize> =
+    (Vec<CyclotomicRing<F, D>>, Vec<[i8; D]>);
+
 fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     reduced: &CyclotomicRing<F, D>,
@@ -272,7 +277,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
@@ -366,6 +371,14 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
+    let tiered = lp.f_key.is_some();
+    if tiered && num_points != 1 {
+        // The tiered relation slices the single commitment group's t̂; multipoint
+        // tiering is a follow-up (see specs/tiered-commitment.md edge cases).
+        return Err(AkitaError::InvalidSetup(
+            "tiered relation currently supports a single commitment group".to_string(),
+        ));
+    }
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
@@ -373,11 +386,12 @@ where
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Row layout: consistency (1) | public (num_public_outputs) |
-    //             D (n_d_active) | B (commitment_row_count) | A (n_a)
-    let d_start = 1 + num_public_outputs;
-    let b_start = d_start + n_d_active;
-    let a_start = b_start + commitment_row_count;
+    // Canonical row layout: consistency (1) | public (num_public_outputs) |
+    //   D (n_d_active) | COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+    let d_start = lp.d_start(num_public_outputs)?;
+    let f_start = lp.f_start(num_public_outputs, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(num_points, num_public_outputs, m_row_layout)?;
+    let a_start = lp.a_start(num_points, num_public_outputs, m_row_layout)?;
 
     if inner_width == 0
         || z_folded_centered.len()
@@ -391,7 +405,7 @@ where
     let mut z_segments = z_folded_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let use_relation_b_rows = commitment_row_count == n_b && num_points == 1;
+    let use_relation_b_rows = !tiered && commitment_row_count == n_b && num_points == 1;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
     let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
         t_hat.flat_digits()
@@ -447,7 +461,10 @@ where
             *dst += src;
         }
     }
-    let commitment_cyclic_rows = if use_relation_b_rows {
+    let commitment_cyclic_rows = if tiered {
+        // Tiered: the COMMIT block is F (computed below), not B.
+        Vec::new()
+    } else if use_relation_b_rows {
         #[cfg(feature = "zk")]
         let mut rows = b_cyclic;
         #[cfg(not(feature = "zk"))]
@@ -478,9 +495,63 @@ where
             lp.log_basis,
         )?
     };
-    if commitment_cyclic_rows.len() != commitment_row_count {
+    if !tiered && commitment_cyclic_rows.len() != commitment_row_count {
         return Err(AkitaError::InvalidProof);
     }
+
+    // Tiered second tier: recompute the slice images from t̂, the second-tier
+    // `F` commit-block cyclic rows, the first-tier `B'` inner-block cyclic rows,
+    // and the per-slice negacyclic images (the `B_inner` RHS = recompose(û)).
+    // `(f_cyclic, b_inner_cyclic, u_concat_neg, u_concat_digits)`.
+    type TieredRows<F, const D: usize> = (
+        Vec<CyclotomicRing<F, D>>,
+        Vec<CyclotomicRing<F, D>>,
+        Vec<CyclotomicRing<F, D>>,
+        Vec<[i8; D]>,
+    );
+    let tiered_rows: Option<TieredRows<F, D>> = if tiered {
+        let f_key = lp.f_key.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let n_b_small = n_b;
+        let width_small = lp.b_key.col_len();
+        let delta_open = lp.num_digits_open;
+        let t_flat = t_hat.flat_digits();
+        if width_small == 0 || !t_flat.len().is_multiple_of(width_small) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut b_inner_cyclic: Vec<CyclotomicRing<F, D>> = Vec::new();
+        let mut u_concat_neg: Vec<CyclotomicRing<F, D>> = Vec::new();
+        for chunk in t_flat.chunks(width_small) {
+            let neg = backend.digit_rows::<D>(prepared, n_b_small, chunk, lp.log_basis)?;
+            let cyc = backend.cyclic_digit_rows::<D>(prepared, n_b_small, chunk, lp.log_basis)?;
+            if neg.len() != n_b_small || cyc.len() != n_b_small {
+                return Err(AkitaError::InvalidProof);
+            }
+            u_concat_neg.extend(neg);
+            b_inner_cyclic.extend(cyc);
+        }
+        let mut u_concat_digits = vec![[0i8; D]; u_concat_neg.len() * delta_open];
+        for (dst, ring) in u_concat_digits
+            .chunks_mut(delta_open)
+            .zip(u_concat_neg.iter())
+        {
+            ring.balanced_decompose_pow2_i8_into(dst, lp.log_basis);
+        }
+        let f_cyclic = backend.cyclic_digit_rows::<D>(
+            prepared,
+            f_key.row_len(),
+            &u_concat_digits,
+            lp.log_basis,
+        )?;
+        if f_cyclic.len() != f_key.row_len()
+            || f_cyclic.len() != (b_inner_start - f_start)
+            || b_inner_cyclic.len() != (a_start - b_inner_start)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Some((f_cyclic, b_inner_cyclic, u_concat_neg, u_concat_digits))
+    } else {
+        None
+    };
     let constant_opening_multipliers = ring_multiplier_points
         .iter()
         .all(|point| point.is_constant());
@@ -541,16 +612,36 @@ where
                 )?;
                 result.push(quotient_from_cyclic_and_reduced(&cyclic, &y[row_idx]));
             }
-        } else if row_idx < b_start {
+        } else if row_idx < f_start {
+            // D-block: v = D·ê.
             result.push(quotient_from_cyclic_and_reduced(
                 &d_cyclic[row_idx - d_start],
                 &y[row_idx],
             ));
+        } else if row_idx < b_inner_start {
+            // COMMIT block: F·û_concat (tiered) or B·t̂ (single-tier); RHS is
+            // the sent commitment in `y`.
+            let commit_idx = row_idx - f_start;
+            let cyclic = match &tiered_rows {
+                Some((f_cyclic, ..)) => f_cyclic.get(commit_idx).ok_or(AkitaError::InvalidProof)?,
+                None => commitment_cyclic_rows
+                    .get(commit_idx)
+                    .ok_or(AkitaError::InvalidProof)?,
+            };
+            result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
         } else if row_idx < a_start {
-            result.push(quotient_from_cyclic_and_reduced(
-                &commitment_cyclic_rows[row_idx - b_start],
-                &y[row_idx],
-            ));
+            // B_inner block (tiered only): B'·t̂_slice cyclic vs its negacyclic
+            // image (= recompose(û_concat)); public RHS = 0.
+            let inner_idx = row_idx - b_inner_start;
+            let (_, b_inner_cyclic, u_concat_neg, _) =
+                tiered_rows.as_ref().ok_or(AkitaError::InvalidProof)?;
+            let cyc = b_inner_cyclic
+                .get(inner_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let neg = u_concat_neg
+                .get(inner_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            result.push(quotient_from_cyclic_and_reduced(cyc, neg));
         } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
@@ -582,11 +673,21 @@ where
 
     tracing::debug!(other_s = other_time, "compute_r breakdown");
 
-    Ok(result)
+    let u_concat_digits = tiered_rows
+        .map(|(_, _, _, digits)| digits)
+        .unwrap_or_default();
+    Ok((result, u_concat_digits))
 }
 
-/// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | public outputs | D (`v`) | B (`commitment_rows`) | A (zeros).
+/// Build the RHS vector `y` matching the canonical M row layout:
+/// consistency (zero) | public outputs | D (`v`) | COMMIT (`commitment_rows`) |
+/// B_inner (zeros) | A (zeros).
+///
+/// `commit_rows_per_group` is the sent-commitment row count per group
+/// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
+/// `b_inner_rows_per_group` is the inner-consistency block size per group
+/// (`0` for single-tier). The number of commitment groups is inferred from
+/// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors
 ///
@@ -597,7 +698,8 @@ pub fn generate_y<F, const D: usize>(
     commitment_rows: &[CyclotomicRing<F, D>],
     public_outputs: &[CyclotomicRing<F, D>],
     n_d: usize,
-    n_b: usize,
+    commit_rows_per_group: usize,
+    b_inner_rows_per_group: usize,
     n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -609,9 +711,12 @@ where
             actual: v.len(),
         });
     }
-    if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
+    if commit_rows_per_group == 0
+        || commitment_rows.is_empty()
+        || !commitment_rows.len().is_multiple_of(commit_rows_per_group)
+    {
         return Err(AkitaError::InvalidSize {
-            expected: n_b,
+            expected: commit_rows_per_group,
             actual: commitment_rows.len(),
         });
     }
@@ -620,11 +725,18 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
+    let num_commitments = commitment_rows.len() / commit_rows_per_group;
+    let b_inner_total = b_inner_rows_per_group
+        .checked_mul(num_commitments)
+        .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
+    let mut out = Vec::with_capacity(
+        1 + public_outputs.len() + n_d + commitment_rows.len() + b_inner_total + n_a,
+    );
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }

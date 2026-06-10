@@ -61,6 +61,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             layout.offset_e,
             layout.offset_t,
             layout.offset_z,
+            layout.offset_u,
         );
         let plan = evaluator.prepare()?;
         let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
@@ -87,7 +88,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn verify<F, T, const D: usize>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        setup_prefix_commit_params: &LevelParams,
+        next_fold_level_params: &LevelParams,
         proof: &SetupSumcheckProof<E>,
         transcript: &mut T,
     ) -> Result<(), AkitaError>
@@ -113,7 +114,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                         .get(id)
                         .map(|slot| (slot, slot.natural_len, slot.padded_len))
                 },
-                setup_prefix_commit_params,
+                next_fold_level_params,
                 natural_field_len,
                 D,
                 "verifier setup-prefix slot does not cover setup product",

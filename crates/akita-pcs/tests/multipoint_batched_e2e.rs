@@ -16,12 +16,12 @@ static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
 
-fn make_onehot_poly_from_ring_elems(
-    total_ring_elems: usize,
+fn make_onehot_poly_from_chunks(
+    total_chunks: usize,
     seed: u64,
 ) -> (OneHotTestPoly, Vec<Option<u8>>) {
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring_elems)
+    let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
     let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices.clone()).expect("onehot poly");
@@ -183,14 +183,16 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             .expect("onehot batched commit layout");
 
         let total_ring = layout.num_blocks * layout.block_len;
+        // `total_ring` ring elements of degree D over `2^nv / K` one-hot chunks.
+        let total_chunks = total_ring * ONEHOT_D / ONEHOT_K;
         let poly_data_per_point: Vec<Vec<(OneHotTestPoly, Vec<Option<u8>>)>> = num_polys_per_point
             .iter()
             .enumerate()
             .map(|(point_idx, &count)| {
                 (0..count)
                     .map(|poly_idx| {
-                        make_onehot_poly_from_ring_elems(
-                            total_ring,
+                        make_onehot_poly_from_chunks(
+                            total_chunks,
                             0xa66e_2000 + (point_idx as u64) * 100 + poly_idx as u64,
                         )
                     })

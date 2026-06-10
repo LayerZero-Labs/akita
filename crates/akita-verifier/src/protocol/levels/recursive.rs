@@ -21,7 +21,7 @@ pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
-    setup_prefix_commit_params: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -43,7 +43,7 @@ where
         current_state,
         None,
         lp,
-        setup_prefix_commit_params,
+        next_fold_level_params,
         block_order,
         setup_contribution_mode,
         #[cfg(feature = "zk")]
@@ -134,7 +134,7 @@ fn verify_one_level_inner<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     final_w_len: Option<usize>,
     lp: &LevelParams,
-    setup_prefix_commit_params: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -613,7 +613,7 @@ where
         )?;
         verifier.verify::<F, T, D>(
             setup,
-            setup_prefix_commit_params,
+            next_fold_level_params,
             stage3_sumcheck_proof,
             transcript,
         )?;
@@ -658,7 +658,7 @@ fn dispatch_verify_intermediate_level<F, L, T, const D: usize>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
-    setup_prefix_commit_params: &LevelParams,
+    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -681,7 +681,7 @@ where
                 transcript,
                 current_state,
                 lp,
-                setup_prefix_commit_params,
+                next_fold_level_params,
                 block_order,
                 setup_contribution_mode,
                 #[cfg(feature = "zk")]
@@ -799,7 +799,7 @@ where
             AkitaProofStep::Intermediate(level_proof) => {
                 let scheduled_next_params =
                     scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
-                let setup_prefix_commit_params = scheduled_next_params.clone();
+                let next_fold_level_params = scheduled_next_params.clone();
                 if is_last {
                     // The terminal slot must be a Terminal variant.
                     return Err(AkitaError::InvalidProof);
@@ -818,7 +818,7 @@ where
                         transcript,
                         &current_state,
                         &current_lp,
-                        &setup_prefix_commit_params,
+                        &next_fold_level_params,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -834,7 +834,7 @@ where
                         transcript,
                         &current_state,
                         &current_lp,
-                        &setup_prefix_commit_params,
+                        &next_fold_level_params,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -959,7 +959,7 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     schedule: &Schedule,
     root_lp: &LevelParams,
     next_level_params: &LevelParams,
-    root_setup_prefix_commit_params: &LevelParams,
+    root_next_fold_level_params: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
@@ -1092,7 +1092,7 @@ where
                 &mut zk_relations,
                 root_lp,
                 &root_step.params,
-                root_setup_prefix_commit_params,
+                root_next_fold_level_params,
             )?;
 
             let first_level_d = next_level_params.ring_dimension;

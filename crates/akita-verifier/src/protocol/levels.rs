@@ -225,7 +225,7 @@ pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
-    setup_prefix_commit_params: &LevelParams,
+    next_fold_level_params: &LevelParams,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -259,7 +259,7 @@ where
         basis,
         root_lp,
         batched_lp,
-        setup_prefix_commit_params,
+        next_fold_level_params,
         RootStageInput::Intermediate {
             next_w_commitment: &stage2.next_w_commitment,
             next_w_eval: stage2.next_w_eval(),
@@ -376,7 +376,7 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     basis: BasisMode,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
-    setup_prefix_commit_params: &LevelParams,
+    next_fold_level_params: &LevelParams,
     stage_input: RootStageInput<'_, F, C>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
@@ -429,7 +429,7 @@ where
     }
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -1023,7 +1023,7 @@ where
         )?;
         verifier.verify::<F, T, D>(
             setup,
-            setup_prefix_commit_params,
+            next_fold_level_params,
             stage3_sumcheck_proof,
             transcript,
         )?;
