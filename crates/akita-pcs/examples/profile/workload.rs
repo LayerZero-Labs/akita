@@ -534,9 +534,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover_recursion(
-            num_vars, 1, 1
-        ),
+        >>::setup_prover_recursion(num_vars, 1, 1),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
