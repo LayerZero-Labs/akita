@@ -40,7 +40,8 @@ pub use kernels::{
     RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, DecomposeFoldTensorBatchPlan,
+    OpeningFoldBasePlan, OpeningFoldOutput, OpeningFoldPlan, OpeningFoldRingPlan,
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub use plans::{

@@ -47,6 +47,28 @@ pub struct CommitInnerPlan {
     pub log_basis: u32,
 }
 
+/// Base-multiplier fold parameters for a fused evaluate-and-fold opening.
+#[derive(Debug, Clone, Copy)]
+pub struct OpeningFoldBasePlan<'a, F: FieldCore> {
+    /// Outer evaluation scalars applied to the folded blocks.
+    pub eval_outer_scalars: &'a [F],
+    /// Per-block fold scalars.
+    pub fold_scalars: &'a [F],
+    /// Block length in ring elements.
+    pub block_len: usize,
+}
+
+/// Ring-multiplier fold parameters for a fused evaluate-and-fold opening.
+#[derive(Debug, Clone, Copy)]
+pub struct OpeningFoldRingPlan<'a, F: FieldCore, const D: usize> {
+    /// Outer evaluation ring multipliers applied to the folded blocks.
+    pub eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+    /// Per-block fold ring multipliers.
+    pub fold_scalars: &'a [CyclotomicRing<F, D>],
+    /// Block length in ring elements.
+    pub block_len: usize,
+}
+
 /// Fold parameters for a fused evaluate-and-fold opening.
 ///
 /// The base/ring split preserves the current distinction between base
@@ -55,23 +77,9 @@ pub struct CommitInnerPlan {
 #[derive(Debug, Clone, Copy)]
 pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     /// Base multiplier point: scalar fold weights.
-    Base {
-        /// Outer evaluation scalars applied to the folded blocks.
-        eval_outer_scalars: &'a [F],
-        /// Per-block fold scalars.
-        fold_scalars: &'a [F],
-        /// Block length in ring elements.
-        block_len: usize,
-    },
+    Base(OpeningFoldBasePlan<'a, F>),
     /// Ring multiplier point: ring-element fold weights.
-    Ring {
-        /// Outer evaluation ring multipliers applied to the folded blocks.
-        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
-        /// Per-block fold ring multipliers.
-        fold_scalars: &'a [CyclotomicRing<F, D>],
-        /// Block length in ring elements.
-        block_len: usize,
-    },
+    Ring(OpeningFoldRingPlan<'a, F, D>),
 }
 
 /// Fused evaluate-and-fold output.
@@ -96,6 +104,19 @@ pub struct DecomposeFoldPlan<'a> {
     pub log_basis: u32,
 }
 
+/// Tensor-shaped batched decompose + fold parameters at one opening point.
+#[derive(Debug, Clone, Copy)]
+pub struct DecomposeFoldTensorBatchPlan<'a> {
+    /// Tensor-structured fold challenges.
+    pub tensor: &'a TensorChallenges,
+    /// Block length in ring elements.
+    pub block_len: usize,
+    /// Number of balanced digits.
+    pub num_digits: usize,
+    /// Logarithm of the gadget basis.
+    pub log_basis: u32,
+}
+
 /// Batched decompose + fold parameters at one opening point.
 ///
 /// Both the sparse-challenge and tensor-shaped fused batched paths are exposed
@@ -104,27 +125,9 @@ pub struct DecomposeFoldPlan<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum DecomposeFoldBatchPlan<'a> {
     /// Sparse-challenge batched fold.
-    Sparse {
-        /// Sparse fold challenges, outermost first.
-        challenges: &'a [SparseChallenge],
-        /// Block length in ring elements.
-        block_len: usize,
-        /// Number of balanced digits.
-        num_digits: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
+    Sparse(DecomposeFoldPlan<'a>),
     /// Tensor-shaped batched fold.
-    Tensor {
-        /// Tensor-structured fold challenges.
-        tensor: &'a TensorChallenges,
-        /// Block length in ring elements.
-        block_len: usize,
-        /// Number of balanced digits.
-        num_digits: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
+    Tensor(DecomposeFoldTensorBatchPlan<'a>),
 }
 
 /// Scalar operation parameters for the fused ring-switch relation rows.
