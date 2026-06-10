@@ -1061,6 +1061,138 @@ Rejected candidates are not allowed to create prover/verifier divergence.
 The challenge domain separator must include the exact shell parameters and
 operator-norm threshold.
 
+### Folded-Witness ∞-Norm Rejection (digit-count tightening)
+
+This is a stacked follow-on to #155, not part of the L2 rank pricing.
+Operator-norm rejection (above) and the L2 certificate price the **A-role rank**;
+this section instead tightens the **digit count** `num_digits_fold` of the next
+recursive witness `z_hat`, which is sized by the `‖z‖_inf` envelope `β_inf` and is
+orthogonal to the A-role collision bound.
+The analysis is specific to the D=64 exact-shell family.
+
+**What sizes the digit count today.**
+`z` enters the next level only through its balanced base-`b` digit planes `z_hat`,
+and the plane count `K = num_digits_fold` is what stage 1 turns into the structural
+per-coordinate bound `balanced_digit_max(lb, K) = (b/2)·(b^K − 1)/(b − 1)`
+([`decomposition_digits.rs::num_digits_fold`]). `K` is chosen so
+
+```text
+balanced_digit_max(lb, K) >= β_inf
+      = fold_witness_beta(...)
+      = num_claims · 2^r_vars · min(‖c‖_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf)
+```
+
+i.e. `β_inf = T_p · ω · σ_inf` in the worst case (`T_p = num_claims · 2^r_vars`,
+`ω = ‖c‖_1`, `σ_inf = ‖s‖_inf`). This worst case assumes all `T_p · ω`
+challenge-coefficient products align in sign at one output coordinate, which the
+honest fold never attains. The prover already aborts when the realized
+`‖z‖_inf` exceeds `β_inf` ([`ring_relation.rs::validate_decompose_fold`]).
+
+**Rejection-sampled tightening.**
+Replace the abort with a transcript-bound grind: re-derive the fold challenge from
+an incremented nonce, re-fold, and accept the first `z` with `‖z‖_inf <= t` for a
+threshold `t < β_inf`. A level then commits the smallest `K` with
+`balanced_digit_max(lb, K) >= t`, which crosses a base-`b` digit boundary wherever
+`t` and `β_inf` straddle a power of `b`.
+
+**Why it terminates in poly time (D=64).**
+The D=64 exact shell `(count_mag1, count_mag2)` places `count_mag1` coordinates of
+magnitude 1 and `count_mag2` of magnitude 2 on a uniform support, each nonzero
+coordinate carrying an *independent uniform sign* (`sample_exact_shell_challenge`,
+`XofCursor::next_sign`). For production `(30, 12)`, `ω = ‖c‖_1 = 54` and the
+energy `rho2 = ‖c‖_2^2 = 30 + 4·12 = 78` are fixed (every member meets
+`rho2 <= ‖c‖_inf · ‖c‖_1 = 108`).
+
+Fix an output coordinate `r` of `z = sum_{(l,i)} c_{l,i} * s_{l,i}` (the fold of
+`T_p` blocks). Expanding the negacyclic products,
+
+```text
+z_r = sum_{(l,i)} sum_{a in supp(c_{l,i})} eps_{l,i,a} · m_{l,i,a} · (± s_{l,i, r⊖a}),
+```
+
+a signed sum of the independent signs `eps_{l,i,a}` with weights of magnitude
+`m_{l,i,a} · |s| <= m_{l,i,a} · σ_inf` (`m = |c| in {1, 2}`). Conditioned on every
+support and magnitude pattern, `z_r` is a zero-mean Rademacher sum with variance
+proxy
+
+```text
+V_r = sum_{(l,i)} sum_a m_{l,i,a}^2 · s_{l,i, r⊖a}^2
+    <= σ_inf^2 · sum_{(l,i)} ‖c_{l,i}‖_2^2
+    <= T_p · rho2 · σ_inf^2 =: V.
+```
+
+Hoeffding for Rademacher sums gives `Pr[|z_r| > t | support, magnitudes] <=
+2·exp(−t^2 / 2V)` for every conditioning, hence unconditionally, and a union bound
+over the `N = coeffs` coordinates yields the tail
+
+```text
+Pr[‖z‖_inf > t] <= 2·N·exp(−t^2 / 2V).        (T)
+```
+
+Let `p = Pr[gamma(c) <= Gamma]` be the operator-norm acceptance probability
+(`p = 1` when the cap does not bind; the production `(30, 12)` ships with no
+threshold, so `p = 1`). For challenges from the accepted distribution, Bayes
+against (T) on the unconditioned event gives
+
+```text
+Pr[‖z‖_inf > t | all T_p blocks accepted] <= Pr[‖z‖_inf > t] / p^{T_p}
+                                          <= (2N / p^{T_p}) · exp(−t^2 / 2V),
+```
+
+so taking
+
+```text
+t >= t* = sqrt( 2V · ln(4N / p^{T_p}) )
+        = sqrt( 2 · T_p · rho2 · σ_inf^2 · (ln 4N + T_p · ln(1/p)) )
+```
+
+makes the conditional miss probability at most 1/2. Each accepted challenge then
+yields `‖z‖_inf <= t*` with probability at least 1/2, so the grind re-folds at
+most twice in expectation (poly time). At `p = 1` this is just
+`t* = sqrt(2V · ln 4N)`; a binding cap adds the loose `T_p · ln(1/p)` term (the
+price of the Bayes step), which keeps termination in `O(1)` expected re-folds for
+any constant `p`.
+
+**Soundness is unchanged.**
+The verifier never reads the accepting nonce as evidence that `‖z‖_inf <= t*`. It
+reads the bound off the committed digits: the stage-1 range check already forces
+`|z_r| <= balanced_digit_max(lb, K)`, and the level published `K` before the fold.
+The CWSS extractor inspects only accepting transcripts and never how `c` was
+sampled, so narrowing the challenge support by the two rejection layers changes
+nothing it recovers; the grind's bias on the challenge distribution is absorbed
+into the standard Fiat-Shamir knowledge error `(Q+1)·κ` for the `Q` random-oracle
+queries an adversary makes, the only contract being that the accepted support
+retains `λ + log2 Q` bits (Accepted-challenge entropy invariant). Lowering `K`
+tightens the `‖z‖_inf` the verifier structurally enforces without touching
+binding.
+
+**How much is gained (D=64), and the gap to honest folds.**
+At `p = 1`,
+
+```text
+t* / β_inf = sqrt(2 · rho2 · ln 4N) / (ω · sqrt(T_p)),
+```
+
+independent of `σ_inf` and growing only as `sqrt(ln N)`. For `(rho2, ω) =
+(78, 54)` and `N ≈ 2^16`, this is `≈ 0.41, 0.29, 0.20, 0.14` at fold widths
+`T_p = 4, 8, 16, 32`, so the rigorous threshold sits inside one base-`b` digit of
+the worst case at the wider folds. It is loose against the measured folds in the
+calibration tables above by roughly another order of magnitude, because `V` charges
+every source coordinate at the worst case `σ_inf` while honest source blocks are
+far smaller in mean square (`mu2_implied`). Production thresholds are calibrated
+against the realized response (the `z_rms` / `mu2_implied` tables) and are
+correspondingly tighter; (T) is only what guarantees termination.
+
+**Transcript and planner consequences (later slices).**
+- The grind nonce is bound before the challenge is squeezed (wire-before-squeeze),
+  exactly like the op-norm rejection stream, so the verifier replays it
+  deterministically and re-derives the same challenge.
+- The threshold policy `t(level, family)` feeds `β_inf` / `num_digits_fold`, must
+  be planner-visible (it changes the schedule DP where a lowered `K` crosses a
+  `2^lb` boundary), and is bound in the instance descriptor.
+- `validate_decompose_fold` becomes the grind loop with a capped attempt count;
+  exceeding the cap is a prover-only error (not verifier-reachable).
+
 ### SIS Tables And Planner
 
 The current SIS tables are keyed by a rounded coefficient `L∞` collision bucket.
