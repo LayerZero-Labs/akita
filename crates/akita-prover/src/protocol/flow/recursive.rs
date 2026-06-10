@@ -154,33 +154,51 @@ where
     let (level_params, next_params) =
         scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
     let level_d = level_params.ring_dimension;
-    let terminal_result = dispatch_ring_dim_result!(
-        level_d,
-        D,
-        prepared,
-        |D, level_prepared| {
-            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
-                backend,
-                level_prepared,
-                transcript,
-                current_state,
-                level,
-                &level_params,
-                MRowLayout::WithoutDBlock,
-            )?;
-            prove_terminal_fold::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+    let terminal_result = if level_d == D {
+        let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+            backend,
+            prepared,
+            transcript,
+            current_state,
+            level,
+            &level_params,
+            MRowLayout::WithoutDBlock,
+        )?;
+        prove_terminal_fold::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+            expanded.as_ref(),
+            backend,
+            prepared,
+            transcript,
+            level,
+            &level_params,
+            next_params.log_basis,
+            prepared_fold,
+        )
+    } else {
+        dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            let prepared_fold =
+                prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
+                    backend,
+                    &level_prepared,
+                    transcript,
+                    current_state,
+                    level,
+                    &level_params,
+                    MRowLayout::WithoutDBlock,
+                )?;
+            prove_terminal_fold::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
                 expanded.as_ref(),
                 backend,
-                level_prepared,
+                &level_prepared,
                 transcript,
                 level,
                 &level_params,
                 next_params.log_basis,
                 prepared_fold,
             )
-        },
-        backend.prepare_expanded::<D>(expanded.clone())?
-    );
+        })
+    };
     #[cfg(not(feature = "zk"))]
     let terminal = terminal_result?;
     #[cfg(feature = "zk")]
