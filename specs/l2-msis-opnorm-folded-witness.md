@@ -1271,7 +1271,7 @@ Likely primary files:
 - `crates/akita-challenges/src/sampler/`
 - `crates/akita-types/src/sis/norm_bound.rs`
 - `crates/akita-types/src/sis/ajtai_key.rs`
-- `crates/akita-types/src/sis/generated_sis_table.rs`
+- `crates/akita-types/src/sis/generated_sis_table/`
 - `crates/akita-types/src/sis/decomposition_digits.rs`
 - `crates/akita-types/src/layout/params.rs`
 - `crates/akita-types/src/proof/levels.rs`

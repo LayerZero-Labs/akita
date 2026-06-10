@@ -90,6 +90,7 @@ def main() -> int:
             fieldnames=[
                 "q", "d", "collision", "rank", "max_width", "target_bits", "search_cap",
             ],
+            lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(rows)

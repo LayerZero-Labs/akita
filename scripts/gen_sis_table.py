@@ -4,8 +4,8 @@ Regenerate the SIS max-width table used by the Akita planner.
 
 This script binary-searches for the maximum SIS width (in ring elements) that
 provides >= 128-bit security for each (d, collision_l2_sq, rank) triple. The
-output is the Rust match arm body for `sis_max_widths` in
-`crates/akita-types/src/sis/generated_sis_table.rs`.
+output is the Rust match arm body for `sis_max_widths` in the split
+`crates/akita-types/src/sis/generated_sis_table/` modules.
 
 Requires SageMath and the pinned lattice-estimator checkout under
 `third_party/lattice-estimator` (or an explicit override).

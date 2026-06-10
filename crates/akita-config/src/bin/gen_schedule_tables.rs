@@ -136,6 +136,10 @@ fn generator_command() -> &'static str {
     }
 }
 
+fn ships_for_active_features(family: &GeneratedFamily) -> bool {
+    !cfg!(feature = "zk") || family.ships_zk
+}
+
 fn emit_module(family: &GeneratedFamily) -> Result<String, String> {
     let mut out = String::new();
     let const_name = output_const_name(family);
@@ -192,6 +196,9 @@ fn main() -> Result<(), String> {
     };
 
     for family in ALL_GENERATED_FAMILIES {
+        if !ships_for_active_features(family) {
+            continue;
+        }
         if let Some(ref names) = filter {
             if !names.contains(&family.module_name) {
                 continue;

@@ -38,7 +38,7 @@ sage -python scripts/gen_sis_table.py --family q64 --jobs 6
 sage -python scripts/gen_sis_table.py --family q128 --jobs 6
 ```
 
-Stitch rust output into `crates/akita-types/src/sis/generated_sis_table.rs` in the
+Stitch rust output into `crates/akita-types/src/sis/generated_sis_table/` in the
 table cutover PR (separate from golden refresh).
 
 Manual workflow only. Rust CI does not require Sage or an initialized submodule.

@@ -628,7 +628,7 @@ impl LevelParams {
             onehot_chunk_size: other.onehot_chunk_size,
             // The tier (split factor + `f_key` rank/bucket) is sized against the
             // same SIS floor as the ranks, so it stays with `self`, matching the
-            // placement of `b_key`'s `row_len`/`collision_inf`.
+            // placement of `b_key`'s `row_len`/`collision_l2_sq`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
         }

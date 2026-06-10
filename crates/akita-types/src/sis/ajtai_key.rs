@@ -33,7 +33,7 @@ pub const MAX_LOG_BUCKET: u32 = 84;
 
 /// Coefficient-`L∞` collision buckets for norm-bound sizing.
 ///
-/// Complements the power-of-two `collision_l2_sq` ladder in `generated_sis_table.rs`:
+/// Complements the power-of-two `collision_l2_sq` ladder in `generated_sis_table/`:
 /// derived keys `K = d · B²` for `B` in this table are the default lookup for
 /// collisions that enter through an `L∞` envelope (A/B/D norm_bound). Keep in
 /// lockstep with `COEFF_LINF_BUCKETS` in `scripts/gen_sis_table.py`.

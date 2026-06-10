@@ -189,6 +189,10 @@ fn regen_hint() -> &'static str {
     }
 }
 
+fn ships_for_active_features(family: &GeneratedFamily) -> bool {
+    !cfg!(feature = "zk") || family.ships_zk
+}
+
 /// The shipped tables must expand to exactly what `find_schedule` produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
@@ -196,6 +200,9 @@ fn regen_hint() -> &'static str {
 fn generated_schedule_tables_match_find_schedule() {
     let mut mismatches = Vec::new();
     for family in ALL_GENERATED_FAMILIES {
+        if !ships_for_active_features(family) {
+            continue;
+        }
         check_family(family, &mut mismatches);
     }
 

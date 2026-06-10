@@ -147,6 +147,19 @@ def merge_family_blocks(
     return [merged[key] for key in sorted(merged)]
 
 
+def validate_rank_count(family: str, arm_lines: list[str], max_rank: int) -> None:
+    for arm in arm_lines:
+        match = ARM_RE.match(arm)
+        if match is None:
+            continue
+        count = 0 if not match.group(3) else len(match.group(3).split(","))
+        if count != max_rank:
+            raise SystemExit(
+                f"{family} row (d={match.group(1)}, collision={match.group(2)}) "
+                f"has {count} widths; expected --max-rank {max_rank}"
+            )
+
+
 def stitch_family_file(family: str, arm_lines: list[str]) -> str:
     enum_name = FAMILY_ENUM[family]
     parts = [
@@ -222,7 +235,10 @@ def main() -> None:
     if args.split_existing:
         if not LEGACY_OUT.exists():
             raise SystemExit(f"missing legacy table at {LEGACY_OUT}")
-        write_table(split_existing_monolith(), dry_run=args.dry_run)
+        family_arm_lines = split_existing_monolith()
+        for family, arm_lines in family_arm_lines.items():
+            validate_rank_count(family, arm_lines, args.max_rank)
+        write_table(family_arm_lines, dry_run=args.dry_run)
         return
 
     derived_keys = derived_l2_collision_keys()
@@ -247,6 +263,8 @@ def main() -> None:
             )
             pow2_block = run_family(family, args.jobs, args.max_rank)
             family_arm_lines[family] = merge_family_blocks(pow2_block, derived_block)
+
+        validate_rank_count(family, family_arm_lines[family], args.max_rank)
 
     write_table(family_arm_lines, dry_run=args.dry_run)
 

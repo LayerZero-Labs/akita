@@ -87,7 +87,7 @@ Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardeni
 
 ## Offline SIS table regen
 
-`scripts/gen_sis_table.py` regenerates `generated_sis_table.rs` using Sage and the
+`scripts/stitch_generated_sis_table.py` regenerates `generated_sis_table/` using Sage and the
 pinned `third_party/lattice-estimator` checkout (`git submodule update --init`).
 Reference replay: `sage -python scripts/sis_golden/check.py`. Rust CI does not
 require Sage or an initialized submodule.

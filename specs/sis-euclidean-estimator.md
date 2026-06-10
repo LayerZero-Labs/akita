@@ -11,7 +11,7 @@
 ## Summary
 
 Akita's L2 MSIS cutover ([`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md))
-needs regenerated `generated_sis_table.rs` rows: for each representative modulus family,
+needs regenerated `generated_sis_table/` rows: for each representative modulus family,
 ring dimension, squared-Euclidean collision bucket, and module rank, the maximum commitment
 width that still yields at least 128-bit security under a fixed lattice-reduction cost model.
 
@@ -45,7 +45,7 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
    (provenance header, `--jobs`, no `SIGALRM` hang guard), and check in Akita-local golden
    CSV plus a regen/check script. *(Done.)*
 3. **Akita (S5b, same PR #155):** stitch emitted rows into
-   `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_inf` →
+   `crates/akita-types/src/sis/generated_sis_table/`, rename `collision_inf` →
    `collision_l2_sq` (`u128`), and wire L2 A-role / B/D pricing from `norm_bound.rs`
    (Lemma 7 on fold response `z`; see parent spec). The stitched table carries two
    complementary key families: **derived** keys `K = d · B²` for coefficient-`L∞`
@@ -83,7 +83,7 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
 - **Derived-key lockstep.** `COEFF_LINF_BUCKETS` in `ajtai_key.rs` and
   `scripts/gen_sis_table.py` must match. Derived rows are merged by
   `scripts/stitch_generated_sis_table.py` (`--supplement-derived-only` or full stitch).
-- **No runtime coupling.** Prover, verifier, and planner read only `generated_sis_table.rs`.
+- **No runtime coupling.** Prover, verifier, and planner read only `generated_sis_table/`.
 - **Single cost model.** Euclidean (`norm = 2`) + `BDGL16` only. The `lgsa` shape model is
   **inert** on this path: `SIS.lattice` with `norm == 2` calls `cost_euclidean`, which
   does not take `red_shape_model`. S5b should correct misleading "lgsa" comments in table
@@ -136,7 +136,7 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
 
 ### Acceptance Criteria (S5b, in #155)
 
-- [x] Stitched `generated_sis_table.rs` unions power-of-two `collision_l2_sq` keys
+- [x] Stitched `generated_sis_table/` unions power-of-two `collision_l2_sq` keys
   (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) with derived keys `K = d · B²` for each
   `B ∈ COEFF_LINF_BUCKETS` and `d ∈ {32,64,128,256}`; provenance notes BDGL16 Euclidean
   (no `lgsa`); ranks `1..=20` via `scripts/stitch_generated_sis_table.py`.
@@ -208,7 +208,7 @@ scripts/sis_golden/
   check.py                         replay + drift gate (manual / optional CI hash)
 
 crates/akita-types/src/sis/
-  generated_sis_table.rs           consumer (S5b stitch)
+  generated_sis_table/             split consumer modules (S5b stitch)
 ```
 
 **Estimator surface used** (everything else ignored):
@@ -322,7 +322,7 @@ on this for correctness.
 - Spec revision (this file) and parent cross-links.
 - S3 op-norm rejection (on branch).
 - S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
-- S5b *(done):* L2 `generated_sis_table.rs` stitch (pow2 ladder + derived `d·B²` keys),
+- S5b *(done):* L2 `generated_sis_table/` stitch (pow2 ladder + derived `d·B²` keys),
   `collision_l2_sq` rename, `collision_l2_sq_for_linf_envelope` rank pricing, planner
   schedule regen. Submodule pinned to `malb/lattice-estimator` @ `27a581b`; re-run
   `scripts/sis_golden/check.py` in a Sage env when bumping the pin. Parallel regen shards
