@@ -17,7 +17,7 @@ use akita_serialization::{
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
     AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, SetupContributionMode,
-    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SetupPrefixVerifierRegistry, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -347,6 +347,17 @@ where
         Ok((seed, shared_matrix))
     }
 
+    fn decode_prefix_slots(
+        rest: &mut &[u8],
+    ) -> Result<SetupPrefixVerifierRegistry<F>, SerializationError> {
+        SetupPrefixVerifierRegistry::deserialize_with_mode(
+            &mut *rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
+        )
+    }
+
     fn decode_from_bytes_with_setup(
         bytes: &[u8],
         decode_setup: impl FnOnce(&mut &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError>,
@@ -428,11 +439,13 @@ where
         rest: &mut &[u8],
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+        let prefix_slots = Self::decode_prefix_slots(rest)?;
         Ok(AkitaVerifierSetup {
             expanded: Arc::new(AkitaExpandedSetup::from_verified_parts(
                 seed,
                 shared_matrix,
             )?),
+            prefix_slots,
         })
     }
 
@@ -458,10 +471,12 @@ where
         rest: &mut &[u8],
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+        let prefix_slots = Self::decode_prefix_slots(rest)?;
         Ok(AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
+            prefix_slots,
         })
     }
 
@@ -488,6 +503,10 @@ pub use akita_algebra as _akita_algebra_dep;
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
+    use akita_types::{
+        derive_public_matrix_flat, sample_public_matrix_seed, FlatRingVec,
+        SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
+    };
 
     type TestF = Prime128Offset275;
     const TEST_D: usize = 32;
@@ -544,6 +563,55 @@ mod tests {
 
         let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
         assert!(err.to_string().contains("opening-point arity 3"));
+    }
+
+    #[test]
+    fn strict_setup_decoder_preserves_prefix_slots() {
+        let public_matrix_seed = sample_public_matrix_seed();
+        let seed = AkitaSetupSeed {
+            max_num_vars: 8,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            gen_ring_dim: TEST_D,
+            max_setup_len: 2,
+            public_matrix_seed,
+        };
+        let shared_matrix = derive_public_matrix_flat::<TestF, TEST_D>(2, &public_matrix_seed);
+        let id = SetupPrefixSlotId {
+            setup_seed_digest: [1u8; 32],
+            d_setup: TEST_D,
+            natural_len: 1,
+            n_prefix: TEST_D,
+            level_params_digest: [2u8; 32],
+        };
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        prefix_slots
+            .insert(SetupPrefixVerifierSlot {
+                id,
+                natural_len: 1,
+                padded_len: TEST_D,
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                },
+            })
+            .expect("insert prefix slot");
+
+        let mut bytes = Vec::new();
+        seed.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+        shared_matrix
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+        prefix_slots
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+
+        let mut rest = &bytes[..];
+        let decoded = AkitaJoltInputs::<TestF, TEST_D>::deserialize_strict_host_setup(&mut rest)
+            .expect("decode setup");
+
+        assert!(rest.is_empty());
+        assert!(decoded.prefix_slots.get(&id).is_some());
+        assert_eq!(decoded.prefix_slots.len(), 1);
     }
 
     #[test]

@@ -312,12 +312,11 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                BATCH_SIZE,
-                1,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(NV, BATCH_SIZE, 1)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,

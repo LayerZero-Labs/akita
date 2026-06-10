@@ -8,7 +8,7 @@
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
-    Schedule, SisModulusFamily,
+    LevelParams, Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -258,6 +258,16 @@ pub fn digest_incidence(summary: &ClaimIncidenceSummary) -> DescriptorDigest {
     for row in summary.public_rows() {
         push_usize(&mut bytes, row.point_idx());
         push_usize_vec(&mut bytes, row.claim_indices());
+    }
+    blake2b_256(&bytes)
+}
+
+/// Digest a normalized list of commitment level parameters.
+pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
+    let mut bytes = Vec::new();
+    push_usize(&mut bytes, params.len());
+    for params in params {
+        params.append_descriptor_bytes(&mut bytes);
     }
     blake2b_256(&bytes)
 }

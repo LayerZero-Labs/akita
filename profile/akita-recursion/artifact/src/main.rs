@@ -311,9 +311,17 @@ fn run() -> Result<(), String> {
     let opening = opening_from_poly(&onehot_poly, &opening_point, &layout, BasisMode::Lagrange)?;
 
     let t0 = Instant::now();
-    let prover_setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-            .map_err(|err| format!("prover setup failed: {err}"))?;
+    let prover_setup = match setup_contribution_mode {
+        SetupContributionMode::Direct => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+        }
+        SetupContributionMode::Recursive => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
+                nv, 1, 1,
+            )
+        }
+    }
+    .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;

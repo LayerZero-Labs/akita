@@ -100,7 +100,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
     #[cfg(feature = "zk")]
     let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
-    let reduction = prove_recursive_extension_opening_reduction::<F, E, _>(
+    let reduction = prove_extension_opening_reduction::<F, E, _>(
         &logical_w,
         &point,
         expected_opening,

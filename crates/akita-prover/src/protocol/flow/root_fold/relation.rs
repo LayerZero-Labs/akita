@@ -216,11 +216,11 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded.as_ref(),
+                &SetupPrefixProverRegistry::new(),
                 lp,
+                next_level_params,
                 &instance,
                 &tau1,
                 alpha,

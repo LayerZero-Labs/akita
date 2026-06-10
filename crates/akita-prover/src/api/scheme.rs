@@ -53,6 +53,18 @@ where
         max_num_points: usize,
     ) -> Result<Self::ProverSetup, AkitaError>;
 
+    /// Build prover setup for recursive setup-contribution mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if base setup construction or recursive setup-prefix
+    /// population fails.
+    fn setup_prover_recursion(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<Self::ProverSetup, AkitaError>;
+
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 

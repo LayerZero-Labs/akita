@@ -103,12 +103,14 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                num_polys_per_point.len(),
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -226,11 +228,14 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_prover(
             NV,
             total_claims,
-            num_polys_per_point.len(),
-        ).unwrap();
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -331,12 +336,14 @@ fn multipoint_dense_shared_commitment_round_trip() {
             })
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                NUM_POINTS,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            NUM_POINTS)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
