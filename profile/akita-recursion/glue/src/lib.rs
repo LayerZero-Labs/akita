@@ -580,6 +580,7 @@ mod tests {
         let id = SetupPrefixSlotId {
             setup_seed_digest: [1u8; 32],
             d_setup: TEST_D,
+            natural_len: 1,
             n_prefix: TEST_D,
             level_params_digest: [2u8; 32],
         };

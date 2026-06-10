@@ -1,8 +1,9 @@
 //! Setup-prefix commitment artifacts for setup-claim offloading (slice 02B).
 //!
-//! This module defines the preprocessing metadata for power-of-two flat
-//! coefficient prefixes of the shared setup vector `S`. It does not run a setup
-//! product sumcheck or change proof semantics.
+//! This module defines preprocessing metadata for exact flat coefficient
+//! prefixes of the shared setup vector `S`, zero-padded to power-of-two
+//! commitment domains. It does not run a setup product sumcheck or change proof
+//! semantics.
 
 use crate::instance_descriptor::{digest_level_params, setup_seed_digest, DescriptorDigest};
 use crate::proof::{
@@ -24,12 +25,18 @@ const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 
 /// Identity for one committed setup-prefix slot.
+///
+/// `natural_len` distinguishes exact prefixes that share a padded commitment
+/// domain, while `n_prefix` binds the power-of-two domain and derived commitment
+/// parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SetupPrefixSlotId {
     /// Digest of the deterministic setup seed / layout identity.
     pub setup_seed_digest: DescriptorDigest,
     /// Coefficient-axis ring dimension for the delegated prefix object.
     pub d_setup: usize,
+    /// Exact flat coefficient length represented before zero padding.
+    pub natural_len: usize,
     /// Padded flat coefficient length committed for this slot.
     pub n_prefix: usize,
     /// Digest of the commitment parameters used to build the slot.
@@ -41,6 +48,11 @@ impl Valid for SetupPrefixSlotId {
         if self.d_setup == 0 {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot d_setup must be non-zero".to_string(),
+            ));
+        }
+        if self.natural_len == 0 || self.natural_len > self.n_prefix {
+            return Err(SerializationError::InvalidData(
+                "setup prefix slot natural_len must be in 1..=n_prefix".to_string(),
             ));
         }
         if self.n_prefix == 0 || !self.n_prefix.is_power_of_two() {
@@ -65,6 +77,8 @@ impl AkitaSerialize for SetupPrefixSlotId {
     ) -> Result<(), SerializationError> {
         writer.write_all(&self.setup_seed_digest)?;
         self.d_setup.serialize_with_mode(&mut writer, compress)?;
+        self.natural_len
+            .serialize_with_mode(&mut writer, compress)?;
         self.n_prefix.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.level_params_digest)?;
         Ok(())
@@ -73,6 +87,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.setup_seed_digest.len()
             + self.d_setup.serialized_size(compress)
+            + self.natural_len.serialized_size(compress)
             + self.n_prefix.serialized_size(compress)
             + self.level_params_digest.len()
     }
@@ -90,12 +105,14 @@ impl AkitaDeserialize for SetupPrefixSlotId {
         let mut setup_seed_digest = [0u8; 32];
         reader.read_exact(&mut setup_seed_digest)?;
         let d_setup = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let n_prefix = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut level_params_digest = [0u8; 32];
         reader.read_exact(&mut level_params_digest)?;
         let out = Self {
             setup_seed_digest,
             d_setup,
+            natural_len,
             n_prefix,
             level_params_digest,
         };
@@ -285,6 +302,11 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
                 "setup prefix verifier slot natural_len must be in 1..=padded_len".to_string(),
             ));
         }
+        if self.natural_len != self.id.natural_len {
+            return Err(SerializationError::InvalidData(
+                "setup prefix verifier slot natural_len must match slot id".to_string(),
+            ));
+        }
         if self.padded_len != self.id.n_prefix {
             return Err(SerializationError::InvalidData(
                 "setup prefix verifier slot padded_len must match slot id".to_string(),
@@ -381,6 +403,11 @@ impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixSlot<F, D> {
         if self.natural_len == 0 || self.natural_len > self.padded_len {
             return Err(SerializationError::InvalidData(
                 "setup prefix prover slot natural_len must be in 1..=padded_len".to_string(),
+            ));
+        }
+        if self.natural_len != self.id.natural_len {
+            return Err(SerializationError::InvalidData(
+                "setup prefix prover slot natural_len must match slot id".to_string(),
             ));
         }
         if self.padded_len != self.id.n_prefix {
@@ -833,12 +860,14 @@ pub fn setup_prefix_level_params(
 pub fn setup_prefix_slot_id(
     setup_seed_digest: DescriptorDigest,
     d_setup: usize,
+    natural_len: usize,
     n_prefix: usize,
     level_params_digest: DescriptorDigest,
 ) -> SetupPrefixSlotId {
     SetupPrefixSlotId {
         setup_seed_digest,
         d_setup,
+        natural_len,
         n_prefix,
         level_params_digest,
     }
@@ -882,17 +911,15 @@ where
     let slot_id = setup_prefix_slot_id(
         seed_digest,
         d_setup,
+        natural_field_len,
         n_prefix,
         digest_level_params(std::slice::from_ref(&prefix_params)),
     );
     let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(&slot_id) else {
         return Ok(None);
     };
-    if slot_padded_len != n_prefix {
+    if slot_natural_len != natural_field_len || slot_padded_len != n_prefix {
         return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
-    }
-    if slot_natural_len < natural_field_len {
-        return Ok(None);
     }
     let setup_eval_len = n_prefix.checked_div(d_setup).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
@@ -986,6 +1013,7 @@ mod tests {
         let id = setup_prefix_slot_id(
             setup_seed_digest(&seed).expect("seed digest"),
             d_setup,
+            natural_len,
             n_prefix,
             digest_level_params(std::slice::from_ref(
                 &prefix_params.expect("eligible prefix params"),
@@ -1033,10 +1061,10 @@ mod tests {
             d_setup,
             "slot does not cover request",
         )
-        .expect("short slot falls back");
+        .expect("different natural_len slot falls back");
         assert!(
             selection.is_none(),
-            "undersized matching slot should behave like a missing slot"
+            "same padded prefix with different natural_len should use a different id"
         );
     }
 
@@ -1049,6 +1077,7 @@ mod tests {
         let id = SetupPrefixSlotId {
             setup_seed_digest: [7u8; 32],
             d_setup: 32,
+            natural_len: 1,
             n_prefix: 32,
             level_params_digest: [9u8; 32],
         };
@@ -1091,6 +1120,7 @@ mod tests {
         let id = SetupPrefixSlotId {
             setup_seed_digest: [7u8; 32],
             d_setup: 32,
+            natural_len: 1,
             n_prefix: 32,
             level_params_digest: [9u8; 32],
         };

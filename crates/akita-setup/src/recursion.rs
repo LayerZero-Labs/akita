@@ -38,7 +38,7 @@ where
         return Ok(());
     };
     let level_params_digest = digest_level_params(std::slice::from_ref(&prefix_params));
-    let id = setup_prefix_slot_id(seed_digest, D, n_prefix, level_params_digest);
+    let id = setup_prefix_slot_id(seed_digest, D, natural_len, n_prefix, level_params_digest);
     if setup.prefix_slots.get(&id).is_some() {
         return Ok(());
     }
@@ -108,7 +108,7 @@ where
             &backend,
             &prepared,
             &next_fold.params,
-            n_prefix,
+            natural_len,
             n_prefix,
         )?;
     }
@@ -176,8 +176,9 @@ mod tests {
             assert_eq!(id, &slot.id);
             id.check().expect("slot id shape");
             assert_eq!(id.d_setup, SETUP_OFFLOAD_D_SETUP);
+            assert_eq!(slot.natural_len, id.natural_len);
             assert_eq!(slot.padded_len, id.n_prefix);
-            assert_eq!(slot.natural_len, slot.padded_len);
+            assert!(slot.natural_len <= slot.padded_len);
             assert!(slot.padded_len.is_power_of_two());
         }
 

@@ -19,9 +19,9 @@ use akita_types::{
 
 /// Commit one padded flat prefix of the shared setup matrix.
 ///
-/// The witness is the coefficient form of `S^flat[0..n_prefix]`, zero-padded to a
-/// power of two. The caller must supply `level_params` whose inner witness shape
-/// satisfies `num_blocks * block_len == n_prefix / D`.
+/// The witness is the coefficient form of `S^flat[0..natural_len]`,
+/// zero-padded to `n_prefix`. The caller must supply `level_params` whose inner
+/// witness shape satisfies `num_blocks * block_len == n_prefix / D`.
 ///
 /// # Errors
 ///
@@ -184,6 +184,7 @@ where
     let id = setup_prefix_slot_id(
         setup_seed_digest,
         D,
+        natural_len,
         n_prefix,
         digest_level_params(std::slice::from_ref(level_params)),
     );

@@ -63,6 +63,7 @@ fn assert_setup_prefix_slots_populated(setup: &akita_types::AkitaVerifierSetup<F
         assert_eq!(id, &slot.id);
         id.check().expect("slot id validation");
         assert_eq!(id.d_setup, ONEHOT_D);
+        assert_eq!(slot.natural_len, id.natural_len);
         assert_eq!(slot.padded_len, id.n_prefix);
         assert!(slot.natural_len <= slot.padded_len);
         assert!(slot.padded_len.is_power_of_two());

@@ -311,6 +311,7 @@ mod tests {
                 id: SetupPrefixSlotId {
                     setup_seed_digest: [1u8; 32],
                     d_setup: 32,
+                    natural_len: 1,
                     n_prefix: 3,
                     level_params_digest: [2u8; 32],
                 },

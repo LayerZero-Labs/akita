@@ -600,6 +600,7 @@ mod tests {
                 let id = SetupPrefixSlotId {
                     setup_seed_digest: setup_seed_digest(setup.expanded.seed()).unwrap(),
                     d_setup: TEST_D,
+                    natural_len: 1,
                     n_prefix: TEST_D,
                     level_params_digest: [9u8; 32],
                 };
