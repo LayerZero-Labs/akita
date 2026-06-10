@@ -4,10 +4,7 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use akita_challenges::{
-    validate_aggregate_fold_min_entropy_for_ring_dim, TensorChallengeShape,
-    MIN_FOLD_CHALLENGE_ENTROPY_BITS,
-};
+use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4};
 use akita_types::ClaimIncidenceSummary;
@@ -78,13 +75,8 @@ fn validate_proof_optimized_fold_entropy(
         }
     }
     .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
-    validate_aggregate_fold_min_entropy_for_ring_dim(
-        cfg,
-        TensorChallengeShape::Flat,
-        d,
-        MIN_FOLD_CHALLENGE_ENTROPY_BITS,
-    )
-    .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))
+    cfg.validate_min_entropy_for_ring_dim(d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
+        .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))
 }
 
 // ---------------------------------------------------------------------------

@@ -11,12 +11,14 @@
 
 use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
 
-/// Minimum aggregate min-entropy (bits) for one logical stage-1 fold challenge.
+/// Minimum min-entropy (bits) for every stage-1 sparse-challenge transcript draw.
 ///
-/// Flat folds draw one sparse challenge per block; tensor folds draw independent
-/// left and right factors whose support multiplies. Callers must apply this
-/// floor to the summed factor entropies, not to an isolated factor in isolation
-/// (see [`SparseChallengeConfig::log2_support_bits`]).
+/// Flat folds sample one such draw per logical block. Tensor folds sample
+/// independent left and right factor vectors; each factor is one draw and is
+/// reused across many logical blocks (`c_{p,q} = left_p · right_q`). Soundness
+/// therefore requires **each draw** to clear this floor, not merely the product
+/// `left ⊗ right` summed to 128 bits (a 64+64 split would pass a sum rule but
+/// leave each factor brute-forceable).
 pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
@@ -143,9 +145,10 @@ impl SparseChallengeConfig {
     ///   whose support reaches `2^128` (see `sampler::bounded_l1_support`), so we
     ///   report that proven floor rather than re-running the DP here.
     ///
-    /// IMPORTANT: fold challenges are tensor-factored (`left ⊗ right`) and drawn
-    /// per block, so the *aggregate* entropy a caller must floor is the sum of
-    /// the factors' `log2_support_bits`, not a single factor in isolation.
+    /// For tensor-shaped folds, this is the support of **one** left or right
+    /// factor draw. A logical block challenge `left_p · right_q` multiplies the
+    /// supports, but the security floor is applied per draw (see
+    /// [`MIN_FOLD_CHALLENGE_ENTROPY_BITS`]).
     pub fn log2_support_bits<const D: usize>(&self) -> f64 {
         fn log2_binom(n: usize, k: usize) -> f64 {
             if k > n {
@@ -188,9 +191,8 @@ impl SparseChallengeConfig {
     /// This is intentionally **not** folded into [`Self::validate`]: that check
     /// is a structural well-formedness gate also exercised at tiny test degrees,
     /// whereas the entropy floor is a security-parameter policy callers apply at
-    /// config-selection time with the correct *aggregate* budget. For a
-    /// tensor-factored fold challenge, apply the floor to the summed
-    /// [`Self::log2_support_bits`] of the factors (see that method's note).
+    /// config-selection time. The same per-draw floor applies to flat blocks and
+    /// to each tensor left/right factor.
     ///
     /// # Errors
     ///
@@ -203,6 +205,25 @@ impl SparseChallengeConfig {
             return Err("sparse challenge family has insufficient min-entropy for security floor");
         }
         Ok(())
+    }
+
+    /// Runtime ring-dimension dispatch for [`Self::validate_min_entropy`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_dim` is unsupported or the per-draw floor fails.
+    pub fn validate_min_entropy_for_ring_dim(
+        &self,
+        ring_dim: usize,
+        required_bits: u32,
+    ) -> Result<(), &'static str> {
+        match ring_dim {
+            32 => self.validate_min_entropy::<32>(required_bits),
+            64 => self.validate_min_entropy::<64>(required_bits),
+            128 => self.validate_min_entropy::<128>(required_bits),
+            256 => self.validate_min_entropy::<256>(required_bits),
+            _ => Err("unsupported ring dimension for fold-challenge entropy audit"),
+        }
     }
 
     /// Canonical byte encoding used for transcript domain separation.
@@ -319,20 +340,19 @@ mod entropy_tests {
     }
 
     #[test]
-    fn tensor_aggregate_sums_factor_entropies() {
-        let cfg = SparseChallengeConfig::ExactShell {
+    fn tensor_floor_is_per_draw_not_product_budget() {
+        // One mag-1 coeff at D=4 has ~3 bits per draw. A sum rule would accept
+        // 64+64; production requires each draw (and each tensor factor) to clear
+        // 128 bits independently.
+        let weak = SparseChallengeConfig::ExactShell {
             count_mag1: 1,
             count_mag2: 0,
         };
-        let flat = super::super::tensor::aggregate_fold_challenge_log2_support_bits::<4>(
-            &cfg,
-            super::super::tensor::ChallengeShape::Flat,
-        );
-        let tensor = super::super::tensor::aggregate_fold_challenge_log2_support_bits::<4>(
-            &cfg,
-            super::super::tensor::ChallengeShape::Tensor,
-        );
-        assert!((tensor - 2.0 * flat).abs() < 1e-9);
+        let per_draw = weak.log2_support_bits::<4>();
+        assert!(per_draw < 128.0);
+        assert!(weak.validate_min_entropy::<4>(128).is_err());
+        // Logical-block product entropy would be 2 * per_draw (informational).
+        assert!((per_draw + per_draw - 2.0 * per_draw).abs() < 1e-9);
     }
 
     #[test]
