@@ -217,7 +217,7 @@ pub fn matrix_envelope_for_schedule<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+    let setup_levels: Vec<LevelParams> = setup_level_params_from_runtime_schedule(&schedule.steps);
     let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
     accumulate_root_matrix_envelope_for_incidence(
         schedule,
@@ -256,7 +256,14 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
         .row_len()
         .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
+    let f_len = match lp.f_key.as_ref() {
+        Some(fk) => fk
+            .row_len()
+            .checked_mul(fk.col_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
+        None => 0,
+    };
+    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
     Ok(())
 }
 
@@ -297,18 +304,25 @@ fn root_runtime_matrix_len_for_incidence(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("batched B setup vector width overflow".to_string())
         })?;
-    let b_width = max_group_poly_count
+    let full_b_width = max_group_poly_count
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("batched B setup width overflow".to_string()))?;
     let d_len =
         lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
             AkitaError::InvalidSetup("batched D setup envelope overflow".to_string())
         })?;
-    let b_len =
-        lp.b_key.row_len().checked_mul(b_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("batched B setup envelope overflow".to_string())
-        })?;
-    Ok(b_len.max(d_len))
+    let b_len = lp
+        .b_key
+        .row_len()
+        .checked_mul(full_b_width.div_ceil(lp.tier_split.max(1)))
+        .ok_or_else(|| AkitaError::InvalidSetup("batched B setup envelope overflow".to_string()))?;
+    let f_len = match lp.f_key.as_ref() {
+        Some(fk) => fk.row_len().checked_mul(fk.col_len()).ok_or_else(|| {
+            AkitaError::InvalidSetup("batched F setup envelope overflow".to_string())
+        })?,
+        None => 0,
+    };
+    Ok(b_len.max(d_len).max(f_len))
 }
 
 #[cfg(feature = "zk")]
@@ -561,12 +575,29 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
+    (@onehot_chunk_size $onehot_chunk_size:expr) => {
+        $onehot_chunk_size
+    };
+    (@onehot_chunk_size) => {
+        1
+    };
+    (@tiered $tiered:expr) => {
+        $tiered
+    };
+    (@tiered) => {
+        false
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr $(, $tiered:expr)?)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
             type ChallengeField = $claim_field;
             const D: usize = $d;
+
+            // Defaults to `false`; the tiered preset(s) pass `true` as the
+            // optional trailing arg.
+            const TIERED_COMMITMENT: bool =
+                impl_proof_optimized_preset!(@tiered $($($tiered)?)?);
 
             fn decomposition() -> akita_types::DecompositionParams {
                 // Proof-optimized presets fold at `log_basis = 3` and set
@@ -610,6 +641,10 @@ macro_rules! impl_proof_optimized_preset {
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
                 )
+            }
+
+            fn onehot_chunk_size() -> usize {
+                impl_proof_optimized_preset!(@onehot_chunk_size $($onehot_chunk_size)?)
             }
         }
     };
