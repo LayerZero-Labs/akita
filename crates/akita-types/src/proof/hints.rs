@@ -244,3 +244,107 @@ impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
 }
 
 impl<F: FieldCore, const D: usize> Eq for AkitaCommitmentHint<F, D> {}
+
+impl<F: FieldCore + Valid, const D: usize> Valid for AkitaCommitmentHint<F, D> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.decomposed_inner_rows.check()?;
+        #[cfg(feature = "zk")]
+        self.b_blinding_digits.check()?;
+        if let Some(rows_by_poly) = &self.recomposed_inner_rows {
+            if rows_by_poly.len() != self.decomposed_inner_rows.len() {
+                return Err(SerializationError::InvalidData(
+                    "recomposed hint rows must match decomposed polynomial count".to_string(),
+                ));
+            }
+            rows_by_poly.check()?;
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for AkitaCommitmentHint<F, D> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.decomposed_inner_rows
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.b_blinding_digits
+            .serialize_with_mode(&mut writer, compress)?;
+        self.recomposed_inner_rows
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(rows) = &self.recomposed_inner_rows {
+            rows.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.decomposed_inner_rows.serialized_size(compress)
+            + {
+                #[cfg(feature = "zk")]
+                {
+                    self.b_blinding_digits.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    0
+                }
+            }
+            + self
+                .recomposed_inner_rows
+                .is_some()
+                .serialized_size(compress)
+            + self
+                .recomposed_inner_rows
+                .as_ref()
+                .map_or(0, |rows| rows.serialized_size(compress))
+    }
+}
+
+impl<F, const D: usize> AkitaDeserialize for AkitaCommitmentHint<F, D>
+where
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+{
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let decomposed_inner_rows =
+            Vec::<FlatDigitBlocks<D>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        #[cfg(feature = "zk")]
+        let b_blinding_digits =
+            Vec::<FlatDigitBlocks<D>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let has_recomposed = bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let recomposed_inner_rows = if has_recomposed {
+            Some(
+                Vec::<Vec<Vec<CyclotomicRing<F, D>>>>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?,
+            )
+        } else {
+            None
+        };
+        let out = Self {
+            decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            b_blinding_digits,
+            recomposed_inner_rows,
+            _marker: PhantomData,
+        };
+        if validate == Validate::Yes {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
