@@ -36,8 +36,8 @@ use super::*;
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, const D: usize, CommitW>(
-    expanded: &AkitaExpandedSetup<F>,
+pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, Cfg, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&P],
@@ -47,12 +47,11 @@ pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, const D: usize, Com
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     expected_w_len: usize,
-    next_log_basis: u32,
+    next_level_params: &LevelParams,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-    commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore
@@ -74,7 +73,7 @@ where
     T: Transcript<F>,
     P: RootProvePoly<F, D>,
     B: RootProveFlowBackend<F, P, E, C, D>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = E, ChallengeField = C>,
 {
     let opening = stack.opening();
     let opening_backend = opening.backend();
@@ -125,8 +124,8 @@ where
             T,
             RootTensorProjectionPoly<F, D>,
             B,
+            Cfg,
             D,
-            _,
         >(
             expanded,
             stack,
@@ -137,8 +136,7 @@ where
             hints,
             root_params,
             expected_w_len,
-            next_log_basis,
-            commit_w_for_next,
+            next_level_params,
             extension_phase.post_transform.prepared_points,
             extension_phase.post_transform.e_folded_by_poly,
             extension_phase.post_transform.y_rings,
@@ -182,7 +180,7 @@ where
         instance,
         witness,
     } = direct;
-    prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
+    prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
         ring_switch.backend(),
         ring_switch.prepared(),
@@ -190,7 +188,7 @@ where
         commitment_rows,
         root_params,
         expected_w_len,
-        next_log_basis,
+        next_level_params,
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
@@ -202,7 +200,6 @@ where
         y_rings_masked,
         row_coefficients,
         setup_contribution_mode,
-        commit_w_for_next,
     )
 }
 

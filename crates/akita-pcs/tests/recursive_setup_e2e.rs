@@ -71,7 +71,9 @@ fn prove_onehot(nv: usize, mode: SetupContributionMode) -> OnehotProof {
     )
     .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
-    assert_eq!(total_ring * ONEHOT_K, 1usize << nv);
+    // `total_ring` ring elements of degree D cover `2^nv` field elements,
+    // independent of the one-hot chunk size K.
+    assert_eq!(total_ring * ONEHOT_D, 1usize << nv);
 
     let poly = make_onehot_poly(&layout, 0xdead_beef_0000 + nv as u64);
     let point = random_point(nv, 0xcafe_0000 + nv as u64);

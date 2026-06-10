@@ -54,6 +54,10 @@ where
     fn num_vars(&self) -> usize {
         self.num_vars
     }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        Some(self.onehot_k)
+    }
 }
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, D, I>

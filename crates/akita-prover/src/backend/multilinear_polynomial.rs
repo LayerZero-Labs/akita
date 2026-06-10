@@ -91,6 +91,13 @@ where
             Self::OneHot(poly) => RootPolyShape::num_vars(poly),
         }
     }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(_) => None,
+            Self::OneHot(poly) => Some(poly.onehot_k),
+        }
+    }
 }
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, D, I>

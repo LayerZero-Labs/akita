@@ -16,15 +16,15 @@ use super::super::*;
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
-    expanded: &AkitaExpandedSetup<F>,
+pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
-    next_log_basis: u32,
+    next_level_params: &LevelParams,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     instance: RingRelationInstance<F, D>,
@@ -33,7 +33,6 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
-    commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
@@ -44,8 +43,8 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: RingSwitchComputeBackend<F>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
+    B: ProverComputeBackend<F>,
+    Cfg: CommitmentConfig<Field = F, ChallengeField = C>,
 {
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
@@ -56,7 +55,13 @@ where
     }
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
-        commit_w_for_next(&logical_w)?
+        crate::commit_next_w::<Cfg, B, D>(
+            next_level_params,
+            expanded,
+            backend,
+            prepared,
+            &logical_w,
+        )?
     };
     let NextWitnessCommitment {
         witness: packed_witness,
@@ -253,7 +258,7 @@ where
             logical_w,
             commitment: committed_commitment,
             hint: committed_hint,
-            log_basis: next_log_basis,
+            log_basis: next_level_params.log_basis,
             sumcheck_challenges,
             opening: w_eval,
             #[cfg(feature = "zk")]

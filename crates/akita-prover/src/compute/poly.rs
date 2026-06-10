@@ -42,6 +42,13 @@ where
         );
         total.trailing_zeros() as usize
     }
+
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Capability: expose a borrowed commit source view for a `RootCommitKernel`.

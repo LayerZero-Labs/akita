@@ -4,8 +4,8 @@
 use crate::compute::ZkHidingCommitBackend;
 use crate::compute::{
     CommitmentComputeBackend, DigitRowsComputeBackend, DirectRootWitnessSource, OpeningBatchKernel,
-    OpeningFoldKernel, RingSwitchComputeBackend, RootOpeningSource, RootProveBackend,
-    RootProveFlowBackend, RootTensorSource, TensorProjectionBatchKernel,
+    OpeningFoldKernel, ProverComputeBackend, RingSwitchComputeBackend, RootOpeningSource,
+    RootProveBackend, RootProveFlowBackend, RootTensorSource, TensorProjectionBatchKernel,
 };
 use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{

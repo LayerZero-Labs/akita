@@ -191,20 +191,30 @@ where
 {
     assert_eq!(Cfg::D, D);
 
-    let k = D;
     let layout = Cfg::get_params_for_batched_commitment(
         &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
     )
     .expect("layout");
+    // The committed poly's one-hot chunk size must match the config's required
+    // `onehot_chunk_size` (e.g. 256 for D64OneHot); configs with no constraint
+    // (`<= 1`) use the K = D one-chunk-per-ring-element representation.
+    let k = if layout.onehot_chunk_size > 1 {
+        layout.onehot_chunk_size
+    } else {
+        D
+    };
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(
-        total_ring * k,
+        total_ring * D,
         1usize << poly_nv,
         "onehot layout mismatch at nv={poly_nv}"
     );
+    let total_chunks = total_ring * D / k;
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
-    let indices: Vec<Option<usize>> = (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
+    let indices: Vec<Option<usize>> = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..k)))
+        .collect();
     let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
@@ -375,18 +385,24 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
-    let k = D;
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
+    let k = if layout.onehot_chunk_size > 1 {
+        layout.onehot_chunk_size
+    } else {
+        D
+    };
     let total_ring = layout.num_blocks * layout.block_len;
-    assert_eq!(total_ring * k, 1usize << poly_nv);
+    assert_eq!(total_ring * D, 1usize << poly_nv);
+    let total_chunks = total_ring * D / k;
 
     let (polys, onehot_indices): (Vec<_>, Vec<_>) = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbabe_f00d_0000 + idx as u64);
-            let indices: Vec<Option<usize>> =
-                (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
+            let indices: Vec<Option<usize>> = (0..total_chunks)
+                .map(|_| Some(rng.gen_range(0..k)))
+                .collect();
             let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
             (poly, indices)
         })

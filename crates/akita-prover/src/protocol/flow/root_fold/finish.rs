@@ -3,17 +3,8 @@ use super::super::*;
 use super::{prove_root_fold_from_ring_relation, prove_terminal_root_fold_from_ring_relation};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finish_root_fold_with_prepared_openings<
-    'stack,
-    F,
-    C,
-    T,
-    Q,
-    B,
-    const D: usize,
-    CommitW,
->(
-    expanded: &AkitaExpandedSetup<F>,
+pub(super) fn finish_root_fold_with_prepared_openings<'stack, F, C, T, Q, B, Cfg, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&Q],
@@ -22,8 +13,7 @@ pub(super) fn finish_root_fold_with_prepared_openings<
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     expected_w_len: usize,
-    next_log_basis: u32,
-    commit_w_for_next: CommitW,
+    next_level_params: &LevelParams,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
@@ -54,9 +44,10 @@ where
     Q: RootOpeningSource<F, D>,
     B: DigitRowsComputeBackend<F>
         + RingSwitchComputeBackend<F>
+        + CommitmentComputeBackend<F>
         + for<'view> OpeningFoldKernel<Q::OpeningView<'view>, F, D>
         + for<'view> OpeningBatchKernel<Q::OpeningBatchView<'view>, F, D>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
+    Cfg: CommitmentConfig<Field = F, ChallengeField = C>,
 {
     let opening = stack.opening();
     let ring_switch = stack.ring_switch();
@@ -112,7 +103,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
+    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
         ring_switch.backend(),
         ring_switch.prepared(),
@@ -120,7 +111,7 @@ where
         commitment_rows,
         root_params,
         expected_w_len,
-        next_log_basis,
+        next_level_params,
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
@@ -132,7 +123,6 @@ where
         y_rings_masked,
         row_coefficients,
         setup_contribution_mode,
-        commit_w_for_next,
     )?;
     raw.extension_opening_reduction = extension_opening_reduction;
     Ok(raw)
@@ -186,6 +176,7 @@ where
     Q: RootOpeningSource<F, D>,
     B: DigitRowsComputeBackend<F>
         + RingSwitchComputeBackend<F>
+        + CommitmentComputeBackend<F>
         + for<'view> OpeningFoldKernel<Q::OpeningView<'view>, F, D>
         + for<'view> OpeningBatchKernel<Q::OpeningBatchView<'view>, F, D>,
 {
