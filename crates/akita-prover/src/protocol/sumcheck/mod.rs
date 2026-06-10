@@ -12,7 +12,6 @@ pub mod two_round_prefix;
 
 pub use akita_stage1_tree::AkitaStage1Prover;
 pub use akita_stage2::AkitaStage2Prover;
-pub(crate) use akita_stage2::{SparseTraceColumn, TraceTable};
 pub use setup_sumcheck::{SetupSumcheckProver, SetupSumcheckProverOutput};
 
 // --- Shared helpers ------------------------------------------------------

@@ -140,6 +140,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 if let Some(trace) = self.trace_table.as_mut() {
                     trace.fold_y2(self.live_x_cols, y_len, r0, r);
                 }
+                // fold_y2 is the two-round handoff; not routed through fold_trace_for_round.
                 let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
                     WTable::Compact(w_compact) => {
@@ -213,9 +214,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 } else {
                     Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
-                if let Some(trace) = self.trace_table.as_mut() {
-                    trace.fold_for_w_update(live_x_cols, y_len, r, folding_x_round);
-                }
+                self.fold_trace_for_round(r, folding_x_round);
                 WTable::Full(w_full)
             }
             WTable::Full(w_full) => {
@@ -226,28 +225,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         self.m_compact = next_m_compact;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_full_prefix_x = true;
-                        if let Some(trace) = self.trace_table.as_mut() {
-                            trace.fold_for_w_update(live_x_cols, y_len, r, folding_x_round);
-                        }
+                        self.fold_trace_for_round(r, folding_x_round);
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
-                        if let Some(trace) = self.trace_table.as_mut() {
-                            trace.fold_for_w_update(live_x_cols, y_len, r, folding_x_round);
-                        }
+                        self.fold_trace_for_round(r, folding_x_round);
                         WTable::Full(next_w_full)
                     }
                 } else if in_y_round && use_prefix_y_round {
-                    if let Some(trace) = self.trace_table.as_mut() {
-                        trace.fold_for_w_update(live_x_cols, y_len, r, folding_x_round);
-                    }
+                    self.fold_trace_for_round(r, folding_x_round);
                     WTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
                 } else {
                     let mut w_full = w_full;
                     fold_evals_in_place(&mut w_full, r);
-                    if let Some(trace) = self.trace_table.as_mut() {
-                        trace.fold_for_w_update(live_x_cols, y_len, r, folding_x_round);
-                    }
+                    self.fold_trace_for_round(r, folding_x_round);
                     WTable::Full(w_full)
                 }
             }

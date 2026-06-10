@@ -1,5 +1,30 @@
 use super::*;
 
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_fused_prefix_x_relation<E: FieldCore>(
+    trace_table: Option<&TraceTable<E>>,
+    table_y_len: usize,
+    rel: &mut [E; 3],
+    w0: E,
+    dw: E,
+    p0: E,
+    p1: E,
+    y: usize,
+    left_next: usize,
+    next_live_x_cols: usize,
+) {
+    accumulate_relation_coeffs(rel, w0, dw, p0, p1);
+    if let Some(trace) = trace_table {
+        let (t0, t1) = if left_next + 1 < next_live_x_cols {
+            trace.pair_at_columns(left_next, left_next + 1, y, table_y_len)
+        } else {
+            (trace.get(left_next, y, table_y_len), E::zero())
+        };
+        accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
+    }
+}
+
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
@@ -25,6 +50,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let alpha_compact = &self.alpha_compact;
         let next_m_compact = Self::fold_m_prefix(&self.m_compact, r);
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let trace_table = self.trace_table.as_ref();
 
         if self.can_skip_norm_linear_coeff() {
             #[cfg(feature = "parallel")]
@@ -68,10 +94,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = next_m_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
+                                &mut rel,
+                                w0,
+                                dw,
+                                p0,
+                                p1,
+                                y,
+                                left_next,
+                                next_live_x_cols,
+                            );
                         }
 
                         let e_out = e_second[j_high];
@@ -133,10 +167,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = next_m_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
+                                &mut rel,
+                                w0,
+                                dw,
+                                p0,
+                                p1,
+                                y,
+                                left_next,
+                                next_live_x_cols,
+                            );
                         }
 
                         let e_out = e_second[j_high];
@@ -198,10 +240,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = next_m_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
+                                &mut rel,
+                                w0,
+                                dw,
+                                p0,
+                                p1,
+                                y,
+                                left_next,
+                                next_live_x_cols,
+                            );
                         }
 
                         let e_out = e_second[j_high];
@@ -266,10 +316,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = next_m_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
+                                &mut rel,
+                                w0,
+                                dw,
+                                p0,
+                                p1,
+                                y,
+                                left_next,
+                                next_live_x_cols,
+                            );
                         }
 
                         let e_out = e_second[j_high];

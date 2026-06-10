@@ -107,16 +107,16 @@ pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs}
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
     batched_eval_target_from_incidence, build_trace_stage2_compact,
-    build_trace_stage2_compact_scaled, build_trace_weight_table_field_block_weights,
-    build_trace_weight_table_field_terms, build_trace_weight_table_ring_block_weights,
-    build_trace_weight_table_ring_terms, ensure_trace_stage2_supported,
-    eval_trace_stage2_wire_for_degree, eval_trace_terms_closed, eval_trace_weight_at_point,
-    root_trace_block_opening, trace_block_weights_k1, trace_input_claim,
-    trace_public_weights_field_terms, trace_public_weights_k1, trace_public_weights_recursive,
-    trace_public_weights_ring, trace_public_weights_ring_terms, trace_public_weights_root_terms,
-    trace_stage2_supported, trace_terms_recursive, trace_terms_root,
-    trace_weight_evals_for_witness, trace_weight_layout_from_segment, TraceFieldBlockOpening,
-    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceStage2Wire, TraceTerm,
-    TraceWeightLayout,
+    build_trace_stage2_compact_scaled, build_trace_table_scaled,
+    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
+    ensure_trace_stage2_supported, eval_trace_claim, eval_trace_terms_closed,
+    eval_trace_weight_at_point, root_trace_block_opening, trace_block_weights_k1,
+    trace_input_claim, trace_public_weights_field_terms, trace_public_weights_k1,
+    trace_public_weights_recursive, trace_public_weights_ring, trace_public_weights_ring_terms,
+    trace_public_weights_root_terms, trace_stage2_supported, trace_terms_recursive,
+    trace_terms_root, trace_weight_evals_for_witness, trace_weight_layout_from_segment, TraceClaim,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
+    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;

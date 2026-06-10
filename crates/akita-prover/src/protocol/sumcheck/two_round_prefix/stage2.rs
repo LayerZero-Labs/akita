@@ -1,10 +1,10 @@
 use super::common::*;
-use crate::protocol::sumcheck::akita_stage2::TraceTable;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
+use akita_types::TraceTable;
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,7 +243,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     let y_len = 1usize << ring_bits;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
-    if let Some(TraceTable::Dense(trace)) = trace_table {
+    if let Some(TraceTable::RingDense(trace)) = trace_table {
         assert_eq!(trace.len(), live_x_cols * y_len);
     }
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
@@ -329,8 +329,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                     &rel_table[lookup_idx],
                 );
                 if let Some(trace_table) = trace_table {
-                    let trace_quad =
-                        std::array::from_fn(|offset| trace_table.get(x_idx, base + offset, y_len));
+                    let trace_quad = trace_table.quad_at(x_idx, base, y_len);
                     let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
                     accum_pointwise_signed(
                         &mut trace_pos,

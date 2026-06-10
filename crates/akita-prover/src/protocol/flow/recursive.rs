@@ -373,7 +373,7 @@ where
     #[cfg(feature = "zk")]
     let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
-    let trace_compact = Some(build_recursive_stage2_trace_compact::<F, L, D>(
+    let trace_compact = Some(build_recursive_stage2_trace_table::<F, L, D>(
         lp,
         &instance,
         &trace_prepared,
@@ -626,7 +626,7 @@ where
     #[cfg(feature = "zk")]
     let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
-    let trace_compact = Some(build_recursive_stage2_trace_compact::<F, L, D>(
+    let trace_compact = Some(build_recursive_stage2_trace_table::<F, L, D>(
         lp,
         &instance,
         &trace_prepared,

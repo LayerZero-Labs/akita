@@ -412,7 +412,7 @@ and commitment `\mathbf{v}`.
 
 | Role | Rust |
 |------|------|
-| Public block weights + inner packed points for `TraceWeight` | `TracePublicWeights`, `TraceStage2Wire::public_weights` |
+| Public block weights + inner packed points for `TraceWeight` | `TracePublicWeights`, `TraceClaim` |
 | Scalar bound by the fused trace term | `trace_eval_target` (equals `opening` on ordinary paths, `final_claim` on EOR) |
 | `trace_coeff` (`γ²`) times the trace target | `trace_opening_claim` via `trace_input_claim(trace_coeff, eval_target)` |
 | Batched root eval target from incidence | `batched_eval_target_from_incidence` |

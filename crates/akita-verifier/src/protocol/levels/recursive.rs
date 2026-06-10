@@ -2,7 +2,7 @@ use super::*;
 use akita_types::{
     ensure_trace_stage2_supported, trace_input_claim, trace_terms_recursive,
     trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TraceStage2Wire,
+    RingSubfieldEncoding, TraceClaim,
 };
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
@@ -459,7 +459,7 @@ where
             };
         #[cfg(feature = "zk")]
         trace_claim_mask.add_scaled(trace_coeff, &trace_eval_target_mask);
-        Some(build_trace_stage2_wire_recursive::<F, L, D>(
+        Some(build_trace_claim_recursive::<F, L, D>(
             lp,
             &relation_instance.segment_layout(lp)?,
             rs.col_bits,
@@ -1108,7 +1108,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
+fn build_trace_claim_recursive<F, L, const D: usize>(
     lp: &LevelParams,
     segment: &RingRelationSegmentLayout,
     col_bits: usize,
@@ -1118,13 +1118,13 @@ fn build_trace_stage2_wire_recursive<F, L, const D: usize>(
     trace_eval_target: L,
     trace_scale: L,
     trace_coeff: L,
-) -> Result<TraceStage2Wire<F, L, D>, AkitaError>
+) -> Result<TraceClaim<F, L, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     L: ExtField<F> + RingSubfieldEncoding<F> + FieldCore + FromPrimitiveInt,
 {
     let layout = trace_weight_layout_from_segment(lp, segment, col_bits, ring_bits, lp.num_blocks)?;
-    Ok(TraceStage2Wire {
+    Ok(TraceClaim {
         layout,
         trace_coeff,
         trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),

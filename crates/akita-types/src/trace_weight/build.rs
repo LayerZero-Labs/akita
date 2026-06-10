@@ -6,6 +6,7 @@ use crate::{gadget_row_scalars, RingSubfieldEncoding};
 
 use super::eval::{TraceFieldBlockOpening, TraceRingBlockOpening};
 use super::layout::TraceWeightLayout;
+use super::trace_table::TraceSparseColumn;
 
 /// Write `gadget[plane] · block_rows[block][ring_coord]` into the witness table.
 fn fill_opening_digit_table<F, E>(
@@ -151,13 +152,13 @@ where
     Ok(table)
 }
 
-/// Build the live compact scalar (`K = 1`) witness slice and scale every output.
-pub(crate) fn build_trace_weight_compact_field_terms_scaled<F, E, const D: usize>(
+/// Build sparse opening-digit columns for the live `K = 1` stage-2 trace table.
+pub(crate) fn build_trace_weight_compact_field_sparse_scaled<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     terms: &[TraceFieldBlockOpening<F, D>],
     live_x_cols: usize,
     output_scale: E,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<Vec<TraceSparseColumn<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FromPrimitiveInt,
@@ -169,11 +170,11 @@ where
     }
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
-    let out_len = compact_table_len(layout, live_x_cols)?;
+    let _ = compact_table_len(layout, live_x_cols)?;
 
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
     let ring_len = layout.ring_len();
-    let mut compact = vec![E::zero(); out_len];
+    let mut columns = Vec::new();
 
     for term in terms {
         let end = term
@@ -197,15 +198,17 @@ where
                     continue;
                 }
                 let scale = block_weight_e * E::lift_base(*gadget_scalar);
-                let dst_base = col * ring_len;
-                for (ring_coord, coeff) in inner_coeffs.iter().enumerate().take(ring_len) {
-                    compact[dst_base + ring_coord] += scale * E::lift_base(*coeff);
-                }
+                let values = inner_coeffs
+                    .iter()
+                    .take(ring_len)
+                    .map(|&coeff| scale * E::lift_base(coeff))
+                    .collect();
+                columns.push(TraceSparseColumn { col, values });
             }
         }
     }
 
-    Ok(compact)
+    Ok(columns)
 }
 
 /// Build the full Boolean trace-weight table for ring (`K > 1`) block weights.

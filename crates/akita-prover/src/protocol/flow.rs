@@ -10,9 +10,7 @@ use crate::protocol::ring_switch::{
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
     NextWitnessCommitment, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::{
-    AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver, SparseTraceColumn, TraceTable,
-};
+use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
@@ -69,10 +67,9 @@ use akita_types::{
     TerminalLevelProof,
 };
 use akita_types::{
-    batched_eval_target_from_incidence, build_trace_stage2_compact_scaled,
-    ensure_trace_stage2_supported, gadget_row_scalars, trace_input_claim,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, TracePublicWeights, TraceWeightLayout,
+    batched_eval_target_from_incidence, build_trace_table_scaled, ensure_trace_stage2_supported,
+    trace_input_claim, trace_public_weights_recursive, trace_public_weights_root_terms,
+    trace_weight_layout_from_segment, TraceTable,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -119,67 +116,8 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     Ok((segment, layout))
 }
 
-fn build_trace_stage2_table_scaled<F, E, const D: usize>(
-    layout: &TraceWeightLayout,
-    public_weights: &TracePublicWeights<F, E, D>,
-    live_x_cols: usize,
-    output_scale: E,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    match public_weights {
-        TracePublicWeights::Field { terms } => {
-            if terms.is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "field trace terms must be non-empty".to_string(),
-                ));
-            }
-            let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
-            let ring_len = layout.ring_len();
-            let mut columns = Vec::new();
-            for term in terms {
-                let end = term
-                    .block_offset
-                    .checked_add(term.block_weights.len())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput("trace term block range overflow".to_string())
-                    })?;
-                if end > layout.num_blocks {
-                    return Err(AkitaError::InvalidInput(
-                        "field trace term exceeds layout block count".to_string(),
-                    ));
-                }
-                let inner_coeffs = term.inner_opening_ring.coefficients();
-                for (local_block, block_weight) in term.block_weights.iter().enumerate() {
-                    let block = term.block_offset + local_block;
-                    let block_weight = output_scale * E::lift_base(*block_weight);
-                    for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
-                        let col = layout.opening_digit_col_index(block, plane);
-                        if col >= live_x_cols {
-                            continue;
-                        }
-                        let scale = block_weight * E::lift_base(*gadget_scalar);
-                        let values = inner_coeffs
-                            .iter()
-                            .take(ring_len)
-                            .map(|&coeff| scale * E::lift_base(coeff))
-                            .collect();
-                        columns.push(SparseTraceColumn { col, values });
-                    }
-                }
-            }
-            Ok(TraceTable::sparse(columns, live_x_cols, ring_len))
-        }
-        TracePublicWeights::Ring { .. } => Ok(TraceTable::dense(
-            build_trace_stage2_compact_scaled(layout, public_weights, live_x_cols, output_scale)?,
-        )),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
-fn build_recursive_stage2_trace_compact<F, E, const D: usize>(
+fn build_recursive_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
@@ -195,11 +133,11 @@ where
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-    build_trace_stage2_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_root_stage2_trace_compact<F, E, const D: usize>(
+fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
@@ -228,7 +166,7 @@ where
         row_coefficients,
         trace_claim_scales,
     )?;
-    build_trace_stage2_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
 /// Runtime state carried between recursive prove levels.

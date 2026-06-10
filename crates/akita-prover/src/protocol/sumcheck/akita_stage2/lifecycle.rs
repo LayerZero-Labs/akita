@@ -70,13 +70,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: m_evals_x.len(),
             });
         }
-        if let Some(TraceTable::Dense(trace)) = &trace_table {
-            if trace.len() != witness_len {
-                return Err(AkitaError::InvalidSize {
-                    expected: witness_len,
-                    actual: trace.len(),
-                });
-            }
+        if let Some(trace) = &trace_table {
+            trace.validate_len(witness_len)?;
         }
 
         let relation_trace_claim = relation_claim + trace_opening_claim;
@@ -173,6 +168,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
+        // Fused prefix-x with trace is implemented in `fuse_full_prefix_x_and_compute_round`,
+        // but stays off while trace is present: padded vs live-column layouts can disagree on
+        // when the lookahead fusion is valid (see `stage2_trace_two_round_prefix_matches_padded_reference`).
         self.trace_table.is_none()
             && self.rounds_completed >= self.ring_bits()
             && self.x_rounds_completed() + 1 < self.col_bits

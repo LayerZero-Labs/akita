@@ -61,9 +61,9 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
+use akita_types::TraceTable;
 use std::mem;
 use std::time::Instant;
-pub(crate) use trace_table::{SparseTraceColumn, TraceTable};
 
 enum WTable<E: FieldCore> {
     Compact(Vec<i8>),
@@ -242,14 +242,13 @@ mod dense_terms;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
-mod trace_table;
 mod x_prefix;
 mod y_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_witness_relation_at_trace_indices(
+    fn accumulate_relation_with_trace_flat(
         &self,
         rel: &mut [E; 3],
         w0: E,
@@ -262,10 +261,44 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
         if let Some(trace) = &self.trace_table {
             let y_len = self.alpha_compact.len();
-            let t0 = trace.get_flat(trace_idx0, y_len);
-            let t1 = trace.get_flat(trace_idx1, y_len);
+            let (t0, t1) = trace.pair_flat(trace_idx0, trace_idx1, y_len);
             accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
         }
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_relation_with_trace_flat_signed(
+        &self,
+        rel: &mut [E::MulU64Accum; 6],
+        w0: i64,
+        dw: i64,
+        trace_idx0: usize,
+        trace_idx1: usize,
+        p0: E,
+        p1: E,
+    ) {
+        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let (t0, t1) = trace.pair_flat(trace_idx0, trace_idx1, y_len);
+            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
+        }
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn accumulate_witness_relation_at_trace_indices(
+        &self,
+        rel: &mut [E; 3],
+        w0: E,
+        dw: E,
+        trace_idx0: usize,
+        trace_idx1: usize,
+        p0: E,
+        p1: E,
+    ) {
+        self.accumulate_relation_with_trace_flat(rel, w0, dw, trace_idx0, trace_idx1, p0, p1);
     }
 
     #[inline]
@@ -280,13 +313,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p0: E,
         p1: E,
     ) {
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let t0 = trace.get_flat(trace_idx0, y_len);
-            let t1 = trace.get_flat(trace_idx1, y_len);
-            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
-        }
+        self.accumulate_relation_with_trace_flat_signed(
+            rel, w0, dw, trace_idx0, trace_idx1, p0, p1,
+        );
     }
 
     #[inline]
@@ -303,13 +332,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         _current_y_mask: usize,
         _current_x_mask: usize,
     ) {
-        accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let t0 = trace.get_flat(2 * j, y_len);
-            let t1 = trace.get_flat(2 * j + 1, y_len);
-            accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
-        }
+        self.accumulate_relation_with_trace_flat(rel, w0, dw, 2 * j, 2 * j + 1, p0, p1);
     }
 
     #[inline]
@@ -326,12 +349,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         _current_y_mask: usize,
         _current_x_mask: usize,
     ) {
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
+        self.accumulate_relation_with_trace_flat_signed(rel, w0, dw, 2 * j, 2 * j + 1, p0, p1);
+    }
+
+    #[inline]
+    pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
+        if let Some(trace) = self.trace_table.as_mut() {
             let y_len = self.alpha_compact.len();
-            let t0 = trace.get_flat(2 * j, y_len);
-            let t1 = trace.get_flat(2 * j + 1, y_len);
-            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
+            trace.fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
         }
     }
 }

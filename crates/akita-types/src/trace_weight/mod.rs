@@ -8,6 +8,7 @@ mod build;
 mod eval;
 mod layout;
 mod stage2;
+mod trace_table;
 
 #[cfg(test)]
 mod tests;
@@ -23,14 +24,15 @@ pub use eval::{
 pub use layout::TraceWeightLayout;
 pub use stage2::{
     batched_eval_target_from_incidence, build_trace_stage2_compact,
-    build_trace_stage2_compact_scaled, ensure_trace_stage2_supported,
-    eval_trace_stage2_wire_for_degree, root_trace_block_opening, trace_block_weights_k1,
-    trace_input_claim, trace_public_weights_field_terms, trace_public_weights_k1,
-    trace_public_weights_recursive, trace_public_weights_ring, trace_public_weights_ring_terms,
-    trace_public_weights_root_terms, trace_stage2_supported, trace_terms_recursive,
-    trace_terms_root, trace_weight_evals_for_witness, trace_weight_layout_from_segment,
-    TracePublicWeights, TraceStage2Wire,
+    build_trace_stage2_compact_scaled, build_trace_table_scaled, ensure_trace_stage2_supported,
+    eval_trace_claim, root_trace_block_opening, trace_block_weights_k1, trace_input_claim,
+    trace_public_weights_field_terms, trace_public_weights_k1, trace_public_weights_recursive,
+    trace_public_weights_ring, trace_public_weights_ring_terms, trace_public_weights_root_terms,
+    trace_stage2_supported, trace_terms_recursive, trace_terms_root,
+    trace_weight_evals_for_witness, trace_weight_layout_from_segment, TraceClaim,
+    TracePublicWeights,
 };
+pub use trace_table::{TraceSparseColumn, TraceTable};
 
 #[cfg(test)]
 pub(crate) use test_only::trace_weight_mle_eval;

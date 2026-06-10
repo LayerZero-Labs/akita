@@ -8,8 +8,9 @@ use akita_field::{
 };
 
 use super::build::{
-    build_trace_weight_compact_field_terms_scaled, build_trace_weight_compact_ring_terms_scaled,
+    build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
+use super::trace_table::TraceTable;
 use crate::{
     block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_terms_closed, lagrange_weights,
     BasisMode, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
@@ -31,7 +32,7 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
-/// Public trace payload consumed by a stage-2 verifier final-point check.
+/// Verifier-side trace claim inputs for the stage-2 sumcheck final check.
 ///
 /// The verifier reconstructs the fused trace term in its short closed form
 /// ([`TraceTerm`]): one term per claim opening carrying the block-axis opening
@@ -40,7 +41,7 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
 /// table; the two are kept distinct because the prover folds every block while
 /// the verifier collapses each claim to a single `Tr_H`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraceStage2Wire<F: FieldCore, E: FieldCore, const D: usize> {
+pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
     pub trace_terms: Vec<TraceTerm<F, E, D>>,
     /// Batching weight applied to the fused trace term. This is the `γ²` power
@@ -527,19 +528,44 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
+    Ok(
+        build_trace_table_scaled(layout, public_weights, live_x_cols, output_scale)?
+            .materialize_dense(live_x_cols, layout.ring_len()),
+    )
+}
+
+/// Build the typed trace table used by the stage-2 prover.
+///
+/// `K = 1` field weights use sparse active columns; `K > 1` ring weights use a dense flat table.
+pub fn build_trace_table_scaled<F, E, const D: usize>(
+    layout: &TraceWeightLayout,
+    public_weights: &TracePublicWeights<F, E, D>,
+    live_x_cols: usize,
+    output_scale: E,
+) -> Result<TraceTable<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
     match public_weights {
-        TracePublicWeights::Field { terms } => build_trace_weight_compact_field_terms_scaled::<
-            F,
-            E,
-            D,
-        >(layout, terms, live_x_cols, output_scale),
-        TracePublicWeights::Ring { terms, .. } => build_trace_weight_compact_ring_terms_scaled::<
-            F,
-            E,
-            D,
-        >(
-            layout, terms, live_x_cols, output_scale
-        ),
+        TracePublicWeights::Field { terms } => {
+            let ring_len = layout.ring_len();
+            let columns = build_trace_weight_compact_field_sparse_scaled::<F, E, D>(
+                layout,
+                terms,
+                live_x_cols,
+                output_scale,
+            )?;
+            Ok(TraceTable::field_sparse(columns, live_x_cols, ring_len))
+        }
+        TracePublicWeights::Ring { terms, .. } => Ok(TraceTable::ring_dense(
+            build_trace_weight_compact_ring_terms_scaled::<F, E, D>(
+                layout,
+                terms,
+                live_x_cols,
+                output_scale,
+            )?,
+        )),
     }
 }
 
@@ -547,8 +573,8 @@ where
 ///
 /// Uses the short closed form: one `Tr_H` per claim term, with no dependence on
 /// the number of fold blocks or opening digits (see [`eval_trace_terms_closed`]).
-pub fn eval_trace_stage2_wire_for_degree<F, E, const D: usize>(
-    wire: &TraceStage2Wire<F, E, D>,
+pub fn eval_trace_claim<F, E, const D: usize>(
+    claim: &TraceClaim<F, E, D>,
     ring_point: &[E],
     col_point: &[E],
 ) -> Result<E, AkitaError>
@@ -556,7 +582,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    eval_trace_terms_closed::<F, E, D>(&wire.layout, ring_point, col_point, &wire.trace_terms)
+    eval_trace_terms_closed::<F, E, D>(&claim.layout, ring_point, col_point, &claim.trace_terms)
 }
 
 /// Sum batched public opening claims under per-claim row coefficients.
@@ -642,6 +668,30 @@ mod tests {
     }
 
     #[test]
+    fn trace_table_field_sparse_matches_materialized_dense() {
+        let layout = layout();
+        let terms = vec![
+            TraceFieldBlockOpening {
+                block_offset: 0,
+                block_weights: vec![F::from_u64(2), F::from_u64(5)],
+                inner_opening_ring: test_ring(10),
+            },
+            TraceFieldBlockOpening {
+                block_offset: 1,
+                block_weights: vec![F::from_u64(7)],
+                inner_opening_ring: test_ring(40),
+            },
+        ];
+        let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
+        let live_x_cols = 5;
+        let dense = build_trace_stage2_compact(&layout, &public_weights, live_x_cols).unwrap();
+        let sparse = build_trace_table_scaled(&layout, &public_weights, live_x_cols, F::one())
+            .unwrap()
+            .materialize_dense(live_x_cols, layout.ring_len());
+        assert_eq!(sparse, dense);
+    }
+
+    #[test]
     fn stage2_compact_field_matches_dense_slice_for_partial_live_columns() {
         let layout = layout();
         let terms = vec![
@@ -721,14 +771,14 @@ mod tests {
     }
 
     #[test]
-    fn stage2_wire_eval_matches_dense_table_for_k1() {
+    fn trace_claim_eval_matches_dense_table_for_k1() {
         let layout = layout();
         let inner_open = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
         let b_open = vec![F::from_u64(11)];
         let block_weights = lagrange_weights(&b_open).unwrap();
         let inner_ring =
             reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
-        let wire = TraceStage2Wire {
+        let claim = TraceClaim {
             layout,
             trace_terms: vec![TraceTerm {
                 block_offset: 0,
@@ -752,7 +802,7 @@ mod tests {
         let dense =
             crate::trace_weight::trace_weight_mle_eval(&layout, &table, &col_point, &ring_point)
                 .unwrap();
-        let closed = eval_trace_stage2_wire_for_degree(&wire, &ring_point, &col_point).unwrap();
+        let closed = eval_trace_claim(&claim, &ring_point, &col_point).unwrap();
 
         assert_eq!(closed, dense);
     }

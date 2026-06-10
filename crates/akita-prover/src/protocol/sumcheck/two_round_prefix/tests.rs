@@ -3,12 +3,12 @@ use super::stage1::*;
 use super::stage2::*;
 use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
 use crate::protocol::sumcheck::akita_stage1::AkitaStage1Prover;
-use crate::protocol::sumcheck::akita_stage2::{SparseTraceColumn, TraceTable};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
 use akita_types::{range_check_eval_from_s, reorder_stage1_coords};
+use akita_types::{TraceSparseColumn, TraceTable};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;
@@ -495,7 +495,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
 
     assert_eq!(
         {
-            let trace_table = TraceTable::dense(trace_compact.clone());
+            let trace_table = TraceTable::ring_dense(trace_compact.clone());
             build_stage2_bivariate_skip_proof_from_compact(
                 &w_compact,
                 &alpha_evals_y,
@@ -534,9 +534,9 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
     let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
         .map(|i| F::from_u64((11 * i as u64) + 13))
         .collect();
-    let sparse_trace = TraceTable::sparse(
+    let sparse_trace = TraceTable::field_sparse(
         (0..live_x_cols)
-            .map(|col| SparseTraceColumn {
+            .map(|col| TraceSparseColumn {
                 col,
                 values: trace_compact[col * y_len..(col + 1) * y_len].to_vec(),
             })

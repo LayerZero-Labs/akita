@@ -1052,7 +1052,7 @@ where
     let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
     ensure_trace_stage2_supported(C::EXT_DEGREE)?;
     let trace_compact = if let Some(prepared_points) = trace_prepared_points {
-        Some(build_root_stage2_trace_compact::<F, C, D>(
+        Some(build_root_stage2_trace_table::<F, C, D>(
             lp,
             &instance,
             prepared_points,
@@ -1302,7 +1302,7 @@ where
     let trace_eval_target_public_claim = trace_input_claim(trace_coeff, trace_eval_target_public);
     ensure_trace_stage2_supported(C::EXT_DEGREE)?;
     let trace_compact = if let Some(prepared_points) = trace_prepared_points {
-        Some(build_root_stage2_trace_compact::<F, C, D>(
+        Some(build_root_stage2_trace_table::<F, C, D>(
             lp,
             &instance,
             prepared_points,
