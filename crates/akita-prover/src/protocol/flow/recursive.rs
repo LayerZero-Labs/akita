@@ -636,6 +636,11 @@ where
 pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: FieldCore> {
     pub(in crate::protocol::flow) proof: ExtensionOpeningReductionProof<L>,
     pub(in crate::protocol::flow) rho: Vec<L>,
+    /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
+    /// the prepare step can fail-fast cross-check the folded y-ring opening
+    /// against the reduction output; the verifier enforces the same relation.
+    pub(in crate::protocol::flow) final_claim: L,
+    pub(in crate::protocol::flow) final_factor: L,
 }
 
 pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
@@ -782,6 +787,8 @@ where
             sumcheck_proof_masked,
         },
         rho,
+        final_claim,
+        final_factor,
     })
 }
 
@@ -868,6 +875,41 @@ where
     Ok((y_rings, folded))
 }
 
+/// Fail-fast prover guard tying the folded witness back to the carried claim.
+///
+/// The opening recovered from the folded `y_ring` must equal the carried claim
+/// (degree-one challenge field) or be consistent with the extension-opening
+/// reduction's final claim (proper extension). This writes nothing to the
+/// transcript: the verifier re-derives the same relation, and the root path
+/// performs the analogous check in `root_fold.rs`.
+fn check_recursive_opening_consistency<F, L, const D: usize>(
+    reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
+    y_ring: &CyclotomicRing<F, D>,
+    inner_reduction: &CyclotomicRing<F, D>,
+    expected_opening: L,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    L: RingSubfieldEncoding<F>,
+{
+    let recovered = recover_ring_subfield_inner_product::<F, L, D>(y_ring, inner_reduction)?;
+    match reduction {
+        Some(reduction) => check_extension_opening_reduction_output(
+            reduction.final_claim,
+            recovered,
+            reduction.final_factor,
+        ),
+        None => {
+            if recovered != expected_opening {
+                return Err(AkitaError::InvalidInput(
+                    "recursive opening does not match carried claim".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
 ///
@@ -952,6 +994,12 @@ where
 
     let (y_rings, e_folded_by_claim) =
         evaluate_witness(&witness_view, &prepared_points, level, level_params)?;
+    check_recursive_opening_consistency::<F, L, D>(
+        &reduction,
+        &y_rings[0],
+        &prepared_points[0].inner_reduction,
+        expected_opening,
+    )?;
     #[cfg(feature = "zk")]
     let y_rings_masked = y_rings
         .iter()
