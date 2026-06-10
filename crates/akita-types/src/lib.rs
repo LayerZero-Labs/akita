@@ -42,9 +42,8 @@ pub use field_reduction::{
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
-    setup_seed_digest,
-    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
-    SetupSection,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
+    ProtocolFeatureSet, SetupSection,
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,
