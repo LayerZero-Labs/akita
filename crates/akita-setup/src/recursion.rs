@@ -154,7 +154,7 @@ where
     Ok(setup)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
@@ -163,7 +163,6 @@ mod tests {
     type F = fp128::Field;
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn recursive_d64_setup_populates_prefix_slots() {
         let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1, 1)
             .expect("recursive D64 setup");
@@ -187,7 +186,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn recursive_d32_setup_skips_prefix_slots() {
         let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1, 1)
             .expect("recursive D32 setup");
