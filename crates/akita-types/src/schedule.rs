@@ -221,6 +221,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
+        num_t_vectors,
         layout,
     )
 }
@@ -242,6 +243,7 @@ pub fn w_ring_element_count_with_counts_bits(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
+        num_t_vectors,
         crate::layout::MRowLayout::WithDBlock,
     )
 }
@@ -249,6 +251,11 @@ pub fn w_ring_element_count_with_counts_bits(
 /// Non-generic variant of [`w_ring_element_count_with_counts_for_layout`] for
 /// callers that already know the effective field bit width. The planner
 /// search uses this to keep its API free of a base-field type parameter.
+///
+/// `fold_num_claims` sizes the fold-digit depth (`num_digits_fold`). It follows
+/// the recursive carried-batch incidence (number of folded claims); most callers
+/// pass `num_t_vectors` to keep the single-claim sizing.
+#[allow(clippy::too_many_arguments)]
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
@@ -256,6 +263,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
+    fold_num_claims: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
     let e_hat_count = num_w_vectors
@@ -272,7 +280,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     let u_concat_count = num_points
         .checked_mul(lp.u_concat_ring_len_per_group())
         .ok_or_else(|| AkitaError::InvalidSetup("witness u-concat width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
+    let num_digits_fold = lp.num_digits_fold(fold_num_claims, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
@@ -796,6 +804,8 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
+                extra_carried_sources: Vec::new(),
+                extra_carried_openings: Vec::new(),
             },
             stage3_sumcheck_proof: None,
         };

@@ -23,7 +23,7 @@ pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
     shipped_table,
 };
-pub use schedule_params::find_schedule;
+pub use schedule_params::{find_recursive_carried_suffix_schedule, find_schedule};
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///

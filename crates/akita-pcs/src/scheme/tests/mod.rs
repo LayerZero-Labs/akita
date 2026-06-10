@@ -104,6 +104,8 @@ fn expected_same_point_batched_shape(
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
+        extra_carried_sources: Vec::new(),
+        extra_carried_openings: Vec::new(),
     };
     let first_level_params = next_level_params.clone();
 
@@ -136,6 +138,8 @@ fn expected_same_point_batched_shape(
             stage3_sumcheck: None,
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
+            extra_carried_sources: Vec::new(),
+            extra_carried_openings: Vec::new(),
         }));
         current_w_len = next_w_len;
         current_log_basis = next_level_params.log_basis;

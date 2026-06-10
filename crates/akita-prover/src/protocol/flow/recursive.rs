@@ -1,11 +1,16 @@
 use super::*;
 
+mod carried;
+
 struct PreparedRecursiveFold<F: FieldCore, L: FieldCore, const D: usize> {
     commitment: FlatRingVec<F>,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     reduction: Option<RecursiveExtensionOpeningReduction<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
+    /// Extra committed sources carried from the consumed state, re-evaluated and
+    /// propagated into the produced level's proof and next state.
+    extra_carried_sources: Vec<RecursiveCarriedSource<F>>,
     #[cfg(feature = "zk")]
     y_rings_masked: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")]
@@ -262,6 +267,7 @@ where
         witness,
         reduction,
         y_rings,
+        extra_carried_sources: _extra_carried_sources,
         #[cfg(feature = "zk")]
         y_rings_masked,
         #[cfg(feature = "zk")]
@@ -465,7 +471,8 @@ where
         None => (logical_w, None),
     };
 
-    Ok(ProveLevelOutput {
+    let next_w_len = logical_w.as_ref().unwrap_or(&committed_witness).len();
+    let mut out = ProveLevelOutput {
         level_proof,
         next_state: RecursiveProverState {
             w: committed_witness,
@@ -473,12 +480,22 @@ where
             commitment: committed_commitment,
             hint: committed_hint,
             log_basis: next_level_params.log_basis,
-            sumcheck_challenges,
+            sumcheck_challenges: sumcheck_challenges.clone(),
             opening: w_eval,
+            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
+                sumcheck_challenges,
+                w_eval,
+                next_w_len,
+            )],
+            extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
         },
-    })
+    };
+    if !_extra_carried_sources.is_empty() {
+        carried::propagate_extra_carried_sources::<F, L, D>(&mut out, &_extra_carried_sources, lp)?;
+    }
+    Ok(out)
 }
 
 /// Prove the terminal recursive fold level after the caller has built its
@@ -537,6 +554,7 @@ where
         witness,
         reduction,
         y_rings,
+        extra_carried_sources: _extra_carried_sources,
         #[cfg(feature = "zk")]
         y_rings_masked,
         #[cfg(feature = "zk")]
@@ -1005,6 +1023,8 @@ where
         sumcheck_challenges,
         opening: expected_opening,
         log_basis: _,
+        carried_openings: _carried_openings,
+        extra_carried_sources: _extra_carried_sources,
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
@@ -1088,6 +1108,7 @@ where
         witness,
         reduction,
         y_rings,
+        extra_carried_sources: _extra_carried_sources,
         #[cfg(feature = "zk")]
         y_rings_masked,
         #[cfg(feature = "zk")]

@@ -304,6 +304,8 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
+                extra_carried_sources: Vec::new(),
+                extra_carried_openings: Vec::new(),
             },
             stage3_sumcheck_proof: stage3_setup_ring_len
                 .map(|setup_ring_len| dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len)),

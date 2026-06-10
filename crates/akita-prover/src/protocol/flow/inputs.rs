@@ -310,6 +310,8 @@ where
         stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
+        extra_carried_sources,
+        extra_carried_openings,
         next_state,
     } = raw;
     let suffix = build_suffix(next_state)?;
@@ -322,7 +324,7 @@ where
     } = suffix;
     #[cfg(feature = "zk")]
     let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
-    let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
+    let mut root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
         y_rings,
         extension_opening_reduction,
         v,
@@ -335,6 +337,12 @@ where
         w_commitment_proof,
         w_eval,
     );
+    if !extra_carried_sources.is_empty() || !extra_carried_openings.is_empty() {
+        if let Some(fold) = root.as_fold_mut() {
+            fold.stage2.extra_carried_sources = extra_carried_sources;
+            fold.stage2.extra_carried_openings = extra_carried_openings;
+        }
+    }
     let steps = build_final_proof_steps::<F, L>(intermediate_levels, terminal);
     Ok((
         AkitaBatchedProof {

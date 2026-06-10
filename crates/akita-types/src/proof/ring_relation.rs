@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_instance_rejects_split_commitment_routing() {
+    fn relation_instance_accepts_recursive_split_commitment_routing() {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![1, 1]).expect("valid incidence");
@@ -420,7 +420,7 @@ mod tests {
             .iter()
             .map(RingMultiplierOpeningPoint::from_base)
             .collect();
-        let err = RingRelationInstance::<F, D>::new(
+        let instance = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, incidence.num_claims()),
             opening_points,
@@ -432,10 +432,10 @@ mod tests {
             vec![CyclotomicRing::zero(); 2],
             Vec::new(),
         )
-        .expect_err("split routing must be rejected");
-        assert!(
-            format!("{err:?}").contains("split opening/commitment routing is not supported"),
-            "unexpected error: {err:?}"
+        .expect("recursive split routing is supported");
+        assert_eq!(
+            instance.commitment_routing().claim_to_commitment_group(),
+            &[0, 0]
         );
     }
 

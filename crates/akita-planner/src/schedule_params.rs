@@ -14,9 +14,10 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
+    fold_witness_beta, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, AjtaiKeyParams,
+    FoldChallengeNorms, FoldWitnessNorms,
 };
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
@@ -140,16 +141,64 @@ fn multi_tiered_keys(
     Ok((1, b_key.clone(), None))
 }
 
+/// Carried-batch incidence counts that size a recursive fold candidate.
+#[derive(Clone, Copy)]
+struct RecursiveShapeCounts {
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_z_vectors: usize,
+}
+
+/// Controls witness-length projection inside [`derive_candidate_level_params_for_shape`].
+#[derive(Clone, Copy)]
+struct DeriveCandidateOptions {
+    /// When set, a candidate is kept only if the terminal-layout witness
+    /// (`WithoutDBlock`) shrinks below `current_witness_len`. Used by
+    /// [`find_recursive_carried_suffix_schedule`], whose fold step commits
+    /// `next_witness_len_terminal`, not the intermediate `WithDBlock` length.
+    shrink_against_terminal: bool,
+    /// When set, opening witnesses are sized at the active `log_basis` rather
+    /// than the parent field-open bound. Matches a recursive suffix that folds
+    /// into a packed-digit direct terminal at the same basis.
+    packed_opening_digits: bool,
+    /// When false, pick the candidate with the largest fold-`β` bound among
+    /// shrink-valid shapes (used by carried-opening suffix search). Default
+    /// search minimizes the intermediate witness length.
+    minimize_witness: bool,
+}
+
+impl Default for DeriveCandidateOptions {
+    fn default() -> Self {
+        Self {
+            shrink_against_terminal: false,
+            packed_opening_digits: false,
+            minimize_witness: true,
+        }
+    }
+}
+
+fn fold_beta_bound(lp: &LevelParams, num_claims: usize) -> Result<u128, AkitaError> {
+    let witness = lp.fold_witness_norms();
+    let challenge = FoldChallengeNorms {
+        infinity_norm: lp.challenge_infinity_norm() as u128,
+        l1_norm: lp.challenge_l1_mass() as u128,
+    };
+    fold_witness_beta(lp.r_vars, num_claims, challenge, witness)
+}
+
 /// Compute parameters that generate the smallest witness for the next
 /// fold level. Note that this is not the optimum case: in the optimum
 /// case (similar to `find_schedule`), we should check that current proof
 /// size + suffix cost is the smallest. However, as time blows up, we
 /// don't do that here.
-fn derive_candidate_level_params(
+fn derive_candidate_level_params_for_shape(
     policy: &PlannerPolicy,
     stage1: Stage1Fn<'_>,
     current_witness_len: usize,
     log_basis: u32,
+    counts: RecursiveShapeCounts,
+    options: DeriveCandidateOptions,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
     let Ok(stage1_config) = stage1(policy.ring_dimension) else {
         return Ok(None);
@@ -167,7 +216,7 @@ fn derive_candidate_level_params(
         )));
     }
 
-    let mut best: Option<(LevelParams, usize, usize)> = None;
+    let mut best: Option<(u128, LevelParams, usize, usize)> = None;
     for r in (1..reduced_vars).rev() {
         let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
             continue;
@@ -176,15 +225,27 @@ fn derive_candidate_level_params(
 
         // Recursive levels commit a dense balanced-digit witness (`is_root =
         // false`, flat fold). Compose the three SIS-secure keys from the
-        // `akita_types::sis` primitives: norm -> width -> rank -> key.
+        // `akita_types::sis` primitives: norm -> width -> rank -> key. B/D
+        // widths use the carried batch incidence counts.
         let family = policy.sis_family;
         let d = policy.ring_dimension;
         let decomp = DecompositionParams {
             log_basis,
             ..policy.decomposition
         };
+        let witness_decomp = if options.packed_opening_digits {
+            DecompositionParams {
+                log_basis,
+                log_commit_bound: policy.decomposition.log_commit_bound,
+                log_open_bound: Some(log_basis),
+            }
+        } else {
+            decomp
+        };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
+        let witness_digits_open = num_digits_open(witness_decomp);
+        let batch = counts.num_t_vectors;
         let Some(norm_s) = rounded_up_collision_norm_s(
             family,
             d,
@@ -209,7 +270,7 @@ fn derive_candidate_level_params(
         let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
             continue;
         };
-        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
+        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, batch) else {
             continue;
         };
         let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
@@ -219,7 +280,7 @@ fn derive_candidate_level_params(
         let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
             continue;
         };
-        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
+        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, batch) else {
             continue;
         };
         let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
@@ -255,32 +316,48 @@ fn derive_candidate_level_params(
             tier_split,
             f_key,
         };
+        let mut witness_params = candidate_params.clone();
+        witness_params.num_digits_open = witness_digits_open;
+        // Fold-digit depth follows the batched `w` incidence; A-role collision
+        // pricing above stays at `num_claims = 1` for recursive levels.
+        let fold_claims = counts.num_w_vectors.max(1);
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
-            &candidate_params,
-            1,
-            1,
-            1,
-            1,
+            &witness_params,
+            counts.num_points,
+            counts.num_t_vectors,
+            counts.num_w_vectors,
+            counts.num_z_vectors,
+            fold_claims,
             MRowLayout::WithDBlock,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
-            &candidate_params,
-            1,
-            1,
-            1,
-            1,
+            &witness_params,
+            counts.num_points,
+            counts.num_t_vectors,
+            counts.num_w_vectors,
+            counts.num_z_vectors,
+            fold_claims,
             MRowLayout::WithoutDBlock,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
 
-        if best.as_ref().is_none_or(|(_, c, _)| next_witness_len < *c) {
+        let fold_beta = fold_beta_bound(&candidate_params, fold_claims)?;
+        let better = if options.minimize_witness {
+            best.as_ref()
+                .is_none_or(|(_, _, c, _)| next_witness_len < *c)
+        } else {
+            best.as_ref()
+                .is_none_or(|(best_beta, _, _, _)| fold_beta > *best_beta)
+        };
+        if better {
             best = Some((
+                fold_beta,
                 candidate_params,
                 next_witness_len,
                 next_witness_len_terminal,
@@ -288,11 +365,17 @@ fn derive_candidate_level_params(
         }
     }
 
-    let Some((candidate_params, next_witness_len, next_witness_len_terminal)) = best else {
+    let Some((_fold_beta, candidate_params, next_witness_len, next_witness_len_terminal)) = best
+    else {
         return Ok(None);
     };
 
-    if next_witness_len >= current_witness_len {
+    let shrink_len = if options.shrink_against_terminal {
+        next_witness_len_terminal
+    } else {
+        next_witness_len
+    };
+    if shrink_len >= current_witness_len {
         return Ok(None);
     }
 
@@ -301,6 +384,27 @@ fn derive_candidate_level_params(
         next_witness_len,
         next_witness_len_terminal,
     )))
+}
+
+fn derive_candidate_level_params(
+    policy: &PlannerPolicy,
+    stage1: Stage1Fn<'_>,
+    current_witness_len: usize,
+    log_basis: u32,
+) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
+    derive_candidate_level_params_for_shape(
+        policy,
+        stage1,
+        current_witness_len,
+        log_basis,
+        RecursiveShapeCounts {
+            num_points: 1,
+            num_t_vectors: 1,
+            num_w_vectors: 1,
+            num_z_vectors: 1,
+        },
+        DeriveCandidateOptions::default(),
+    )
 }
 
 fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
@@ -925,6 +1029,7 @@ pub fn find_schedule(
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,
+                    key.num_t_vectors,
                     layout,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
@@ -1023,6 +1128,125 @@ pub fn find_schedule(
         steps: best_steps,
         total_bytes: best_cost,
     })
+}
+
+/// Find the recursive suffix used to consume a carried-opening batch.
+///
+/// The caller supplies the already-committed recursive witness length and
+/// active log-basis after the root fold. The returned suffix always starts with
+/// one recursive fold sized by `key`'s carried incidence counts, then closes
+/// directly. This keeps setup-prefix carried claims fold-consumed instead of
+/// serialized into a terminal-only boundary.
+pub fn find_recursive_carried_suffix_schedule(
+    key: AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    start_level: usize,
+    current_witness_len: usize,
+    _current_log_basis: u32,
+) -> Result<Schedule, AkitaError> {
+    let stage1: Stage1Fn<'_> = &stage1;
+    if start_level == 0 || current_witness_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "recursive carried suffix must start after a non-empty root fold".to_string(),
+        ));
+    }
+    if key.num_points == 0
+        || key.num_t_vectors == 0
+        || key.num_w_vectors == 0
+        || key.num_z_vectors == 0
+    {
+        return Err(AkitaError::InvalidSetup(
+            "recursive carried suffix dimensions must be non-zero".to_string(),
+        ));
+    }
+
+    let field_bits = policy.decomposition.field_bits();
+    let challenge_bits = field_bits * policy.chal_ext_degree as u32;
+    let mut best: Option<(u128, usize, Vec<Step>)> = None;
+    let fold_claims = key.num_w_vectors.max(1);
+    let (min_log_basis, max_log_basis) = policy.basis_range;
+    for lb in min_log_basis..=max_log_basis {
+        let Some((candidate_params, _next_witness_len, _packed_terminal_len)) =
+            derive_candidate_level_params_for_shape(
+                policy,
+                stage1,
+                current_witness_len,
+                lb,
+                RecursiveShapeCounts {
+                    num_points: key.num_points,
+                    num_t_vectors: key.num_t_vectors,
+                    num_w_vectors: key.num_w_vectors,
+                    num_z_vectors: key.num_z_vectors,
+                },
+                DeriveCandidateOptions {
+                    shrink_against_terminal: true,
+                    packed_opening_digits: true,
+                    minimize_witness: false,
+                },
+            )?
+        else {
+            continue;
+        };
+        // Shrink validation uses packed opening digits; emitted schedule lengths
+        // must match the prover's full-open recursive `LevelParams`.
+        let committed_terminal_len = w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            &candidate_params,
+            key.num_points,
+            key.num_t_vectors,
+            key.num_w_vectors,
+            key.num_z_vectors,
+            fold_claims,
+            MRowLayout::WithoutDBlock,
+        )?
+        .checked_mul(policy.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
+        let fold_beta = fold_beta_bound(&candidate_params, fold_claims)?;
+        let eor_bytes =
+            extension_opening_reduction_level_bytes(policy, key, start_level, current_witness_len)?;
+        let level_bytes = level_proof_bytes(
+            field_bits,
+            challenge_bits,
+            &candidate_params,
+            None,
+            committed_terminal_len,
+            key.num_z_vectors,
+            MRowLayout::WithoutDBlock,
+        ) + eor_bytes;
+        let witness_shape = CleartextWitnessShape::PackedDigits((committed_terminal_len, lb));
+        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+        let total = level_bytes + direct_bytes;
+        if best.as_ref().is_none_or(|(best_beta, best_total, _)| {
+            fold_beta > *best_beta || (fold_beta == *best_beta && total < *best_total)
+        }) {
+            best = Some((
+                fold_beta,
+                total,
+                vec![
+                    Step::Fold(FoldStep {
+                        params: candidate_params,
+                        current_w_len: current_witness_len,
+                        next_w_len: committed_terminal_len,
+                        level_bytes,
+                    }),
+                    Step::Direct(DirectStep {
+                        current_w_len: committed_terminal_len,
+                        witness_shape,
+                        direct_bytes,
+                        params: None,
+                    }),
+                ],
+            ));
+        }
+    }
+
+    let Some((_fold_beta, total_bytes, steps)) = best else {
+        return Err(AkitaError::InvalidSetup(
+            "no recursive carried suffix schedule found".to_string(),
+        ));
+    };
+    Ok(Schedule { steps, total_bytes })
 }
 
 #[cfg(test)]

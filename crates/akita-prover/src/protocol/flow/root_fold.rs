@@ -1255,6 +1255,7 @@ where
         Some(packed_witness) => (packed_witness, Some(logical_w)),
         None => (logical_w, None),
     };
+    let next_w_len = logical_w.as_ref().unwrap_or(&committed_witness).len();
 
     #[cfg(not(feature = "zk"))]
     let proof_w_eval = w_eval;
@@ -1300,14 +1301,22 @@ where
         stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval: proof_w_eval,
+        extra_carried_sources: Vec::new(),
+        extra_carried_openings: Vec::new(),
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
             commitment: committed_commitment,
             hint: committed_hint,
             log_basis: next_level_params.log_basis,
-            sumcheck_challenges,
+            sumcheck_challenges: sumcheck_challenges.clone(),
             opening: w_eval,
+            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
+                sumcheck_challenges,
+                w_eval,
+                next_w_len,
+            )],
+            extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
         },

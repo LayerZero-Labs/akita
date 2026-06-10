@@ -43,14 +43,17 @@ pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSlice
 pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
-    append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
-    verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentRouting, IncidenceClaim, PublicOpeningRow,
+    append_carried_opening_batch_to_transcript, append_claim_incidence_shape_to_transcript,
+    carried_opening_incidence_summary, sample_public_row_coefficients,
+    validate_carried_opening_batch, verifier_claims_to_incidence, CarriedOpeningClaim,
+    CarriedOpeningKind, CarriedOpeningSource, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, CommitmentRouting, IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
+    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CarriedOpeningProof,
+    CarriedOpeningSourceProof, ExtensionOpeningReductionProof, SetupSumcheckProof,
+    TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
@@ -72,9 +75,9 @@ pub use setup_prefix::{
     SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
 };
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape, CarriedOpeningShape,
+    CarriedOpeningSourceShape, ExtensionOpeningReductionShape, LevelProofShape,
+    SetupProductSumcheckShape, TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

@@ -59,11 +59,12 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
-    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
-    LevelParams, MRowLayout, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSourceProof, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, CleartextWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -96,6 +97,74 @@ pub use root_fold::{
     prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
 };
 
+/// One opening claim carried into the next recursive fold.
+///
+/// Source index 0 is the ordinary recursive-witness claim derived from the
+/// fold sumcheck. Additional claims reference proof-visible carried sources
+/// (e.g. a setup-prefix opening) by their `source_idx`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecursiveCarriedOpening<L: FieldCore> {
+    /// Source index in the recursive carried-source table.
+    pub source_idx: usize,
+    /// Evaluation point in the carried claim's basis.
+    pub opening_point: Vec<L>,
+    /// Claimed value at `opening_point`.
+    pub opening: L,
+    /// Proof-visible masked value bound into the transcript.
+    #[cfg(feature = "zk")]
+    pub proof_opening: L,
+    /// Basis used to interpret `opening_point`.
+    pub basis: BasisMode,
+    /// Unpadded logical field length of the opened object.
+    pub natural_len: usize,
+    /// Common padded field-domain length used by the recursive batch.
+    pub padded_len: usize,
+    /// Logical source of this carried opening.
+    pub kind: CarriedOpeningKind,
+}
+
+impl<L: FieldCore> RecursiveCarriedOpening<L> {
+    /// Build the ordinary size-one carried witness claim (claim 0).
+    pub fn recursive_witness(opening_point: Vec<L>, opening: L, w_len: usize) -> Self {
+        Self {
+            source_idx: 0,
+            opening_point,
+            opening,
+            #[cfg(feature = "zk")]
+            proof_opening: opening,
+            basis: BasisMode::Lagrange,
+            natural_len: w_len,
+            padded_len: w_len.next_power_of_two(),
+            kind: CarriedOpeningKind::RecursiveWitness,
+        }
+    }
+
+    /// Opening value that is visible to the verifier and bound to the transcript.
+    pub fn transcript_opening(&self) -> L {
+        #[cfg(not(feature = "zk"))]
+        {
+            self.opening
+        }
+        #[cfg(feature = "zk")]
+        {
+            self.proof_opening
+        }
+    }
+}
+
+/// Prover-only committed source carried into a recursive fold.
+#[derive(Clone)]
+pub struct RecursiveCarriedSource<F: FieldCore> {
+    /// Current committed representation for this source.
+    pub w: RecursiveWitnessFlat,
+    /// Logical witness when it differs from the committed representation.
+    pub logical_w: Option<RecursiveWitnessFlat>,
+    /// Commitment to this source.
+    pub commitment: FlatRingVec<F>,
+    /// D-erased commitment hint for this source.
+    pub hint: RecursiveCommitmentHintCache<F>,
+}
+
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     /// Current committed recursive witness representation.
@@ -108,10 +177,19 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub hint: RecursiveCommitmentHintCache<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
-    /// Sumcheck challenges that become the next recursive opening point.
+    /// Sumcheck challenges that become the next recursive opening point
+    /// (claim 0's `opening_point`).
     pub sumcheck_challenges: Vec<L>,
-    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
+    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`
+    /// (claim 0's `opening`).
     pub opening: L,
+    /// Opening claims carried into this recursive level. Claim 0 is the
+    /// ordinary recursive witness (`w`); extras reference `extra_carried_sources`.
+    /// Empty until the first level populates it; size-one is the common case.
+    pub carried_openings: Vec<RecursiveCarriedOpening<L>>,
+    /// Extra committed sources referenced by carried openings. Source index 0
+    /// is the ordinary recursive witness stored in `w`; extras start at 1.
+    pub extra_carried_sources: Vec<RecursiveCarriedSource<F>>,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -122,6 +200,30 @@ impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
         self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+
+    /// Common padded field-domain length shared by all carried openings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] if the carried batch is empty or
+    /// does not use one common padded field domain.
+    pub fn common_padded_len(&self) -> Result<usize, AkitaError> {
+        let first = self
+            .carried_openings
+            .first()
+            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
+        if first.padded_len == 0
+            || self
+                .carried_openings
+                .iter()
+                .any(|claim| claim.padded_len != first.padded_len)
+        {
+            return Err(AkitaError::InvalidInput(
+                "carried openings must share one padded domain".to_string(),
+            ));
+        }
+        Ok(first.padded_len)
     }
 }
 
@@ -322,6 +424,10 @@ pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
     pub w_eval: L,
+    /// Extra proof-visible carried sources appended after the witness claim.
+    pub extra_carried_sources: Vec<CarriedOpeningSourceProof<F>>,
+    /// Extra proof-visible carried openings appended after the witness claim.
+    pub extra_carried_openings: Vec<CarriedOpeningProof<L>>,
     /// Recursive prover state for the first suffix level.
     pub next_state: RecursiveProverState<F, L>,
 }
