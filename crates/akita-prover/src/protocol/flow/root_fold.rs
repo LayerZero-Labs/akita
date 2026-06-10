@@ -19,6 +19,7 @@ fn root_trace_claim_scales<C: Copy>(
 #[allow(clippy::too_many_arguments)]
 fn finish_root_fold_with_prepared_openings<F, C, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -107,6 +108,7 @@ where
 
     let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -148,6 +150,7 @@ where
 #[inline(never)]
 pub fn prove_root_fold_with_params<F, E, C, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -308,6 +311,7 @@ where
             D,
         >(
             expanded,
+            prefix_slots,
             backend,
             prepared,
             transcript,
@@ -447,6 +451,7 @@ where
 
     prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -921,6 +926,7 @@ where
 #[inline(never)]
 pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -1144,17 +1150,11 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded
-                .as_ref()
-                .shared_matrix()
-                .total_ring_elements_at::<D>()?;
-            let setup_view = expanded
-                .as_ref()
-                .shared_matrix()
-                .ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded.as_ref(),
+                prefix_slots,
                 lp,
+                next_level_params,
                 &instance,
                 &tau1,
                 alpha,

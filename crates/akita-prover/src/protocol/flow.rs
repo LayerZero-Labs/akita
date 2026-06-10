@@ -63,7 +63,8 @@ use akita_types::{
     CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
     LevelParams, MRowLayout, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding,
-    Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
+    Schedule, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step,
+    TerminalLevelProof,
 };
 use akita_types::{
     batched_eval_target_from_incidence, build_trace_stage2_compact_scaled,

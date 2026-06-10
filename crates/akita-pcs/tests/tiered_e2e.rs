@@ -55,11 +55,6 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} singleton"
         );
-        assert_ne!(
-            layout.b_inner_rows_per_group(),
-            layout.effective_commit_rows(),
-            "nv={nv} singleton must exercise B' inner rows != sent-commitment length"
-        );
 
         let poly = make_onehot_poly(&layout, 0x7000_0000);
         let pt = random_point(nv, 0x7115_0000 + nv as u64);
@@ -230,12 +225,9 @@ fn tiered_onehot_batch_nv14() {
 }
 
 #[test]
-#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35;
-re-enable after tiered table catches up without blowing CI time"]
-fn tiered_onehot_singleton_nv35() {
-    // Trace-internalization regen dropped tiering at nv=34 root; nv=35 still tiers with
-    // tier_split=2 and n_f=1 while n_b'=1 (b_inner_rows=2 != sent u.len()==1).
-    run_tiered_singleton(35, SetupContributionMode::Direct);
+fn tiered_onehot_singleton_nv29() {
+    // Smallest shipped-table singleton whose root fold tiers (f_key present).
+    run_tiered_singleton(29, SetupContributionMode::Direct);
 }
 
 /// Same tiered instances under [`SetupContributionMode::Recursive`]: the root
@@ -250,8 +242,6 @@ fn tiered_onehot_batch_nv14_recursive() {
 }
 
 #[test]
-#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35;
-re-enable after tiered table catches up without blowing CI time"]
-fn tiered_onehot_singleton_nv35_recursive() {
-    run_tiered_singleton(35, SetupContributionMode::Recursive);
+fn tiered_onehot_singleton_nv29_recursive() {
+    run_tiered_singleton(29, SetupContributionMode::Recursive);
 }

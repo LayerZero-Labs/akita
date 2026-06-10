@@ -41,7 +41,8 @@ pub use field_reduction::{
     RingSubfieldEncoding, SubfieldParams,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_incidence, digest_serializable, setup_seed_digest,
+    digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
+    setup_seed_digest,
     AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
     SetupSection,
 };
@@ -62,15 +63,16 @@ pub use proof::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use proof::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript,
-    append_prepared_root_opening_point, checked_total_claims, derive_public_matrix_flat,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape, generate_y,
-    i8_digits_to_bytes, prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, relation_claim_from_rows, relation_claim_from_rows_extension,
-    ring_column_z_first, ring_inner_product_with_extension_weights,
+    active_setup_field_len, append_batched_commitments_to_transcript,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
+    derive_public_matrix_flat, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    generate_y, i8_digits_to_bytes, padded_setup_prefix_len, prepare_recursive_opening_point_ext,
+    prepare_root_opening_point, prepare_root_opening_point_ext, relation_claim_from_rows,
+    relation_claim_from_rows_extension, ring_column_z_first,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
+    select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
     terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed, verifier_claims_to_incidence,
@@ -84,10 +86,11 @@ pub use proof::{
     FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits,
     PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow,
     RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRelationSegmentLayout, RingSliceSerializer, SetupMatrixEnvelope, SetupProductSumcheckShape,
-    SetupSumcheckProof, TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-    SETUP_SUMCHECK_DEGREE,
+    RingRelationSegmentLayout, RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};

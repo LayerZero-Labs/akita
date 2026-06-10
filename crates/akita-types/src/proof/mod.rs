@@ -14,6 +14,7 @@ pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
+pub mod setup_prefix;
 pub mod stage1;
 pub mod terminal_witness;
 
@@ -31,10 +32,9 @@ pub use batch::{
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
-    RingMultiplierOpeningPoint,
+    prepare_root_opening_point_ext, ring_subfield_packed_extension_opening_point,
+    root_tensor_projection_enabled, validate_batched_inputs, PreparedRecursiveOpeningPoint,
+    PreparedRootOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
@@ -65,6 +65,12 @@ pub use setup::{
 };
 #[cfg(feature = "zk")]
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
+pub use setup_prefix::{
+    active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
+    setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
+};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
     ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
