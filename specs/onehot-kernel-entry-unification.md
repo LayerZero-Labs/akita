@@ -323,16 +323,16 @@ accumulator is partitioning `block_len` positions.
 The expansion helper can be shared:
 
 ```rust
-fn expand_digit0_accum<const D: usize>(
-    digit0: Vec<[i32; D]>,
+fn expand_onehot_accum<const D: usize>(
+    compressed: Vec<[i32; D]>,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
     if num_digits == 1 {
-        return digit0;
+        return compressed;
     }
 
-    let mut expanded = Vec::with_capacity(digit0.len().saturating_mul(num_digits));
-    for coeffs in digit0 {
+    let mut expanded = Vec::with_capacity(compressed.len().saturating_mul(num_digits));
+    for coeffs in compressed {
         expanded.push(coeffs);
         for _ in 1..num_digits {
             expanded.push([0i32; D]);
@@ -623,7 +623,7 @@ concrete monomorphized function.
 `block_len`.
 
 ```rust
-pub(super) fn onehot_accumulate_digit0<E, const D: usize>(
+pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
     num_blocks: usize,
@@ -680,7 +680,7 @@ where
 Tensor accumulation is analogous:
 
 ```rust
-pub(super) fn onehot_accumulate_digit0_tensor<E, const D: usize>(
+pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
     expected_blocks: usize,
@@ -716,14 +716,14 @@ where
         .map(|i| blocks.block(i))
         .collect();
 
-    let digit0 = onehot_accumulate_digit0::<E, D>(
+    let compressed = onehot_accumulate::<E, D>(
         &block_views,
         challenges,
         num_blocks,
         block_len,
     );
 
-    let coeff_accum = expand_digit0_accum(digit0, num_digits);
+    let coeff_accum = expand_onehot_accum(compressed, num_digits);
     build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
 }
 ```

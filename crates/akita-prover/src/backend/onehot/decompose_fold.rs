@@ -1,13 +1,16 @@
-use super::accumulate::{onehot_accumulate_digit0, onehot_accumulate_digit0_tensor};
+use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor};
 use super::*;
 
-fn expand_digit0_accum<const D: usize>(digit0: Vec<[i32; D]>, num_digits: usize) -> Vec<[i32; D]> {
+fn expand_onehot_accum<const D: usize>(
+    compressed: Vec<[i32; D]>,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
     if num_digits == 1 {
-        return digit0;
+        return compressed;
     }
 
-    let mut expanded = Vec::with_capacity(digit0.len().saturating_mul(num_digits));
-    for coeffs in digit0 {
+    let mut expanded = Vec::with_capacity(compressed.len().saturating_mul(num_digits));
+    for coeffs in compressed {
         expanded.push(coeffs);
         for _ in 1..num_digits {
             expanded.push([0i32; D]);
@@ -17,13 +20,13 @@ fn expand_digit0_accum<const D: usize>(digit0: Vec<[i32; D]>, num_digits: usize)
 }
 
 fn finish_decompose_fold<F: CanonicalField, const D: usize>(
-    coeff_accum_digit0: Vec<[i32; D]>,
+    compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
 ) -> DecomposeFoldWitness<F, D> {
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let coeff_accum = {
-        let _span = tracing::info_span!("onehot_expand_digit0").entered();
-        expand_digit0_accum(coeff_accum_digit0, num_digits)
+        let _span = tracing::info_span!("onehot_expand_accum").entered();
+        expand_onehot_accum(compressed_accum, num_digits)
     };
     let _span = tracing::info_span!("onehot_convert").entered();
     build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
@@ -40,11 +43,11 @@ where
     E: OneHotEntry,
     F: CanonicalField,
 {
-    let coeff_accum_digit0 = {
-        let _span = tracing::info_span!("onehot_accumulate_digit0").entered();
-        onehot_accumulate_digit0::<E, D>(block_views, challenges, num_blocks, block_len)
+    let compressed_accum = {
+        let _span = tracing::info_span!("onehot_accumulate").entered();
+        onehot_accumulate::<E, D>(block_views, challenges, num_blocks, block_len)
     };
-    finish_decompose_fold(coeff_accum_digit0, num_digits)
+    finish_decompose_fold(compressed_accum, num_digits)
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
@@ -178,16 +181,16 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                     });
                 }
                 let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_digit0_tensor").entered();
-                    onehot_accumulate_digit0_tensor::<SingleChunkEntry, D>(
+                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
+                    onehot_accumulate_tensor::<SingleChunkEntry, D>(
                         &flat_blocks,
                         tensor,
                         expected_blocks,
                         block_len,
                     )?
                 };
-                let coeff_accum_digit0 = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_digit0_accum(coeff_accum_digit0, num_digits);
+                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
             OneHotBlocks::MultiChunk(_) => {
@@ -208,16 +211,16 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                     });
                 }
                 let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_digit0_tensor").entered();
-                    onehot_accumulate_digit0_tensor::<MultiChunkEntry, D>(
+                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
+                    onehot_accumulate_tensor::<MultiChunkEntry, D>(
                         &flat_blocks,
                         tensor,
                         expected_blocks,
                         block_len,
                     )?
                 };
-                let coeff_accum_digit0 = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_digit0_accum(coeff_accum_digit0, num_digits);
+                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
         };

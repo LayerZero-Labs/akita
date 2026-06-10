@@ -1,4 +1,4 @@
-use super::accumulate::onehot_accumulate_digit0;
+use super::accumulate::onehot_accumulate;
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
@@ -827,12 +827,8 @@ fn multi_chunk_compressed_accum_matches_expanded_width_path() {
         inner_width,
         num_digits,
     );
-    let compressed = onehot_accumulate_digit0::<MultiChunkEntry, D>(
-        &block_views,
-        &challenges,
-        num_blocks,
-        block_len,
-    );
+    let compressed =
+        onehot_accumulate::<MultiChunkEntry, D>(&block_views, &challenges, num_blocks, block_len);
     let mut expanded_from_compressed = Vec::with_capacity(inner_width);
     for coeffs in compressed {
         expanded_from_compressed.push(coeffs);

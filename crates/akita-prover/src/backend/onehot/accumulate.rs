@@ -1,12 +1,15 @@
 use super::*;
 
-/// Position-parallel digit-zero accumulation for one-hot witnesses.
+/// Accumulates one-hot decompose-fold rows in compressed position order.
+///
+/// The returned vector has `block_len` rows. Callers expand each row across
+/// `num_digits` later, inserting zero rows for higher digit planes.
 ///
 /// `blocks` is a slice-of-slices view over per-block entries. Both
 /// single-polynomial callers (which collect once via `FlatBlocks::block`)
 /// and batched callers (which concatenate slices across polynomials) feed
 /// through the same signature.
-pub(super) fn onehot_accumulate_digit0<E, const D: usize>(
+pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
     num_blocks: usize,
@@ -63,7 +66,7 @@ where
 // product of two sparse samples. The witness boundary narrows back to
 // `[i32; D]` after checking the selected schedule's coefficient envelope.
 
-pub(super) fn onehot_accumulate_digit0_tensor<E, const D: usize>(
+pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
     num_blocks: usize,
