@@ -46,7 +46,7 @@ The implementation must touch these protocol surfaces:
 - `AkitaInstanceDescriptor` binds the mode so prover and verifier cannot replay different transcript schedules.
 - `TerminalLevelProof` and `TerminalLevelProofShape` represent either the existing relation-only sumcheck terminal payload or the new direct-relation terminal payload.
 - Terminal witness sizing excludes `r_hat` in direct mode.
-- Transparent terminal prover construction emits `z_folded_rings`, `e_hat`, and `t_hat` segments only.
+- Transparent terminal prover construction emits `z_folded_rings`, `e_hat`, and `t_hat`, plus tiered `û_concat` when the active layout is tiered, but never `r_hat`.
 - Terminal verifier construction decodes the non-quotient final witness and checks the terminal rows directly across both suffix-terminal and terminal-root verification entrypoints.
 - Proof-size and planner accounting use the selected terminal mode.
 
@@ -56,10 +56,10 @@ The current terminal recursive fold is implemented in `crates/akita-prover/src/p
 
 Current prover flow:
 
-1. `RingRelationProver::new_recursive_multipoint` builds terminal `e_hat`, skips `v`, absorbs terminal `e_hat`, samples fold challenges, computes `z_folded_rings`, and builds terminal `y`.
+1. `RingRelationProver::new_recursive_multipoint` builds terminal `e_hat`, skips `v`, absorbs terminal `e_hat`, absorbs sparse-challenge context and squeezes `CHALLENGE_SPARSE_CHALLENGE`, samples fold challenges, computes `z_folded_rings`, and builds terminal `y`.
 2. `prove_terminal_fold_level_from_ring_relation` computes `terminal_witness_segment_layout`.
 3. It calls `ring_switch_build_w`, which calls `compute_relation_quotient`.
-4. In transparent builds, `build_w_coeffs` emits `z_folded_rings`, `e_hat`, `t_hat`, and finally `r_hat`.
+4. In transparent builds, `build_w_coeffs` emits `z_folded_rings`, `e_hat`, `t_hat`, tiered `û_concat` when applicable, and finally `r_hat`.
    Under `feature = "zk"`, it also emits terminal B-side blinding planes and keeps D-side blinding empty because terminal layout drops D rows.
 5. The full `logical_w` is packed into `CleartextWitnessProof::PackedDigits`.
 6. `ring_switch_finalize_terminal` absorbs the final-witness remainder and samples `alpha` and `tau1`.
@@ -71,7 +71,7 @@ Current verifier flow:
 1. `verify_one_level_inner` checks the opening claim and y-ring relation.
 2. It computes terminal `w_len` from the scheduled terminal direct step.
 3. It splits terminal `final_witness` into `e_hat` and remainder transcript parts.
-4. It derives fold challenges with `MRowLayout::WithoutDBlock`.
+4. It absorbs sparse-challenge context, squeezes `CHALLENGE_SPARSE_CHALLENGE`, and derives fold challenges with `MRowLayout::WithoutDBlock`.
 5. It calls `ring_switch_verifier_terminal`, which absorbs the remainder, samples `alpha` and `tau1`, and prepares deferred row evaluation.
 6. It builds an `AkitaStage2Verifier` over the direct final witness.
 7. It verifies the terminal stage-2 sumcheck.
@@ -104,8 +104,8 @@ In direct terminal mode, the terminal fold keeps the same public y-ring opening 
 
 Prover flow:
 
-1. Build terminal `e_hat` and absorb it before sampling fold challenges, as today.
-2. Sample fold challenges, compute `z_folded_rings`, and build terminal `y`, as today.
+1. Build terminal `e_hat` and absorb it before any sparse seed is squeezed, as today.
+2. Absorb sparse-challenge context and squeeze `CHALLENGE_SPARSE_CHALLENGE`, then sample fold challenges, compute `z_folded_rings`, and build terminal `y`, as today.
 3. Build a transparent terminal direct witness with the same segment ordering as the current transparent terminal witness, but omit the `r_hat` suffix.
 4. Pack that non-quotient witness into `CleartextWitnessProof::PackedDigits`.
 5. Absorb the final-witness remainder.
@@ -118,7 +118,7 @@ Verifier flow:
 
 1. Decode and validate the terminal `final_witness`.
 2. Split it into the same `e_hat` and remainder transcript parts.
-3. Absorb `e_hat`, derive fold challenges, and absorb the remainder in the same relative positions as the prover.
+3. Absorb `e_hat`, absorb sparse-challenge context, squeeze `CHALLENGE_SPARSE_CHALLENGE`, derive fold challenges, and absorb the remainder in the same relative positions as the prover.
 4. Do not sample terminal ring-switch or terminal sumcheck challenges.
 5. Recompose the non-quotient witness segments into terminal row inputs using a full terminal segment layout, not only the transcript `e_hat` slice.
 6. For each terminal row, evaluate the row directly in the cyclotomic ring.
@@ -195,7 +195,7 @@ Otherwise it must mirror the current `repeated_b_commitment_rows` semantics and 
 `TerminalWitnessSegmentLayout` (`crates/akita-types/src/proof/terminal_witness.rs:10`) is not enough for this checker by itself because it only describes the transcript `e_hat` slice.
 Direct row checking needs the full segment layout already used on the verifier side, `RingSwitchSegmentLayout` in `crates/akita-verifier/src/protocol/ring_switch.rs:140`, produced by the prepared-layout `segment_layout()` method at `crates/akita-verifier/src/protocol/ring_switch.rs:605`.
 That type already pins `offset_w`, `offset_t`, `offset_z`, `offset_r`, the `z_first` ordering, and (under `feature = "zk"`) the blinding offsets.
-Direct mode should generalize it so that `offset_r` is absent in `OmitRHat` mode rather than introducing a parallel layout type, keeping a single source of truth for `z_folded_rings`, `e_hat`, `t_hat`, blinding, and the omitted-`r_hat` policy.
+Direct mode should generalize it so that `offset_r` is absent in `OmitRHat` mode rather than introducing a parallel layout type, keeping a single source of truth for `z_folded_rings`, `e_hat`, `t_hat`, tiered `û_concat`, blinding, and the omitted-`r_hat` policy.
 
 ### Invariants
 
@@ -212,7 +212,8 @@ Direct mode should generalize it so that `offset_r` is absent in `OmitRHat` mode
   It must not squeeze terminal `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, or `CHALLENGE_SUMCHECK_ROUND`.
 
 - **Witness binding remains before challenge use.**
-  The logical terminal `e_hat` segment is absorbed before fold-challenge sampling.
+  The logical terminal `e_hat` segment is absorbed before sparse-challenge context and `CHALLENGE_SPARSE_CHALLENGE` are squeezed.
+  Fold challenges are derived only after that sparse seed.
   The final-witness remainder is absorbed before direct row verification starts.
 
 - **Descriptor binding.**
@@ -303,7 +304,7 @@ Add tests in `crates/akita-types/src/schedule.rs`:
 
 Add transcript and tamper tests in `crates/akita-pcs/tests/transcript_hardening.rs` and helper coverage in `crates/akita-pcs/tests/common/mod.rs`:
 
-- Direct terminal event order includes descriptor binding, commitment, evaluation claims, terminal `e_hat`, fold challenges, and terminal remainder.
+- Direct terminal event order includes descriptor binding, commitment, evaluation claims, terminal `e_hat`, sparse-challenge context plus `CHALLENGE_SPARSE_CHALLENGE`, fold challenges, and terminal remainder.
 - Direct terminal event order excludes `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, and terminal `CHALLENGE_SUMCHECK_ROUND`.
 - Sumcheck-terminal event order remains unchanged when that mode is selected.
 - Direct terminal descriptor mismatch rejects before row checking begins.
@@ -521,8 +522,10 @@ e_hat_count + t_hat_count + z_folded_rings_count + r_count
 Direct terminal mode needs:
 
 ```text
-e_hat_count + t_hat_count + z_folded_rings_count
+e_hat_count + t_hat_count + z_folded_rings_count + u_concat_count
 ```
+
+where `u_concat_count` is `num_points * lp.u_concat_ring_len_per_group()` and is zero on non-tiered layouts.
 
 The function should be generalized rather than duplicated.
 A small enum such as `TerminalWitnessQuotient::{IncludeRHat, OmitRHat}` is clearer than overloading `MRowLayout`.
@@ -538,7 +541,7 @@ It should share the segment emission helpers used by `build_w_coeffs`:
 
 It should not call `compute_relation_quotient`.
 It should not allocate `r_planes`.
-In transparent mode it emits only `z_folded_rings`, `e_hat`, and `t_hat`.
+In transparent mode it emits `z_folded_rings`, `e_hat`, and `t_hat`, and on tiered layouts also emits `û_concat` via the same `emit_flat_planes` path used by `build_w_coeffs`.
 It should return `RecursiveWitnessFlat` so packing and transcript slicing can reuse existing `CleartextWitnessProof` helpers.
 
 Add a direct terminal row checker in the verifier crate.
@@ -560,6 +563,7 @@ The checker should decode the packed witness and split it into:
 - `z_folded_rings` digit planes,
 - `e_hat` digit planes,
 - `t_hat` digit planes,
+- tiered `û_concat` digit planes when `lp.u_concat_ring_len_per_group() > 0`,
 - optional blinding planes only if a future ZK direct mode is specified.
 
 Then it should recompose rows and check:
@@ -582,6 +586,8 @@ descriptor bind
 commitment absorb
 opening point and y absorb
 terminal e_hat absorb
+sparse-challenge context absorb
+CHALLENGE_SPARSE_CHALLENGE squeeze
 fold challenges
 terminal witness remainder absorb
 alpha squeeze
@@ -596,6 +602,8 @@ descriptor bind
 commitment absorb
 opening point and y absorb
 terminal e_hat absorb
+sparse-challenge context absorb
+CHALLENGE_SPARSE_CHALLENGE squeeze
 fold challenges
 terminal witness remainder absorb
 direct row checks
