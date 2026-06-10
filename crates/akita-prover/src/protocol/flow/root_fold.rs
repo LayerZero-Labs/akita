@@ -1408,26 +1408,25 @@ where
     } = rs;
 
     let stage1_point = vec![C::zero(); col_bits + ring_bits];
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let stage2_round_pads =
-                zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
-            let stage2_sumcheck_proof = {
-                let _sumcheck_span =
-                    tracing::info_span!("stage2_sumcheck_terminal_root").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    C::zero(),
-                    w_evals_compact,
-                    &stage1_point,
-                    C::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
+    #[cfg(feature = "zk")]
+    let stage2_round_pads = zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
+    let stage2_sumcheck_proof = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            C::zero(),
+            w_evals_compact,
+            &stage1_point,
+            C::zero(),
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )?;
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
                 let (stage2_sumcheck_proof, _sumcheck_challenges) = stage2_prover
                     .prove_zk::<F, T, _>(
                         relation_claim_public,
@@ -1435,33 +1434,15 @@ where
                         |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
                         stage2_round_pads,
                     )?;
-                stage2_sumcheck_proof
-            };
-        } else {
-            let stage2_sumcheck_proof = {
-                let _sumcheck_span =
-                    tracing::info_span!("stage2_sumcheck_terminal_root").entered();
-                let mut stage2_prover = AkitaStage2Prover::new(
-                    C::zero(),
-                    w_evals_compact,
-                    &stage1_point,
-                    C::zero(),
-                    b,
-                    alpha_evals_y,
-                    m_evals_x,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    relation_claim,
-                )?;
+            } else {
                 let (stage2_sumcheck_proof, _sumcheck_challenges, _stage2_final_claim) =
                     stage2_prover.prove::<F, T, _>(transcript, |tr| {
                         sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
                     })?;
-                stage2_sumcheck_proof
-            };
+            }
         }
-    }
+        stage2_sumcheck_proof
+    };
 
     #[cfg(feature = "zk")]
     let proof_y_rings = y_rings_masked;
