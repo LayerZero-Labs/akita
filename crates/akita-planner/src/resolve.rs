@@ -28,6 +28,10 @@ use akita_types::{
 };
 
 use crate::find_schedule;
+// @generated schedule table cfg imports begin
+#[cfg(not(feature = "zk"))]
+use crate::generated::fp128_d64_onehot_tiered_table;
+// @generated schedule table cfg imports end
 use crate::generated::{
     // @generated schedule table imports begin
     fp128_d128_full_table,
@@ -36,7 +40,6 @@ use crate::generated::{
     fp128_d32_onehot_table,
     fp128_d64_onehot_table,
     fp128_d64_onehot_tensor_table,
-    fp128_d64_onehot_tiered_table,
     fp32_d128_onehot_table,
     fp32_d256_onehot_table,
     fp64_d128_onehot_table,

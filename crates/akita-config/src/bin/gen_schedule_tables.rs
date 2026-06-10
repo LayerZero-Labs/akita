@@ -181,6 +181,8 @@ fn emit_module(family: &GeneratedFamily) -> Result<String, String> {
 
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+const RESOLVE_CFG_IMPORTS_BEGIN: &str = "// @generated schedule table cfg imports begin";
+const RESOLVE_CFG_IMPORTS_END: &str = "// @generated schedule table cfg imports end";
 const RESOLVE_IMPORTS_BEGIN: &str = "// @generated schedule table imports begin";
 const RESOLVE_IMPORTS_END: &str = "// @generated schedule table imports end";
 
@@ -246,13 +248,33 @@ fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
     Ok(out)
 }
 
+fn emit_resolve_cfg_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = String::new();
+    for family in families {
+        if family.module_name == "fp128_d64_onehot_tiered" {
+            writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+            writeln!(
+                out,
+                "use crate::generated::{};",
+                table_fn_name(family.module_name)
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
 fn emit_resolve_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
-    let imports = families
-        .iter()
-        .map(|family| table_fn_name(family.module_name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(format!("{imports},\n    "))
+    let mut out = String::new();
+    for family in families {
+        if family.module_name == "fp128_d64_onehot_tiered" {
+            continue;
+        }
+        writeln!(out, "{},", table_fn_name(family.module_name)).map_err(|e| e.to_string())?;
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
 fn replace_between_markers(
@@ -298,6 +320,13 @@ fn refresh_generated_wiring(base_dir: &Path) -> Result<(), String> {
         .join("resolve.rs");
     let resolve_src = fs::read_to_string(&resolve_path)
         .map_err(|e| format!("read {}: {e}", resolve_path.display()))?;
+    let cfg_imports = emit_resolve_cfg_imports(&families)?;
+    let resolve_src = replace_between_markers(
+        &resolve_src,
+        RESOLVE_CFG_IMPORTS_BEGIN,
+        RESOLVE_CFG_IMPORTS_END,
+        &cfg_imports,
+    )?;
     let imports = emit_resolve_imports(&families)?;
     let resolve_src = replace_between_markers(
         &resolve_src,
