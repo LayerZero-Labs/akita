@@ -65,6 +65,10 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     Cfg: CommitmentConfig<Field = F>,
 {
+    if D != SETUP_OFFLOAD_D_SETUP {
+        return Ok(());
+    }
+
     let root_incidence =
         ClaimIncidenceSummary::from_counts(max_num_vars, max_num_batched_polys, max_num_points)?;
     let schedule = Cfg::get_params_for_prove(&root_incidence)?;
@@ -80,10 +84,6 @@ where
 
     let folds: Vec<_> = schedule.fold_steps().collect();
     let terminal_fold_idx = folds.len().saturating_sub(1);
-
-    if D != SETUP_OFFLOAD_D_SETUP {
-        return Ok(());
-    }
 
     let backend = CpuBackend;
     let prepared = backend.prepare_setup(setup)?;
