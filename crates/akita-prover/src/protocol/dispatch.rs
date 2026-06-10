@@ -52,8 +52,66 @@ macro_rules! dispatch_ring_dim {
 
 /// Bridge a runtime `d: usize` to a const-generic `D` context, returning an
 /// [`AkitaError`](akita_field::AkitaError) for unsupported dimensions.
+///
+/// Two forms are provided:
+///
+/// * `dispatch_ring_dim_result!(d, |D| expr)` — the plain form, matching `d`
+///   against the supported dimensions and evaluating `expr` with `D` bound as a
+///   const.
+/// * `dispatch_ring_dim_result!(d, current_D, current_prepared, |D, prepared| { .. }, prepare)`
+///   — the prepared-setup form used by the recursive fold loop. When `d` equals
+///   the caller's already-instantiated `current_D`, it reuses `current_prepared`
+///   on the fast path (no re-preparation). Otherwise it re-enters the matched
+///   const-`D` arm, evaluates `prepare` to build that dimension's prepared setup,
+///   and runs the body. `D` (the body's const) and the `D` referenced inside
+///   `prepare` share the caller's hygiene context, so both resolve to the same
+///   per-arm const.
 #[macro_export]
 macro_rules! dispatch_ring_dim_result {
+    (
+        $d:expr,
+        $current_D:ident,
+        $current_prepared:expr,
+        |$D:ident, $prepared:ident| $body:block,
+        $prepare:expr
+    ) => {{
+        let __d = $d;
+        if __d == $current_D {
+            let $prepared = $current_prepared;
+            $body
+        } else {
+            match __d {
+                32 => {
+                    const $D: usize = 32;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                64 => {
+                    const $D: usize = 64;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                128 => {
+                    const $D: usize = 128;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                256 => {
+                    const $D: usize = 256;
+                    let __prepared = $prepare;
+                    let $prepared = &__prepared;
+                    $body
+                }
+                _ => Err(akita_field::AkitaError::InvalidInput(format!(
+                    "unsupported ring dimension: {__d}"
+                ))),
+            }
+        }
+    }};
+
     ($d:expr, |$D:ident| $body:expr) => {{
         let __d = $d;
         match __d {

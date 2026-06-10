@@ -461,6 +461,8 @@ pub(crate) struct FoldVerifierLayouts {
     pub(crate) root_lp: LevelParams,
     /// First recursive-level params reached by the root fold.
     pub(crate) next_level_params: LevelParams,
+    /// Next-fold params used to derive the root setup-prefix slot.
+    pub(crate) root_next_fold_level_params: LevelParams,
 }
 
 /// Schedule context selected by the root scheme/config layer.
@@ -497,10 +499,12 @@ where
             current_w_len: root_step.next_w_len,
         };
         let next_level_params = next_params(next_inputs)?;
+        let root_next_fold_level_params = next_level_params.clone();
         Ok(BatchedVerifierScheduleContext::Fold(Box::new(
             FoldVerifierLayouts {
                 root_lp: root_step.params.clone(),
                 next_level_params,
+                root_next_fold_level_params,
             },
         )))
     } else {
@@ -633,6 +637,7 @@ where
                 schedule,
                 &layouts.root_lp,
                 &layouts.next_level_params,
+                &layouts.root_next_fold_level_params,
                 setup_contribution_mode,
             )?;
         }
