@@ -497,6 +497,8 @@ mod tests {
             n_d,
             m_row_layout: MRowLayout::WithDBlock,
             n_b,
+            tier_split: 1,
+            n_f: 0,
             num_points,
             rows,
             claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
