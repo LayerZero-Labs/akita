@@ -230,7 +230,8 @@ fn tiered_onehot_batch_nv14() {
 }
 
 #[test]
-#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35; re-enable after tiered table catches up without blowing CI time"]
+#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35;
+re-enable after tiered table catches up without blowing CI time"]
 fn tiered_onehot_singleton_nv35() {
     // Trace-internalization regen dropped tiering at nv=34 root; nv=35 still tiers with
     // tier_split=2 and n_f=1 while n_b'=1 (b_inner_rows=2 != sent u.len()==1).
@@ -249,7 +250,8 @@ fn tiered_onehot_batch_nv14_recursive() {
 }
 
 #[test]
-#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35; re-enable after tiered table catches up without blowing CI time"]
+#[ignore = "trace-internalized schedule regen defers singleton tiering to nv>=35;
+re-enable after tiered table catches up without blowing CI time"]
 fn tiered_onehot_singleton_nv35_recursive() {
     run_tiered_singleton(35, SetupContributionMode::Recursive);
 }
