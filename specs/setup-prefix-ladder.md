@@ -124,6 +124,21 @@ fold: unsupported or missing slots use direct fallback. Proof-size and verifier
 performance wins are expected only after the later planner-aware and carried
 opening integration PRs.
 
+### Design Note: Prefix Contents and Cache Reuse
+
+There are two different setup-prefix commitment policies with different cache
+behavior. A reusable ladder commits full power-of-two prefixes
+`S[0..N_prefix]`, so one artifact can serve any active footprint up to that
+prefix size. An exact selected-slot policy commits `S[0..natural_len]` followed
+by zeros up to `N_prefix`; that object is cheaper only if the commitment/opening
+backend exploits the zero tail, and it is specific to `natural_len`.
+
+The current CPU path commits the padded dense block shape, so zero-padding is a
+semantic choice, not a preprocessing speedup. Exact zero-padded selected slots
+must include `natural_len` in the slot identity and transcript binding. A
+reusable `FullLadder` should instead commit full power-of-two setup prefixes and
+make inactive coordinates contribute zero through setup-product weights.
+
 ## Design
 
 ### Prefix Shape

@@ -259,10 +259,10 @@ mod tests {
         SisModulusFamily,
     };
 
-    fn prefix_level_params() -> LevelParams {
+    fn prefix_level_params(ring_dimension: usize) -> LevelParams {
         LevelParams::params_only(
             SisModulusFamily::Q128,
-            32,
+            ring_dimension,
             3,
             2,
             3,
@@ -292,8 +292,11 @@ mod tests {
         )
     }
 
-    fn test_setup(level_params: &LevelParams, n_prefix: usize) -> AkitaProverSetup<F, 32> {
-        AkitaProverSetup::<F, 32>::generate_with_capacity(
+    fn test_setup<const D: usize>(
+        level_params: &LevelParams,
+        n_prefix: usize,
+    ) -> AkitaProverSetup<F, D> {
+        AkitaProverSetup::<F, D>::generate_with_capacity(
             8,
             1,
             1,
@@ -305,7 +308,7 @@ mod tests {
                     .row_len()
                     .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
                         level_params.b_key.row_len(),
-                        32,
+                        D,
                         level_params.log_basis,
                     ))
                     .expect("ZK B setup capacity"),
@@ -317,22 +320,47 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_populates_singleton_slot() {
-        let level_params = prefix_level_params();
+    fn setup_prefix_extraction_zero_pads_after_natural_len() {
+        let level_params = prefix_level_params(64);
+        let natural_len = 65usize;
+        let padded_ring_slots = 2usize;
+        let setup = test_setup::<64>(&level_params, padded_ring_slots * 64);
+        let fields = setup.expanded.shared_matrix().as_field_slice();
+
+        let ring_elems = extract_setup_prefix_ring_elems::<F, 64>(
+            &setup.expanded,
+            padded_ring_slots,
+            natural_len,
+        )
+        .expect("extract setup prefix");
+
+        assert_eq!(ring_elems.len(), padded_ring_slots);
+        assert_eq!(ring_elems[0].coefficients(), &fields[..64]);
+        assert_eq!(ring_elems[1].coefficients()[0], fields[64]);
+        assert!(
+            ring_elems[1].coefficients()[1..]
+                .iter()
+                .all(|coeff| coeff.is_zero()),
+            "coefficients after natural_len must be zero padded"
+        );
+    }
+
+    fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
+        let level_params = prefix_level_params(D);
         let incidence = ClaimIncidenceSummary::same_point(4, 1).expect("incidence");
         let witness_ring_slots = level_params
             .num_blocks
             .checked_mul(level_params.block_len)
             .expect("witness shape");
-        let n_prefix = witness_ring_slots.checked_mul(32).expect("prefix length");
-        let natural_len = active_setup_field_len(&level_params, &incidence, 32)
+        let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
+        let natural_len = active_setup_field_len(&level_params, &incidence, D)
             .expect("natural len")
             .min(n_prefix);
-        let mut setup = test_setup(&level_params, n_prefix);
+        let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<32>(&setup).expect("prepared setup");
+        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
-        let slot = commit_setup_prefix::<F, 32, _>(
+        let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,
             &backend,
             &prepared,
@@ -346,5 +374,15 @@ mod tests {
         assert_eq!(slot.padded_len, n_prefix);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
+    }
+
+    #[test]
+    fn commit_setup_prefix_populates_d32_singleton_slot() {
+        assert_commit_setup_prefix_populates_singleton_slot::<32>();
+    }
+
+    #[test]
+    fn commit_setup_prefix_populates_d64_singleton_slot() {
+        assert_commit_setup_prefix_populates_singleton_slot::<64>();
     }
 }

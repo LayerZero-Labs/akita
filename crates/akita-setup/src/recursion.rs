@@ -153,3 +153,47 @@ where
 
     Ok(setup)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_config::proof_optimized::fp128;
+    use akita_types::SETUP_OFFLOAD_D_SETUP;
+
+    type F = fp128::Field;
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn recursive_d64_setup_populates_prefix_slots() {
+        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1, 1)
+            .expect("recursive D64 setup");
+
+        assert!(
+            !setup.prefix_slots.is_empty(),
+            "D64 recursive setup should populate setup-prefix slots"
+        );
+        for (id, slot) in setup.prefix_slots.iter() {
+            assert_eq!(id, &slot.id);
+            id.check().expect("slot id shape");
+            assert_eq!(id.d_setup, SETUP_OFFLOAD_D_SETUP);
+            assert_eq!(slot.padded_len, id.n_prefix);
+            assert!(slot.natural_len <= slot.padded_len);
+            assert!(slot.padded_len.is_power_of_two());
+        }
+
+        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        assert_eq!(verifier_setup.prefix_slots.len(), setup.prefix_slots.len());
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn recursive_d32_setup_skips_prefix_slots() {
+        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1, 1)
+            .expect("recursive D32 setup");
+
+        assert!(
+            setup.prefix_slots.is_empty(),
+            "D32 recursive setup should skip D64-gated prefix slots"
+        );
+    }
+}
