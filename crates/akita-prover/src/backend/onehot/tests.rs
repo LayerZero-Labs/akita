@@ -1,3 +1,4 @@
+use super::accumulate::onehot_accumulate_digit0;
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
@@ -94,12 +95,12 @@ fn map_onehot_k_gt_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 1);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].coeff_idx(), 3);
+    assert_eq!(block0[0].coeffs(), &[3]);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 1);
     assert_eq!(block1[0].pos_in_block(), 2);
-    assert_eq!(block1[0].coeff_idx(), 2);
+    assert_eq!(block1[0].coeffs(), &[2]);
 }
 
 #[test]
@@ -122,16 +123,16 @@ fn map_onehot_k_eq_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 2);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].coeff_idx(), 0);
+    assert_eq!(block0[0].coeffs(), &[0]);
     assert_eq!(block0[1].pos_in_block(), 1);
-    assert_eq!(block0[1].coeff_idx(), 2);
+    assert_eq!(block0[1].coeffs(), &[2]);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 2);
     assert_eq!(block1[0].pos_in_block(), 0);
-    assert_eq!(block1[0].coeff_idx(), 3);
+    assert_eq!(block1[0].coeffs(), &[3]);
     assert_eq!(block1[1].pos_in_block(), 1);
-    assert_eq!(block1[1].coeff_idx(), 1);
+    assert_eq!(block1[1].coeffs(), &[1]);
 }
 
 #[test]
@@ -163,16 +164,16 @@ fn map_onehot_k_lt_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 2);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].nonzero_coeffs(), &[0, 6]);
+    assert_eq!(block0[0].coeffs(), &[0, 6]);
     assert_eq!(block0[1].pos_in_block(), 1);
-    assert_eq!(block0[1].nonzero_coeffs(), &[3, 5]);
+    assert_eq!(block0[1].coeffs(), &[3, 5]);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 2);
     assert_eq!(block1[0].pos_in_block(), 0);
-    assert_eq!(block1[0].nonzero_coeffs(), &[0, 4]);
+    assert_eq!(block1[0].coeffs(), &[0, 4]);
     assert_eq!(block1[1].pos_in_block(), 1);
-    assert_eq!(block1[1].nonzero_coeffs(), &[3, 7]);
+    assert_eq!(block1[1].coeffs(), &[3, 7]);
 }
 
 #[test]
@@ -622,7 +623,7 @@ fn wide_matches_reference() {
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
     let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-    let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
+    let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
     assert_eq!(ref_result.len(), wide_result.len());
     for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -659,7 +660,7 @@ fn wide_matches_reference_fp128() {
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
     let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-    let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
+    let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
     assert_eq!(ref_result.len(), wide_result.len());
     for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -692,9 +693,14 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
         .map(|i| single_chunk_blocks.block(i))
         .collect();
-    let got =
-        column_sweep_ajtai_single_chunk::<F, D>(&a_view, &single_chunk_views, 1, block_len, 1);
-    let expected = inner_ajtai_wide_single_chunk_tiled::<F, D>(&a_view, &bucket, 1);
+    let got = column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+        &a_view,
+        &single_chunk_views,
+        1,
+        block_len,
+        1,
+    );
+    let expected = inner_ajtai_wide_onehot_tiled::<SingleChunkEntry, F, D>(&a_view, &bucket, 1);
 
     assert_eq!(got.len(), 1);
     assert_eq!(got[0], expected);
@@ -733,7 +739,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         .map(|i| multi_chunk_blocks.block(i))
         .collect();
 
-    let got = column_sweep_ajtai_multi_chunk::<F, D>(
+    let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
         &a_view,
         &views,
         n_a,
@@ -745,8 +751,107 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     assert_eq!(got.len(), 1, "single-block test: expected one output row");
     assert_eq!(
         got[0], reference,
-        "column_sweep_ajtai_multi_chunk must agree with the non-wide \
+        "column_sweep_ajtai_onehot must agree with the non-wide \
          reference at fan-out totals above MAX_WIDE_SHIFT_ACCUMULATIONS"
+    );
+}
+
+/// Legacy expanded-width multi-chunk digit-zero accumulation, kept only to
+/// validate the compressed-then-expanded refactor.
+fn legacy_multi_chunk_expanded_accumulate<const D: usize>(
+    multi_chunk_blocks: &[&[MultiChunkEntry]],
+    challenges: &[SparseChallenge],
+    num_blocks: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    let mut acc = vec![[0i32; D]; inner_width];
+    let mut rotated = vec![[0i16; D]; D];
+
+    for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+        let entries = multi_chunk_blocks[block_idx];
+        fill_rotated_challenge::<D>(&mut rotated, challenge);
+        for entry in entries {
+            let local_pos = entry.pos_in_block() * num_digits;
+            for &ci in entry.coeffs() {
+                let rot = &rotated[ci as usize];
+                let dst = &mut acc[local_pos];
+                for k in 0..D {
+                    dst[k] += rot[k] as i32;
+                }
+            }
+        }
+    }
+
+    acc
+}
+
+#[test]
+fn multi_chunk_compressed_accum_matches_expanded_width_path() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let k = 4;
+    let block_len = 2;
+    let num_digits = 4;
+    let indices: Vec<Option<usize>> = vec![
+        Some(0),
+        Some(2),
+        Some(3),
+        Some(1),
+        Some(0),
+        Some(0),
+        Some(3),
+        Some(3),
+    ];
+    let blocks = FlatBlocks::<MultiChunkEntry>::from_indices(k, &indices, block_len, D, 2).unwrap();
+    let block_views: Vec<&[MultiChunkEntry]> =
+        (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0, 3, 7],
+            coeffs: vec![1, -1, 2],
+        },
+        SparseChallenge {
+            positions: vec![1, 5],
+            coeffs: vec![1, 1],
+        },
+    ];
+    let num_blocks = challenges.len().min(blocks.num_blocks());
+    let inner_width = block_len * num_digits;
+
+    let legacy_expanded = legacy_multi_chunk_expanded_accumulate::<D>(
+        &block_views,
+        &challenges,
+        num_blocks,
+        inner_width,
+        num_digits,
+    );
+    let compressed = onehot_accumulate_digit0::<MultiChunkEntry, D>(
+        &block_views,
+        &challenges,
+        num_blocks,
+        block_len,
+    );
+    let mut expanded_from_compressed = Vec::with_capacity(inner_width);
+    for coeffs in compressed {
+        expanded_from_compressed.push(coeffs);
+        for _ in 1..num_digits {
+            expanded_from_compressed.push([0i32; D]);
+        }
+    }
+
+    assert_eq!(
+        expanded_from_compressed, legacy_expanded,
+        "compressed-then-expanded multi-chunk accumulation must match the legacy expanded-width path"
+    );
+
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let legacy_witness = build_decompose_fold_witness::<F, D>(legacy_expanded, modulus);
+    let new_witness = build_decompose_fold_witness::<F, D>(expanded_from_compressed, modulus);
+    assert_eq!(
+        legacy_witness.centered_coeffs, new_witness.centered_coeffs,
+        "decompose-fold witness must agree after compressed multi-chunk refactor"
     );
 }
 
