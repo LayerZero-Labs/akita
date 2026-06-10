@@ -514,11 +514,18 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
     };
     let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        poly.num_vars(),
-        1,
-        1,
-    )
+    let setup = match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover(poly.num_vars(), 1, 1),
+        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover_recursion(
+            poly.num_vars(), 1, 1
+        ),
+    }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
@@ -602,8 +609,16 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
-    let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1).unwrap();
+    let setup = match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1)
+        }
+        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            FF,
+            D,
+        >>::setup_prover_recursion(nv, 1, 1),
+    }
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -705,8 +720,16 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1).unwrap();
+    let setup_contribution_mode = profile_setup_contribution_mode();
+    let setup = match setup_contribution_mode {
+        SetupContributionMode::Direct => {
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1)
+        }
+        SetupContributionMode::Recursive => {
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys, 1)
+        }
+    }
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -736,7 +759,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
-    let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
         label,
         ?setup_contribution_mode,
