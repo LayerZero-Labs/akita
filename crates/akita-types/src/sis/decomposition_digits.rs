@@ -1,4 +1,35 @@
-//! Gadget-decomposition digit counts.
+//! Gadget-decomposition digit counts and the committed-matrix widths derived
+//! from them.
+//!
+//! Three layers live here, lowest to highest:
+//!
+//! 1. **Core digit-count math** — how many balanced base-`2^log_basis` digits
+//!    represent a bound. Two centering conventions exist:
+//!    - `compute_num_digits` (crate-private): the *symmetric* signed range
+//!      `[-2^(k-1), 2^(k-1) - 1]`, including the sign-bit correction. Reached
+//!      only through the router below.
+//!    - [`compute_num_digits_full_field`]: the *asymmetric* full-field residue,
+//!      plain `ceil(field_bits / log_basis)` with no correction.
+//!    - [`num_digits_for_bound`]: the router. Full-field bounds
+//!      (`log_bound >= field_bits`) use the asymmetric count; smaller bounds use
+//!      the symmetric one. This is the *only* symmetric entry point, so a caller
+//!      cannot accidentally request the symmetric count of a full-field bound
+//!      (the historical `compute_num_digits(128, _)` footgun).
+//!
+//! 2. **Per-role selectors** — map a [`DecompositionParams`] to the digit depth
+//!    of a specific witness role, encoding which bound applies to each:
+//!    - [`num_digits_s_commit`]: committed witness `s` (`log_commit_bound` at
+//!      the root, `log_basis` at recursive levels).
+//!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
+//!    - [`num_digits_fold`]: folded witness `z` — the digit count for the
+//!      norm-derived bound `β`, which is not a [`DecompositionParams`] field.
+//!
+//! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
+//!    digit depth plus block geometry into a matrix's ring-column count:
+//!    [`decomposed_s_block_ring_count`] (A), [`decomposed_t_ring_count`] (B),
+//!    [`decomposed_w_ring_count`] (D). These are layout arithmetic, not digit
+//!    math; they sit here so each width formula lives beside the depth it
+//!    multiplies.
 
 use akita_field::AkitaError;
 
@@ -45,13 +76,14 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 ///
 /// This symmetric count is for *small* bounds (`log_bound < field_bits`):
 /// one-hot `log_commit_bound = 1`, recursive `log_basis`, and fold `log_beta`.
-/// Full-field bounds route through [`num_digits_for_bound`] to the asymmetric
-/// [`compute_num_digits_full_field`] instead.
+/// It is crate-private and reached only through [`num_digits_for_bound`], which
+/// routes full-field bounds to the asymmetric [`compute_num_digits_full_field`]
+/// instead — so no caller can ask for the symmetric count of a full-field bound.
 ///
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or at least 128, or if `log_bound` exceeds 128.
-pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
+pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     assert!(
         log_bound <= 128,
@@ -98,22 +130,6 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
     } else {
         compute_num_digits(log_bound, log_basis)
     }
-}
-
-/// `(δ_commit, δ_open)` for one decomposition (commit-bound digits, open-bound
-/// digits). Renames the former `decomp_depths`.
-pub fn decomp_depths(decomposition: DecompositionParams) -> (usize, usize) {
-    let field_bits = decomposition.field_bits();
-    let depth_commit = num_digits_for_bound(
-        decomposition.log_commit_bound,
-        field_bits,
-        decomposition.log_basis,
-    );
-    let open_bound = decomposition
-        .log_open_bound
-        .unwrap_or(decomposition.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, field_bits, decomposition.log_basis);
-    (depth_commit, depth_open)
 }
 
 /// `δ_commit`: digits per coefficient of the committed witness `s`, using the
