@@ -26,5 +26,5 @@ helper shared by prover and verifier.
 **Sources to fold in**
 
 - `crates/akita-types/src/instance_descriptor.rs:42-55`.
-- `crates/akita-config/src/...` (`bind_transcript_instance_descriptor`).
+- `crates/akita-config/src/transcript_binding.rs` (`bind_transcript_instance_descriptor`).
 - Paper §3.5 `sec:akita-one-step` ("Transcript binding").

@@ -27,7 +27,7 @@ re-derives rather than trusts.
 **Sources to fold in**
 
 - `crates/akita-types/src/layout/params.rs:41-97`.
-- `crates/akita-types/src/proof/...schedule.rs` (`Step`, `FoldStep`, `DirectStep`).
+- `crates/akita-types/src/schedule.rs` (`Step`, `FoldStep`, `DirectStep`).
 - Paper §3.10 `sec:akita-planner` ("What the schedule fixes").
 - Council architecture + newcomer reports (schedule invariants, level overload).
 
@@ -40,6 +40,6 @@ reject malformed input, never panic). The verifier-reachable proof-size formula.
 **Sources to fold in**
 
 - `crates/akita-planner/src/` (`resolve.rs`, `find_schedule`, `generated/`).
-- `crates/akita-types/src/proof/...` (proof-size formula `level_proof_bytes`).
+- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - Paper §3.10 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `AGENTS.md` (Profiling: D32/D64/D128 optimum), `specs/planner-incidence-generalization.md` (active tail).
