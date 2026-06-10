@@ -525,9 +525,6 @@ mod zk_generated_family_sis_audit {
     #[test]
     fn generated_families_stay_within_audited_sis_widths() {
         for family in generated_families::ALL_GENERATED_FAMILIES {
-            if !family.ships_zk {
-                continue;
-            }
             audit_generated_family_sparse(family, GENERATED_FAMILY_NV_SAMPLES);
         }
     }

@@ -34,8 +34,6 @@ pub struct GeneratedFamily {
     /// rewrites `_SCHEDULES` -> `_ZK_SCHEDULES` when the `zk` feature
     /// is enabled.
     pub const_name: &'static str,
-    /// Whether this family ships a generated `_zk` table.
-    pub ships_zk: bool,
     /// Inclusive lower bound of the `num_vars` range enumerated for
     /// this family.
     pub min_num_vars: usize,
@@ -102,7 +100,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp128_d128_full",
         const_name: "FP128_D128_FULL_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D128Full>,
@@ -111,7 +108,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp128_d128_onehot",
         const_name: "FP128_D128_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D128OneHot>,
@@ -120,7 +116,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp128_d64_onehot",
         const_name: "FP128_D64_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D64OneHot>,
@@ -129,17 +124,16 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp128_d64_onehot_tensor",
         const_name: "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<tensor_verifier::fp128::D64OneHotTensor>,
         table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
     },
     // Tiered companion of `fp128_d64_onehot`
+    #[cfg(not(feature = "zk"))]
     GeneratedFamily {
         module_name: "fp128_d64_onehot_tiered",
         const_name: "FP128_D64_ONEHOT_TIERED_SCHEDULES",
-        ships_zk: false,
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D64OneHotTiered>,
@@ -148,7 +142,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp64_d128",
         const_name: "FP64_D128_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D128Full>,
@@ -157,7 +150,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp64_d128_onehot",
         const_name: "FP64_D128_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D128OneHot>,
@@ -166,7 +158,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp64_d256_onehot",
         const_name: "FP64_D256_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D256OneHot>,
@@ -175,7 +166,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp32_d128_onehot",
         const_name: "FP32_D128_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D128OneHot>,
@@ -184,7 +174,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
         module_name: "fp32_d256_onehot",
         const_name: "FP32_D256_ONEHOT_SCHEDULES",
-        ships_zk: true,
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D256OneHot>,
