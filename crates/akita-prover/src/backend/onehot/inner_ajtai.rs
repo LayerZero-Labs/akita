@@ -40,17 +40,14 @@ where
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
-/// Entry-chunked wide inner Ajtai for blocks whose entry count exceeds the
-/// wide-accumulator safety bound when each entry contributes one shift-add.
 #[cfg(test)]
 #[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_wide_onehot_tiled<E, F, const D: usize>(
+pub(crate) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    entries: &[E],
+    entries: &[SingleChunkEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
@@ -58,7 +55,7 @@ where
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
 
     for tile in entries.chunks(MAX_WIDE_SHIFT_ACCUMULATIONS) {
-        let partial = inner_ajtai_wide_onehot(a_view, tile, num_digits);
+        let partial = inner_ajtai_wide_onehot::<SingleChunkEntry, F, D>(a_view, tile, num_digits);
         for (dst, src) in t.iter_mut().zip(partial.iter()) {
             *dst += *src;
         }

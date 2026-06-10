@@ -1,4 +1,3 @@
-use super::accumulate::onehot_accumulate;
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
@@ -700,7 +699,7 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
         block_len,
         1,
     );
-    let expected = inner_ajtai_wide_onehot_tiled::<SingleChunkEntry, F, D>(&a_view, &bucket, 1);
+    let expected = inner_ajtai_wide_single_chunk_tiled::<F, D>(&a_view, &bucket, 1);
 
     assert_eq!(got.len(), 1);
     assert_eq!(got[0], expected);
@@ -753,101 +752,6 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         got[0], reference,
         "column_sweep_ajtai_onehot must agree with the non-wide \
          reference at fan-out totals above MAX_WIDE_SHIFT_ACCUMULATIONS"
-    );
-}
-
-/// Legacy expanded-width multi-chunk digit-zero accumulation, kept only to
-/// validate the compressed-then-expanded refactor.
-fn legacy_multi_chunk_expanded_accumulate<const D: usize>(
-    multi_chunk_blocks: &[&[MultiChunkEntry]],
-    challenges: &[SparseChallenge],
-    num_blocks: usize,
-    inner_width: usize,
-    num_digits: usize,
-) -> Vec<[i32; D]> {
-    let mut acc = vec![[0i32; D]; inner_width];
-    let mut rotated = vec![[0i16; D]; D];
-
-    for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
-        let entries = multi_chunk_blocks[block_idx];
-        fill_rotated_challenge::<D>(&mut rotated, challenge);
-        for entry in entries {
-            let local_pos = entry.pos_in_block() * num_digits;
-            for &ci in entry.coeffs() {
-                let rot = &rotated[ci as usize];
-                let dst = &mut acc[local_pos];
-                for k in 0..D {
-                    dst[k] += rot[k] as i32;
-                }
-            }
-        }
-    }
-
-    acc
-}
-
-#[test]
-fn multi_chunk_compressed_accum_matches_expanded_width_path() {
-    type F = Prime24Offset3;
-    const D: usize = 8;
-
-    let k = 4;
-    let block_len = 2;
-    let num_digits = 4;
-    let indices: Vec<Option<usize>> = vec![
-        Some(0),
-        Some(2),
-        Some(3),
-        Some(1),
-        Some(0),
-        Some(0),
-        Some(3),
-        Some(3),
-    ];
-    let blocks = FlatBlocks::<MultiChunkEntry>::from_indices(k, &indices, block_len, D, 2).unwrap();
-    let block_views: Vec<&[MultiChunkEntry]> =
-        (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-    let challenges = vec![
-        SparseChallenge {
-            positions: vec![0, 3, 7],
-            coeffs: vec![1, -1, 2],
-        },
-        SparseChallenge {
-            positions: vec![1, 5],
-            coeffs: vec![1, 1],
-        },
-    ];
-    let num_blocks = challenges.len().min(blocks.num_blocks());
-    let inner_width = block_len * num_digits;
-
-    let legacy_expanded = legacy_multi_chunk_expanded_accumulate::<D>(
-        &block_views,
-        &challenges,
-        num_blocks,
-        inner_width,
-        num_digits,
-    );
-    let compressed =
-        onehot_accumulate::<MultiChunkEntry, D>(&block_views, &challenges, num_blocks, block_len);
-    let mut expanded_from_compressed = Vec::with_capacity(inner_width);
-    for coeffs in compressed {
-        expanded_from_compressed.push(coeffs);
-        for _ in 1..num_digits {
-            expanded_from_compressed.push([0i32; D]);
-        }
-    }
-
-    assert_eq!(
-        expanded_from_compressed, legacy_expanded,
-        "compressed-then-expanded multi-chunk accumulation must match the legacy expanded-width path"
-    );
-
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let legacy_witness = build_decompose_fold_witness::<F, D>(legacy_expanded, modulus);
-    let new_witness = build_decompose_fold_witness::<F, D>(expanded_from_compressed, modulus);
-    assert_eq!(
-        legacy_witness.centered_coeffs, new_witness.centered_coeffs,
-        "decompose-fold witness must agree after compressed multi-chunk refactor"
     );
 }
 
