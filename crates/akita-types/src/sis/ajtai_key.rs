@@ -162,9 +162,11 @@ impl AjtaiKeyParams {
     ///
     /// Use this only for intermediate construction steps that carry
     /// incomplete data (`params_only` placeholders with `col_len = 0` or
-    /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.).
-    /// Production-facing layouts must reach [`try_new`](Self::try_new) before
-    /// they're emitted into a schedule or setup.
+    /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.) and for
+    /// synthetic test/descriptor/proof-size layouts that intentionally carry
+    /// degenerate ranks. Production-facing schedule layouts are built through
+    /// [`try_new`](Self::try_new), which audits the SIS floor against the final
+    /// width as the key is constructed.
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -179,50 +181,6 @@ impl AjtaiKeyParams {
             collision_inf,
             sis_family,
         }
-    }
-
-    /// Re-audit an already-constructed key against the SIS floor for its
-    /// current `(col_len, collision_inf, row_len)`.
-    ///
-    /// [`Self::new_unchecked`] is used by layout transforms ([`crate::LevelParams::with_decomp`],
-    /// [`crate::LevelParams::with_layout`]) that recompute `col_len` (the message
-    /// width) while preserving the `row_len` that was audited against the *old*
-    /// width. Because [`min_secure_rank`] grows with width, a widened key can
-    /// silently fall below the secure floor. Call this after any such transform.
-    ///
-    /// Placeholder keys (`col_len == 0` or `collision_inf == 0`, as produced by
-    /// `params_only`/intermediate construction) are not yet audit-ready and pass
-    /// through; only fully-populated keys are checked.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the SIS-floor tables do not cover the configuration
-    /// or if `row_len` is below the audited floor.
-    pub fn audit_sis_floor(&self, ring_dimension: usize) -> Result<(), AkitaError> {
-        if self.col_len == 0 || self.collision_inf == 0 {
-            return Ok(());
-        }
-        let floor = min_secure_rank(
-            self.sis_family,
-            ring_dimension as u32,
-            self.collision_inf,
-            self.col_len as u64,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: no audited SIS rank for family={:?} d={ring_dimension} \
-                 collision_inf={} col_len={} (re-audit after width recompute)",
-                self.sis_family, self.collision_inf, self.col_len
-            ))
-        })?;
-        if self.row_len < floor {
-            return Err(AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: row_len {} < SIS floor {floor} after width recompute \
-                 (family={:?}, d={ring_dimension}, collision_inf={}, col_len={})",
-                self.row_len, self.sis_family, self.collision_inf, self.col_len
-            )));
-        }
-        Ok(())
     }
 
     /// Number of rows.

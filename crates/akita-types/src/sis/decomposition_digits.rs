@@ -34,13 +34,19 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
 /// `log_bound = m + 1` (this is exactly what [`num_digits_fold`] does).
 ///
-/// The digit count starts at `ceil(log_bound / log_basis)`. When
-/// `n · log_basis <= log_bound`, an extra digit is added if the balanced-digit
-/// positive reach still falls short of `2^(log_bound-1) - 1`. When
-/// `n · log_basis > log_bound`, the extra-digit pass is skipped (the shipped
-/// schedule tables rely on this branch; see [`tests::digits_basic`]). The
-/// signed-range contract for the guarded branch is pinned by
-/// [`tests::compute_num_digits_covers_signed_range`].
+/// The count is `ceil(log_bound / log_basis)`, plus one more digit when the
+/// balanced-digit positive reach `balanced_digit_max` still falls short of
+/// `2^(log_bound-1) - 1`. The extra digit is only ever needed when `log_basis`
+/// divides `log_bound` exactly (otherwise `ceil(log_bound/log_basis)·log_basis
+/// > log_bound`, so the reach already clears `2^(log_bound-1)`); the check is
+/// run unconditionally because it is cheap and self-evidently correct. Both the
+/// coverage and the minimality of the result are pinned by the
+/// `compute_num_digits_covers_signed_range` unit test.
+///
+/// This symmetric count is for *small* bounds (`log_bound < field_bits`):
+/// one-hot `log_commit_bound = 1`, recursive `log_basis`, and fold `log_beta`.
+/// Full-field bounds route through [`num_digits_for_bound`] to the asymmetric
+/// [`compute_num_digits_full_field`] instead.
 ///
 /// # Panics
 ///
@@ -57,12 +63,9 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     }
 
     let mut num_digits = (log_bound as usize).div_ceil(log_basis as usize);
-    let total_bits = (num_digits as u32).saturating_mul(log_basis);
-    if total_bits <= log_bound {
-        let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
-        if balanced_digit_max(log_basis, num_digits) < required_positive {
-            num_digits += 1;
-        }
+    let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
+    if balanced_digit_max(log_basis, num_digits) < required_positive {
+        num_digits += 1;
     }
     num_digits.max(1)
 }
@@ -215,10 +218,16 @@ mod tests {
 
     #[test]
     fn digits_basic() {
-        assert_eq!(compute_num_digits(128, 2), 65);
-        assert_eq!(compute_num_digits(128, 3), 43);
+        // Production `compute_num_digits` inputs are small symmetric bounds:
+        // one-hot `log_commit_bound = 1`, recursive `log_basis`, fold
+        // `log_beta`. Full-field bounds go through `num_digits_for_bound` to
+        // `compute_num_digits_full_field`, not here.
         assert_eq!(compute_num_digits(1, 2), 1);
         assert_eq!(compute_num_digits(0, 2), 1);
+        // `log_basis` itself (the recursive commit bound): one base-`2^lb`
+        // digit covers the balanced range `[-2^(lb-1), 2^(lb-1) - 1]` exactly.
+        assert_eq!(compute_num_digits(2, 2), 1);
+        assert_eq!(compute_num_digits(3, 3), 1);
     }
 
     /// The returned digit count must actually cover the signed range

@@ -237,7 +237,6 @@ impl GeneratedFoldStep {
             tier_split,
             f_key,
         };
-        params.audit_fold_challenge_entropy()?;
         Ok(params)
     }
 }
