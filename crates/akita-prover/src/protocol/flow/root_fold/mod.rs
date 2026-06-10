@@ -38,6 +38,7 @@ use super::*;
 #[inline(never)]
 pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&P],
@@ -128,6 +129,7 @@ where
             D,
         >(
             expanded,
+            prefix_slots,
             stack,
             transcript,
             &transformed_refs,
@@ -182,6 +184,7 @@ where
     } = direct;
     prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
+        prefix_slots,
         ring_switch.backend(),
         ring_switch.prepared(),
         transcript,

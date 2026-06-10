@@ -168,6 +168,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     claims: ProverClaims<
         'a,
@@ -263,6 +264,7 @@ where
 
     prove_folded_batched::<Cfg, T, P, B, D>(
         expanded,
+        prefix_slots,
         stack,
         transcript,
         prepared_claims,
@@ -379,6 +381,7 @@ where
 #[inline(never)]
 pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     stack: &crate::compute::ProverComputeStack<'a, Cfg::Field, D, B, B, B, B>,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
@@ -433,8 +436,8 @@ where
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
         build_zk_hiding_context::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, B, D>(
-            commit.backend(),
-            commit.prepared(),
+            stack.commit().backend(),
+            stack.commit().prepared(),
             schedule,
             &root_step.params,
             prepared_claims.incidence_summary.num_vars(),
@@ -511,6 +514,7 @@ where
         D,
     >(
         expanded,
+        prefix_slots,
         stack,
         transcript,
         &prepared_claims.flat_polys,
@@ -534,6 +538,7 @@ where
         |next_state| {
             crate::prove_recursive_suffix::<Cfg, T, B, D>(
                 expanded,
+                prefix_slots,
                 stack,
                 num_vars,
                 transcript,

@@ -18,6 +18,7 @@ use super::super::*;
 #[inline(never)]
 pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -218,7 +219,7 @@ where
         SetupContributionMode::Recursive => {
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
                 expanded.as_ref(),
-                &SetupPrefixProverRegistry::new(),
+                prefix_slots,
                 lp,
                 next_level_params,
                 &instance,

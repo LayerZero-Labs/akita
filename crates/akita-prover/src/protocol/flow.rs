@@ -92,14 +92,10 @@ pub use inputs::{
     build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof,
     prepare_batched_prove_inputs, prove_batched, prove_folded_batched, prove_root_direct,
 };
-pub use recursive::{
-    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params, prove_recursive_level,
-    prove_recursive_suffix, prove_terminal_fold_level_from_ring_relation,
-    prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level,
-};
+pub use recursive::prove_recursive_suffix;
 #[cfg(test)]
 pub(in crate::protocol::flow) use recursive::{
-    prove_recursive_extension_opening_reduction, recursive_witness_base_evals,
+    prove_extension_opening_reduction, recursive_witness_base_evals,
 };
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_recursive_witness_at_multiplier_point;

@@ -99,8 +99,23 @@ where
         )
     }
 
+    fn setup_prover_recursion(
+        max_num_vars: usize,
+        max_num_polys_per_point: usize,
+        max_num_points: usize,
+    ) -> Result<Self::ProverSetup, AkitaError> {
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
+        akita_setup::new_prover_setup_recursion::<F, D, Cfg>(
+            max_num_vars,
+            max_num_polys_per_point,
+            max_num_points,
+        )
+    }
+
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        setup.verifier_setup()
+        setup
+            .verifier_setup()
+            .expect("prover setup must convert to verifier setup")
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
@@ -152,6 +167,7 @@ where
         validate_field_roles_for_ring::<F, D, Cfg>()?;
         let proof = prove_batched::<Cfg, T, P, B, D>(
             &setup.expanded,
+            &setup.prefix_slots,
             stack,
             claims,
             transcript,

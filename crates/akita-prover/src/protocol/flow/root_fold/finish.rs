@@ -5,6 +5,7 @@ use super::{prove_root_fold_from_ring_relation, prove_terminal_root_fold_from_ri
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finish_root_fold_with_prepared_openings<'stack, F, C, T, Q, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     stack: &crate::compute::ProverComputeStack<'stack, F, D, B, B, B, B>,
     transcript: &mut T,
     polys: &[&Q],
@@ -105,6 +106,7 @@ where
 
     let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
+        prefix_slots,
         ring_switch.backend(),
         ring_switch.prepared(),
         transcript,

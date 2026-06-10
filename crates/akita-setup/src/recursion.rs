@@ -4,10 +4,8 @@ use crate::save_prover_setup;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
-};
+use akita_prover::compute::CommitmentComputeBackend;
+use akita_prover::{commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
