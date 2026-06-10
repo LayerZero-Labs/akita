@@ -36,7 +36,9 @@ type Scheme = AkitaCommitmentScheme<D, Cfg>;
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
-const BENCH_ONEHOT_K: usize = ONEHOT_D;
+// `fp128::D64OneHot` requires K=256 one-hot schedules (must match
+// `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
+const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
@@ -282,10 +284,14 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
 fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, ONEHOT_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let num_vars = layout.m_vars + layout.r_vars + ONEHOT_D.trailing_zeros() as usize;
-    assert_eq!(total_ring * BENCH_ONEHOT_K, 1usize << num_vars);
+    // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
+    // grouped into `2^num_vars / K` one-hot chunks.
+    let total_field = total_ring * ONEHOT_D;
+    assert_eq!(total_field, 1usize << num_vars);
+    let total_chunks = total_field / BENCH_ONEHOT_K;
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring)
+    let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
         .collect();
 

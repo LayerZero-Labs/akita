@@ -4,11 +4,18 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
+use std::iter::repeat_n;
 
 /// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | D (`v`) | B (`commitment_rows`) | A (zeros).
+/// consistency (zero) | D (`v`) | COMMIT (`commitment_rows`) | B_inner (zeros) | A (zeros).
 ///
 /// Public-output rows bind through the fused trace term, not `y`.
+///
+/// `commit_rows_per_group` is the sent-commitment row count per group
+/// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
+/// `b_inner_rows_per_group` is the inner-consistency block size per group
+/// (`0` for single-tier). The number of commitment groups is inferred from
+/// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors
 ///
@@ -18,7 +25,8 @@ pub fn generate_y<F, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     commitment_rows: &[CyclotomicRing<F, D>],
     n_d: usize,
-    n_b: usize,
+    commit_rows_per_group: usize,
+    b_inner_rows_per_group: usize,
     n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -30,17 +38,25 @@ where
             actual: v.len(),
         });
     }
-    if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
+    if commit_rows_per_group == 0
+        || commitment_rows.is_empty()
+        || !commitment_rows.len().is_multiple_of(commit_rows_per_group)
+    {
         return Err(AkitaError::InvalidSize {
-            expected: n_b,
+            expected: commit_rows_per_group,
             actual: commitment_rows.len(),
         });
     }
-    let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + n_a);
+    let num_commitments = commitment_rows.len() / commit_rows_per_group;
+    let b_inner_total = b_inner_rows_per_group
+        .checked_mul(num_commitments)
+        .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
+    let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + b_inner_total + n_a);
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
-    out.extend(std::iter::repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }
 

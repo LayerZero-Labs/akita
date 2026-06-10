@@ -145,6 +145,15 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         regen: regen::<tensor_verifier::fp128::D64OneHotTensor>,
         table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
     },
+    // Tiered companion of `fp128_d64_onehot`
+    GeneratedFamily {
+        module_name: "fp128_d64_onehot_tiered",
+        const_name: "FP128_D64_ONEHOT_TIERED_SCHEDULES",
+        min_num_vars: 1,
+        max_num_vars: 50,
+        regen: regen::<fp128::D64OneHotTiered>,
+        table_backed: table_backed::<fp128::D64OneHotTiered>,
+    },
     GeneratedFamily {
         module_name: "fp64_d128",
         const_name: "FP64_D128_SCHEDULES",

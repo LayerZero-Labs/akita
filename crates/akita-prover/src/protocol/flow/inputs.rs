@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::commitment::validate_onehot_chunk_size_for_params;
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
@@ -226,6 +227,16 @@ where
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
+    let root_commit_params = match schedule.steps.first() {
+        Some(Step::Fold(root)) => Some(&root.params),
+        Some(Step::Direct(root)) => root.params.as_ref(),
+        None => None,
+    }
+    .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
+    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
+        &prepared_claims.group_polys,
+        root_commit_params,
+    )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
@@ -408,7 +419,7 @@ where
     if prepared_claims
         .commitments_by_point
         .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_step.params.effective_commit_rows())
     {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
@@ -495,10 +506,10 @@ where
         T,
         P,
         B,
+        Cfg,
         D,
-        _,
     >(
-        expanded.as_ref(),
+        expanded,
         backend,
         prepared,
         transcript,
@@ -509,14 +520,13 @@ where
         prepared_claims.flat_hints,
         &root_step.params,
         root_step.next_w_len,
-        root_next_params.log_basis,
+        root_next_params,
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
         setup_contribution_mode,
-        |w| crate::commit_next_w::<Cfg, B, D>(root_next_params, expanded, backend, prepared, w),
     )?;
 
     build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(

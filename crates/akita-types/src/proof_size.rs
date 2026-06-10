@@ -89,8 +89,10 @@ pub fn level_proof_bytes(
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+            // Sent next-level commitment length: the second-tier `F` rows when
+            // the next level is tiered, else the first-tier `B` rows.
             let next_commit_bytes = proof_ring_vec_bytes(
-                next_lp.b_key.row_len(),
+                next_lp.effective_commit_rows(),
                 next_lp.ring_dimension,
                 base_elem_bytes,
             );

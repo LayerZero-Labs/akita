@@ -423,7 +423,7 @@ where
     }
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -736,7 +736,8 @@ where
         y_v_slice,
         commitment_rows,
         n_d_active,
-        batched_lp.b_key.row_len(),
+        batched_lp.effective_commit_rows(),
+        batched_lp.b_inner_rows_per_group(),
         batched_lp.a_key.row_len(),
     )?;
     let relation_instance = RingRelationInstance::new(

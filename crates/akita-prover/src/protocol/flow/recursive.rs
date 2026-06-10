@@ -243,10 +243,9 @@ where
 /// Prove one recursive fold level after the caller has built its ring-relation
 /// equation and selected the commitment policy for the next `w`.
 ///
-/// The caller owns config/schedule decisions through `commit_w_for_next`; this
-/// function owns the config-free prover mechanics: build `w`, commit it using
-/// that closure, finish ring switching, run stage-1/stage-2 sumchecks, and
-/// produce the next recursive state.
+/// This function owns prover mechanics: build `w`, commit it, finish ring
+/// switching, run stage-1/stage-2 sumchecks, and produce the next recursive
+/// state.
 ///
 /// # Errors
 ///
@@ -254,15 +253,15 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
-    expanded: &AkitaExpandedSetup<F>,
+pub fn prove_fold_level_from_ring_relation<F, L, T, B, Cfg, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     commitment_u: &[CyclotomicRing<F, D>],
     level: usize,
     lp: &LevelParams,
-    next_log_basis: u32,
+    next_level_params: &LevelParams,
     instance: RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
@@ -272,7 +271,6 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     trace_prepared: Option<&PreparedRecursiveOpeningPoint<F, L, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
-    commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -290,12 +288,18 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
+    Cfg: CommitmentConfig<Field = F, ChallengeField = L>,
 {
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        commit_w_for_next(&logical_w)?
+        crate::commit_next_w::<Cfg, B, D>(
+            next_level_params,
+            expanded,
+            backend,
+            prepared,
+            &logical_w,
+        )?
     };
     let NextWitnessCommitment {
         witness: packed_witness,
@@ -305,7 +309,7 @@ where
     let w_commitment_proof = committed_commitment.clone();
     let rs = ring_switch_finalize::<F, L, T, D>(
         &instance,
-        expanded,
+        expanded.as_ref(),
         transcript,
         &logical_w,
         &w_commitment_proof,
@@ -462,8 +466,14 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
+            let setup_len = expanded
+                .as_ref()
+                .shared_matrix()
+                .total_ring_elements_at::<D>()?;
+            let setup_view = expanded
+                .as_ref()
+                .shared_matrix()
+                .ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
                 setup_view.as_slice(),
                 lp,
@@ -507,7 +517,7 @@ where
             logical_w,
             commitment: committed_commitment,
             hint: committed_hint,
-            log_basis: next_log_basis,
+            log_basis: next_level_params.log_basis,
             sumcheck_challenges,
             opening: w_eval,
             #[cfg(feature = "zk")]
@@ -878,8 +888,8 @@ where
 /// level parameters.
 ///
 /// The caller owns schedule/config selection and passes the next-level
-/// commitment policy as a closure. This function owns recursive opening-point
-/// reduction, witness folding, public recursive transcript absorbs, recursive
+/// commitment params. This function owns recursive opening-point reduction,
+/// witness folding, public recursive transcript absorbs, recursive
 /// ring-relation construction, and the folded-level prover mechanics.
 ///
 /// # Errors
@@ -889,17 +899,16 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
-    expanded: &AkitaExpandedSetup<F>,
+pub fn prove_recursive_fold_with_params<F, L, T, B, Cfg, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     current_state: RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_level_params: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
-    commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -918,7 +927,7 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
+    Cfg: CommitmentConfig<Field = F, ChallengeField = L>,
 {
     {
         let x: u8 = 0;
@@ -1088,7 +1097,7 @@ where
     )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_fold_level_from_ring_relation::<F, L, T, B, D, _>(
+    prove_fold_level_from_ring_relation::<F, L, T, B, Cfg, D>(
         expanded,
         backend,
         prepared,
@@ -1096,7 +1105,7 @@ where
         commitment_u,
         level,
         level_params,
-        next_log_basis,
+        next_level_params,
         instance,
         witness,
         extension_opening_reduction,
@@ -1108,7 +1117,6 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
         setup_contribution_mode,
-        commit_w_for_next,
     )
 }
 
@@ -1336,7 +1344,7 @@ where
 ///
 /// Delegates witness unpacking and fold mechanics to
 /// [`prove_recursive_fold_with_params`]; this wrapper only threads the
-/// schedule-selected level params and next-witness commitment policy.
+/// schedule-selected current and next level params.
 ///
 /// # Errors
 ///
@@ -1377,17 +1385,16 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
     drop(_setup_span);
 
-    prove_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, D, _>(
-        expanded.as_ref(),
+    prove_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+        expanded,
         backend,
         prepared,
         transcript,
         current_state,
         level,
         level_params,
-        next_params.log_basis,
+        next_params,
         setup_contribution_mode,
-        |w| crate::commit_next_w::<Cfg, B, D>(next_params, expanded, backend, prepared, w),
     )
 }
 

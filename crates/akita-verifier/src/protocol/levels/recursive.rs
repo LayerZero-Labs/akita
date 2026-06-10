@@ -345,7 +345,8 @@ where
         y_v_slice,
         commitment_u,
         n_d_active,
-        lp.b_key.row_len(),
+        lp.effective_commit_rows(),
+        lp.b_inner_rows_per_group(),
         lp.a_key.row_len(),
     )?;
     let relation_instance = RingRelationInstance::new(

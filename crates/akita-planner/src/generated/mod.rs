@@ -7,8 +7,18 @@ pub struct GeneratedFoldStep {
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
+    /// Stored first-tier `B` rank. This is the actual committed rank: the shrunk
+    /// `B'` rank when the step is tiered (`tier_split.is_some()`), and the full
+    /// `B` rank otherwise.
     pub n_b: u32,
     pub n_d: u32,
+    /// Tiered split factor `f`. `None` for single-tier steps; `Some(f)` when the
+    /// step reuses a smaller `B'` across `f` column-slices (paired with `n_f`).
+    pub tier_split: Option<u32>,
+    /// Second-tier `F` rank. `None` for single-tier steps; `Some` iff
+    /// `tier_split` is `Some`. Expansion sizes `F` from `tier_split`, `n_b`, and
+    /// the level's `num_digits_open`.
+    pub n_f: Option<u32>,
 }
 
 /// Terminal direct-send step in a generated schedule.
@@ -78,6 +88,10 @@ pub mod fp128_d64_onehot;
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_tensor_zk;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d64_onehot_tiered;
+#[cfg(feature = "zk")]
+pub mod fp128_d64_onehot_tiered_zk;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_zk;
 #[cfg(not(feature = "zk"))]
@@ -188,6 +202,21 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
+    }
+}
+
+pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
+    #[cfg(feature = "zk")]
+    {
+        GeneratedScheduleTable {
+            sis_family: SisModulusFamily::Q128,
+            entries: fp128_d64_onehot_tiered_zk::FP128_D64_ONEHOT_TIERED_ZK_SCHEDULES,
+        }
+    }
+    #[cfg(not(feature = "zk"))]
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
     }
 }
 

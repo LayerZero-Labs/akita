@@ -396,7 +396,7 @@ impl RingRelationProver {
             }
         }
         for commitment in commitments {
-            if commitment.u.len() != lp.b_key.row_len() {
+            if commitment.u.len() != lp.effective_commit_rows() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
@@ -587,7 +587,8 @@ impl RingRelationProver {
             y_v_slice,
             &commitment_rows,
             n_d_active,
-            lp.b_key.row_len(),
+            lp.effective_commit_rows(),
+            lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
@@ -806,7 +807,8 @@ impl RingRelationProver {
             y_v_slice,
             commitment,
             n_d_active,
-            lp.b_key.row_len(),
+            lp.effective_commit_rows(),
+            lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_claim.into_iter().flatten().collect();

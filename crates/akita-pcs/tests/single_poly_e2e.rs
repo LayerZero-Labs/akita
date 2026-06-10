@@ -35,11 +35,12 @@ fn run_single_onehot(nv: usize) {
             &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
-        assert_eq!(total_ring * ONEHOT_K, 1usize << nv);
+        let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+        assert_eq!(total_field, 1usize << nv);
+        let total_chunks = total_field / ONEHOT_K;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + nv as u64);
-        let indices: Vec<Option<u8>> = (0..total_ring)
+        let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
         let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
@@ -245,11 +246,12 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
                 .expect("singleton incidence"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
-        assert_eq!(total_ring * ONEHOT_K, 1usize << poly_nv);
+        let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+        assert_eq!(total_field, 1usize << poly_nv);
+        let total_chunks = total_field / ONEHOT_K;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);
-        let indices: Vec<Option<u8>> = (0..total_ring)
+        let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
         let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");

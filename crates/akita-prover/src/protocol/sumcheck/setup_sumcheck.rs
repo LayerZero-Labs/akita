@@ -221,6 +221,7 @@ where
         layout.offset_e,
         layout.offset_t,
         layout.offset_z,
+        layout.offset_u,
     )?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
@@ -294,7 +295,15 @@ where
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(lp.num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    if lp.b_key.col_len() < expected_b_width {
+    // Tiered: the stored first-tier `B'` is the full B width divided by the
+    // reuse factor `tier_split` (mirrors the verifier-side check in
+    // `akita-verifier`'s `prepare_ring_switch_row_eval_inner`).
+    let expected_stored_b_width = if lp.f_key.is_some() {
+        expected_b_width.div_ceil(lp.tier_split.max(1))
+    } else {
+        expected_b_width
+    };
+    if lp.b_key.col_len() < expected_stored_b_width {
         return Err(AkitaError::InvalidSetup(
             "B-key column width is too small for setup contribution layout".to_string(),
         ));
@@ -330,6 +339,10 @@ where
         rows,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         num_public_rows: num_public_m_rows,
+        // Stage-3 (recursive setup-contribution mode) tiered support is a
+        // follow-up; the default Direct verifier path uses `eval_at_point`.
+        tier_split: lp.tier_split,
+        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
     })
 }
 

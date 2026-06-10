@@ -26,6 +26,10 @@ pub fn ring_column_z_first(lp: &LevelParams) -> bool {
 pub struct RingRelationSegmentLayout {
     pub offset_e: usize,
     pub offset_t: usize,
+    /// Witness column offset of the tiered `û_concat` segment (flat, contiguous,
+    /// immediately after `t̂`). Equals `offset_t + t_len`; for single-tier
+    /// levels the segment is empty (`u_len == 0`) but the offset is still valid.
+    pub offset_u: usize,
     pub offset_z: usize,
     pub offset_r: usize,
     #[cfg(feature = "zk")]
@@ -253,12 +257,16 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .checked_mul(b_blinding_digit_planes_per_point)
             .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
 
+        // Tiered `û_concat` segment length (per the single commitment group);
+        // `0` for single-tier levels.
+        let u_len = lp.u_concat_ring_len_per_group();
         let z_first = ring_column_z_first(lp);
         let offset_z = if z_first {
             0
         } else {
             e_len
                 .checked_add(t_len)
+                .and_then(|offset| offset.checked_add(u_len))
                 .and_then(|offset| offset.checked_add(b_blinding_segment_len))
                 .and_then(|offset| offset.checked_add(d_blinding_segment_len))
                 .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
@@ -271,8 +279,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         } else {
             e_len
         };
-        let b_blinding_offset = offset_t
+        // `û_concat` is emitted immediately after `t̂` in both orderings.
+        let offset_u = offset_t
             .checked_add(t_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
+        let b_blinding_offset = offset_u
+            .checked_add(u_len)
             .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
         let d_blinding_offset = b_blinding_offset
             .checked_add(b_blinding_segment_len)
@@ -291,6 +303,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         Ok(RingRelationSegmentLayout {
             offset_e,
             offset_t,
+            offset_u,
             offset_z,
             offset_r,
             #[cfg(feature = "zk")]

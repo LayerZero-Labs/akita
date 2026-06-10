@@ -56,7 +56,7 @@ where
     })?;
     let routing = instance.commitment_routing();
 
-    let r = compute_relation_quotient::<F, B, D>(
+    let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
         backend,
         prepared,
         lp,
@@ -101,6 +101,7 @@ where
             &decomposed_inner_rows,
             #[cfg(feature = "zk")]
             &b_blinding_digits,
+            &u_concat_digits,
             &z_folded_rings.centered_coeffs,
             &r,
             lp,
@@ -160,6 +161,14 @@ fn emit_planes_block_inner<const D: usize>(
         for blk in 0..total_blocks {
             out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
         }
+    }
+}
+
+/// Emit flat digit planes contiguously (no block transpose). Used for the
+/// tiered `û_concat` segment; a no-op for the single-tier path (empty slice).
+fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
+    for plane in planes {
+        out.extend_from_slice(plane);
     }
 }
 
@@ -251,6 +260,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
+    u_concat_digits: &[[i8; D]],
     z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -278,9 +288,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         .sum();
     #[cfg(not(feature = "zk"))]
     let b_blinding_planes = 0usize;
+    // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
+    // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
+    let u_concat_planes = u_concat_digits.len();
     let z_count = e_hat_planes
         + d_blinding_planes
         + t_hat_planes
+        + u_concat_planes
         + b_blinding_planes
         + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
@@ -338,6 +352,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             t_block_count,
             t_planes_per_block,
         );
+        emit_flat_planes(&mut out, u_concat_digits);
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, b_blinding_digits);
         #[cfg(feature = "zk")]
@@ -350,6 +365,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             t_block_count,
             t_planes_per_block,
         );
+        emit_flat_planes(&mut out, u_concat_digits);
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, b_blinding_digits);
         #[cfg(feature = "zk")]
