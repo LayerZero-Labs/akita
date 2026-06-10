@@ -215,4 +215,3 @@ the implemented subset.
 - `crates/akita-setup/src/recursion.rs`
 - `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`
 - `crates/akita-verifier/src/stages/stage3.rs`
-

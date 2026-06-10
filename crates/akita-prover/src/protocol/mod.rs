@@ -17,13 +17,11 @@ pub use akita_types::RingRelationInstance;
 pub use flow::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
     build_terminal_root_batched_proof, prepare_batched_prove_inputs, prove_batched,
-    prove_fold_level_from_ring_relation, prove_folded_batched, prove_recursive_fold_with_params,
-    prove_recursive_level, prove_recursive_suffix, prove_root_direct,
+    prove_folded_batched, prove_recursive_suffix, prove_root_direct,
     prove_root_fold_from_ring_relation, prove_root_fold_with_params,
-    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
-    prove_terminal_recursive_level, prove_terminal_root_fold_from_ring_relation,
-    prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
-    RecursiveProverState, RecursiveSuffixOutcome, RootLevelRawOutput,
+    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
+    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
+    RootLevelRawOutput,
 };
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;
