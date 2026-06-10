@@ -83,8 +83,8 @@ pub use proof::{
     IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSliceSerializer, SetupMatrixEnvelope, SetupProductSumcheckShape, SetupSumcheckProof,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
+    RingSliceSerializer, RootLevelRawOutput, SetupMatrixEnvelope, SetupProductSumcheckShape,
+    SetupSumcheckProof, TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
     SETUP_SUMCHECK_DEGREE,
 };

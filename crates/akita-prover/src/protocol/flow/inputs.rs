@@ -8,6 +8,8 @@ struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize
     summary: ClaimIncidenceSummary,
 }
 
+type FoldedProofWithLevelCount<F, L> = (AkitaBatchedProof<F, L>, usize);
+
 fn prover_claims_to_incidence<'a, F, E, P, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
@@ -277,40 +279,56 @@ where
 /// Build the recursive suffix from an intermediate-root handoff, then
 /// assemble the final folded batched proof.
 ///
-/// The caller owns suffix schedule/config policy inside `build_suffix`; this
-/// helper owns the config-free handoff from root raw output into suffix
-/// construction and final proof assembly.
-///
 /// # Errors
 ///
 /// Returns an error if suffix construction fails.
-pub fn build_folded_batched_proof_with_suffix<F, L, const D: usize, BuildSuffix>(
-    raw: RootLevelRawOutput<F, L, D>,
-    build_suffix: BuildSuffix,
-) -> Result<(AkitaBatchedProof<F, L>, usize), AkitaError>
+#[allow(clippy::too_many_arguments)]
+pub fn build_folded_batched_proof_with_suffix<Cfg, T, B, const D: usize>(
+    root_output: RootLevelProverOutput<Cfg::Field, Cfg::ChallengeField, D>,
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    num_vars: usize,
+    transcript: &mut T,
+    schedule: &Schedule,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<FoldedProofWithLevelCount<Cfg::Field, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore,
-    L: ExtField<F>,
-    BuildSuffix:
-        FnOnce(RecursiveProverState<F, L>) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field>,
+    B: ProverComputeBackend<Cfg::Field>,
 {
-    let RootLevelRawOutput {
+    let RootLevelProverOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        y_rings,
-        extension_opening_reduction,
-        v,
-        stage1,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval,
+        raw,
         next_state,
-    } = raw;
-    let suffix = build_suffix(next_state)?;
+    } = root_output;
+    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
+        expanded,
+        backend,
+        prepared,
+        num_vars,
+        transcript,
+        next_state,
+        schedule,
+        setup_contribution_mode,
+    )?;
     let RecursiveSuffixOutcome {
         intermediate_levels,
         terminal,
@@ -320,20 +338,9 @@ where
     } = suffix;
     #[cfg(feature = "zk")]
     let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
-    let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
-        y_rings,
-        extension_opening_reduction,
-        v,
-        stage1,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval,
-    );
-    let steps = build_final_proof_steps::<F, L>(intermediate_levels, terminal);
+    let root = AkitaBatchedRootProof::new::<D>(raw);
+    let steps =
+        build_final_proof_steps::<Cfg::Field, Cfg::ChallengeField>(intermediate_levels, terminal);
     Ok((
         AkitaBatchedProof {
             #[cfg(feature = "zk")]
@@ -531,19 +538,14 @@ where
         setup_contribution_mode,
     )?;
 
-    build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(
+    build_folded_batched_proof_with_suffix::<Cfg, T, B, D>(
         raw,
-        |next_state| {
-            crate::prove_recursive_suffix::<Cfg, T, B, D>(
-                expanded,
-                backend,
-                prepared,
-                num_vars,
-                transcript,
-                next_state,
-                schedule,
-                setup_contribution_mode,
-            )
-        },
+        expanded,
+        backend,
+        prepared,
+        num_vars,
+        transcript,
+        schedule,
+        setup_contribution_mode,
     )
 }
