@@ -449,13 +449,10 @@ where
         let final_witness = final_witness.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold did not bind a final witness".to_string())
         })?;
-        cfg_if! {
-            if #[cfg(feature = "zk")] {
-                let proof_y_rings = prepared_fold.y_rings_masked;
-            } else {
-                let proof_y_rings = prepared_fold.y_rings;
-            }
-        }
+        #[cfg(feature = "zk")]
+        let proof_y_rings = prepared_fold.y_rings_masked;
+        #[cfg(not(feature = "zk"))]
+        let proof_y_rings = prepared_fold.y_rings;
         let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
             proof_y_rings,
             extension_opening_reduction,
@@ -474,13 +471,10 @@ where
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
-        cfg_if! {
-            if #[cfg(feature = "zk")] {
-                let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
-            } else {
-                let proof_w_eval = w_eval;
-            }
-        }
+        #[cfg(feature = "zk")]
+        let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
+        #[cfg(not(feature = "zk"))]
+        let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
         let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
             setup_contribution_mode,
@@ -506,13 +500,10 @@ where
             AkitaError::InvalidInput("intermediate fold did not bind a next commitment".to_string())
         })?;
         let w_commitment_proof = committed_commitment.clone();
-        cfg_if! {
-            if #[cfg(feature = "zk")] {
-                let proof_y_rings = prepared_fold.y_rings_masked;
-            } else {
-                let proof_y_rings = prepared_fold.y_rings;
-            }
-        }
+        #[cfg(feature = "zk")]
+        let proof_y_rings = prepared_fold.y_rings_masked;
+        #[cfg(not(feature = "zk"))]
+        let proof_y_rings = prepared_fold.y_rings;
         let mut level_proof =
             AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
                 proof_y_rings,
@@ -878,11 +869,8 @@ where
             "extension-opening reduction transparent factor mismatch".to_string(),
         ));
     }
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let final_claim = final_witness * final_factor;
-        }
-    }
+    #[cfg(feature = "zk")]
+    let final_claim = final_witness * final_factor;
     check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
     Ok(RecursiveExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
