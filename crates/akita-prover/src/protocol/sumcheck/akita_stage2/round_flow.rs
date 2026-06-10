@@ -220,12 +220,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             WTable::Full(w_full) => {
                 if folding_x_round && use_prefix_x_round {
                     if fuse_next_full_prefix_x {
+                        // Fold trace before the fused kernel so relation terms use the same
+                        // post-fold table as `compute_round_full_prefix_x_terms`.
+                        self.fold_trace_for_round(r, folding_x_round);
                         let (next_w_full, next_m_compact, virt_terms, rel_coeffs) =
                             self.fuse_full_prefix_x_and_compute_round(&w_full, r);
                         self.m_compact = next_m_compact;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_full_prefix_x = true;
-                        self.fold_trace_for_round(r, folding_x_round);
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);

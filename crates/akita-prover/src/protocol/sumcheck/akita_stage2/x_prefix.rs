@@ -25,6 +25,31 @@ fn accumulate_fused_prefix_x_relation<E: FieldCore>(
     }
 }
 
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_fused_prefix_x_relation_signed<E: FieldCore + HasUnreducedOps>(
+    trace_table: Option<&TraceTable<E>>,
+    table_y_len: usize,
+    rel: &mut [E::MulU64Accum; 6],
+    w0: i64,
+    dw: i64,
+    p0: E,
+    p1: E,
+    y: usize,
+    left: usize,
+    live_x_cols: usize,
+) {
+    accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
+    if let Some(trace) = trace_table {
+        let (t0, t1) = if left + 1 < live_x_cols {
+            trace.pair_at_columns(left, left + 1, y, table_y_len)
+        } else {
+            (trace.get(left, y, table_y_len), E::zero())
+        };
+        accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
+    }
+}
+
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
@@ -369,6 +394,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
         let m_compact = &self.m_compact;
+        let trace_table = self.trace_table.as_ref();
+        let y_len = alpha_compact.len();
         debug_assert_eq!(m_compact.len(), self.current_x_len());
 
         if self.can_skip_norm_linear_coeff() {
@@ -415,14 +442,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = m_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            self.accumulate_witness_relation_at_trace_indices_signed(
+                            accumulate_fused_prefix_x_relation_signed(
+                                trace_table,
+                                y_len,
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
-                                row_start + left,
-                                row_start + left + 1,
                                 p0,
                                 p1,
+                                y,
+                                left,
+                                self.live_x_cols,
                             );
                         }
 
@@ -496,14 +526,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = m_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            self.accumulate_witness_relation_at_trace_indices_signed(
+                            accumulate_fused_prefix_x_relation_signed(
+                                trace_table,
+                                y_len,
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
-                                row_start + left,
-                                row_start + left + 1,
                                 p0,
                                 p1,
+                                y,
+                                left,
+                                self.live_x_cols,
                             );
                         }
 
@@ -555,6 +588,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
         let m_compact = &self.m_compact;
+        let trace_table = self.trace_table.as_ref();
+        let y_len = alpha_compact.len();
         debug_assert_eq!(m_compact.len(), self.current_x_len());
 
         if self.can_skip_norm_linear_coeff() {
@@ -593,14 +628,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = m_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            self.accumulate_witness_relation_at_trace_indices(
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
                                 &mut rel,
                                 w0,
                                 dw,
-                                row_start + left,
-                                row_start + left + 1,
                                 p0,
                                 p1,
+                                y,
+                                left,
+                                self.live_x_cols,
                             );
                         }
 
@@ -661,14 +699,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let m1 = m_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
-                            self.accumulate_witness_relation_at_trace_indices(
+                            accumulate_fused_prefix_x_relation(
+                                trace_table,
+                                y_len,
                                 &mut rel,
                                 w0,
                                 dw,
-                                row_start + left,
-                                row_start + left + 1,
                                 p0,
                                 p1,
+                                y,
+                                left,
+                                self.live_x_cols,
                             );
                         }
 
