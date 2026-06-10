@@ -83,10 +83,15 @@ pub struct SetupContributionPlan<E> {
     a_required: usize,
     e_eq_slice: Vec<E>,
     t_eq_slice_per_group: Vec<Vec<E>>,
-    z_eq_slice: Vec<E>,
+    /// Per-point-combined A-block weight over the A setup footprint, flat as
+    /// `a_row · z_range + col`. Entry =
+    /// `Σ_p a_weights[p·n_a + a_row] · z_eval(p, col)` (the negated z MLE folded
+    /// in). The point axis is summed *here* (after pairing point `p`'s A-block
+    /// weight with point `p`'s `z^(p)`), so the per-point A obligation is
+    /// enforced and the hot scan stays a single lookup-add.
+    a_z_combined: Vec<E>,
     d_weights: Vec<E>,
     b_weights_by_row: Vec<Vec<E>>,
-    a_weights: Vec<E>,
     endpoints: Vec<usize>,
     /// Tiered-commitment tables/dims, or `None` for a single-tier plan.
     tiered: Option<TieredCommitmentData<E>>,
@@ -154,8 +159,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
                             segment.a_start_abs,
-                            segment.a_weight,
-                            &self.z_eq_slice,
+                            segment.a_z,
                             tiered,
                             segment.b_inner_row,
                             segment.has_f,
@@ -229,8 +233,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
                             segment.a_start_abs,
-                            segment.a_weight,
-                            &self.z_eq_slice,
+                            segment.a_z,
                             tiered,
                             segment.b_inner_row,
                             segment.has_f,
@@ -278,7 +281,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             }
         }
         if segment.has_a {
-            weight += segment.a_weight * self.z_eq_slice[lambda - segment.a_start_abs];
+            weight += segment.a_z[lambda - segment.a_start_abs];
         }
         // Tiered first-tier `B'` (B_inner) and second-tier `F` (COMMIT) blocks,
         // matching `packed_slice_inner_sum`. `has_b` (full single-tier B) and
@@ -343,10 +346,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let has_a = self.z_range != 0 && lo < self.a_required;
                 let a_row = if has_a { lo / self.z_range } else { 0 };
                 let a_start_abs = if has_a { a_row * self.z_range } else { 0 };
-                let a_weight = if has_a {
-                    self.a_weights[a_row]
+                let a_z: &[E] = if has_a {
+                    &self.a_z_combined[a_start_abs..a_start_abs + self.z_range]
                 } else {
-                    E::zero()
+                    &[]
                 };
 
                 // Tiered first-tier `B'` (B_inner) and second-tier `F` blocks.
@@ -382,7 +385,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     b_weights,
                     has_a,
                     a_start_abs,
-                    a_weight,
+                    a_z,
                     has_b_inner,
                     b_inner_start_abs,
                     b_inner_row,
@@ -490,9 +493,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             MRowLayout::WithDBlock => inputs.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        // Canonical row layout: consistency (1) | public | D (n_d_active) |
-        // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-        let d_start = checked_add(1, inputs.num_public_rows, "D row start")?;
+        // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
+        // COMMIT (F when tiered, else B) | B_inner (tiered) | A (P · n_a). The
+        // point axis P is `num_points`, matching the prover M-eval `eq_tau1`
+        // layout (consistency `eq_tau1[0..P]`, public `eq_tau1[P..2P]`).
+        let d_start = checked_add(inputs.num_points, inputs.num_points, "D row start")?;
         // COMMIT block start (the F block when tiered, the B block otherwise).
         let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
         let commit_rows_pg = if tiered { inputs.n_f } else { inputs.n_b };
@@ -506,7 +511,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let b_inner_rows_total =
             checked_mul(b_inner_rows_pg, inputs.num_points, "B_inner row count")?;
         let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
-        let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
+        // Per-point A-block: `num_points` weight rows of `n_a` each.
+        let a_weight_rows = checked_mul(inputs.num_points, inputs.n_a, "A weight rows")?;
+        let a_end = checked_add(a_start, a_weight_rows, "A row end")?;
         // Non-tiered alias used by the packed B scan.
         let b_start = f_start;
         if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
@@ -641,7 +648,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             })
             .collect();
 
-        let z_eq_slice = if z_dims_pow2 {
+        // Per-point z MLE factor over the A footprint columns (`z_range` each).
+        // The point axis is kept separate here (no `Σ_pt` collapse) so it can be
+        // paired with the per-point A-block weights below.
+        let z_eq_per_point: Vec<Vec<E>> = if z_dims_pow2 {
             let z_block_low_storage;
             let z_block_low_eq = if let Some(z_block_low_eq) = z_block_low_eq {
                 z_block_low_eq
@@ -668,35 +678,40 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let eq_hi_z_table: Vec<E> = (0..=num_q_z)
                 .map(|k| eq_eval_at_index(z_high_challenges, z_offset_high + k))
                 .collect();
-            let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..inputs.depth_commit)
-                .map(|dc| {
-                    let mut s = [E::zero(); POSSIBLE_CARRIES];
-                    for (carry_slot, slot) in s.iter_mut().enumerate() {
-                        let mut acc = E::zero();
-                        for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
-                            for pt in 0..inputs.num_points {
-                                let k = pt
-                                    + inputs.num_points * df
-                                    + inputs.num_points * inputs.depth_fold * dc
-                                    + carry_slot;
-                                acc += eq_hi_z_table[k].mul_base(fg);
+            (0..inputs.num_points)
+                .map(|pt| {
+                    let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..inputs.depth_commit)
+                        .map(|dc| {
+                            let mut s = [E::zero(); POSSIBLE_CARRIES];
+                            for (carry_slot, slot) in s.iter_mut().enumerate() {
+                                let mut acc = E::zero();
+                                for (df, &fg) in
+                                    fold_gadget.iter().enumerate().take(inputs.depth_fold)
+                                {
+                                    let k = pt
+                                        + inputs.num_points * df
+                                        + inputs.num_points * inputs.depth_fold * dc
+                                        + carry_slot;
+                                    acc += eq_hi_z_table[k].mul_base(fg);
+                                }
+                                *slot = -acc;
                             }
-                        }
-                        *slot = -acc;
-                    }
-                    s
-                })
-                .collect();
-            cfg_into_iter!(0..z_range)
-                .map(|c| {
-                    let (low_eq_idx, depth_commit_idx, block_carry) = get_eq_indices_for_a(
-                        c,
-                        inputs.depth_commit,
-                        z_offset_low,
-                        z_block_mask,
-                        z_offset_low_bits,
-                    );
-                    z_block_low_eq[low_eq_idx] * s_per_dc_per_carry[depth_commit_idx][block_carry]
+                            s
+                        })
+                        .collect();
+                    (0..z_range)
+                        .map(|c| {
+                            let (low_eq_idx, depth_commit_idx, block_carry) = get_eq_indices_for_a(
+                                c,
+                                inputs.depth_commit,
+                                z_offset_low,
+                                z_block_mask,
+                                z_offset_low_bits,
+                            );
+                            z_block_low_eq[low_eq_idx]
+                                * s_per_dc_per_carry[depth_commit_idx][block_carry]
+                        })
+                        .collect()
                 })
                 .collect()
         } else {
@@ -735,30 +750,51 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
                 .collect();
 
-            cfg_into_iter!(0..z_range)
-                .map(|c| {
-                    let dc = c % inputs.depth_commit;
-                    let blk = c / inputs.depth_commit;
-                    let mut acc = E::zero();
-                    for pt in 0..inputs.num_points {
-                        for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
-                            let x = blk
-                                + inputs.block_len * pt
-                                + inputs.block_len * inputs.num_points * df
-                                + inputs.block_len * inputs.num_points * inputs.depth_fold * dc;
-                            let sum = offset_z_dense_low + x;
-                            let low_idx = sum & mask;
-                            // `eq_high_z_dense` starts at `offset_z_dense_high`,
-                            // so the low-bit carry is the relative high-table index.
-                            let high_carry = sum >> k;
-                            let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_carry];
-                            acc += eq_val.mul_base(fg);
-                        }
-                    }
-                    -acc
+            (0..inputs.num_points)
+                .map(|pt| {
+                    (0..z_range)
+                        .map(|c| {
+                            let dc = c % inputs.depth_commit;
+                            let blk = c / inputs.depth_commit;
+                            let mut acc = E::zero();
+                            for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold)
+                            {
+                                let x = blk
+                                    + inputs.block_len * pt
+                                    + inputs.block_len * inputs.num_points * df
+                                    + inputs.block_len * inputs.num_points * inputs.depth_fold * dc;
+                                let sum = offset_z_dense_low + x;
+                                let low_idx = sum & mask;
+                                // `eq_high_z_dense` starts at `offset_z_dense_high`,
+                                // so the low-bit carry is the relative high-table index.
+                                let high_carry = sum >> k;
+                                let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_carry];
+                                acc += eq_val.mul_base(fg);
+                            }
+                            -acc
+                        })
+                        .collect()
                 })
                 .collect()
         };
+
+        // Pair point `p`'s A-block weights with point `p`'s `z^(p)`, then sum the
+        // point axis into the flat A footprint `a_row · z_range + col`.
+        let a_weights_full = &inputs.eq_tau1[a_start..a_end];
+        let a_z_combined: Vec<E> = cfg_into_iter!(0..a_required)
+            .map(|idx| {
+                let a_row = idx / z_range;
+                let col = idx % z_range;
+                let mut acc = E::zero();
+                for pt in 0..inputs.num_points {
+                    let weight = a_weights_full[pt * inputs.n_a + a_row];
+                    if !weight.is_zero() {
+                        acc += weight * z_eq_per_point[pt][col];
+                    }
+                }
+                acc
+            })
+            .collect();
 
         // Packed B weights (single-tier only). For tiered levels the packed B
         // scan is disabled (`b_required == 0`) and the COMMIT/B_inner weights
@@ -850,10 +886,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             a_required,
             e_eq_slice,
             t_eq_slice_per_group,
-            z_eq_slice,
+            a_z_combined,
             d_weights: inputs.eq_tau1[d_start..(d_start + n_d_active)].to_vec(),
             b_weights_by_row,
-            a_weights: inputs.eq_tau1[a_start..a_end].to_vec(),
             endpoints,
             tiered: tiered_data,
         })
@@ -871,7 +906,9 @@ struct SetupSegment<'a, E> {
     b_weights: &'a [E],
     has_a: bool,
     a_start_abs: usize,
-    a_weight: E,
+    /// Per-point-combined A weights for this segment's A row (`z_range` long):
+    /// `a_z_combined[a_row · z_range ..]`. The point axis is already folded in.
+    a_z: &'a [E],
     // Tiered first-tier `B'` (B_inner) and second-tier `F` (COMMIT) blocks, both
     // fused into the same pass as A/D. Always inactive (`false`/`0`) for
     // single-tier plans (the full single-tier `B` uses `has_b` above instead).
@@ -905,8 +942,7 @@ fn packed_slice_inner_sum<
     b_weights: &[E],
     t_eq_per_group: &[Vec<E>],
     a_start: usize,
-    a_weight: E,
-    z_eq: &[E],
+    a_z: &[E],
     // Tiered-commitment data (A/D are identical in both modes):
     // - `tiered = None`: the B-block is the full single-tier B; its weight is
     //   the linear `b_weights[g] · t_eq[λ - b_start]`.
@@ -956,7 +992,7 @@ where
                 }
             }
             if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
+                weight += a_z[lambda - a_start];
             }
             // Tiered second-tier `F` (COMMIT) block, fused into the same pass.
             // `has_f` / `f_row` are segment-constant, so this is a predictable
@@ -998,8 +1034,7 @@ fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: 
     b_weights: &[E],
     t_eq_per_group: &[Vec<E>],
     a_start: usize,
-    a_weight: E,
-    z_eq: &[E],
+    a_z: &[E],
     // Tiered blocks, identical to `packed_slice_inner_sum`: `None` / `has_f ==
     // false` for single-tier plans (inert, predictable branch).
     tiered: Option<&TieredCommitmentData<E>>,
@@ -1039,7 +1074,7 @@ where
                 }
             }
             if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
+                weight += a_z[lambda - a_start];
             }
             if has_f {
                 if let Some(td) = tiered {
@@ -1217,8 +1252,10 @@ mod tests {
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+        // All-ones A weights so `a_z_combined` is exactly the (single-point)
+        // negated z fold, isolating the dense relative-high-carry computation.
         let inputs = SetupContributionPlanInputs {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![F::one(); 8],
             num_t_vectors: 0,
             num_blocks: 4,
             num_claims: 1,
@@ -1232,7 +1269,8 @@ mod tests {
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
             num_points,
-            rows: 2,
+            // Per-point layout: consistency (P=1) | public (P=1) | A (P·n_a=1).
+            rows: 3,
             num_polys_per_commitment_group: vec![0],
             num_public_rows: 0,
             tier_split: 1,
@@ -1270,7 +1308,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(plan.z_eq_slice, expected);
+        assert_eq!(plan.a_z_combined, expected);
     }
 
     #[test]

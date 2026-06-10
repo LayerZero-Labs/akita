@@ -8,8 +8,11 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
 /// Compute the stage-2 relation claim from the public M-row data.
 ///
 /// This evaluates `sum_i eq(tau1, i) * y_alpha[i]` where `y_alpha` follows
-/// the M row layout: consistency zero row, public `y_rings`, D rows `v`, B
-/// rows `u`, then A zero rows.
+/// the M row layout: `P` consistency zero rows, public `y_rings` (`P` rows),
+/// D rows `v`, COMMIT rows `u`, then B_inner / A zero rows. The point count
+/// `P` equals `y_rings.len()` (one public output per opening point), and the
+/// consistency block has the same `P` rows, so the public block starts at row
+/// `P`. Trailing zero blocks (B_inner, A) contribute nothing and are skipped.
 ///
 /// # Errors
 ///
@@ -25,7 +28,8 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Result<F, AkitaError> {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = F::zero();
-    let mut row_idx = 1usize;
+    // `P` consistency zero rows precede the public block (`P = y_rings.len()`).
+    let mut row_idx = y_rings.len();
 
     for y_ring in y_rings {
         if row_idx >= eq_tau1.len() {
@@ -70,7 +74,8 @@ where
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
-    let mut row_idx = 1usize;
+    // `P` consistency zero rows precede the public block (`P = y_rings.len()`).
+    let mut row_idx = y_rings.len();
 
     for y_ring in y_rings {
         if row_idx >= eq_tau1.len() {

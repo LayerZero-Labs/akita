@@ -123,8 +123,10 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     pub challenge_block_summaries: &'a [[E; 2]],
     /// `tau1` equality weight for each claim's public input row.
     pub public_row_weights_by_claim: &'a [E],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub challenge_weight: E,
+    /// `tau1` equality weight for each claim's per-point fold-consistency row.
+    /// The ê fold column of a claim lands on its own point's consistency row, so
+    /// this is keyed per claim (by `claim_to_point`), never a single shared row.
+    pub challenge_row_weights_by_claim: &'a [E],
 }
 
 impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
@@ -160,10 +162,10 @@ where
 
         [
             (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
-                + self.challenge_weight * aggregated_challenge_carry0)
+                + self.challenge_row_weights_by_claim[claim_idx] * aggregated_challenge_carry0)
                 .mul_base(self.gadget_vector[digit]),
             (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
-                + self.challenge_weight * aggregated_challenge_carry1)
+                + self.challenge_row_weights_by_claim[claim_idx] * aggregated_challenge_carry1)
                 .mul_base(self.gadget_vector[digit]),
         ]
     }
@@ -178,10 +180,20 @@ pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     /// Gadget vector for the digit decomposition of `w`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
-    /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
+    /// Per-(point, t-vector) carry summary of `c_alpha`, flattened as
+    /// `point * num_t_vectors + t_vector`. Length = `num_points · num_t_vectors`.
+    /// A slot shared by claims from different points keeps the point
+    /// contributions separate so the A-block never sums the point axis.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// `tau1` equality weight for each `A`-row of `M`. Length =
-    /// number of `A` rows.
+    /// Number of t-vectors (slots): the inner dimension of
+    /// `challenge_block_summaries`.
+    pub num_t_vectors: usize,
+    /// Number of opening points `P`.
+    pub num_points: usize,
+    /// A-rows per point `n_a`.
+    pub n_a: usize,
+    /// `tau1` equality weight for each `A`-row of `M`. Length = `num_points · n_a`;
+    /// point `p`'s row `a` lives at `a_row_weights[p * n_a + a]`.
     pub a_row_weights: &'a [E],
 }
 
@@ -192,7 +204,10 @@ where
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.challenge_block_summaries.len() * self.gadget_vector.len() * self.a_row_weights.len()
+        // The t̂ witness is shared per slot (n_a rows per block), so the outer
+        // dimension stays `num_t_vectors · num_digits · n_a`; the per-point
+        // A-block is realised by summing the point weights inside.
+        self.num_t_vectors * self.gadget_vector.len() * self.n_a
     }
 
     #[inline]
@@ -207,20 +222,25 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_claims = self.challenge_block_summaries.len();
+        let num_t = self.num_t_vectors;
         let num_digits = self.gadget_vector.len();
-        let claim_idx = outer_index % num_claims;
-        let compound = outer_index / num_claims;
+        let t_vector_idx = outer_index % num_t;
+        let compound = outer_index / num_t;
         let digit = compound % num_digits;
         let a_row_idx = compound / num_digits;
-        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-            self.challenge_block_summaries[claim_idx];
-        [
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry0,
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry1,
-        ]
+        let mut carry0 = E::zero();
+        let mut carry1 = E::zero();
+        for pt in 0..self.num_points {
+            let weight = self.a_row_weights[pt * self.n_a + a_row_idx];
+            if weight.is_zero() {
+                continue;
+            }
+            let [s0, s1] = self.challenge_block_summaries[pt * num_t + t_vector_idx];
+            let weighted = weight.mul_base(self.gadget_vector[digit]);
+            carry0 += weighted * s0;
+            carry1 += weighted * s1;
+        }
+        [carry0, carry1]
     }
 }
 
@@ -236,8 +256,9 @@ pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     pub fold_gadget: &'a [F],
     /// Per-opening-point carry summary of `opening_point.a[..block_len]`.
     pub a_block_summary: &'a [[E; 2]],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub consistency_weight: E,
+    /// `tau1` equality weight for each point's fold-consistency row of `M`.
+    /// Point `p`'s `z^(p)` block is weighted by `consistency_weights[p]`.
+    pub consistency_weights: &'a [E],
 }
 
 impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
@@ -270,7 +291,7 @@ where
         let dc = q1 / depth_fold;
 
         let [a_carry0, a_carry1] = self.a_block_summary[pt];
-        let scale = (-self.consistency_weight)
+        let scale = (-self.consistency_weights[pt])
             .mul_base(self.g1_commit[dc])
             .mul_base(self.fold_gadget[df]);
         [scale * a_carry0, scale * a_carry1]
@@ -284,8 +305,9 @@ pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     pub g1_commit: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub consistency_weight: E,
+    /// `tau1` equality weight for each point's fold-consistency row of `M`.
+    /// Point `p`'s `z^(p)` block is weighted by `consistency_weights[p]`.
+    pub consistency_weights: &'a [E],
     /// Per-point alpha-evaluated ring-multiplier `a` values.
     pub a_evals_by_point: &'a [Vec<E>],
     /// Full multilinear evaluation point.
@@ -313,7 +335,7 @@ where
                 let df = compound_dig % self.fold_gadget.len();
                 let point_idx = global_blk / self.block_len;
                 let blk = global_blk % self.block_len;
-                -self.consistency_weight
+                -self.consistency_weights[point_idx]
                     * self.a_evals_by_point[point_idx][blk]
                         .mul_base(self.g1_commit[dc_idx])
                         .mul_base(self.fold_gadget[df])
@@ -441,7 +463,9 @@ mod tests {
         let num_claims = 3usize;
         let num_public_rows = num_points;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
+        // Per-point layout: consistency (P) | public (P) | D | COMMIT (per group)
+        // | A (P · n_a, per point). Here `num_groups == num_points`.
+        let rows = num_public_rows + num_public_rows + n_d + n_b * num_points + n_a * num_points;
         let inner_width = block_len * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
@@ -559,10 +583,18 @@ mod tests {
             })
             .collect::<Result<_, _>>()
             .unwrap();
+        // Per-point layout: consistency rows `0..P`, public rows `P..2P`. A
+        // claim's ê fold column lands on its point's consistency row
+        // (`eq_tau1[point]`) and its point's public row (`eq_tau1[P + point]`).
         let public_row_weights_by_claim: Vec<F> = p
             .claim_to_point
             .iter()
-            .map(|&point_idx| p.eq_tau1[1 + point_idx])
+            .map(|&point_idx| p.eq_tau1[p.num_public_rows + point_idx])
+            .collect();
+        let challenge_row_weights_by_claim: Vec<F> = p
+            .claim_to_point
+            .iter()
+            .map(|&point_idx| p.eq_tau1[point_idx])
             .collect();
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
@@ -583,7 +615,7 @@ mod tests {
             public_block_summaries: &public_block_summaries,
             challenge_block_summaries: &challenge_block_summaries,
             public_row_weights_by_claim: &public_row_weights_by_claim,
-            challenge_weight: p.eq_tau1[0],
+            challenge_row_weights_by_claim: &challenge_row_weights_by_claim,
         }
         .evaluate();
 
@@ -595,10 +627,10 @@ mod tests {
             let claim_idx = blk / p.num_blocks;
             let block_idx = blk % p.num_blocks;
             let point_idx = p.claim_to_point[claim_idx];
-            let entry = (p.eq_tau1[1 + point_idx]
+            let entry = (p.eq_tau1[p.num_public_rows + point_idx]
                 * p.gamma[claim_idx]
                 * fx.opening_points[point_idx].b[block_idx]
-                + p.eq_tau1[0] * c_alphas[blk])
+                + p.eq_tau1[point_idx] * c_alphas[blk])
                 * fx.g1_open[dig];
             expected += entry * eq[fx.offset_e + x];
         }
@@ -609,42 +641,86 @@ mod tests {
     fn t_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let t_len = p.depth_open * p.n_a * p.total_blocks();
+        // The t̂ witness is shared per slot (t-vector), so the block axis is
+        // `num_t_vectors · num_blocks`, not `num_claims · num_blocks`.
+        let t_total_blocks = p.num_t_vectors * p.num_blocks;
+        let t_len = p.depth_open * p.n_a * t_total_blocks;
         let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
-
-        let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
-            .map(|claim_idx| {
-                let start = claim_idx * p.num_blocks;
-                summarize_pow2_block_carries(
-                    &eq_low,
-                    block_offset_low,
-                    &p.c_alphas.as_flat().unwrap()[start..(start + p.num_blocks)],
-                )
-            })
-            .collect::<Result<_, _>>()
-            .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
-        let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
+
+        // Route each claim to its (point, t-vector) plane: a slot shared across
+        // points stays separate, so the per-point A-block never sums the point
+        // axis.
+        let t_vector_offsets: Vec<usize> = p
+            .num_polys_per_commitment_group
+            .iter()
+            .scan(0usize, |acc, &count| {
+                let offset = *acc;
+                *acc += count;
+                Some(offset)
+            })
+            .collect();
+        let claim_to_t_vector: Vec<usize> = p
+            .claim_to_commitment_group_poly
+            .iter()
+            .map(|&(group_idx, poly_idx)| t_vector_offsets[group_idx] + poly_idx)
+            .collect();
+
+        // Per-(point, t-vector) routed challenge carry summaries.
+        let mut challenge_block_summaries =
+            vec![[F::zero(); 2]; p.num_public_rows * p.num_t_vectors];
+        for claim_idx in 0..p.num_claims {
+            let start = claim_idx * p.num_blocks;
+            let summary = summarize_pow2_block_carries(
+                &eq_low,
+                block_offset_low,
+                &c_alphas[start..(start + p.num_blocks)],
+            )
+            .unwrap();
+            let dst = p.claim_to_point[claim_idx] * p.num_t_vectors + claim_to_t_vector[claim_idx];
+            challenge_block_summaries[dst][0] += summary[0];
+            challenge_block_summaries[dst][1] += summary[1];
+        }
+
+        let a_start = p.num_public_rows + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_t >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
+            num_t_vectors: p.num_t_vectors,
+            num_points: p.num_public_rows,
+            n_a: p.n_a,
             a_row_weights: &p.eq_tau1[a_start..p.rows],
         }
         .evaluate();
 
+        // Materialized reference: per-(point, t-vector, block) routed challenge
+        // sums, A-block weighted by the point's own A-row weight.
+        let mut challenge_sums = vec![F::zero(); p.num_public_rows * t_total_blocks];
+        for claim_idx in 0..p.num_claims {
+            let pt = p.claim_to_point[claim_idx];
+            let tv = claim_to_t_vector[claim_idx];
+            for block_idx in 0..p.num_blocks {
+                challenge_sums[pt * t_total_blocks + tv * p.num_blocks + block_idx] +=
+                    c_alphas[claim_idx * p.num_blocks + block_idx];
+            }
+        }
         let mut expected = F::zero();
         for x in 0..t_len {
-            let total_blocks = p.total_blocks();
-            let compound_dig = x / total_blocks;
-            let blk = x % total_blocks;
+            let compound_dig = x / t_total_blocks;
+            let blk = x % t_total_blocks;
             let a_idx = compound_dig / p.depth_open;
             let digit_idx = compound_dig % p.depth_open;
-            let entry = p.eq_tau1[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];
+            let mut entry = F::zero();
+            for pt in 0..p.num_public_rows {
+                entry += p.eq_tau1[a_start + pt * p.n_a + a_idx]
+                    * challenge_sums[pt * t_total_blocks + blk]
+                    * fx.g1_open[digit_idx];
+            }
             expected += entry * eq[fx.offset_t + x];
         }
         assert_eq!(got, expected);
@@ -679,7 +755,7 @@ mod tests {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             a_block_summary: &a_block_summary,
-            consistency_weight: p.eq_tau1[0],
+            consistency_weights: &p.eq_tau1[0..p.num_public_rows],
         }
         .evaluate();
 
@@ -692,7 +768,8 @@ mod tests {
             let df = compound_dig % p.depth_fold;
             let point_idx = global_blk / p.block_len;
             let blk = global_blk % p.block_len;
-            let entry = -(p.eq_tau1[0]
+            // Point `p`'s z block is weighted by its own consistency row.
+            let entry = -(p.eq_tau1[point_idx]
                 * fx.opening_points[point_idx].a[blk]
                 * fx.g1_commit[dc]
                 * fx.fold_gadget[df]);
@@ -719,7 +796,7 @@ mod tests {
         let got = ZDenseSlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
-            consistency_weight: p.eq_tau1[0],
+            consistency_weights: &p.eq_tau1[0..p.num_public_rows],
             a_evals_by_point: &a_evals_by_point,
             full_vec_randomness: &fx.full_vec_randomness,
             offset_z: fx.offset_z,
@@ -737,7 +814,8 @@ mod tests {
             let df = compound_dig % p.depth_fold;
             let point_idx = global_blk / p.block_len;
             let blk = global_blk % p.block_len;
-            let entry = -(p.eq_tau1[0]
+            // Point `p`'s z block is weighted by its own consistency row.
+            let entry = -(p.eq_tau1[point_idx]
                 * fx.opening_points[point_idx].a[blk]
                 * fx.g1_commit[dc]
                 * fx.fold_gadget[df]);

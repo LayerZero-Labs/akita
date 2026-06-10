@@ -173,7 +173,16 @@ impl SetupContributionFixture {
         } else {
             0
         };
-        let rows = 1 + shape.num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
+        // Per-point layout: consistency (P) | public (P) | D | COMMIT | B_inner
+        // | A (P · n_a). `commit_rows`/`b_inner_rows` already fold in their
+        // per-group `num_points` factor; the point axis here is `num_points`
+        // (= `num_public_rows`, one public row per opening point).
+        let rows = num_points
+            + num_points
+            + shape.n_d
+            + commit_rows
+            + b_inner_rows
+            + shape.n_a * num_points;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;

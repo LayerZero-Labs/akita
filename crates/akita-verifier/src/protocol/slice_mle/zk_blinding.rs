@@ -27,7 +27,9 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
+    // Per-point layout: consistency (P) | public (P) | D | COMMIT. The COMMIT
+    // (B) block starts after both per-point blocks and the D block.
+    let b_start = prepared.num_public_rows + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group. The
@@ -82,7 +84,9 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let d_start = 1 + prepared.num_public_rows;
+    // Per-point layout: consistency (P) | public (P) | D. The D block starts
+    // after both per-point blocks.
+    let d_start = prepared.num_public_rows + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let d_zk_view = setup
@@ -173,7 +177,9 @@ mod tests {
         let num_public_rows = 2usize;
         let num_points = num_polys_per_point.len();
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
+        // Per-point layout: consistency (P) | public (P) | D | COMMIT (per group)
+        // | A (P · n_a, per point). Here `num_groups == num_points`.
+        let rows = num_public_rows + num_public_rows + n_d + n_b * num_points + n_a * num_points;
 
         let w_len = depth_open * total_blocks;
         let b_blinding_digit_planes_per_point =
@@ -291,7 +297,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let b_start = 1 + p.num_public_rows + p.n_d;
+        let b_start = p.num_public_rows + p.num_public_rows + p.n_d;
         let b_offset = p.segment_layout().unwrap().b_blinding_offset;
         let b_zk_view = fx
             .setup
@@ -325,7 +331,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let d_start = 1 + p.num_public_rows;
+        let d_start = p.num_public_rows + p.num_public_rows;
         let d_offset = p.segment_layout().unwrap().d_blinding_offset;
         let d_zk_view = fx
             .setup

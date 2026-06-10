@@ -356,8 +356,14 @@ where
     }
 
     let mut out = ZkR1csLinearCombination::zero();
+    // Per-point M-row layout: `P` consistency zero rows precede the public
+    // block, so public output `y_idx` lands on row `P + y_idx` (`P = y_count`).
+    // This mirrors `relation_claim_from_rows`, which starts at `row_idx = P`.
     for y_idx in 0..y_count {
-        let row_coeff = eq_tau1.get(1 + y_idx).copied().unwrap_or_else(E::zero);
+        let row_coeff = eq_tau1
+            .get(y_count + y_idx)
+            .copied()
+            .unwrap_or_else(E::zero);
         for coeff_idx in 0..D {
             let coeff = row_coeff * alpha_pows[coeff_idx];
             out.add_scaled(coeff, &y_masks[y_idx * D + coeff_idx]);

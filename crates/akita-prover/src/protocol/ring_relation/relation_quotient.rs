@@ -181,9 +181,14 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
+/// Cyclic / negacyclic `⟨a^(p), G z^(p)⟩` products for a single opening point.
+///
+/// `z_segment_centered` is that point's `block_len · depth_commit` centered
+/// fold digits. The point axis is realised by per-point rows, so this is
+/// computed once per point and never summed across points.
 fn cyclic_consistency_z_product<F, const D: usize>(
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    z_folded_centered: &[[i32; D]],
+    opening_point: &RingMultiplierOpeningPoint<F, D>,
+    z_segment_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
     log_basis: u32,
@@ -194,48 +199,38 @@ where
     let inner_width = block_len
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
-    if inner_width == 0
-        || z_folded_centered.len()
-            != ring_multiplier_points
-                .len()
-                .checked_mul(inner_width)
-                .ok_or_else(|| AkitaError::InvalidSetup("z point width overflow".to_string()))?
-    {
+    if inner_width == 0 || z_segment_centered.len() != inner_width {
         return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier z layout mismatch: z_folded_len={} points={} block_len={} depth_commit={} expected={}",
-            z_folded_centered.len(),
-            ring_multiplier_points.len(),
+            "ring-multiplier z segment layout mismatch: z_segment_len={} block_len={} depth_commit={} expected={inner_width}",
+            z_segment_centered.len(),
             block_len,
             depth_commit,
-            ring_multiplier_points.len() * inner_width
+        )));
+    }
+    if opening_point.a_len() < block_len {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
+            opening_point.a_len()
         )));
     }
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let mut cyclic = [F::zero(); D];
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
-    for (point_idx, opening_point) in ring_multiplier_points.iter().enumerate() {
-        if opening_point.a_len() < block_len {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
-                opening_point.a_len()
-            )));
+    for block_idx in 0..block_len {
+        let mut z_block = CyclotomicRing::<F, D>::zero();
+        for (digit_idx, &g) in g_commit.iter().enumerate() {
+            let z_idx = block_idx * depth_commit + digit_idx;
+            z_block += centered_i32_ring::<F, D>(&z_segment_centered[z_idx]).scale(&g);
         }
-        for block_idx in 0..block_len {
-            let mut z_block = CyclotomicRing::<F, D>::zero();
-            for (digit_idx, &g) in g_commit.iter().enumerate() {
-                let z_idx = point_idx * inner_width + block_idx * depth_commit + digit_idx;
-                z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
-            }
-            if let Some(scalar) = opening_point.a_constant_coeff(block_idx) {
-                add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
-                reduced += z_block.scale(&scalar);
-            } else {
-                let a_rings = opening_point.a_rings().ok_or(AkitaError::InvalidProof)?;
-                let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
-                add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
-                reduced += *multiplier * z_block;
-            }
+        if let Some(scalar) = opening_point.a_constant_coeff(block_idx) {
+            add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
+            reduced += z_block.scale(&scalar);
+        } else {
+            let a_rings = opening_point.a_rings().ok_or(AkitaError::InvalidProof)?;
+            let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
+            add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
+            reduced += *multiplier * z_block;
         }
     }
 
@@ -327,7 +322,10 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let num_points = num_polys_per_commitment_group.len();
+    // `num_groups` (G) drives the per-commitment-group COMMIT / B_inner blocks;
+    // `num_public_outputs` (P) drives the per-opening-point consistency / public
+    // / A blocks. They coincide only when each group is opened at one point.
+    let num_groups = num_polys_per_commitment_group.len();
     let expected_inner_rows = total_poly_slots
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
@@ -372,7 +370,7 @@ where
         MRowLayout::WithoutDBlock => 0,
     };
     let tiered = lp.f_key.is_some();
-    if tiered && num_points != 1 {
+    if tiered && num_groups != 1 {
         // The tiered relation slices the single commitment group's t̂; multipoint
         // tiering is a follow-up (see specs/tiered-commitment.md edge cases).
         return Err(AkitaError::InvalidSetup(
@@ -380,18 +378,19 @@ where
         ));
     }
     let commitment_row_count = n_b
-        .checked_mul(num_points)
+        .checked_mul(num_groups)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout)?;
+    let num_rows = lp.m_row_count_for(num_groups, num_public_outputs, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | public (num_public_outputs) |
-    //   D (n_d_active) | COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+    // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
+    //   COMMIT (F when tiered, else B; per group) | B_inner (tiered; per group) |
+    //   A (P · n_a; per point).
     let d_start = lp.d_start(num_public_outputs)?;
     let f_start = lp.f_start(num_public_outputs, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(num_points, num_public_outputs, m_row_layout)?;
-    let a_start = lp.a_start(num_points, num_public_outputs, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(num_groups, num_public_outputs, m_row_layout)?;
+    let a_start = lp.a_start(num_groups, num_public_outputs, m_row_layout)?;
 
     if inner_width == 0
         || z_folded_centered.len()
@@ -405,7 +404,7 @@ where
     let mut z_segments = z_folded_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let use_relation_b_rows = !tiered && commitment_row_count == n_b && num_points == 1;
+    let use_relation_b_rows = !tiered && commitment_row_count == n_b && num_groups == 1;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
     let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
         t_hat.flat_digits()
@@ -431,7 +430,13 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let mut a_quotients = relation_rows.a_quotients;
+    // Per-point A·z^(p) quotient rows: point p's n_a rows are kept separate so
+    // the A-block can enforce one obligation per opening point (never summed).
+    // Point 0 comes from the fused relation-rows call; points 1.. from the
+    // per-segment quotient calls below.
+    let mut a_quotients_per_point: Vec<Vec<CyclotomicRing<F, D>>> =
+        Vec::with_capacity(num_public_outputs);
+    a_quotients_per_point.push(relation_rows.a_quotients);
     let b_cyclic = relation_rows.b_cyclic;
     #[cfg(feature = "zk")]
     let mut d_cyclic = relation_rows.d_cyclic;
@@ -457,9 +462,10 @@ where
         if segment_rows.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
-            *dst += src;
-        }
+        a_quotients_per_point.push(segment_rows);
+    }
+    if a_quotients_per_point.len() != num_public_outputs {
+        return Err(AkitaError::InvalidProof);
     }
     let commitment_cyclic_rows = if tiered {
         // Tiered: the COMMIT block is F (computed below), not B.
@@ -557,20 +563,32 @@ where
         .all(|point| point.is_constant());
     let constant_public_multipliers =
         constant_opening_multipliers && row_coefficient_rings.iter().all(ring_is_constant);
-    let consistency_z_quotient = if constant_opening_multipliers {
+    // Per-point fold-consistency z quotient `⟨a^(p), G z^(p)⟩`: one per opening
+    // point, matching the per-point consistency rows.
+    let consistency_z_quotient: Vec<CyclotomicRing<F, D>> = if constant_opening_multipliers {
         // Degree-one openings embed scalar weights as constant rings. Cyclic
         // and negacyclic multiplication by a constant agree, so the quotient
         // row is identically zero.
-        CyclotomicRing::<F, D>::zero()
+        vec![CyclotomicRing::<F, D>::zero(); num_public_outputs]
     } else {
-        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
-            ring_multiplier_points,
-            z_folded_centered,
-            lp.block_len,
-            lp.num_digits_commit,
-            lp.log_basis,
-        )?;
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+        (0..num_public_outputs)
+            .map(|point_idx| -> Result<CyclotomicRing<F, D>, AkitaError> {
+                let segment =
+                    &z_folded_centered[point_idx * inner_width..(point_idx + 1) * inner_width];
+                let (consistency_z_cyclic, consistency_z_reduced) =
+                    cyclic_consistency_z_product::<F, D>(
+                        &ring_multiplier_points[point_idx],
+                        segment,
+                        lp.block_len,
+                        lp.num_digits_commit,
+                        lp.log_basis,
+                    )?;
+                Ok(quotient_from_cyclic_and_reduced(
+                    &consistency_z_cyclic,
+                    &consistency_z_reduced,
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
 
     let tensor_products = match challenges {
@@ -582,16 +600,23 @@ where
     let mut other_time = 0.0f64;
 
     for row_idx in 0..num_rows {
-        if row_idx == 0 {
+        if row_idx < num_public_outputs {
             let t_row = Instant::now();
             let _span = tracing::info_span!("challenge_fold_row").entered();
-            // Consistency row: Σ c_i · e_folded[i] over all (claim, block).
+            // Per-point consistency row `p`: Σ_{p(ℓ)=p} c_ℓ · e_folded[ℓ] on the
+            // ê side minus ⟨a^(p), G z^(p)⟩ on the z side. Only claims at point
+            // `p` contribute, so the point axis is never summed.
+            let point_idx = row_idx;
             let quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
+                    let claim_idx = i / blocks_per_claim;
+                    if claim_to_point[claim_idx] != point_idx {
+                        return None;
+                    }
                     Some(e_folded[i])
                 })?;
             let mut quotient = CyclotomicRing::from_slice(&quotient);
-            quotient -= consistency_z_quotient;
+            quotient -= consistency_z_quotient[point_idx];
             result.push(quotient);
             other_time += t_row.elapsed().as_secs_f64();
         } else if row_idx < d_start {
@@ -601,7 +626,7 @@ where
                 // negacyclic products, so this row contributes no quotient.
                 result.push(CyclotomicRing::<F, D>::zero());
             } else {
-                let point_idx = row_idx - 1;
+                let point_idx = row_idx - num_public_outputs;
                 let cyclic = cyclic_public_row_product::<F, D>(
                     e_folded,
                     ring_multiplier_points,
@@ -645,24 +670,33 @@ where
         } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
-            let a_idx = row_idx - a_start;
+            // Per-point A-block: rows `a_start + p·n_a .. a_start + (p+1)·n_a`
+            // are point `p`'s A-relation. Row a_idx LHS = Σ_{p(ℓ)=p} c_ℓ ·
+            // recomposed_inner_rows[slot(ℓ)][a_idx] (t̂ side, claims at p only);
+            // RHS = (A z^(p)) row a_idx. The point axis is never summed.
+            let local = row_idx - a_start;
+            let point_idx = local / n_a;
+            let a_idx = local % n_a;
 
             // Iterate `(claim, block)` over the challenge space and route
-            // each cell to its polynomial-slot in `recomposed_inner_rows`
-            // (`poly_slot * num_blocks + block_idx`). Iterating over the
-            // raw `recomposed_inner_rows.len()` would conflate poly slots
-            // with claims and overrun `challenges` whenever a group has
-            // more polynomial slots than opened claims.
+            // each cell at point `point_idx` to its polynomial-slot in
+            // `recomposed_inner_rows` (`poly_slot * num_blocks + block_idx`).
+            // Iterating over the raw `recomposed_inner_rows.len()` would
+            // conflate poly slots with claims and overrun `challenges` whenever
+            // a group has more polynomial slots than opened claims.
             let mut quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
                     let claim_idx = i / blocks_per_claim;
+                    if claim_to_point[claim_idx] != point_idx {
+                        return None;
+                    }
                     let block_idx = i % blocks_per_claim;
                     let poly_slot = poly_slot_for_claim[claim_idx];
                     let inner_idx = poly_slot * blocks_per_claim + block_idx;
                     recomposed_inner_rows[inner_idx].get(a_idx).copied()
                 })?;
 
-            let a_q = a_quotients[a_idx].coefficients();
+            let a_q = a_quotients_per_point[point_idx][a_idx].coefficients();
             for k in 0..D {
                 quotient[k] -= a_q[k];
             }
@@ -680,8 +714,9 @@ where
 }
 
 /// Build the RHS vector `y` matching the canonical M row layout:
-/// consistency (zero) | public outputs | D (`v`) | COMMIT (`commitment_rows`) |
-/// B_inner (zeros) | A (zeros).
+/// consistency (P zeros) | public outputs (P) | D (`v`) |
+/// COMMIT (`commitment_rows`) | B_inner (zeros) | A (P · n_a zeros).
+/// `P = public_outputs.len()` is the opening-point count.
 ///
 /// `commit_rows_per_group` is the sent-commitment row count per group
 /// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
@@ -729,14 +764,25 @@ where
     let b_inner_total = b_inner_rows_per_group
         .checked_mul(num_commitments)
         .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
+    // Per-point layout: one fold-consistency zero per point and one n_a A-block
+    // per point (P = number of opening points = public_outputs.len()).
+    let num_points = public_outputs.len();
+    let a_block_total = num_points
+        .checked_mul(n_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("generate_y A-block overflow".to_string()))?;
     let mut out = Vec::with_capacity(
-        1 + public_outputs.len() + n_d + commitment_rows.len() + b_inner_total + n_a,
+        num_points
+            + public_outputs.len()
+            + n_d
+            + commitment_rows.len()
+            + b_inner_total
+            + a_block_total,
     );
-    out.push(CyclotomicRing::<F, D>::zero());
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), num_points));
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), a_block_total));
     Ok(out)
 }

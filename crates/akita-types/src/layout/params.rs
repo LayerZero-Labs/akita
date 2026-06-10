@@ -403,10 +403,21 @@ impl LevelParams {
         AkitaError::InvalidSetup("M-row count overflow".to_string())
     }
 
+    /// Per-point fold/consistency row count: one fold row per opening point.
+    ///
+    /// Equal to `num_public_outputs` (both are the opening-point count `P`):
+    /// the layout carries one fold-consistency row and one public eval row per
+    /// distinct opening point. Kept as a named helper so the per-point intent is
+    /// explicit at every offset site rather than a bare literal.
+    #[inline]
+    pub fn consistency_rows(num_public_outputs: usize) -> usize {
+        num_public_outputs
+    }
+
     /// Absolute start row of the D block (after consistency + public rows).
     #[inline]
     pub fn d_start(&self, num_public_outputs: usize) -> Result<usize, AkitaError> {
-        1usize
+        Self::consistency_rows(num_public_outputs)
             .checked_add(num_public_outputs)
             .ok_or_else(Self::m_row_overflow)
     }
@@ -462,10 +473,12 @@ impl LevelParams {
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
-    /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// COMMIT (effective_commit_rows · num_commitments) |
-    /// B_inner (b_inner_rows_per_group · num_commitments) | A (n_a).  The
-    /// batched CWSS protocol uses one public y-row per distinct opening point.
+    /// Row layout: consistency (num_public_outputs) | public (num_public_outputs)
+    /// | D (n_d) | COMMIT (effective_commit_rows · num_commitments) |
+    /// B_inner (b_inner_rows_per_group · num_commitments) | A (num_public_outputs · n_a).
+    /// The batched CWSS protocol materialises one fold-consistency row and one
+    /// public y-row per distinct opening point, and one `n_a`-wide A-block per
+    /// opening point, so the point axis is never silently summed.
     #[inline]
     pub fn m_row_count(
         &self,
@@ -486,8 +499,13 @@ impl LevelParams {
         num_public_outputs: usize,
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
+        let a_block_rows = self
+            .a_key
+            .row_len()
+            .checked_mul(num_public_outputs)
+            .ok_or_else(Self::m_row_overflow)?;
         self.a_start(num_commitments, num_public_outputs, layout)?
-            .checked_add(self.a_key.row_len())
+            .checked_add(a_block_rows)
             .ok_or_else(Self::m_row_overflow)
     }
 
@@ -737,12 +755,15 @@ mod tests {
     fn m_row_count_values() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
-        assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
-        assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
+        // Per-point layout: consistency (np) | public (np) | D (n_d=3) |
+        // COMMIT (n_b=4 · nc) | A (np · n_a=2). At np=1 this collapses to the
+        // historical single-point layout (byte-identical).
+        assert_eq!(lp.m_row_count(1, 1).unwrap(), 1 + 1 + 3 + 4 + 1 * 2);
+        assert_eq!(lp.m_row_count(2, 5).unwrap(), 5 + 5 + 3 + 4 * 2 + 5 * 2);
+        assert_eq!(lp.m_row_count(4, 4).unwrap(), 4 + 4 + 3 + 4 * 4 + 4 * 2);
         assert_eq!(
             lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
-            4 * 2 + 5 + 1 + 2
+            5 + 5 + 4 * 2 + 5 * 2
         );
     }
 
@@ -765,8 +786,9 @@ mod tests {
                     MRowLayout::WithDBlock => n_d,
                     MRowLayout::WithoutDBlock => 0,
                 };
-                // Open-coded historical offsets: 1 | public | D | B | A.
-                let d_start = 1 + np;
+                // Per-point offsets: consistency (np) | public (np) | D | B |
+                // A (np · n_a).
+                let d_start = np + np;
                 let b_start = d_start + n_d_active;
                 let a_start = b_start + n_b * nc;
 
@@ -774,7 +796,10 @@ mod tests {
                 assert_eq!(lp.f_start(np, layout).unwrap(), b_start);
                 assert_eq!(lp.b_inner_start(nc, np, layout).unwrap(), a_start);
                 assert_eq!(lp.a_start(nc, np, layout).unwrap(), a_start);
-                assert_eq!(lp.m_row_count_for(nc, np, layout).unwrap(), a_start + n_a);
+                assert_eq!(
+                    lp.m_row_count_for(nc, np, layout).unwrap(),
+                    a_start + np * n_a
+                );
             }
         }
     }

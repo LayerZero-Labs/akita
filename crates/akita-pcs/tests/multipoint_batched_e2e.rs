@@ -424,6 +424,99 @@ fn multipoint_dense_shared_commitment_round_trip() {
     });
 }
 
+/// P = 1 degenerate case: the per-point layout collapses to a single
+/// consistency row and a single `n_a` A-block, so this must remain byte-stable
+/// and round-trip exactly like the pre-per-point single-point path.
+#[test]
+fn multipoint_dense_single_point_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 10;
+        let num_polys_per_point = [2usize];
+        let total_claims: usize = num_polys_per_point.iter().sum();
+        let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+            .expect("valid dense incidence");
+        let layout = DenseCfg::get_params_for_batched_commitment(&incidence)
+            .expect("dense batched commit layout");
+
+        let polys: Vec<DensePoly<F, DENSE_D>> = (0..num_polys_per_point[0])
+            .map(|poly_idx| make_dense_poly(NV, 0xd3e5_9000 + poly_idx as u64))
+            .collect();
+        let opening_point_owned = random_point(NV, 0xaaaa_9000);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &opening_point_owned, &layout))
+            .collect();
+
+        let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> = vec![polys.as_slice()];
+        let openings_per_point_refs: Vec<&[F]> = vec![openings.as_slice()];
+        let opening_points: Vec<&[F]> = vec![opening_point_owned.as_slice()];
+
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
+            NV,
+            total_claims,
+            num_polys_per_point.len(),
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_verifier(&setup);
+
+        let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_commit(
+            &setup, &CpuBackend, &prepared, &polys_per_point_refs
+        )
+        .expect("dense batched commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_p1");
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .expect("single-point batched prove");
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_p1");
+        let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
+            F,
+            DENSE_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(
+            result.is_ok(),
+            "single-point (P=1) round trip failed: {:?}",
+            result.err()
+        );
+    });
+}
+
 #[cfg(not(feature = "zk"))]
 mod non_zk_negative_cases {
     use super::*;
@@ -532,6 +625,128 @@ mod non_zk_negative_cases {
                 akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "swapped opening points must be rejected");
+        });
+    }
+
+    /// Per-point soundness regression for the point axis (the
+    /// `(z^(1)+δ, z^(2)−δ)` mass-shift attack). The prover commits and proves
+    /// honestly; the verifier is then handed openings that move `δ` from
+    /// point 0's claim to point 1's claim, leaving the *sum* of the two claims
+    /// unchanged. Under a protocol that summed the point axis this would
+    /// verify; with explicit per-point fold/A rows each point's opening is
+    /// bound independently, so the tampered openings must be rejected.
+    #[test]
+    fn multipoint_dense_verify_rejects_shifted_opening_across_points() {
+        init_rayon_pool();
+        let _guard = E2E_TEST_LOCK.lock().unwrap();
+        run_on_large_stack(|| {
+            const NV: usize = 10;
+            let num_polys_per_point = [2usize, 2];
+            let total_claims: usize = num_polys_per_point.iter().sum();
+            let incidence =
+                ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+                    .expect("valid dense incidence");
+            let layout = DenseCfg::get_params_for_batched_commitment(&incidence)
+                .expect("dense batched commit layout");
+
+            let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
+                .iter()
+                .enumerate()
+                .map(|(point_idx, &count)| {
+                    (0..count)
+                        .map(|poly_idx| {
+                            make_dense_poly(
+                                NV,
+                                0xd3e5_7000 + (point_idx as u64) * 100 + poly_idx as u64,
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let opening_points_owned: Vec<Vec<F>> =
+                vec![random_point(NV, 0xaaaa_7000), random_point(NV, 0xaaaa_7001)];
+            let openings_per_point: Vec<Vec<F>> = polys_per_point
+                .iter()
+                .zip(opening_points_owned.iter())
+                .map(|(polys, point)| {
+                    polys
+                        .iter()
+                        .map(|poly| opening_from_poly(poly, point, &layout))
+                        .collect()
+                })
+                .collect();
+
+            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+                polys_per_point.iter().map(Vec::as_slice).collect();
+            let opening_points: Vec<&[F]> =
+                opening_points_owned.iter().map(Vec::as_slice).collect();
+
+            let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::setup_prover(NV, total_claims, num_polys_per_point.len())
+            .unwrap();
+            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::setup_verifier(&setup);
+
+            let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::batched_commit(
+                &setup, &CpuBackend, &prepared, &polys_per_point_refs
+            )
+            .expect("dense batched commit");
+            let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
+
+            let mut prover_transcript =
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shift");
+            let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::batched_prove(
+                &setup,
+                &CpuBackend,
+                &prepared,
+                prove_inputs_from_groups(
+                    &opening_points,
+                    &polys_per_point_refs,
+                    &commitments,
+                    hints,
+                ),
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
+            )
+            .expect("multipoint batched prove");
+
+            // Move `δ = 1` from point 0's first claim to point 1's first claim:
+            // the summed claim is preserved, but neither point's opening is
+            // honest anymore.
+            let mut shifted = openings_per_point.clone();
+            shifted[0][0] += F::one();
+            shifted[1][0] -= F::one();
+            let shifted_refs: Vec<&[F]> = shifted.iter().map(Vec::as_slice).collect();
+
+            let mut verifier_transcript =
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shift");
+            let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
+                F,
+                DENSE_D,
+            >>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_inputs_from_groups(&opening_points, &shifted_refs, &commitments),
+                BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
+            );
+            assert!(
+                result.is_err(),
+                "point-axis mass shift (sum-preserving) must be rejected"
+            );
         });
     }
 

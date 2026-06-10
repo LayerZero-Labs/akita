@@ -766,10 +766,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 block_offset_low,
                 self.num_blocks,
             )?;
-        let mut challenge_block_summaries_by_t_vector =
-            vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        // Per-commitment-group t-vector starting indices. Under the current
-        // relation-routing contract these match opening-point groups.
+        // Per-(point, t-vector) challenge summaries, flattened as
+        // `point * num_t_vectors + t_vector`. Each claim's challenge mass stays
+        // in its own point's plane so a slot shared across points is never
+        // summed on the per-point A-block.
+        let mut challenge_block_summaries_by_point_t_vector =
+            vec![[E::zero(), E::zero()]; self.num_public_rows * self.num_t_vectors];
+        // Per-commitment-group t-vector starting indices.
         let t_vector_offsets: Vec<usize> = self
             .num_polys_per_commitment_group
             .iter()
@@ -783,9 +786,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             self.claim_to_commitment_group_poly.iter().enumerate()
         {
             let t_vector_idx = t_vector_offsets[group_idx] + poly_idx;
+            let point_idx = self.claim_to_point[claim_idx];
+            let dst = point_idx * self.num_t_vectors + t_vector_idx;
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
-            challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
-            challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
+            challenge_block_summaries_by_point_t_vector[dst][0] += carry0;
+            challenge_block_summaries_by_point_t_vector[dst][1] += carry1;
         }
 
         // ----- E-hat ---------------------------------------------------------
@@ -835,13 +840,27 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     )
                 })
                 .collect::<Result<_, _>>()?;
+            // Per-point row layout: fold-consistency rows occupy `0..P`, public
+            // eval rows occupy `P..2P`. A claim's ê fold column lands on its
+            // point's consistency row `claim_to_point` and its point's public
+            // row `num_public_rows + claim_to_point`.
             let public_row_weights_by_claim: Vec<E> = self
                 .claim_to_point
                 .iter()
                 .map(|&point_idx| {
-                    point_idx
-                        .checked_add(1)
+                    self.num_public_rows
+                        .checked_add(point_idx)
                         .and_then(|idx| self.eq_tau1.get(idx))
+                        .copied()
+                        .ok_or(AkitaError::InvalidProof)
+                })
+                .collect::<Result<_, _>>()?;
+            let challenge_row_weights_by_claim: Vec<E> = self
+                .claim_to_point
+                .iter()
+                .map(|&point_idx| {
+                    self.eq_tau1
+                        .get(point_idx)
                         .copied()
                         .ok_or(AkitaError::InvalidProof)
                 })
@@ -853,7 +872,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
                 public_row_weights_by_claim: &public_row_weights_by_claim,
-                challenge_weight: self.eq_tau1[0],
+                challenge_row_weights_by_claim: &challenge_row_weights_by_claim,
             }
             .evaluate()
         };
@@ -870,7 +889,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         } else {
             0
         };
-        let a_start = 1
+        // Per-point layout: consistency (P) | public (P) | D | COMMIT (per group)
+        // | B_inner (per group) | A (P · n_a, per point).
+        let a_start = self.num_public_rows
             + self.num_public_rows
             + self.n_d_active()
             + (commit_rows_pg + b_inner_rows_pg) * self.num_points;
@@ -882,7 +903,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 high_challenges,
                 offset_high: layout.offset_t >> offset_low_bits,
                 gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries_by_t_vector,
+                challenge_block_summaries: &challenge_block_summaries_by_point_t_vector,
+                num_t_vectors: self.num_t_vectors,
+                num_points: self.num_public_rows,
+                n_a: self.n_a,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
             }
             .evaluate()
@@ -924,6 +948,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let z_structured_contribution = {
             let _span = tracing::info_span!("z_structured").entered();
             let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+            // Per-point fold-consistency row weights (rows `0..P`).
+            let consistency_weights = &self.eq_tau1[0..self.num_public_rows];
             if self.block_len.is_power_of_two() {
                 let z_offset_low = layout.offset_z & (self.block_len - 1);
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
@@ -943,7 +969,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     g1_commit: &g1_commit,
                     fold_gadget: &fold_gadget,
                     a_block_summary: &a_block_summary,
-                    consistency_weight: self.eq_tau1[0],
+                    consistency_weights,
                 }
                 .evaluate()
             } else {
@@ -958,7 +984,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 ZDenseSlicesEvaluator {
                     g1_commit: &g1_commit,
                     fold_gadget: &fold_gadget,
-                    consistency_weight: self.eq_tau1[0],
+                    consistency_weights,
                     a_evals_by_point: &a_evals_by_point,
                     full_vec_randomness: x_challenges,
                     offset_z: layout.offset_z,
@@ -983,7 +1009,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // columns), weighted by the B_inner row eq. Zero for single-tier.
         let u_recompose_contribution = if self.tier_split > 1 {
             let n_d_active = self.n_d_active();
-            let f_start = 1 + self.num_public_rows + n_d_active;
+            let f_start = self.num_public_rows + self.num_public_rows + n_d_active;
             let b_inner_start = f_start + commit_rows_pg * self.num_points;
             let n_b_small = self.n_b;
             let inner_rows_pg = self.tier_split * n_b_small;
