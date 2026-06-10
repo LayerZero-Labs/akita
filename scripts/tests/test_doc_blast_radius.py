@@ -30,6 +30,32 @@ class TestPathMatchesGlob(unittest.TestCase):
         self.assertTrue(mod.path_matches_glob("Cargo.toml", "Cargo.toml"))
         self.assertFalse(mod.path_matches_glob("README.md", "Cargo.toml"))
 
+    def test_flat_schedule_and_proof_size_paths(self) -> None:
+        self.assertTrue(
+            mod.path_matches_glob(
+                "crates/akita-types/src/schedule.rs",
+                "crates/akita-types/src/schedule*",
+            )
+        )
+        self.assertFalse(
+            mod.path_matches_glob(
+                "crates/akita-types/src/schedule.rs",
+                "crates/akita-types/src/**/schedule*",
+            )
+        )
+        self.assertTrue(
+            mod.path_matches_glob(
+                "crates/akita-types/src/proof_size.rs",
+                "crates/akita-types/src/proof_size.rs",
+            )
+        )
+        self.assertTrue(
+            mod.path_matches_glob(
+                "crates/akita-types/src/layout/proof_size.rs",
+                "crates/akita-types/src/**/proof_size*",
+            )
+        )
+
 
 class TestLoadMap(unittest.TestCase):
     def test_map_loads(self) -> None:
