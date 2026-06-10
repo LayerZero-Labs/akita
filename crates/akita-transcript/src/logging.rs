@@ -359,11 +359,11 @@ fn hex_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
     use crate::{append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript};
-    use akita_field::{Fp2, Fp32, Fp64, NegOneNr};
+    use akita_field::{Fp32, Fp64, FpExt2, NegOneNr};
 
     type F = Fp64<4294967197>;
     type Base = Fp32<251>;
-    type BaseFp2 = Fp2<Base, NegOneNr>;
+    type BaseFpExt2 = FpExt2<Base, NegOneNr>;
 
     #[test]
     fn logs_absorbs_and_squeezes() {
@@ -391,7 +391,7 @@ mod tests {
     fn catches_wire_without_matching_absorb_before_squeeze() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"final-w");
+        transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
         let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
         let errors = transcript.smell_check_errors();
         assert!(errors.iter().any(|error| error.contains("wire `ak/a/w`")));
@@ -401,8 +401,8 @@ mod tests {
     fn accepts_wire_with_matching_absorb_before_squeeze() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"final-w");
-        transcript.append_bytes(labels::ABSORB_SUMCHECK_W, b"final-w");
+        transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
+        transcript.append_bytes(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
         let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
         transcript.assert_smell_checks();
     }
@@ -411,7 +411,7 @@ mod tests {
     fn coverage_manifest_requires_wire_events() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.expect_wire_label(labels::ABSORB_SUMCHECK_W);
+        transcript.expect_wire_label(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING);
         let errors = transcript.smell_check_errors();
         assert!(errors
             .iter()
@@ -435,9 +435,14 @@ mod tests {
     fn known_label_check_accepts_extension_limb_labels() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<Base>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        let x = BaseFp2::new(Base::from_u64(1), Base::from_u64(2));
-        append_ext_field::<Base, BaseFp2, _>(&mut transcript, labels::ABSORB_EVALUATION_CLAIMS, &x);
-        let _ = sample_ext_challenge::<Base, BaseFp2, _>(&mut transcript, labels::CHALLENGE_TAU0);
+        let x = BaseFpExt2::new(Base::from_u64(1), Base::from_u64(2));
+        append_ext_field::<Base, BaseFpExt2, _>(
+            &mut transcript,
+            labels::ABSORB_EVALUATION_CLAIMS,
+            &x,
+        );
+        let _ =
+            sample_ext_challenge::<Base, BaseFpExt2, _>(&mut transcript, labels::CHALLENGE_TAU0);
 
         transcript.assert_smell_checks();
     }

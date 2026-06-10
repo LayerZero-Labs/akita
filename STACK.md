@@ -216,13 +216,19 @@ The first implementation should use the cleaner post-Stage-2 placement:
 5. Carry the remaining setup-prefix opening claim into the next recursive fold.
 6. Batch that carried setup claim with the folded-witness opening.
 
-The no-new-stage optimization is to shift the relation matrix work back before
-the setup product sumcheck and use Stage 2 for the setup product. That is valid
-only if the witness claim produced by the shifted relation work is also closed:
-either carry both witness openings into the next recursive incidence batch, or
-add an explicit witness-claim reduction that combines the relation witness
-claim and the norm witness claim into one later witness opening. Without that
-extra reduction/carry, a witness claim is left unresolved.
+The optimized target is the no-new-stage relation-shift form: batch the relation
+into the Stage-1 range/norm sumcheck so `r_x` is fixed early (dropping the
+`eq(tau_0, .)`-factored compact range message), use Stage 2 for the setup
+product sumcheck, and fold an explicit witness claim-reduction sumcheck
+(`lambda * W(r_1) + s -> W(r_star)`, with `s = W(r_1)(W(r_1)+1)`) into Stage 2 to
+merge the relation and norm witness claims into one carried folded-witness
+opening. The level then runs two stages, the same as baseline, and carries a
+single witness opening plus the setup opening. The post-Stage-2 Stage-3 placement above is the
+first implementation step toward this; the relation-shift form is valid because
+the shifted relation work's witness claim is closed by the reduction (the
+alternative closure, carrying both openings into the next recursive incidence
+batch, also works). See `specs/setup-layout-repack.md` (Product Sumcheck
+Placement) for the full schedule and cost.
 
 If there is no subsequent recursive fold, setup offloading is disabled for that
 level in the first implementation.

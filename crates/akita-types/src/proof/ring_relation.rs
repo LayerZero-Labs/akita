@@ -12,7 +12,7 @@ use akita_field::{AkitaError, FieldCore, Zero};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
 /// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
-/// before ŵ/t̂; otherwise ŵ/t̂ precede ẑ (see `specs/optimized_verifier.md`).
+/// before ê/t̂; otherwise ê/t̂ precede ẑ (see `specs/optimized_verifier.md`).
 #[inline]
 pub fn ring_column_z_first(lp: &LevelParams) -> bool {
     lp.m_vars >= lp.r_vars
@@ -24,8 +24,12 @@ pub fn ring_column_z_first(lp: &LevelParams) -> bool {
 /// [`ring_relation_segment_layout_for_opening_shape`] in tests).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingRelationSegmentLayout {
-    pub offset_w: usize,
+    pub offset_e: usize,
     pub offset_t: usize,
+    /// Witness column offset of the tiered `û_concat` segment (flat, contiguous,
+    /// immediately after `t̂`). Equals `offset_t + t_len`; for single-tier
+    /// levels the segment is empty (`u_len == 0`) but the offset is still valid.
+    pub offset_u: usize,
     pub offset_z: usize,
     pub offset_r: usize,
     #[cfg(feature = "zk")]
@@ -219,9 +223,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .checked_mul(num_t_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
 
-        let w_len = depth_open
+        let e_len = depth_open
             .checked_mul(total_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("W segment length overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
         let t_len = depth_open
             .checked_mul(lp.a_key.row_len())
             .and_then(|len| len.checked_mul(t_total_blocks))
@@ -253,26 +257,34 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .checked_mul(b_blinding_digit_planes_per_point)
             .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
 
+        // Tiered `û_concat` segment length (per the single commitment group);
+        // `0` for single-tier levels.
+        let u_len = lp.u_concat_ring_len_per_group();
         let z_first = ring_column_z_first(lp);
         let offset_z = if z_first {
             0
         } else {
-            w_len
+            e_len
                 .checked_add(t_len)
+                .and_then(|offset| offset.checked_add(u_len))
                 .and_then(|offset| offset.checked_add(b_blinding_segment_len))
                 .and_then(|offset| offset.checked_add(d_blinding_segment_len))
                 .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
         };
-        let offset_w = if z_first { z_len } else { 0 };
+        let offset_e = if z_first { z_len } else { 0 };
         let offset_t = if z_first {
             z_len
-                .checked_add(w_len)
+                .checked_add(e_len)
                 .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?
         } else {
-            w_len
+            e_len
         };
-        let b_blinding_offset = offset_t
+        // `û_concat` is emitted immediately after `t̂` in both orderings.
+        let offset_u = offset_t
             .checked_add(t_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
+        let b_blinding_offset = offset_u
+            .checked_add(u_len)
             .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
         let d_blinding_offset = b_blinding_offset
             .checked_add(b_blinding_segment_len)
@@ -289,8 +301,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         };
 
         Ok(RingRelationSegmentLayout {
-            offset_w,
+            offset_e,
             offset_t,
+            offset_u,
             offset_z,
             offset_r,
             #[cfg(feature = "zk")]
@@ -396,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_instance_accepts_recursive_split_commitment_routing() {
+    fn relation_instance_rejects_split_commitment_routing() {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![1, 1]).expect("valid incidence");
@@ -407,7 +420,7 @@ mod tests {
             .iter()
             .map(RingMultiplierOpeningPoint::from_base)
             .collect();
-        let instance = RingRelationInstance::<F, D>::new(
+        let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, incidence.num_claims()),
             opening_points,
@@ -419,10 +432,10 @@ mod tests {
             vec![CyclotomicRing::zero(); 2],
             Vec::new(),
         )
-        .expect("recursive split routing is supported");
-        assert_eq!(
-            instance.commitment_routing().claim_to_commitment_group(),
-            &[0, 0]
+        .expect_err("split routing must be rejected");
+        assert!(
+            format!("{err:?}").contains("split opening/commitment routing is not supported"),
+            "unexpected error: {err:?}"
         );
     }
 
@@ -495,13 +508,13 @@ mod tests {
         let num_points = instance.incidence().num_points();
         let num_claims = instance.incidence().num_claims();
         let z_len = depth_fold * lp.num_digits_commit * num_points * lp.block_len;
-        let w_len = lp.num_digits_open * lp.num_blocks * num_claims;
-        assert_eq!(layout.offset_w, z_len);
-        assert_eq!(layout.offset_t, z_len + w_len);
+        let e_len = lp.num_digits_open * lp.num_blocks * num_claims;
+        assert_eq!(layout.offset_e, z_len);
+        assert_eq!(layout.offset_t, z_len + e_len);
         #[cfg(not(feature = "zk"))]
         {
             let t_len = lp.num_digits_open * lp.a_key.row_len() * lp.num_blocks * num_t_vectors;
-            assert_eq!(layout.offset_r, z_len + w_len + t_len);
+            assert_eq!(layout.offset_r, z_len + e_len + t_len);
         }
         instance
             .check_v_shape_for_level(&lp)

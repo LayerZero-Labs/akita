@@ -11,7 +11,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::fields::wide::HasWide;
+use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 
@@ -77,6 +77,13 @@ where
         match self {
             Self::Dense(poly) => poly.num_vars(),
             Self::OneHot(poly) => poly.num_vars(),
+        }
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(poly) => poly.onehot_chunk_size(),
+            Self::OneHot(poly) => poly.onehot_chunk_size(),
         }
     }
 

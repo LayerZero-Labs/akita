@@ -123,7 +123,7 @@ Existing tests that must continue passing:
 - `cargo nextest run --workspace --no-fail-fast`
 - `cargo test -p akita-types field_reduction` (anchors `embed_subfield`, `psi_embed`, `check_trace_inner_product` for K ∈ {1, 2, 4})
 - `cargo test -p akita-verifier`
-- `cargo test -p akita-scheme fp128_degree_one_batched_proof_roundtrip_is_stable`
+- `cargo test -p akita-pcs fp128_degree_one_batched_proof_roundtrip_is_stable`
 
 Targeted tests added in this PR:
 

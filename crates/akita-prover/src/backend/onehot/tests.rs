@@ -1,8 +1,11 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
-use akita_field::fields::{Fp64, Prime128Offset275, Prime24Offset3, TowerBasisFp4, TwoNr, UnitNr};
 use akita_field::RandomSampling;
+use akita_field::{
+    Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4,
+    TwoNr, UnitNr,
+};
 use akita_types::FlatMatrix;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -195,7 +198,7 @@ fn onehot_poly_rejects_non_divisible_k_d() {
 #[test]
 fn tensor_column_partials_match_dense_reference() {
     type F = Prime24Offset3;
-    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
     const D: usize = 16;
 
     let poly = OneHotPoly::<F, D>::new(
@@ -232,7 +235,7 @@ fn tensor_column_partials_match_dense_reference() {
 #[test]
 fn batched_tensor_column_partials_match_individual() {
     type F = Prime24Offset3;
-    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
     const D: usize = 16;
 
     let polys = [
@@ -289,10 +292,136 @@ fn batched_tensor_column_partials_match_individual() {
     assert_eq!(got, expected);
 }
 
+/// Exercises the factorized sparse fast path across *multiple outer blocks*
+/// (`num_vars - low_vars` exceeds the inner-bit cap, so the high weights are
+/// genuinely split into more than one outer block) and on a power-of-two
+/// `onehot_k`. The batched sparse partials must be byte-identical both to the
+/// dense reference and to the per-poly path.
+#[test]
+fn batched_tensor_column_partials_multi_block_match_dense() {
+    type F = Prime24Offset3;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    const D: usize = 16;
+    const ONEHOT_K: usize = 8;
+    // hi_vars = NUM_VARS - log2(ONEHOT_K) = 18 - 3 = 15 > inner-bit cap, so the
+    // factorization produces several outer blocks.
+    const NUM_VARS: usize = 18;
+
+    let num_chunks = (1usize << NUM_VARS) / ONEHOT_K;
+    let make_indices = |seed: usize| {
+        (0..num_chunks)
+            .map(|c| {
+                let h = c
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add(seed.wrapping_mul(40_503));
+                if h % 7 == 0 {
+                    None
+                } else {
+                    Some(h % ONEHOT_K)
+                }
+            })
+            .collect::<Vec<Option<usize>>>()
+    };
+    let polys = [
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(3)).unwrap(),
+    ];
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(7 * idx as u128 + 1),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 2),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 4),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 6),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let dense_expected = polys
+        .iter()
+        .map(|poly| {
+            materialize_onehot_as_dense(poly)
+                .tensor_extension_column_partials::<E>(&point)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let individual = polys
+        .iter()
+        .map(|poly| poly.tensor_extension_column_partials::<E>(&point).unwrap())
+        .collect::<Vec<_>>();
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let batched =
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+            &poly_refs, &point,
+        )
+        .unwrap();
+
+    assert_eq!(batched, dense_expected);
+    assert_eq!(batched, individual);
+}
+
+#[test]
+fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp_ext4() {
+    type F = Prime32Offset99;
+    type E = RingSubfieldFpExt4<F>;
+    const D: usize = 32;
+    const ONEHOT_K: usize = 16;
+    const NUM_VARS: usize = 10;
+
+    let num_chunks = (1usize << NUM_VARS) / ONEHOT_K;
+    let make_indices = |seed: usize| {
+        (0..num_chunks)
+            .map(|chunk| {
+                let h = chunk
+                    .wrapping_mul(1_103_515_245)
+                    .wrapping_add(seed.wrapping_mul(12_345));
+                if h % 11 == 0 {
+                    None
+                } else {
+                    Some(h % ONEHOT_K)
+                }
+            })
+            .collect::<Vec<Option<usize>>>()
+    };
+    let polys = [
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(3)).unwrap(),
+    ];
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(7 * idx as u128 + 1),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 2),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 4),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 8),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let dense_expected = polys
+        .iter()
+        .map(|poly| {
+            materialize_onehot_as_dense(poly)
+                .tensor_extension_column_partials::<E>(&point)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let batched =
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+            &poly_refs, &point,
+        )
+        .unwrap();
+
+    assert_eq!(batched, dense_expected);
+}
+
 #[test]
 fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     type F = Prime24Offset3;
-    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
     const D: usize = 16;
 
     let polys = [
@@ -361,6 +490,107 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
 
     assert_eq!(got.table_len(), expected.table_len());
     assert_eq!(got.entries(), expected.entries());
+}
+
+/// Diagnostic for the EOR `np = 1` plateau: dump the within-chunk hot-position
+/// distribution (`raw >> lw`, equivalently `tail % stride`) read off a *real*
+/// tensor-packed witness, and show the fold plateau is `log2(stride)` rounds
+/// long *regardless* of how that distribution looks.
+///
+/// The hot positions are uniformly spread (random `raw`, exactly like
+/// `examples/profile/workload.rs`: seed `0xbeef_cafe`, `gen_range(0..onehot_k)`,
+/// every chunk active), yet `entries_len` is provably flat for `log2(stride)`
+/// rounds. So the plateau comes from the one-entry-per-power-of-two-window
+/// layout, not from any "alignment" of the hot positions.
+///
+/// `onehot_k = 256` and `width = [E:F] = 4` reproduce the `fp32 onehot_d32`
+/// shape (`stride = 64`, expected plateau `log2(64) = 6`). The arity is
+/// downscaled (2^14 chunks) purely for test speed; the per-chunk structure is
+/// identical to the profiled run.
+///
+/// See the histogram with:
+///   cargo test -p akita-prover np1_offset_distribution_and_plateau -- --nocapture
+#[test]
+fn np1_offset_distribution_and_plateau() {
+    use rand::Rng;
+    type F = Prime24Offset3;
+    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    const D: usize = 16;
+
+    let onehot_k = 256usize;
+    let log_chunks = 14usize;
+    let num_chunks = 1usize << log_chunks;
+
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let indices: Vec<Option<usize>> = (0..num_chunks)
+        .map(|_| Some(rng.gen_range(0..onehot_k)))
+        .collect();
+    let poly = OneHotPoly::<F, D>::new(onehot_k, indices).unwrap();
+
+    let witness = poly.tensor_packed_sparse_witness::<E>().unwrap();
+
+    let (lw, width) = akita_types::tensor_opening_split::<F, E>().unwrap();
+    assert!(onehot_k.is_multiple_of(width));
+    let stride = onehot_k / width;
+    assert!(stride.is_power_of_two() && stride >= 2);
+    let s = stride.trailing_zeros() as usize;
+
+    // (a) offset = raw >> lw, recovered from the real witness as tail % stride
+    //     because tail = chunk_idx * stride + (raw >> lw).
+    let tails: Vec<usize> = witness.entries().iter().map(|&(t, _)| t).collect();
+    assert_eq!(
+        tails.len(),
+        num_chunks,
+        "all chunks active => one entry each"
+    );
+    let mut hist = vec![0usize; stride];
+    for &t in &tails {
+        hist[t % stride] += 1;
+    }
+    let occupied = hist.iter().filter(|&&c| c > 0).count();
+    let min = *hist.iter().min().unwrap();
+    let max = *hist.iter().max().unwrap();
+    eprintln!(
+        "np=1 offset (raw>>lw) distribution: onehot_k={onehot_k} width={width} lw={lw} \
+         stride={stride} entries={} occupied_buckets={occupied}/{stride} \
+         per-bucket min={min} max={max} mean={}",
+        tails.len(),
+        tails.len() / stride,
+    );
+    eprintln!("  histogram[offset 0..{stride}] = {hist:?}");
+    assert!(
+        occupied > stride / 2,
+        "hot positions are spread, not aligned (occupied {occupied}/{stride})"
+    );
+
+    // (b) entries_len after r folds == #distinct(tail >> r): flat for r=0..=s,
+    //     then halves at r=s+1 — independent of the spread distribution above.
+    let distinct_after = |r: usize| -> usize {
+        let mut v: Vec<usize> = tails.iter().map(|&t| t >> r).collect();
+        v.sort_unstable();
+        v.dedup();
+        v.len()
+    };
+    eprintln!("plateau (expected entries_len flat for r=0..={s}):");
+    for r in 0..=(s + 2) {
+        eprintln!(
+            "  round r={r:2}: table_len=2^{:<2} entries_len={}",
+            log_chunks + s - r,
+            distinct_after(r),
+        );
+    }
+    for r in 0..=s {
+        assert_eq!(
+            distinct_after(r),
+            num_chunks,
+            "entries_len must stay flat across the log2(stride) plateau (round {r})",
+        );
+    }
+    assert_eq!(
+        distinct_after(s + 1),
+        num_chunks / 2,
+        "first merge halves entries_len exactly one round after the plateau",
+    );
 }
 
 #[test]

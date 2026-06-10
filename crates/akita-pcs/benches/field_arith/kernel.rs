@@ -1,4 +1,5 @@
-use akita_field::{CanonicalField, FieldCore, PackedField, Prime128Offset275, RandomSampling};
+use akita_field::packed::PackedField;
+use akita_field::{CanonicalField, FieldCore, Prime128Offset275, RandomSampling};
 use criterion::{black_box, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -17,9 +18,8 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("field_arith/kernel/packed_macc");
     group.throughput(Throughput::Elements(n));
 
-    use akita_field::fields::pseudo_mersenne::*;
+    use akita_field::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
 
-    sumcheck_bench::<Prime16Offset99, P16O99>(&mut group, PRIME16_OFFSET99, &mut rng, n);
     sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
     sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);
     sumcheck_bench::<Prime32Offset99, P32O99>(&mut group, PRIME32_OFFSET99, &mut rng, n);

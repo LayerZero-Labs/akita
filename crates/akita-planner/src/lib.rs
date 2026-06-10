@@ -18,13 +18,12 @@ pub mod generated;
 mod resolve;
 pub mod schedule_params;
 
-pub use akita_types::root_level_params_for_layout_with_log_basis;
 pub use generated::GeneratedScheduleTable;
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
     shipped_table,
 };
-pub use schedule_params::{find_recursive_carried_suffix_schedule, find_schedule};
+pub use schedule_params::find_schedule;
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///
@@ -55,4 +54,14 @@ pub struct PlannerPolicy {
     /// folded-witness digit count. Only consulted at a root level whose
     /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
     pub onehot_chunk_size: usize,
+    /// Enable the tiered second commitment matrix `F` (`Cfg::TIERED_COMMITMENT`).
+    ///
+    /// When `true`, [`schedule_params`] is allowed to reuse a smaller first-tier
+    /// matrix `B` across `f` witness slices and size a second-tier matrix `F`
+    /// per level whose first-tier footprint would otherwise exceed `A`. When
+    /// `false`, every level emits `tier_split == 1` / `f_key == None` and the
+    /// layout is identical to the historical single-tier scheme. Also keys the
+    /// [`shipped_table`] discriminator so a tiered policy never aliases a
+    /// non-tiered table.
+    pub tiered: bool,
 }

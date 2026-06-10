@@ -1,4 +1,9 @@
 //! Proof structures for the Akita protocol.
+//!
+//! Opening-side notation (paper §§3--5): pre-digit ring openings are `e_folded`;
+//! per-block opening digits are `e_hat` (`e_i = ⟨a, f_i⟩`, `ê_i = G^{-1}(e_i)`).
+//! The full next-level recursive witness stays `w` (`next_w_commitment`,
+//! `final_witness`, `num_w_vectors`, `build_w_coeffs`).
 
 //! Proof, commitment, setup, and claim data shapes.
 
@@ -9,6 +14,7 @@ pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
+pub mod setup_prefix;
 pub mod stage1;
 pub mod terminal_witness;
 
@@ -26,10 +32,9 @@ pub use batch::{
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
-    RingMultiplierOpeningPoint,
+    prepare_root_opening_point_ext, ring_subfield_packed_extension_opening_point,
+    root_tensor_projection_enabled, validate_batched_inputs, PreparedRecursiveOpeningPoint,
+    PreparedRootOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
@@ -38,16 +43,14 @@ pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSlice
 pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
-    append_carried_opening_batch_to_transcript, append_claim_incidence_shape_to_transcript,
-    carried_opening_incidence_summary, sample_public_row_coefficients,
-    validate_carried_opening_batch, verifier_claims_to_incidence, CarriedOpeningClaim,
-    CarriedOpeningKind, CarriedOpeningSource, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, CommitmentRouting, IncidenceClaim, PublicOpeningRow,
+    append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
+    verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    CommitmentRouting, IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CarriedOpeningProof,
-    CarriedOpeningSourceProof, ExtensionOpeningReductionProof, TerminalLevelProof,
+    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
@@ -62,10 +65,16 @@ pub use setup::{
 };
 #[cfg(feature = "zk")]
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
+pub use setup_prefix::{
+    active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
+    setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
+};
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape, CarriedOpeningShape,
-    CarriedOpeningSourceShape, ExtensionOpeningReductionShape, LevelProofShape,
-    TerminalLevelProofShape,
+    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
+    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -74,32 +83,46 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use terminal_witness::{
-    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
+use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-pub use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
-use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
 #[cfg(not(feature = "zk"))]
-use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
+use akita_sumcheck::EqFactoredSumcheckProof;
+use akita_sumcheck::{
+    uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
+pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
+
 pub(super) fn checked_shape_len(len: usize) -> Result<(), SerializationError> {
     if len > DEFAULT_MAX_SEQUENCE_LEN {
         return Err(SerializationError::LengthLimitExceeded {
             len: u64::try_from(len).unwrap_or(u64::MAX),
             max: DEFAULT_MAX_SEQUENCE_LEN,
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn checked_shape_sequence_len(len: usize) -> Result<(), SerializationError> {
+    if len > MAX_PROOF_SHAPE_SEQUENCE_LEN {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: u64::try_from(len).unwrap_or(u64::MAX),
+            max: MAX_PROOF_SHAPE_SEQUENCE_LEN,
         });
     }
     Ok(())

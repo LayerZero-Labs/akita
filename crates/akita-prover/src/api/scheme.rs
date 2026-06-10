@@ -4,7 +4,7 @@ use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
+use akita_types::{BasisMode, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -36,6 +36,18 @@ where
     /// Returns an error if the requested capacity, field tower, or generated
     /// setup is invalid.
     fn setup_prover(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<Self::ProverSetup, AkitaError>;
+
+    /// Build prover setup for recursive setup-contribution mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if base setup construction or recursive setup-prefix
+    /// population fails.
+    fn setup_prover_recursion(
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
@@ -112,6 +124,7 @@ where
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,

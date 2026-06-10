@@ -1,6 +1,6 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{AppendToTranscript, BasisMode};
+use crate::{AppendToTranscript, BasisMode, SetupContributionMode};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 
@@ -62,6 +62,7 @@ where
         transcript: &mut T,
         claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;
 
     /// Protocol identifier.

@@ -128,9 +128,8 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         v_coeffs: 1,
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
+        stage3_sumcheck: None,
         next_commit_coeffs: 1,
-        extra_carried_sources: Vec::new(),
-        extra_carried_openings: Vec::new(),
     };
 
     let err = oversized.check().unwrap_err();
@@ -149,6 +148,41 @@ fn level_shape_validation_checks_extension_opening_reduction() {
 
     let err = wrong_degree.check().unwrap_err();
     assert!(matches!(err, SerializationError::InvalidData(_)));
+}
+
+#[test]
+fn level_shape_deserialization_rejects_vector_length_before_allocation() {
+    let mut bytes = Vec::new();
+    0usize.serialize_compressed(&mut bytes).unwrap(); // y_ring_coeffs
+    false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
+    0usize.serialize_compressed(&mut bytes).unwrap(); // v_coeffs
+    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
+        .serialize_compressed(&mut bytes)
+        .unwrap(); // stage1_stages
+
+    let err = LevelProofShape::deserialize_compressed(&bytes[..], &())
+        .expect_err("oversized shape vector must be rejected before allocation");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
+}
+
+#[test]
+fn terminal_shape_deserialization_validates_shape() {
+    let mut bytes = Vec::new();
+    0usize.serialize_compressed(&mut bytes).unwrap(); // y_rings_coeffs
+    false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
+    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
+        .serialize_compressed(&mut bytes)
+        .unwrap(); // stage2_sumcheck
+
+    let err = TerminalLevelProofShape::deserialize_compressed(&bytes[..], &())
+        .expect_err("oversized terminal sumcheck shape must be rejected");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
 }
 
 fn tiny_stage1() -> AkitaStage1Proof<F> {
@@ -174,8 +208,6 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         next_w_eval: F::zero(),
         #[cfg(feature = "zk")]
         next_w_eval_masked: F::zero(),
-        extra_carried_sources: Vec::new(),
-        extra_carried_openings: Vec::new(),
     }
 }
 

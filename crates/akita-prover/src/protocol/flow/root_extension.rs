@@ -47,7 +47,7 @@ pub(in crate::protocol::flow) fn prepare_root_extension_opening_reduction<
 ) -> Result<PreparedRootExtensionOpeningReduction<E, C>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F> + ExtField<E>,
     P: AkitaPolyOps<F, D>,
 {
@@ -191,7 +191,12 @@ pub(in crate::protocol::flow) fn prove_prepared_root_extension_opening_reduction
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F> + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
 {
@@ -304,7 +309,7 @@ where
                     .entered();
                     tensor_equality_factor_evals::<F, C>(tail_point, &eta)?
                 };
-                terms.push(BatchedExtensionOpeningReductionTerm::new_sparse(
+                terms.push(ExtensionOpeningReductionTerm::new_sparse(
                     witness_evals,
                     factor_evals,
                     C::one(),
@@ -318,7 +323,7 @@ where
                 )
                 .entered();
                 terms.push(
-                    BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+                    ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
                         witness_evals,
                         tail_point.to_vec(),
                         eta.clone(),
@@ -345,7 +350,7 @@ where
                 let tail_point = &padded_points[point_idx][split_bits..];
                 let factor_evals = tensor_equality_factor_evals::<F, C>(tail_point, &eta)?;
                 let witness_evals = poly.tensor_packed_extension_evals::<C>()?;
-                terms.push(BatchedExtensionOpeningReductionTerm::new(
+                terms.push(ExtensionOpeningReductionTerm::new(
                     witness_evals,
                     factor_evals,
                     row_coefficients[claim_idx],
@@ -356,9 +361,11 @@ where
     };
     let prover = {
         let _span = tracing::info_span!("root_extension_reduction_prover_new").entered();
-        BatchedExtensionOpeningReductionProver::new(terms, true_input_claim)?
+        ExtensionOpeningReductionProver::new(terms, true_input_claim)?
     };
     let mut prover = prover;
+    let _eor_sumcheck_span =
+        tracing::info_span!("extension_opening_reduction_sumcheck", path = "root").entered();
     #[cfg(not(feature = "zk"))]
     let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)

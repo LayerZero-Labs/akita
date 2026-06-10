@@ -24,7 +24,10 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::D64OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-pub(super) const ONEHOT_K: usize = ONEHOT_D;
+// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+// ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
+// per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
+pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::D128Full;
 pub(super) const DENSE_D: usize = DenseCfg::D;
@@ -171,9 +174,12 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
-    let total_ring = layout.num_blocks * layout.block_len;
+    // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
+    // `2^nv / K` one-hot chunks of size `K`.
+    let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+    let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring)
+    let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
     OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
@@ -303,9 +309,9 @@ pub(super) fn assert_terminal_event_order_if_present(
 ) -> Option<usize> {
     use akita_transcript::labels;
 
-    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
+    let e_hat = first_label_index(events, labels::ABSORB_TERMINAL_E_HAT)?;
     let (sparse_seed, sparse_seed_end) =
-        first_logical_label_span_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
+        first_logical_label_span_after(events, e_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
             .expect("terminal transcript must squeeze sparse seed");
     let remainder =
         first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
@@ -322,17 +328,17 @@ pub(super) fn assert_terminal_event_order_if_present(
 
     for (range, label, message) in [
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_RING_SWITCH,
             "terminal alpha must not precede witness remainder",
         ),
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_TAU1,
             "terminal tau1 must not precede alpha",
         ),
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_SUMCHECK_ROUND,
             "terminal stage-2 sumcheck must not precede tau1",
         ),
@@ -375,7 +381,7 @@ pub(super) fn assert_terminal_event_order_if_present(
         assert_no_logical_label(events, range, label, message);
     }
 
-    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
+    assert!(e_hat < sparse_seed, "e_hat must precede sparse seed");
     assert!(
         sparse_seed < remainder,
         "sparse seed must precede witness remainder"
@@ -387,12 +393,12 @@ pub(super) fn assert_terminal_event_order_if_present(
         "tau1 must precede terminal stage-2 sumcheck"
     );
     assert!(
-        events[w_hat..]
+        events[e_hat..]
             .iter()
             .all(|event| event_label(event).is_none_or(|candidate| {
                 !is_label_or_extension_limb(candidate, labels::CHALLENGE_TAU0)
             })),
         "terminal transcript window must not squeeze tau0"
     );
-    Some(w_hat)
+    Some(e_hat)
 }

@@ -17,15 +17,20 @@ cargo test
 ## CI test timing
 
 Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
-showing per-pass wall time vs a main baseline, plus per-test outliers from the
-nextest JUnit output. The CI test job uploads artifact `ci-test-timing-data`
+showing per-pass wall time vs a main baseline, critical-path wall time when passes
+run in parallel, plus per-test outliers from the nextest JUnit output. CI runs the
+non-zk and all-features nextest passes in parallel matrix jobs (`slice:index/total`
+via `matrix.shard` / `strategy.job-total`; 1-based index, not `strategy.job-index`),
+with [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) per pass (`cache: false`
+on `setup-rust-toolchain` so the explicit shared-key step owns `target/`). The
+`test-timing` job merges shard JUnit and uploads artifact `ci-test-timing-data`
 containing `summary.json` and the rendered comment/report.
 
 ## Crate Structure
 
 Workspace members under `crates/`:
 
-- `akita-field` — field traits, prime/extension fields, wide/packed helpers, FFT, parallel macros
+- `akita-field` — field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros
 - `akita-serialization` — serialization/validation/compression traits
 - `akita-algebra` — modules/vectors, NTTs, cyclotomic rings, sparse challenges, polynomials
 - `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
@@ -34,11 +39,10 @@ Workspace members under `crates/`:
 - `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; the verifier-reachable per-level proof-size formula (`level_proof_bytes`); the SIS security-floor tables (`akita_types::sis_floor`: `SisModulusFamily`, `min_rank_for_secure_width`, `ceil_supported_collision`); pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `decomp_depths`); SIS-secure layout derivation (`sis_derived_root_params_for_layout`, `sis_secure_level_params`). The generated schedule-table *representation*, shipped tables, and on-demand expansion live in `akita-planner` (not here)
 - `akita-config` — runtime config presets, the single `CommitmentConfig` trait, config-backed schedule adapters, the `policy_of::<Cfg>()` bridge, the generated-table family list (`generated_families`) + `gen_schedule_tables` binary, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. **Depends on `akita-planner`.** `CommitmentConfig::runtime_schedule` is a one-line delegation to `akita_planner::get_schedule(key, &policy_of::<Self>(), …)`; the planner owns table selection (`shipped_table`), so the trait has **no** `schedule_table()` / `resolve_schedule()` hooks. Runtime DP fallback on a table miss is the default for every preset (no opt-in wrapper, no `test-utils` feature)
 - `akita-setup` — config-backed setup construction + optional setup cache
-- `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`). Reaches `akita-planner` transitively via `akita-config` (DP fallback is verifier-reachable)
-- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme)
-- `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API
+- `akita-verifier` — verifier replay (no prover-only polynomial backends). **Depends on `akita-config`** and is directly `<Cfg>`-generic: `verify_batched::<Cfg, T, D>` (in `protocol::batched`) calls `Cfg::…` and `bind_transcript_instance_descriptor` directly — there is no `_with_policy` closure layer. Reaches `akita-planner` transitively via `akita-config` (DP fallback is verifier-reachable)
+- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. **Depends on `akita-config`** and is directly `<Cfg>`-generic: `prove_batched::<Cfg, T, P, B, D>` (in `protocol::flow`), `commit::<Cfg, D, P, B>` / `batched_commit::<Cfg, D, P, B>` (in `api::commitment`), `commit_next_w::<Cfg, B, D>` and `prove_recursive_suffix::<Cfg, T, B, D>` (in `protocol`), calling `Cfg::…` and `bind_transcript_instance_descriptor` directly with no `_with_policy` closures. The root tensor-projection transform and the multi-`D` dispatch helpers live here (not in the scheme)
 - `akita-planner` — pure, **`Cfg`-free** schedule owner. It holds the generated schedule-table representation (`Generated*` types, `table_entry`, `generated_schedule_lookup_key`), the shipped `src/generated/*.rs` tables + `*_table()` constructors, the `policy → table` registry `shipped_table(&PlannerPolicy, root_fold_is_tensor)`, the on-demand compact→`LevelParams` expansion (`generated::expand`, `schedule_from_entry`), and the schedule-search DP `find_schedule(key, &PlannerPolicy, stage1, fold_shape)`. The single resolution entry point is `get_schedule(key, &PlannerPolicy, stage1, fold_shape)` — it selects the shipped table from the policy (and the level-0 fold shape, which disambiguates the tensor table), expands the compact entry on a hit, and runs the DP on a miss. It names no `CommitmentConfig` type and depends only on `akita-types` / `akita-challenges` / `akita-field`. Sits **BELOW** `akita-config` (the arrow is inverted): `akita-config::runtime_schedule` is a one-line delegation to `get_schedule`. The preset family list and the `gen_schedule_tables` binary live in `akita-config` (the only crate that can name presets); the binary writes its output into `crates/akita-planner/src/generated/`
-- `akita-pcs` — umbrella crate with examples, benches, integration tests, public re-exports
+- `akita-pcs` — umbrella crate with `AkitaCommitmentScheme` orchestration, examples, benches, integration tests, and public re-exports
 
 ## Key Abstractions
 
@@ -83,7 +87,7 @@ Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardeni
 
 ## Profiling
 
-Canonical: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile`. D=128 is the proof-size optimum under the committed-fold A-role SIS pricing (resolved through the runtime DP; there is no shipped D128 table).
+Canonical: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`. Under committed-fold A-role SIS pricing the planner's `total_bytes` optimum is **D=32 or D=64** (D32 is marginally smaller; D128 is ~20% larger). Use `akita_config::proof_optimized::fp128::best_onehot_schedule` / `best_full_schedule` to pick across D32/D64/D128. D128 has no shipped table and is resolved via runtime DP only.
 
 Knobs (`AKITA_MODE`, `AKITA_NUM_VARS`, `AKITA_PROFILE_TRACE`, `AKITA_PROFILE_LOG`, `AKITA_PROFILE_ANSI`, `AKITA_PROFILE_SPAN_CLOSES`, `AKITA_ALLOW_DEBUG_PROFILE`): defaults and details in `examples/profile.rs`. `RAYON_NUM_THREADS` caps Rayon threads; `--no-default-features` disables `parallel`. The `--release` guard can be bypassed with `AKITA_ALLOW_DEBUG_PROFILE=1`.
 

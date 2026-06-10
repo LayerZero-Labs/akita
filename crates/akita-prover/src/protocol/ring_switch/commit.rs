@@ -88,35 +88,47 @@ where
         sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     validate_commit_outer_input_nonempty(outer_input.len())?;
-    #[cfg(feature = "zk")]
-    let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-        prepared,
-        commit_layout.b_key.row_len(),
-        &outer_input,
-        commit_layout.log_basis,
-    )?;
-    #[cfg(not(feature = "zk"))]
-    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-        prepared,
-        commit_layout.b_key.row_len(),
-        &outer_input,
-        commit_layout.log_basis,
-    )?;
-    #[cfg(feature = "zk")]
-    {
-        let blinding_rows = backend.zk_b_digit_rows::<D>(
+    let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
+        // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
+        // tier is a non-goal; tiered proofs are exercised non-zk.
+        crate::api::commitment::tiered_commit_u_final::<F, D, B>(
+            backend,
+            prepared,
+            commit_layout,
+            &outer_input,
+        )?
+    } else {
+        #[cfg(feature = "zk")]
+        let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
             prepared,
             commit_layout.b_key.row_len(),
-            b_blinding_digits.flat_digits().len(),
-            b_blinding_digits.flat_digits(),
+            &outer_input,
+            commit_layout.log_basis,
         )?;
-        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding;
+        #[cfg(not(feature = "zk"))]
+        let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+            prepared,
+            commit_layout.b_key.row_len(),
+            &outer_input,
+            commit_layout.log_basis,
+        )?;
+        #[cfg(feature = "zk")]
+        {
+            let blinding_rows = backend.zk_b_digit_rows::<D>(
+                prepared,
+                commit_layout.b_key.row_len(),
+                b_blinding_digits.flat_digits().len(),
+                b_blinding_digits.flat_digits(),
+            )?;
+            for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+                *row += blinding;
+            }
         }
-    }
-    if u.len() != commit_layout.b_key.row_len() {
-        return Err(AkitaError::InvalidProof);
-    }
+        if u.len() != commit_layout.b_key.row_len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        u
+    };
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
         inner.decomposed_inner_rows,
@@ -133,42 +145,38 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-/// Dispatch a recursive `w` commitment to the selected ring dimension.
+/// Dispatch a recursive `w` commitment to the selected ring dimension under
+/// config `Cfg`.
 ///
-/// The prover crate owns typed backend preparation and `commit_w` execution.
-/// Callers supply the config-specific layout policy for the selected
-/// commitment dimension.
+/// The prover crate owns typed backend preparation and `commit_w` execution;
+/// the recursive layout is derived from `Cfg`.
 ///
 /// # Errors
 ///
 /// Returns an error if layout selection, backend preparation, commitment, or
 /// D-erased hint conversion fails.
-#[allow(clippy::type_complexity)]
 #[inline(never)]
-fn dispatch_commit_w_with_layout_policy<F, L, B, Layout>(
+fn dispatch_commit_w_with_layout_policy<Cfg, B>(
     backend: &B,
     commit_params: LevelParams,
-    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     logical_w: &RecursiveWitnessFlat,
-    layout_for_d: Layout,
-) -> Result<NextWitnessCommitment<F>, AkitaError>
+) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F>,
-    B: CommitmentComputeBackend<F>,
-    Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    B: CommitmentComputeBackend<Cfg::Field>,
 {
     let commit_d = commit_params.ring_dimension;
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
         let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
-        if L::EXT_DEGREE == 1 {
-            let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
-            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
+        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 logical_w,
                 expanded.as_ref(),
                 backend,
                 &prepared_commit,
-                &commit_layout,
+                &commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -176,14 +184,19 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
-            let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
-            let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
+            // The tensor pack is length-preserving (it redistributes the same
+            // digit count), so the committed witness fits the schedule's
+            // recursive commit params directly — no per-length re-derivation.
+            let committed_w =
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, { D_COMMIT }>(
+                    logical_w,
+                )?;
+            let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 &committed_w,
                 expanded.as_ref(),
                 backend,
                 &prepared_commit,
-                &commit_layout,
+                &commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -194,42 +207,38 @@ where
     })
 }
 
-/// Commit the next recursive witness using caller-supplied layout policy.
+/// Commit the next recursive witness under config `Cfg`.
 ///
 /// The same-D fast path reuses the caller's prepared backend context. Cross-D
 /// commitments prepare a typed backend context for the target ring dimension.
+/// The recursive commitment layout is derived from `Cfg::decomposition()` and
+/// `Cfg::ring_subfield_embedding_norm_bound()`.
 ///
 /// # Errors
 ///
 /// Returns an error if layout selection, commitment, backend preparation, or
 /// D-erased hint conversion fails.
-#[allow(clippy::type_complexity)]
 #[inline(never)]
-pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: usize>(
+pub fn commit_next_w<Cfg, B, const D: usize>(
     commit_params: &LevelParams,
-    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     logical_w: &RecursiveWitnessFlat,
-    same_d_layout: SameLayout,
-    dispatch_layout: DispatchLayout,
-) -> Result<NextWitnessCommitment<F>, AkitaError>
+) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F>,
-    B: CommitmentComputeBackend<F>,
-    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
-    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    B: CommitmentComputeBackend<Cfg::Field>,
 {
     if commit_params.ring_dimension == D {
-        if L::EXT_DEGREE == 1 {
-            let commit_layout = same_d_layout(commit_params, logical_w.len())?;
-            let (wc, wh) = commit_w::<F, B, D>(
+        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 logical_w,
                 expanded.as_ref(),
                 backend,
                 prepared,
-                &commit_layout,
+                commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -237,14 +246,16 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
-            let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
-            let commit_layout = same_d_layout(commit_params, committed_w.len())?;
-            let (wc, wh) = commit_w::<F, B, D>(
+            // The tensor pack is length-preserving, so the committed witness
+            // fits the schedule's recursive commit params directly.
+            let committed_w =
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, D>(logical_w)?;
+            let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 &committed_w,
                 expanded.as_ref(),
                 backend,
                 prepared,
-                &commit_layout,
+                commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -253,12 +264,11 @@ where
             })
         }
     } else {
-        dispatch_commit_w_with_layout_policy::<F, L, B, DispatchLayout>(
+        dispatch_commit_w_with_layout_policy::<Cfg, B>(
             backend,
             commit_params.clone(),
             expanded,
             logical_w,
-            dispatch_layout,
         )
     }
 }

@@ -8,7 +8,7 @@
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
-    Schedule, SisModulusFamily,
+    LevelParams, Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -258,6 +258,16 @@ pub fn digest_incidence(summary: &ClaimIncidenceSummary) -> DescriptorDigest {
     for row in summary.public_rows() {
         push_usize(&mut bytes, row.point_idx());
         push_usize_vec(&mut bytes, row.claim_indices());
+    }
+    blake2b_256(&bytes)
+}
+
+/// Digest a normalized list of commitment level parameters.
+pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
+    let mut bytes = Vec::new();
+    push_usize(&mut bytes, params.len());
+    for params in params {
+        params.append_descriptor_bytes(&mut bytes);
     }
     blake2b_256(&bytes)
 }
@@ -718,7 +728,6 @@ fn decode_sis_family<R: Read>(
         0 => Ok(SisModulusFamily::Q32),
         1 => Ok(SisModulusFamily::Q64),
         2 => Ok(SisModulusFamily::Q128),
-        3 => Ok(SisModulusFamily::Q16),
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusFamily tag {other}"
         ))),
@@ -823,6 +832,13 @@ mod tests {
             PlanSection::from_schedule(&schedule),
             CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
         )
+    }
+
+    #[test]
+    fn rejects_removed_q16_sis_family_tag() {
+        let err = decode_sis_family(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
+            .expect_err("historical Q16 tag 3 must be rejected");
+        assert!(matches!(err, SerializationError::InvalidData(_)));
     }
 
     #[test]

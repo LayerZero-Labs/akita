@@ -21,6 +21,7 @@
 
 pub mod ajtai_key;
 pub mod decomposition_digits;
+pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
 
@@ -30,8 +31,10 @@ pub use decomposition_digits::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_fold, num_digits_for_bound, num_digits_open, num_digits_s_commit,
 };
+pub use four_square::four_squares;
 pub use norm_bound::{
-    committed_fold_collision_s, fold_witness_beta, ring_product_infinity_norm_bound,
-    rounded_up_collision_norm_s, rounded_up_collision_norm_t, rounded_up_collision_norm_w,
-    FoldChallengeNorms, FoldWitnessNorms,
+    beta_l2_squared, committed_fold_collision_s, fold_witness_beta, l2_bound_squared,
+    l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
+    rounded_up_collision_norm_w, s_l2_max_squared, FoldChallengeNorms, FoldWitnessNorms,
 };

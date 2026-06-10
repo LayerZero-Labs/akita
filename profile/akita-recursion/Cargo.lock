@@ -94,7 +94,6 @@ name = "akita-field"
 version = "0.1.0"
 dependencies = [
  "akita-serialization",
- "jolt-field",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
@@ -110,7 +109,6 @@ dependencies = [
  "akita-config",
  "akita-field",
  "akita-prover",
- "akita-scheme",
  "akita-serialization",
  "akita-setup",
  "akita-sumcheck",
@@ -137,6 +135,7 @@ dependencies = [
  "aes",
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -161,6 +160,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
+ "clap",
  "rand 0.8.6",
  "rayon",
  "tracing",
@@ -208,22 +208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-scheme"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-config",
- "akita-field",
- "akita-prover",
- "akita-serialization",
- "akita-setup",
- "akita-transcript",
- "akita-types",
- "akita-verifier",
- "tracing",
-]
-
-[[package]]
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
@@ -251,7 +235,6 @@ dependencies = [
  "akita-field",
  "akita-serialization",
  "akita-transcript",
- "rayon",
  "tracing",
 ]
 
@@ -276,7 +259,9 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "num-traits",
  "rand_core 0.6.4",
+ "rayon",
  "sha3 0.10.9",
  "tracing",
 ]
@@ -287,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -1249,17 +1235,6 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "jolt-field"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
-dependencies = [
- "num-traits",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "serde",
 ]
 
 [[package]]

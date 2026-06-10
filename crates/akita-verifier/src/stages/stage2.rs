@@ -159,12 +159,27 @@ enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
 /// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
 pub(crate) struct Stage2RowEvalSource<F: FieldCore> {
     prepared: RingSwitchDeferredRowEval<F>,
+    setup_claim: Option<F>,
 }
 
 impl<F: FieldCore> Stage2RowEvalSource<F> {
     /// Construct a source from prepared ring-switch row-eval state.
     pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
-        Self { prepared }
+        Self {
+            prepared,
+            setup_claim: None,
+        }
+    }
+
+    /// Construct a source that uses a separately proved setup contribution.
+    pub(crate) fn new_with_setup_claim(
+        prepared: RingSwitchDeferredRowEval<F>,
+        setup_claim: F,
+    ) -> Self {
+        Self {
+            prepared,
+            setup_claim: Some(setup_claim),
+        }
     }
 }
 
@@ -397,6 +412,7 @@ where
             self.opening_points,
             self.ring_multiplier_points,
             self.alpha,
+            self.row_eval_source.setup_claim,
         )
     }
 }
@@ -520,12 +536,12 @@ where
 mod tests {
     use super::{field_witness_eval, packed_witness_eval};
     use akita_field::{AkitaError, FieldCore};
-    use akita_field::{Fp2, NegOneNr, Prime128Offset275};
+    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
     type F = Prime128Offset275;
-    type E = Fp2<F, NegOneNr>;
+    type E = FpExt2<F, NegOneNr>;
     const D: usize = 4;
 
     fn build_w_evals<F: FieldCore>(

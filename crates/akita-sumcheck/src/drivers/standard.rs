@@ -110,7 +110,16 @@ where
         let mut r = Vec::with_capacity(num_rounds);
 
         for round in 0..num_rounds {
-            let g = self.compute_round_univariate(round, claim);
+            let _round_span = tracing::info_span!(
+                "sumcheck_round",
+                round,
+                table_len = 1usize << (num_rounds - round)
+            )
+            .entered();
+            let g = {
+                let _s = tracing::info_span!("sumcheck_round_univariate").entered();
+                self.compute_round_univariate(round, claim)
+            };
             let round_sum = g.evaluate(&E::zero()) + g.evaluate(&E::one());
             debug_assert!(
                 round_sum == claim,
@@ -131,7 +140,10 @@ where
             r.push(r_i);
 
             claim = compressed.eval_from_hint(&claim, &r_i);
-            self.ingest_challenge(round, r_i);
+            {
+                let _s = tracing::info_span!("sumcheck_round_fold").entered();
+                self.ingest_challenge(round, r_i);
+            }
             round_polys.push(compressed);
         }
 
@@ -331,7 +343,16 @@ where
         let mut r = Vec::with_capacity(num_rounds);
 
         for (round, pad_poly) in pre_sampled_pads.into_iter().enumerate() {
-            let g = self.compute_round_univariate(round, claim);
+            let _round_span = tracing::info_span!(
+                "sumcheck_round",
+                round,
+                table_len = 1usize << (num_rounds - round)
+            )
+            .entered();
+            let g = {
+                let _s = tracing::info_span!("sumcheck_round_univariate").entered();
+                self.compute_round_univariate(round, claim)
+            };
             let compressed = g.compress();
             if compressed.degree() > degree_bound {
                 return Err(AkitaError::InvalidInput(format!(
@@ -346,7 +367,10 @@ where
             r.push(r_i);
 
             claim = compressed.eval_from_hint(&claim, &r_i);
-            self.ingest_challenge(round, r_i);
+            {
+                let _s = tracing::info_span!("sumcheck_round_fold").entered();
+                self.ingest_challenge(round, r_i);
+            }
             masked_round_polys.push(masked_poly);
         }
 

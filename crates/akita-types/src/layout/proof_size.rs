@@ -1,10 +1,9 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
 use akita_field::{AkitaError, CanonicalField};
-use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 
 use crate::sis::compute_num_digits_full_field;
-use crate::{CleartextWitnessShape, LevelParams};
+use crate::{CleartextWitnessShape, LevelParams, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -100,7 +99,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     lp: &LevelParams,
 ) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
-    let w_hat_count = lp
+    let e_hat_count = lp
         .num_blocks
         .checked_mul(lp.num_digits_open)
         .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
@@ -117,6 +116,8 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .m_row_count(1, 1)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
+    // Tiered single-group `û_concat` (one commitment group); `0` single-tier.
+    let u_concat_count = lp.u_concat_ring_len_per_group();
 
     #[cfg(feature = "zk")]
     {
@@ -132,8 +133,9 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
             lp.log_basis,
             field_bits as usize,
         );
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
             .and_then(|n| n.checked_add(z_pre_count))
@@ -142,8 +144,9 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(u_concat_count))
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))

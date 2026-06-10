@@ -28,6 +28,8 @@ use akita_types::{
 };
 
 use crate::find_schedule;
+#[cfg(not(feature = "zk"))]
+use crate::generated::fp128_d64_onehot_tiered_table;
 use crate::generated::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
     fp128_d64_onehot_tensor_table, fp32_d128_onehot_table, fp32_d256_onehot_table,
@@ -78,6 +80,21 @@ pub fn shipped_table(
     root_fold_is_tensor: bool,
 ) -> Option<GeneratedScheduleTable> {
     let onehot = policy.decomposition.log_commit_bound == 1;
+    // Tiered policies select a dedicated tiered table whose compact entries
+    // store the committed `B'`/`F` layout directly (`tier_split` + `n_f`). A
+    // tiered policy never aliases a non-tiered table.
+    if policy.tiered {
+        #[cfg(not(feature = "zk"))]
+        if !root_fold_is_tensor
+            && matches!(
+                (policy.sis_family, policy.ring_dimension, onehot),
+                (SisModulusFamily::Q128, 64, true)
+            )
+        {
+            return Some(fp128_d64_onehot_tiered_table());
+        }
+        return None;
+    }
     Some(match (policy.sis_family, policy.ring_dimension, onehot) {
         (SisModulusFamily::Q128, 128, true) => fp128_d128_onehot_table(),
         (SisModulusFamily::Q128, 128, false) => fp128_d128_full_table(),
@@ -273,7 +290,6 @@ pub fn schedule_from_entry(
                         nt,
                         nw,
                         nz,
-                        1,
                         MRowLayout::WithoutDBlock,
                     )?;
                     let len = mul_d(ring)?;

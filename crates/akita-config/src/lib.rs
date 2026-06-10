@@ -1,5 +1,5 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
-//! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
+//! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
 //! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
 //! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
@@ -8,14 +8,9 @@
 //! regenerates the schedule with the offline DP search
 //! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
 //! [`policy_of`] bridge. Fallback is the default for every preset.
-//!
-//! [`WCommitmentConfig`] is the derived recursive-w config used by
-//! `<Cfg>`-generic ring-degree dispatch helpers.
-
-use std::marker::PhantomData;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -53,6 +48,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
+        tiered: Cfg::TIERED_COMMITMENT,
     }
 }
 
@@ -71,10 +67,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     type Field: CanonicalField + FieldCore;
 
     /// Field used by public opening points and claimed evaluations.
-    type ClaimField: ExtField<Self::Field>;
+    type ClaimField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
 
     /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
-    type ChallengeField: ExtField<Self::Field> + ExtField<Self::ClaimField>;
+    type ChallengeField: ExtField<Self::Field>
+        + ExtField<Self::ClaimField>
+        + MulBaseUnreduced<Self::Field>;
 
     /// Extension degree `K = [ClaimField : Field]`.
     ///
@@ -117,6 +115,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
+
+    /// Enable the second commitment tier (matrix `F`).
+    ///
+    /// When `true`, the planner is allowed
+    /// to reuse a smaller first-tier matrix `B` across `f` witness slices and
+    /// commit the partial images with a second-tier matrix `F`
+    /// (`u_final = F · decompose(u_1 ‖ … ‖ u_f)`), shrinking the shared
+    /// preprocessing matrix and the verifier setup-contribution scan. See
+    /// `specs/tiered-commitment.md`. Threaded into the planner via
+    /// [`PlannerPolicy::tiered`] (see [`policy_of`]).
+    const TIERED_COMMITMENT: bool = false;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -269,79 +278,25 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 }
 
-/// Derived commitment config for recursive w-openings: `log_commit_bound`
-/// drops to `log_basis` (balanced-digit `w` entries) while `log_open_bound`
-/// inherits the parent opening bound (recursive opening folds produce
-/// full-field coefficients).
-#[derive(Clone, Copy, Debug)]
-pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: PhantomData<Cfg>,
-}
-
-impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
-    type Field = Cfg::Field;
-    type ClaimField = Cfg::ClaimField;
-    type ChallengeField = Cfg::ChallengeField;
-    const D: usize = D;
-
-    fn decomposition() -> DecompositionParams {
-        let root = Cfg::decomposition();
-        DecompositionParams {
-            log_basis: root.log_basis,
-            log_commit_bound: root.log_basis,
-            log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
-        }
-    }
-
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Cfg::ring_challenge_config(d)
-    }
-
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
-    }
-
-    fn sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
-    }
-
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-        max_num_points: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
-    }
-
-    fn basis_range() -> (u32, u32) {
-        Cfg::basis_range()
-    }
-
-    /// Resolve schedules through the parent `Cfg`, not this derived config.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        Cfg::runtime_schedule(key)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, TowerBasisFp4, UnitNr};
+    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, TowerBasisFpExt4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
-    type BaseFp2 = Fp2<Base, NegOneNr>;
-    type BaseTowerBasisFp4 = TowerBasisFp4<Base, NegOneNr, UnitNr>;
+    type BaseFpExt2 = FpExt2<Base, NegOneNr>;
+    type BaseTowerBasisFpExt4 = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
 
     #[derive(Clone)]
     struct ExtensionRoleConfig;
 
     impl CommitmentConfig for ExtensionRoleConfig {
         type Field = Base;
-        type ClaimField = BaseFp2;
-        type ChallengeField = BaseTowerBasisFp4;
+        type ClaimField = BaseFpExt2;
+        type ChallengeField = BaseTowerBasisFpExt4;
 
         const D: usize = 8;
 
@@ -396,7 +351,7 @@ mod tests {
 
         let c1 =
             ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
-        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
             &mut t2,
             labels::CHALLENGE_RING_SWITCH,
         );
@@ -407,7 +362,7 @@ mod tests {
     fn claim_ext_degree_default_matches_claim_field_ext_degree() {
         assert_eq!(
             ExtensionRoleConfig::CLAIM_EXT_DEGREE,
-            <BaseFp2 as ExtField<Base>>::EXT_DEGREE
+            <BaseFpExt2 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
     }
@@ -416,7 +371,7 @@ mod tests {
     fn chal_ext_degree_default_matches_challenge_field_ext_degree() {
         assert_eq!(
             ExtensionRoleConfig::CHAL_EXT_DEGREE,
-            <BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE
+            <BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
     }
@@ -424,36 +379,39 @@ mod tests {
     #[test]
     fn chal_over_claim_degree_matches_quotient_of_absolute_degrees() {
         assert_eq!(
-            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE,
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
             ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
         );
     }
 
     #[test]
     fn extension_role_config_exercises_true_field_tower() {
-        assert_eq!(<BaseFp2 as ExtField<Base>>::EXT_DEGREE, 2);
-        assert_eq!(<BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE, 2);
-        assert_eq!(<BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE, 4);
+        assert_eq!(<BaseFpExt2 as ExtField<Base>>::EXT_DEGREE, 2);
+        assert_eq!(
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
+            2
+        );
+        assert_eq!(<BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE, 4);
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
         assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
 
-        let claim = BaseFp2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
-        let lifted = BaseTowerBasisFp4::lift_base(claim);
+        let claim = BaseFpExt2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
+        let lifted = BaseTowerBasisFpExt4::lift_base(claim);
         assert_eq!(
-            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::to_base_vec(&lifted),
-            vec![claim, BaseFp2::zero()]
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::to_base_vec(&lifted),
+            vec![claim, BaseFpExt2::zero()]
         );
     }
 
     #[test]
     fn config_appends_extension_claim_role() {
-        let claim = BaseFp2::new(Base::from_u64(9), Base::from_u64(10));
+        let claim = BaseFpExt2::new(Base::from_u64(9), Base::from_u64(10));
 
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         ExtensionRoleConfig::append_claim_field(&mut t1, labels::ABSORB_EVALUATION_CLAIMS, &claim);
-        append_ext_field::<Base, BaseFp2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
+        append_ext_field::<Base, BaseFpExt2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
 
         let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);

@@ -45,6 +45,31 @@ the recursive level layout that prover and verifier must both bind.
    witness-plus-dummy-setup carried batch verifies through at least one
    non-terminal recursive fold, and singleton recursive proofs still verify.
 
+## Implementation Layer (rebased onto current main)
+
+This slice is reimplemented on top of current `main`, which refactored the exact
+surface 02C touches. Build on these structures rather than the pre-refactor flow:
+
+- Recursive prover state is `RecursiveProverState` (`akita-prover/src/protocol/flow.rs`),
+  carrying a single `opening` at `sumcheck_challenges`. Generalize this into the
+  carried-opening batch (claim 0 = folded witness) here, not in a revived monolith.
+- The recursive fold is driven by `prove_recursive_suffix` → `prepare_fold_data` →
+  `PreparedRecursiveFold` (`flow/recursive.rs`). The carried-incidence helper and
+  batch construction must live in `prepare_fold_data`, and fold-param selection must
+  use `next_level_params` (post-#170), not a `commit_w_for_next` closure.
+- The verifier recursive replay generalizes the singleton
+  `current_state.opening{,_point,_mask}`/`basis` (+ `zk_eor_final`) into the same
+  carried batch the prover binds.
+- Setup-prefix carry rides on the existing `akita-types::proof::setup_prefix` module
+  (`SetupPrefixProverRegistry`, `setup_prefix_level_params`, `select_setup_prefix_slot`,
+  `SETUP_OFFLOAD_D_SETUP`) and the stage-3 setup-product sumcheck (`SetupSumcheckProof`,
+  #147). Do not add a parallel setup-prefix path.
+- Schedule selection adds `find_recursive_carried_suffix_schedule` in the planner,
+  coexisting with #157 tiered sizing: fold-digit depth in `schedule.rs` must follow the
+  carried incidence (`num_claims`) while preserving the tiered `u_concat` term.
+- Tests live in `akita-pcs` (`crates/akita-pcs/src/scheme/tests/`); `akita-scheme` no
+  longer exists (#152).
+
 ## Non-Direction
 
 - Do not introduce a local fallback evaluator or unchecked dense path.
@@ -52,3 +77,7 @@ the recursive level layout that prover and verifier must both bind.
   params were selected for a smaller carried batch.
 - Do not use a terminal-only shortcut as the acceptance test.
 - Do not treat serializing an unused dummy commitment as full 02C completion.
+- Do not duplicate setup-prefix commitment or stage-3 setup-product machinery that
+  #138/#147 already provide on main.
+- Do not reintroduce the pre-#171 monolithic `prove_recursive_fold_with_params` or the
+  pre-#170 commit closures.

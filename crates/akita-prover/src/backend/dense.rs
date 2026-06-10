@@ -7,11 +7,11 @@
 use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
-use akita_algebra::{CyclotomicRing, EqPolynomial};
+use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_sumcheck::tensor_opening_split;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -207,35 +207,23 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         }
         Ok((split_bits, width))
     }
+}
 
-    fn tensor_extension_column_partials_with_tail_eq<E>(
-        &self,
-        width: usize,
-        tail_eq: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let live_len = self.live_coeff_len()?;
-        let expected_tail_len = live_len / width;
-        if tail_eq.len() != expected_tail_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_tail_len,
-                actual: tail_eq.len(),
-            });
-        }
+/// Column source over dense ring storage: `row(tail)` is the `width`-length
+/// base-field run at flat index `tail*width`. `width` divides `D` and runs are
+/// `width`-aligned within a ring, so a run never crosses a ring boundary.
+struct DenseColumnSource<'a, F: FieldCore, const D: usize> {
+    coeffs: &'a [CyclotomicRing<F, D>],
+    width: usize,
+}
 
-        let mut partials = vec![E::zero(); width];
-        for (tail, &weight) in tail_eq.iter().enumerate() {
-            let flat_idx = tail * width;
-            let ring_idx = flat_idx / D;
-            let coeff_idx = flat_idx % D;
-            let coeffs = &self.coeffs[ring_idx].coefficients()[coeff_idx..coeff_idx + width];
-            for (partial, &coeff) in partials.iter_mut().zip(coeffs.iter()) {
-                *partial += weight.mul_base(coeff);
-            }
-        }
-        Ok(partials)
+impl<F: FieldCore, const D: usize> TensorColumnSource<F> for DenseColumnSource<'_, F, D> {
+    #[inline]
+    fn row(&self, tail: usize) -> &[F] {
+        let flat = tail * self.width;
+        let ring_idx = flat / D;
+        let coeff_idx = flat % D;
+        &self.coeffs[ring_idx].coefficients()[coeff_idx..coeff_idx + self.width]
     }
 }
 
@@ -291,11 +279,17 @@ where
 
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let (split_bits, width) = self.tensor_shape::<E>(Some(logical_point))?;
-        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
-        self.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
+        let source = DenseColumnSource {
+            coeffs: &self.coeffs,
+            width,
+        };
+        Ok(tensor_column_partials_split_fold::<F, E, _>(
+            &split, width, &source,
+        ))
     }
 
     fn tensor_extension_column_partials_batch<E>(
@@ -303,18 +297,26 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let Some(first) = polys.first() else {
             return Ok(Vec::new());
         };
         let (split_bits, width) = first.tensor_shape::<E>(Some(logical_point))?;
-        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
+        // The Dao-Thaler / Gruen split of the tail equality table is
+        // point-dependent only, so it is built once and shared across the batch.
+        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
         polys
             .iter()
             .map(|poly| {
                 poly.tensor_shape::<E>(Some(logical_point))?;
-                poly.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+                let source = DenseColumnSource {
+                    coeffs: &poly.coeffs,
+                    width,
+                };
+                Ok(tensor_column_partials_split_fold::<F, E, _>(
+                    &split, width, &source,
+                ))
             })
             .collect()
     }
@@ -697,9 +699,9 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::fields::{TowerBasisFp4, TwoNr, UnitNr};
     use akita_field::Prime128OffsetA7F7 as F;
-    use akita_sumcheck::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
+    use akita_field::{TowerBasisFpExt4, TwoNr, UnitNr};
+    use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
@@ -732,7 +734,7 @@ mod tests {
     #[test]
     fn dense_tensor_opening_methods_match_flat_reference() {
         const D: usize = 8;
-        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+        type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
 
         let num_vars = 5;
         let evals = (0..(1usize << num_vars))

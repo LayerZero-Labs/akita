@@ -18,6 +18,10 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
+/// Binary onehot `D=64` preset with the tiered commitment matrix `F`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotTiered;
+
 /// Full-field adaptive `D=32` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D32Full;
@@ -64,7 +68,19 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     64,
     128,
-    1
+    1,
+    256
+);
+impl_proof_optimized_preset!(
+    D64OneHotTiered,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    64,
+    128,
+    1,
+    256,
+    /* tiered = */ true
 );
 impl_proof_optimized_preset!(
     D32Full,
@@ -92,15 +108,15 @@ pub enum Fp128Preset {
     D32Full,
     /// Full-field adaptive `D=64` preset.
     D64Full,
-    /// Full-field `D=128` preset (proof-size optimum under committed-fold
-    /// A-role pricing).
+    /// Full-field `D=128` preset (comparison / legacy; D32/D64 are smaller under
+    /// committed-fold A-role pricing).
     D128Full,
     /// Onehot adaptive `D=32` preset.
     D32OneHot,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
-    /// Binary onehot `D=128` preset (proof-size optimum under committed-fold
-    /// A-role pricing).
+    /// Binary onehot `D=128` preset (comparison / legacy; D32/D64 are smaller under
+    /// committed-fold A-role pricing).
     D128OneHot,
 }
 

@@ -5,8 +5,7 @@ use crate::kernels::linear::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    CanonicalField, FieldCore, HalvingField, Prime128Offset275, Prime16Offset99, Prime32Offset99,
-    Prime64Offset59,
+    CanonicalField, FieldCore, HalvingField, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
 use akita_types::layout::FlatMatrix;
 
@@ -79,7 +78,6 @@ fn assert_fused_split_eq_zpre_chunks<
 
 #[test]
 fn fused_split_eq_zpre_chunks_reduced_profiles() {
-    assert_fused_split_eq_zpre_chunks::<Prime16Offset99, 256>(5);
     assert_fused_split_eq_zpre_chunks::<Prime32Offset99, 256>(32);
     assert_fused_split_eq_zpre_chunks::<Prime64Offset59, 256>(8);
 }
@@ -148,7 +146,6 @@ fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
 
 #[test]
 fn mat_vec_mul_ntt_single_i8_chunks_reduced_profiles() {
-    assert_single_i8_chunk_paths::<Prime16Offset99, 256>(5_000);
     assert_single_i8_chunk_paths::<Prime32Offset99, 256>(900);
     assert_single_i8_chunk_paths::<Prime64Offset59, 256>(8_200);
 }

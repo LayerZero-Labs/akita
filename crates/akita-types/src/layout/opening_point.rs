@@ -26,25 +26,6 @@ pub enum BasisMode {
     Monomial,
 }
 
-impl BasisMode {
-    /// Stable wire identifier for proof serialization and transcript binding.
-    pub fn as_u8(self) -> u8 {
-        match self {
-            Self::Lagrange => 0,
-            Self::Monomial => 1,
-        }
-    }
-
-    /// Decode a stable wire identifier.
-    pub fn from_u8(tag: u8) -> Result<Self, AkitaError> {
-        match tag {
-            0 => Ok(Self::Lagrange),
-            1 => Ok(Self::Monomial),
-            _ => Err(AkitaError::InvalidProof),
-        }
-    }
-}
-
 /// Ring-native opening point storing field scalars.
 ///
 /// Contains the two vectors used by the §4.2 prover:

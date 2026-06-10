@@ -3,16 +3,16 @@
 //!
 //! Everything in this module is gated behind the `test-support` Cargo
 //! feature, which production builds never enable: it is switched on only
-//! through the dev-dependency edges of `akita-pcs` and `akita-scheme`, so
-//! the helpers here are compiled for test/example/bench targets and are
+//! through the dev-dependency edge of `akita-pcs`, so the helpers here are
+//! compiled for test/example/bench targets and are
 //! absent from every shipped artifact. Production callers size their
 //! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
 //! directly and never need this module.
 
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams, Schedule};
+use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams};
 
-use crate::{policy_of, CommitmentConfig};
+use crate::CommitmentConfig;
 
 /// Derive the per-polynomial commitment layout optimized for a batch of
 /// `num_claims` polynomials with `num_vars` variables.
@@ -66,25 +66,4 @@ where
     Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
         num_vars, num_claims,
     )?)
-}
-
-/// Test-only helper for constructing a recursive carried-opening suffix from
-/// an already committed recursive state.
-pub fn recursive_carried_suffix_schedule<Cfg>(
-    key: AkitaScheduleLookupKey,
-    start_level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-) -> Result<Schedule, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    akita_planner::find_recursive_carried_suffix_schedule(
-        key,
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        start_level,
-        current_w_len,
-        current_log_basis,
-    )
 }

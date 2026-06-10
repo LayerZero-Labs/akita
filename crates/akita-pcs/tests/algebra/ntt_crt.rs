@@ -2,17 +2,16 @@ use akita_algebra::backend::{CrtReconstruct, NttPrimeOps};
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::poly::Poly;
 use akita_algebra::tables::{
-    q128_garner, q128_primes, q32_garner, q64_garner, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q16_NUM_PRIMES, Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS,
-    Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_garner, q128_primes, q32_garner, q64_garner, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
+    Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
+use akita_algebra::NttPrime;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
-use akita_field::{
-    Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275, Prime16Offset99,
-};
+use akita_field::packed::HasPacking;
+use akita_field::{Fp128, Fp32, Fp64, Prime128Offset159, Prime128Offset275};
 
 #[test]
 fn limbq_from_to_u128_round_trip() {
@@ -61,28 +60,27 @@ fn ntt_normalize_in_range() {
 
 #[test]
 fn csubp_widened_handles_large_negative_i16() {
-    for &prime in &Q16_PRIMES {
-        let p = prime.p;
-        // Values in (-2p, -(2^15 - p)) that previously overflowed in narrow i16
-        for &raw in &[-20000i16, -(p + p / 2), -(p + 1000)] {
-            if raw <= -2 * p || raw >= 0 {
-                continue;
-            }
-            let a = MontCoeff::from_raw(raw);
-            let reduced = prime.reduce_range(a);
-            let r = reduced.raw();
-            assert!(
-                r > -p && r < p,
-                "reduce_range({raw}) = {r} not in (-{p}, {p}) for p={p}"
-            );
-
-            let norm = prime.normalize(reduced);
-            let n = norm.raw();
-            assert!(
-                n >= 0 && n < p,
-                "normalize(reduce_range({raw})) = {n} not in [0, {p}) for p={p}"
-            );
+    let prime = NttPrime::compute(15361_i16);
+    let p = prime.p;
+    // Values in (-2p, -(2^15 - p)) that previously overflowed in narrow i16
+    for &raw in &[-20000i16, -(p + p / 2), -(p + 1000)] {
+        if raw <= -2 * p || raw >= 0 {
+            continue;
         }
+        let a = MontCoeff::from_raw(raw);
+        let reduced = prime.reduce_range(a);
+        let r = reduced.raw();
+        assert!(
+            r > -p && r < p,
+            "reduce_range({raw}) = {r} not in (-{p}, {p}) for p={p}"
+        );
+
+        let norm = prime.normalize(reduced);
+        let n = norm.raw();
+        assert!(
+            n >= 0 && n < p,
+            "normalize(reduce_range({raw})) = {n} not in [0, {p}) for p={p}"
+        );
     }
 }
 
@@ -423,13 +421,23 @@ fn cyclotomic_ntt_crt_round_trip_q32() {
     assert_eq!(ring, round_trip);
 }
 
-fn assert_q16_ntt_round_trip<const D: usize>() {
-    type F = Prime16Offset99;
-    type R<const D: usize> = CyclotomicRing<F, D>;
-    type N<const D: usize> = CyclotomicCrtNtt<i16, Q16_NUM_PRIMES, D>;
+const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
 
-    let params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
-    let coeffs = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % 97));
+fn synthetic_i16_primes() -> [NttPrime<i16>; SYNTHETIC_I16_NUM_PRIMES] {
+    [
+        NttPrime::compute(15361_i16),
+        NttPrime::compute(13313_i16),
+        NttPrime::compute(12289_i16),
+    ]
+}
+
+fn assert_synthetic_i16_ntt_round_trip<const D: usize>() {
+    type F = Fp64<{ Q32_MODULUS }>;
+    type R<const D: usize> = CyclotomicRing<F, D>;
+    type N<const D: usize> = CyclotomicCrtNtt<i16, SYNTHETIC_I16_NUM_PRIMES, D>;
+
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
     let ring = R::<D>::from_coefficients(coeffs);
     let ntt = N::<D>::from_ring_with_params(&ring, &params);
     let round_trip = ntt.to_ring_with_params(&params);
@@ -466,19 +474,19 @@ fn assert_q64_ntt_round_trip<const D: usize>() {
 }
 
 #[test]
-fn q16_ntt_round_trips_across_supported_ring_dims() {
-    assert_q16_ntt_round_trip::<32>();
-    assert_q16_ntt_round_trip::<64>();
-    assert_q16_ntt_round_trip::<128>();
-    assert_q16_ntt_round_trip::<256>();
-}
-
-#[test]
 fn reduced_q32_ntt_round_trips_across_supported_ring_dims() {
     assert_q32_ntt_round_trip::<32>();
     assert_q32_ntt_round_trip::<64>();
     assert_q32_ntt_round_trip::<128>();
     assert_q32_ntt_round_trip::<256>();
+}
+
+#[test]
+fn synthetic_i16_ntt_round_trips_across_supported_ring_dims() {
+    assert_synthetic_i16_ntt_round_trip::<32>();
+    assert_synthetic_i16_ntt_round_trip::<64>();
+    assert_synthetic_i16_ntt_round_trip::<128>();
+    assert_synthetic_i16_ntt_round_trip::<256>();
 }
 
 #[test]

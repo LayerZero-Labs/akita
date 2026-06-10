@@ -81,7 +81,7 @@ where
 }
 
 /// Variant of [`ring_switch_finalize`] that assumes the caller has already
-/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+/// absorbed the `ABSORB_NEXT_LEVEL_WITNESS_BINDING` bytes into `transcript`.
 ///
 /// Used by terminal fold levels, which absorb the cleartext `final_witness`
 /// in place of the recursive `next_w_commitment`.
@@ -123,7 +123,7 @@ where
 
 /// Terminal variant of [`ring_switch_finalize`].
 ///
-/// The terminal fold binds logical `w_hat` before fold challenge sampling.
+/// The terminal fold binds logical `e_hat` before fold challenge sampling.
 /// This function binds the remaining final-witness bytes before ring-switch
 /// challenge sampling.
 ///
@@ -194,7 +194,7 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
+    transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment_proof);
     ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
         instance,
         setup,
@@ -251,7 +251,7 @@ where
 }
 
 /// Variant of [`ring_switch_finalize_with_gamma`] that assumes the caller has
-/// already absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+/// already absorbed the `ABSORB_NEXT_LEVEL_WITNESS_BINDING` bytes into `transcript`.
 ///
 /// Intermediate fold levels absorb `next_w_commitment` before calling this;
 /// terminal fold levels absorb the cleartext `final_witness` instead. Keeping

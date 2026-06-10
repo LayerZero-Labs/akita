@@ -15,8 +15,8 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms,
-    FoldWitnessNorms,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
 };
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
@@ -40,12 +40,104 @@ type FoldShapeFn<'a> = &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape;
 // memo state without changing emitted tables.
 const MAX_RECURSION_DEPTH: usize = 12;
 
-#[derive(Clone, Copy)]
-struct RecursiveShapeCounts {
-    num_points: usize,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
-    num_z_vectors: usize,
+/// Largest tiered split factor `f` the planner will consider. `B'` matrix size
+/// is monotone non-increasing in `f`, so scanning `f = 2..=MAX` ascending and
+/// taking the first divisor of the `B` width whose size fits under `A` yields the
+/// smallest feasible split. Kept small to bound the added relation rows / witness
+/// / `F` size (and the verifier-reachable DP work).
+const MAX_TIERED_SPLIT_FACTOR: usize = 16;
+
+/// Tiered second matrix `F`. When the first-tier `B` matrix size exceeds the
+/// inner `A` matrix size, shrink `B` to a `B'` reused across `f` equal flat
+/// column-slices of `t̂`, and size the second-tier `F` that commits the decomposed
+/// concatenation `u_1 ‖ … ‖ u_f`.
+///
+/// The split is a plain contiguous partition of the `B` width into `f` equal
+/// slices (`f | width`). No column structure is preserved and `f` need not be a
+/// power of two — the relation only enforces `B'·t_i = u_i` and
+/// `F(u_1 ‖ … ‖ u_f) = u_final`, and every prover/verifier path slices `t̂` flatly.
+/// `F` is sized at its own collision bucket ([`rounded_up_collision_norm_tiered_commitment`]).
+///
+/// `B'` matrix size is monotonically non-increasing in `f`, so the **smallest**
+/// divisor `f` in `2..=MAX_TIERED_SPLIT_FACTOR` whose size drops to
+/// `<= a_matrix_size` is optimal (smallest `F`, fewest relation rows, least
+/// witness).
+///
+/// Returns `(tier_split, b_key, f_key)`: `(1, b_key.clone(), None)` when no split
+/// is needed (`B` already fits under `A`) or none is feasible; `(f, B', Some(F))`
+/// otherwise.
+///
+/// Verifier-reachable through the runtime DP fallback: never panics — every
+/// product is checked and every emitted key passes [`AjtaiKeyParams::try_new`].
+/// This is the DP's source of truth for the `B'`/`F` split; the shipped tiered
+/// table stores the resulting layout directly, so expansion never re-runs it.
+fn multi_tiered_keys(
+    a_matrix_size: usize,
+    b_key: &AjtaiKeyParams,
+    delta_open: usize,
+    log_basis: u32,
+    ring_d: usize,
+) -> Result<(usize, AjtaiKeyParams, Option<AjtaiKeyParams>), AkitaError> {
+    let Some(b_matrix_size) = b_key.row_len().checked_mul(b_key.col_len()) else {
+        return Ok((1, b_key.clone(), None));
+    };
+    if b_matrix_size <= a_matrix_size {
+        // First-tier `B` already fits under `A`; no tiering needed.
+        return Ok((1, b_key.clone(), None));
+    }
+
+    // `F` commits balanced base-`2^log_basis` digits of `u_concat`.
+    let Some(norm_f) =
+        rounded_up_collision_norm_tiered_commitment(b_key.sis_family(), ring_d, log_basis)
+    else {
+        return Ok((1, b_key.clone(), None));
+    };
+
+    // Smallest f in 2..=MAX dividing the B width whose shrunk B' matrix size fits
+    // under A. Size is monotone non-increasing in f, so the first hit is optimal.
+    for f in 2..=MAX_TIERED_SPLIT_FACTOR {
+        if !b_key.col_len().is_multiple_of(f) {
+            continue;
+        }
+        let shrunk_width = b_key.col_len() / f; // exact: f divides the B width
+        let Some(n_b_small) = min_secure_rank(
+            b_key.sis_family(),
+            ring_d as u32,
+            b_key.collision_inf(),
+            shrunk_width as u64,
+        ) else {
+            continue;
+        };
+        let Some(b_small_size) = n_b_small.checked_mul(shrunk_width) else {
+            continue;
+        };
+        if b_small_size > a_matrix_size {
+            continue;
+        }
+        // `F` commits `decompose(u_1 ‖ … ‖ u_f)`: `f · n_b' · δ_open` digit columns.
+        let Some(width_f) = f
+            .checked_mul(n_b_small)
+            .and_then(|w| w.checked_mul(delta_open))
+        else {
+            continue;
+        };
+        let Some(n_f) = min_secure_rank(b_key.sis_family(), ring_d as u32, norm_f, width_f as u64)
+        else {
+            continue;
+        };
+        let f_key = AjtaiKeyParams::try_new(b_key.sis_family(), n_f, width_f, norm_f, ring_d)?;
+        let tiered_b_key = AjtaiKeyParams::try_new(
+            b_key.sis_family(),
+            n_b_small,
+            shrunk_width,
+            b_key.collision_inf(),
+            ring_d,
+        )?;
+        return Ok((f, tiered_b_key, Some(f_key)));
+    }
+
+    // No split in 2..=MAX brings B' under A; stay single-tier.
+    Ok((1, b_key.clone(), None))
 }
 
 /// Compute parameters that generate the smallest witness for the next
@@ -53,12 +145,11 @@ struct RecursiveShapeCounts {
 /// case (similar to `find_schedule`), we should check that current proof
 /// size + suffix cost is the smallest. However, as time blows up, we
 /// don't do that here.
-fn derive_candidate_level_params_for_shape(
+fn derive_candidate_level_params(
     policy: &PlannerPolicy,
     stage1: Stage1Fn<'_>,
     current_witness_len: usize,
     log_basis: u32,
-    counts: RecursiveShapeCounts,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
     let Ok(stage1_config) = stage1(policy.ring_dimension) else {
         return Ok(None);
@@ -77,15 +168,15 @@ fn derive_candidate_level_params_for_shape(
     }
 
     let mut best: Option<(LevelParams, usize, usize)> = None;
-    for r in 1..reduced_vars {
+    for r in (1..reduced_vars).rev() {
         let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
             continue;
         };
         let block_len = num_ring_elems.div_ceil(num_blocks);
 
         // Recursive levels commit a dense balanced-digit witness (`is_root =
-        // false`, flat fold). Compose keys via `akita_types::sis`; B/D widths
-        // use the carried batch incidence counts.
+        // false`, flat fold). Compose the three SIS-secure keys from the
+        // `akita_types::sis` primitives: norm -> width -> rank -> key.
         let family = policy.sis_family;
         let d = policy.ring_dimension;
         let decomp = DecompositionParams {
@@ -94,7 +185,6 @@ fn derive_candidate_level_params_for_shape(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let batch = counts.num_t_vectors;
         let Some(norm_s) = rounded_up_collision_norm_s(
             family,
             d,
@@ -119,7 +209,7 @@ fn derive_candidate_level_params_for_shape(
         let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
             continue;
         };
-        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, batch) else {
+        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
             continue;
         };
         let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
@@ -129,13 +219,22 @@ fn derive_candidate_level_params_for_shape(
         let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
             continue;
         };
-        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, batch) else {
+        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
             continue;
         };
         let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
             continue;
         };
         let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
+
+        let (tier_split, b_key, f_key) = if policy.tiered {
+            let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
+                continue;
+            };
+            multi_tiered_keys(a_matrix_size, &b_key, delta_open, log_basis, d)?
+        } else {
+            (1, b_key, None)
+        };
 
         let candidate_params = LevelParams {
             ring_dimension: policy.ring_dimension,
@@ -153,15 +252,16 @@ fn derive_candidate_level_params_for_shape(
             num_digits_open: delta_open,
             // Recursive levels commit dense balanced-digit witnesses.
             onehot_chunk_size: 0,
+            tier_split,
+            f_key,
         };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            counts.num_points,
-            counts.num_t_vectors,
-            counts.num_w_vectors,
-            counts.num_z_vectors,
+            1,
+            1,
+            1,
             1,
             MRowLayout::WithDBlock,
         )?
@@ -170,10 +270,9 @@ fn derive_candidate_level_params_for_shape(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            counts.num_points,
-            counts.num_t_vectors,
-            counts.num_w_vectors,
-            counts.num_z_vectors,
+            1,
+            1,
+            1,
             1,
             MRowLayout::WithoutDBlock,
         )?
@@ -202,26 +301,6 @@ fn derive_candidate_level_params_for_shape(
         next_witness_len,
         next_witness_len_terminal,
     )))
-}
-
-fn derive_candidate_level_params(
-    policy: &PlannerPolicy,
-    stage1: Stage1Fn<'_>,
-    current_witness_len: usize,
-    log_basis: u32,
-) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
-    derive_candidate_level_params_for_shape(
-        policy,
-        stage1,
-        current_witness_len,
-        log_basis,
-        RecursiveShapeCounts {
-            num_points: 1,
-            num_t_vectors: 1,
-            num_w_vectors: 1,
-            num_z_vectors: 1,
-        },
-    )
 }
 
 fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
@@ -612,7 +691,16 @@ fn compute_root_direct_level_params(
         0
     };
 
-    Ok(Some(LevelParams {
+    let (tier_split, b_key, f_key) = if policy.tiered {
+        let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
+            return Ok(None);
+        };
+        multi_tiered_keys(a_matrix_size, &b_key, depth_open, log_basis, d)?
+    } else {
+        (1, b_key, None)
+    };
+
+    let root_direct_params = LevelParams {
         ring_dimension: d,
         log_basis,
         a_key,
@@ -627,7 +715,10 @@ fn compute_root_direct_level_params(
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
         onehot_chunk_size,
-    }))
+        tier_split,
+        f_key,
+    };
+    Ok(Some(root_direct_params))
 }
 
 /// Find the optimal schedule for a root schedule lookup key under `policy`.
@@ -729,7 +820,7 @@ pub fn find_schedule(
         let num_digits_commit = num_digits_s_commit(level_decomp, true);
         let num_digits_open = num_digits_open(level_decomp);
 
-        for r_vars in min_r_vars..=max_r_vars {
+        for r_vars in (min_r_vars..=max_r_vars).rev() {
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
                 continue;
             };
@@ -793,6 +884,20 @@ pub fn find_schedule(
             } else {
                 0
             };
+            let (tier_split, b_key, f_key) = if policy.tiered {
+                let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
+                    continue;
+                };
+                multi_tiered_keys(
+                    a_matrix_size,
+                    &b_key,
+                    num_digits_open,
+                    candidate_log_basis,
+                    d,
+                )?
+            } else {
+                (1, b_key, None)
+            };
             let candidate_params = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
@@ -808,6 +913,8 @@ pub fn find_schedule(
                 num_digits_commit,
                 num_digits_open,
                 onehot_chunk_size,
+                tier_split,
+                f_key,
             };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
@@ -818,7 +925,6 @@ pub fn find_schedule(
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,
-                    key.num_t_vectors,
                     layout,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
@@ -919,100 +1025,62 @@ pub fn find_schedule(
     })
 }
 
-/// Find the recursive suffix used to consume a carried-opening batch.
-///
-/// The caller supplies the already-committed recursive witness length and
-/// active log-basis after the root fold. The returned suffix always starts with
-/// one recursive fold sized by `key`'s carried incidence counts, then closes
-/// directly. This keeps setup-prefix carried claims fold-consumed instead of
-/// serialized into a terminal-only boundary.
-pub fn find_recursive_carried_suffix_schedule(
-    key: AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    start_level: usize,
-    current_witness_len: usize,
-    current_log_basis: u32,
-) -> Result<Schedule, AkitaError> {
-    let stage1: Stage1Fn<'_> = &stage1;
-    if start_level == 0 || current_witness_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "recursive carried suffix must start after a non-empty root fold".to_string(),
-        ));
-    }
-    if key.num_points == 0
-        || key.num_t_vectors == 0
-        || key.num_w_vectors == 0
-        || key.num_z_vectors == 0
-    {
-        return Err(AkitaError::InvalidSetup(
-            "recursive carried suffix dimensions must be non-zero".to_string(),
-        ));
+#[cfg(test)]
+mod tiering_tests {
+    use super::*;
+    use akita_types::sis::{min_secure_rank, AjtaiKeyParams, SisModulusFamily};
+
+    const D: usize = 64;
+    const FAMILY: SisModulusFamily = SisModulusFamily::Q128;
+    // log_basis = 3 ⟹ B/F collision bucket = 2^3 − 1 = 7.
+    const LOG_BASIS: u32 = 3;
+    const NORM: u32 = 7;
+    const DELTA_OPEN: usize = 43;
+
+    fn b_key(n_b: usize, width: usize) -> AjtaiKeyParams {
+        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, NORM, D)
     }
 
-    let field_bits = policy.decomposition.field_bits();
-    let challenge_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(usize, Vec<Step>)> = None;
-    let (min_log_basis, max_log_basis) = policy.basis_range;
-    for lb in min_log_basis.max(current_log_basis)..=max_log_basis {
-        let Some((candidate_params, _next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params_for_shape(
-                policy,
-                stage1,
-                current_witness_len,
-                lb,
-                RecursiveShapeCounts {
-                    num_points: key.num_points,
-                    num_t_vectors: key.num_t_vectors,
-                    num_w_vectors: key.num_w_vectors,
-                    num_z_vectors: key.num_z_vectors,
-                },
-            )?
-        else {
-            continue;
-        };
-        let eor_bytes =
-            extension_opening_reduction_level_bytes(policy, key, start_level, current_witness_len)?;
-        let level_bytes = level_proof_bytes(
-            field_bits,
-            challenge_bits,
-            &candidate_params,
-            None,
-            next_witness_len_terminal,
-            key.num_z_vectors,
-            MRowLayout::WithoutDBlock,
-        ) + eor_bytes;
-        let witness_shape = CleartextWitnessShape::PackedDigits((next_witness_len_terminal, lb));
-        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-        let total = level_bytes + direct_bytes;
-        if best
-            .as_ref()
-            .is_none_or(|(best_total, _)| total < *best_total)
-        {
-            best = Some((
-                total,
-                vec![
-                    Step::Fold(FoldStep {
-                        params: candidate_params,
-                        current_w_len: current_witness_len,
-                        next_w_len: next_witness_len_terminal,
-                        level_bytes,
-                    }),
-                    Step::Direct(DirectStep {
-                        current_w_len: next_witness_len_terminal,
-                        witness_shape,
-                        direct_bytes,
-                        params: None,
-                    }),
-                ],
-            ));
+    #[test]
+    fn tiering_skipped_when_b_fits_under_a() {
+        // B size (1·86) already <= A size, so no split.
+        let bk = b_key(1, 86);
+        let (f, out_b, fk) = multi_tiered_keys(1_000_000, &bk, DELTA_OPEN, LOG_BASIS, D).unwrap();
+        assert_eq!(f, 1);
+        assert!(fk.is_none());
+        assert_eq!(out_b.col_len(), bk.col_len());
+    }
+
+    #[test]
+    fn tiering_fires_with_smallest_feasible_split() {
+        // B size = 1·5504 = 5504 > A size = 2·1024 = 2048.
+        let width_t = 5504;
+        let a_matrix_size = 2 * 1024;
+        let bk = b_key(1, width_t);
+
+        let (f, out_b, fk) =
+            multi_tiered_keys(a_matrix_size, &bk, DELTA_OPEN, LOG_BASIS, D).unwrap();
+        let fk = fk.expect("expected tiering to fire");
+
+        assert!(f > 1);
+        // B' fits under A; width shrank by exactly the split factor.
+        assert!(out_b.row_len() * out_b.col_len() <= a_matrix_size);
+        assert_eq!(out_b.col_len(), width_t / f);
+        // F width = f · n_b' · δ_open, same collision bucket as B.
+        assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
+        assert_eq!(out_b.collision_inf(), NORM);
+        assert_eq!(fk.collision_inf(), NORM);
+        // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
+        for smaller in 2..f {
+            if !width_t.is_multiple_of(smaller) {
+                continue;
+            }
+            let w = width_t / smaller;
+            let n = min_secure_rank(FAMILY, D as u32, NORM, w as u64).unwrap();
+            assert!(
+                n * w > a_matrix_size,
+                "split f={smaller} should not fit under A"
+            );
         }
     }
-
-    let Some((total_bytes, steps)) = best else {
-        return Err(AkitaError::InvalidSetup(
-            "no recursive carried suffix schedule found".to_string(),
-        ));
-    };
-    Ok(Schedule { steps, total_bytes })
 }

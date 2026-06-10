@@ -246,6 +246,7 @@ where
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -393,6 +394,7 @@ fn full_d64_prove_verify() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
         let prove_time = prove_start.elapsed();
@@ -419,6 +421,7 @@ fn full_d64_prove_verify() {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         let verify_time = verify_start.elapsed();
 
@@ -468,6 +471,7 @@ fn full_d32_prove_verify() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
 
         assert!(
@@ -500,6 +504,7 @@ fn fp32_static_dense_round_trip() {
                 &mut verifier_transcript,
                 verify_input(&opening_point[..], &openings[..], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
 
         assert!(
@@ -532,6 +537,7 @@ fn fp64_static_dense_round_trip() {
                 &mut verifier_transcript,
                 verify_input(&opening_point[..], &openings[..], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
 
         assert!(
@@ -605,6 +611,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -661,6 +668,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
 
         assert!(
@@ -720,6 +728,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -789,6 +798,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -844,6 +854,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -959,6 +970,7 @@ fn batched_onehot_same_point_round_trip() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -979,6 +991,7 @@ fn batched_onehot_same_point_round_trip() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -1000,6 +1013,7 @@ fn batched_onehot_same_point_round_trip() {
                 &mut truncated_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         assert!(
             truncated_result.is_err(),
@@ -1077,6 +1091,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -1114,6 +1129,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_err(),

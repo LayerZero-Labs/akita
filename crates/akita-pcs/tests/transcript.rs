@@ -1,16 +1,18 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_field::{ExtField, Fp2, Fp32, Fp64, NegOneNr, PowerBasisFp4, TowerBasisFp4, UnitNr};
+use akita_field::{
+    ExtField, Fp32, Fp64, FpExt2, NegOneNr, PowerBasisFpExt4, TowerBasisFpExt4, UnitNr,
+};
 use akita_transcript::{
     append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
 };
 
 type F = Fp64<4294967197>;
 type Base = Fp32<251>;
-type BaseFp2 = Fp2<Base, NegOneNr>;
-type BaseTowerBasisFp4 = TowerBasisFp4<Base, NegOneNr, UnitNr>;
-type BasePowerBasisFp4 = PowerBasisFp4<Base, NegOneNr>;
+type BaseFpExt2 = FpExt2<Base, NegOneNr>;
+type BaseTowerBasisFpExt4 = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
+type BasePowerBasisFpExt4 = PowerBasisFpExt4<Base, NegOneNr>;
 
 fn sample_schedule<T: Transcript<F>>(transcript: &mut T) -> F {
     transcript.append_bytes(labels::ABSORB_COMMITMENT, b"commitment-a");
@@ -95,8 +97,8 @@ fn extension_challenge_sampling_is_deterministic() {
     let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let c1 = sample_ext_challenge::<Base, BaseFp2, _>(&mut t1, labels::CHALLENGE_SUMCHECK_ROUND);
-    let c2 = sample_ext_challenge::<Base, BaseFp2, _>(&mut t2, labels::CHALLENGE_SUMCHECK_ROUND);
+    let c1 = sample_ext_challenge::<Base, BaseFpExt2, _>(&mut t1, labels::CHALLENGE_SUMCHECK_ROUND);
+    let c2 = sample_ext_challenge::<Base, BaseFpExt2, _>(&mut t2, labels::CHALLENGE_SUMCHECK_ROUND);
     assert_eq!(c1, c2);
 }
 
@@ -115,11 +117,11 @@ fn quartic_extension_challenge_sampling_is_deterministic() {
     let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let c1 = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+    let c1 = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
         &mut t1,
         labels::CHALLENGE_SUMCHECK_ROUND,
     );
-    let c2 = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+    let c2 = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
         &mut t2,
         labels::CHALLENGE_SUMCHECK_ROUND,
     );
@@ -129,7 +131,7 @@ fn quartic_extension_challenge_sampling_is_deterministic() {
 #[test]
 fn extension_challenge_sampling_does_not_project_to_base_field() {
     let mut transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let challenge = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+    let challenge = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
         &mut transcript,
         labels::CHALLENGE_SUMCHECK_ROUND,
     );
@@ -143,13 +145,13 @@ fn extension_challenge_sampling_does_not_project_to_base_field() {
 
 #[test]
 fn append_ext_field_is_coordinate_order_sensitive() {
-    let x = BaseFp2::new(Base::from_u64(1), Base::from_u64(2));
-    let y = BaseFp2::new(Base::from_u64(2), Base::from_u64(1));
+    let x = BaseFpExt2::new(Base::from_u64(1), Base::from_u64(2));
+    let y = BaseFpExt2::new(Base::from_u64(2), Base::from_u64(1));
 
     let mut tx = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut ty = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    append_ext_field::<Base, BaseFp2, _>(&mut tx, labels::ABSORB_EVALUATION_CLAIMS, &x);
-    append_ext_field::<Base, BaseFp2, _>(&mut ty, labels::ABSORB_EVALUATION_CLAIMS, &y);
+    append_ext_field::<Base, BaseFpExt2, _>(&mut tx, labels::ABSORB_EVALUATION_CLAIMS, &x);
+    append_ext_field::<Base, BaseFpExt2, _>(&mut ty, labels::ABSORB_EVALUATION_CLAIMS, &y);
 
     let cx = tx.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     let cy = ty.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -171,20 +173,28 @@ fn append_degree_one_ext_field_uses_scalar_label() {
 }
 
 #[test]
-fn append_fp4_ext_field_is_coordinate_order_sensitive() {
-    let x = BaseTowerBasisFp4::new(
-        BaseFp2::new(Base::from_u64(1), Base::from_u64(2)),
-        BaseFp2::new(Base::from_u64(3), Base::from_u64(4)),
+fn append_fp_ext4_ext_field_is_coordinate_order_sensitive() {
+    let x = BaseTowerBasisFpExt4::new(
+        BaseFpExt2::new(Base::from_u64(1), Base::from_u64(2)),
+        BaseFpExt2::new(Base::from_u64(3), Base::from_u64(4)),
     );
-    let y = BaseTowerBasisFp4::new(
-        BaseFp2::new(Base::from_u64(1), Base::from_u64(2)),
-        BaseFp2::new(Base::from_u64(4), Base::from_u64(3)),
+    let y = BaseTowerBasisFpExt4::new(
+        BaseFpExt2::new(Base::from_u64(1), Base::from_u64(2)),
+        BaseFpExt2::new(Base::from_u64(4), Base::from_u64(3)),
     );
 
     let mut tx = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut ty = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    append_ext_field::<Base, BaseTowerBasisFp4, _>(&mut tx, labels::ABSORB_EVALUATION_CLAIMS, &x);
-    append_ext_field::<Base, BaseTowerBasisFp4, _>(&mut ty, labels::ABSORB_EVALUATION_CLAIMS, &y);
+    append_ext_field::<Base, BaseTowerBasisFpExt4, _>(
+        &mut tx,
+        labels::ABSORB_EVALUATION_CLAIMS,
+        &x,
+    );
+    append_ext_field::<Base, BaseTowerBasisFpExt4, _>(
+        &mut ty,
+        labels::ABSORB_EVALUATION_CLAIMS,
+        &y,
+    );
 
     let cx = tx.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     let cy = ty.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -192,8 +202,8 @@ fn append_fp4_ext_field_is_coordinate_order_sensitive() {
 }
 
 #[test]
-fn append_power_basis_fp4_uses_univariate_limb_order() {
-    let x = BasePowerBasisFp4::new([
+fn append_power_basis_fp_ext4_uses_univariate_limb_order() {
+    let x = BasePowerBasisFpExt4::new([
         Base::from_u64(1),
         Base::from_u64(2),
         Base::from_u64(3),
@@ -201,7 +211,7 @@ fn append_power_basis_fp4_uses_univariate_limb_order() {
     ]);
 
     assert_eq!(
-        <BasePowerBasisFp4 as ExtField<Base>>::to_base_vec(&x),
+        <BasePowerBasisFpExt4 as ExtField<Base>>::to_base_vec(&x),
         vec![
             Base::from_u64(1),
             Base::from_u64(2),

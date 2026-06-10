@@ -29,7 +29,6 @@ scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-derive
 scripts/check-crate-deps.sh akita-setup
-scripts/check-crate-deps.sh akita-scheme
 ```
 
 ## When To Reopen The Checklist

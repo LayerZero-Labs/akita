@@ -16,12 +16,12 @@ static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
 
-fn make_onehot_poly_from_ring_elems(
-    total_ring_elems: usize,
+fn make_onehot_poly_from_chunks(
+    total_chunks: usize,
     seed: u64,
 ) -> (OneHotTestPoly, Vec<Option<u8>>) {
     let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring_elems)
+    let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
     let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices.clone()).expect("onehot poly");
@@ -101,12 +101,14 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                num_polys_per_point.len(),
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -135,6 +137,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("multipoint batched prove");
 
@@ -156,6 +159,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -179,14 +183,16 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             .expect("onehot batched commit layout");
 
         let total_ring = layout.num_blocks * layout.block_len;
+        // `total_ring` ring elements of degree D over `2^nv / K` one-hot chunks.
+        let total_chunks = total_ring * ONEHOT_D / ONEHOT_K;
         let poly_data_per_point: Vec<Vec<(OneHotTestPoly, Vec<Option<u8>>)>> = num_polys_per_point
             .iter()
             .enumerate()
             .map(|(point_idx, &count)| {
                 (0..count)
                     .map(|poly_idx| {
-                        make_onehot_poly_from_ring_elems(
-                            total_ring,
+                        make_onehot_poly_from_chunks(
+                            total_chunks,
                             0xa66e_2000 + (point_idx as u64) * 100 + poly_idx as u64,
                         )
                     })
@@ -217,11 +223,14 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_prover(
             NV,
             total_claims,
-            num_polys_per_point.len(),
-        ).unwrap();
+            num_polys_per_point.len())
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -244,7 +253,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
                     &polys_per_point_refs,
                     &commitments,
                     hints,
-                ), &mut prover_transcript, BasisMode::Lagrange)
+                ), &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -268,6 +277,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -314,12 +324,14 @@ fn multipoint_dense_shared_commitment_round_trip() {
             })
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                total_claims,
-                NUM_POINTS,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(
+            NV,
+            total_claims,
+            NUM_POINTS)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -364,6 +376,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             prover_claims,
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("shared-commitment multipoint batched prove");
 
@@ -401,6 +414,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             &mut verifier_transcript,
             verifier_claims,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -499,6 +513,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -514,6 +529,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&swapped_points, &openings_per_point_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "swapped opening points must be rejected");
         });
@@ -598,6 +614,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "capacity overflow must be rejected");
         });
@@ -692,6 +709,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -713,6 +731,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&opening_points, &truncated_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_err(),

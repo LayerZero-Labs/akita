@@ -22,14 +22,16 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
+num-traits = "0.2"
 rand_core = "0.6"
 sha3 = "0.10.8"
 tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-field/parallel"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-sumcheck/zk"]
 
 [dev-dependencies]

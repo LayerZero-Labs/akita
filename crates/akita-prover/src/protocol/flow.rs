@@ -1,12 +1,16 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
-use super::RecursiveQuadraticSource;
+use crate::dispatch_ring_dim_result;
+use crate::protocol::extension_opening_reduction::{
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+};
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
     NextWitnessCommitment, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
@@ -16,24 +20,14 @@ use crate::{
     RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::fields::wide::HasWide;
-use akita_field::fields::HasUnreducedOps;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, Invertible, PseudoMersenneField, RandomSampling,
+    HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionSumcheck, SumcheckInstanceProver,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
-};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
@@ -43,14 +37,14 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    append_batched_commitments_to_transcript, append_carried_opening_batch_to_transcript,
-    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
-    append_claim_values_to_transcript, basis_weights, carried_opening_incidence_summary,
+    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
@@ -58,15 +52,18 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
+    schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSource,
-    CarriedOpeningSourceProof, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
-    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
+    LevelParams, MRowLayout, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -74,6 +71,7 @@ use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
 use rand_core::OsRng;
 #[cfg(feature = "zk")]
 use std::array::from_fn;
+use std::sync::Arc;
 
 mod inputs;
 mod recursive;
@@ -84,89 +82,19 @@ mod tests;
 
 pub use inputs::{
     build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof,
-    prepare_batched_prove_inputs, prove_batched_with_policy, prove_folded_batched_with_policy,
-    prove_root_direct,
+    prepare_batched_prove_inputs, prove_batched, prove_folded_batched, prove_root_direct,
 };
-pub use recursive::{
-    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
-    prove_terminal_recursive_level_with_policy, SuffixLevelOutput, SuffixLevelRequest,
-};
+pub use recursive::prove_recursive_suffix;
 #[cfg(test)]
 pub(in crate::protocol::flow) use recursive::{
-    prove_recursive_extension_opening_reduction, recursive_witness_base_evals,
+    prove_extension_opening_reduction, recursive_witness_base_evals,
 };
 pub(in crate::protocol::flow) use root_extension::*;
-pub(in crate::protocol::flow) use root_fold::evaluate_recursive_witness_at_multiplier_point;
+pub(in crate::protocol::flow) use root_fold::evaluate_witness_at_multiplier_point;
 pub use root_fold::{
     prove_root_fold_from_ring_relation, prove_root_fold_with_params,
     prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
 };
-
-/// One opening claim carried into the next recursive fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecursiveCarriedOpening<L: FieldCore> {
-    /// Source index in the recursive carried-source table.
-    pub source_idx: usize,
-    /// Evaluation point in the carried claim's basis.
-    pub opening_point: Vec<L>,
-    /// Claimed value at `opening_point`.
-    pub opening: L,
-    /// Proof-visible masked value bound into the transcript.
-    #[cfg(feature = "zk")]
-    pub proof_opening: L,
-    /// Basis used to interpret `opening_point`.
-    pub basis: BasisMode,
-    /// Unpadded logical field length of the opened object.
-    pub natural_len: usize,
-    /// Common padded field-domain length used by the recursive batch.
-    pub padded_len: usize,
-    /// Logical source of this carried opening.
-    pub kind: CarriedOpeningKind,
-}
-
-impl<L: FieldCore> RecursiveCarriedOpening<L> {
-    /// Build the ordinary size-one carried witness claim used by today's path.
-    pub fn recursive_witness(opening_point: Vec<L>, opening: L, w_len: usize) -> Self {
-        Self {
-            source_idx: 0,
-            opening_point,
-            opening,
-            #[cfg(feature = "zk")]
-            proof_opening: opening,
-            basis: BasisMode::Lagrange,
-            natural_len: w_len,
-            padded_len: w_len.next_power_of_two(),
-            kind: CarriedOpeningKind::RecursiveWitness,
-        }
-    }
-
-    /// Opening value that is visible to the verifier and bound to the transcript.
-    pub fn transcript_opening(&self) -> L {
-        #[cfg(not(feature = "zk"))]
-        {
-            self.opening
-        }
-        #[cfg(feature = "zk")]
-        {
-            self.proof_opening
-        }
-    }
-}
-
-/// Prover-only committed source carried into a recursive fold.
-#[derive(Clone)]
-pub struct RecursiveCarriedSource<F: FieldCore> {
-    /// Current committed representation for this source.
-    pub w: RecursiveWitnessFlat,
-    /// Logical witness when it differs from the committed representation.
-    pub logical_w: Option<RecursiveWitnessFlat>,
-    /// Commitment to this source.
-    pub commitment: FlatRingVec<F>,
-    /// D-erased commitment hint for this source.
-    pub hint: RecursiveCommitmentHintCache<F>,
-}
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
@@ -180,11 +108,10 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub hint: RecursiveCommitmentHintCache<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
-    /// Opening claims carried into this recursive level.
-    pub carried_openings: Vec<RecursiveCarriedOpening<L>>,
-    /// Extra committed sources referenced by carried openings. Source index 0
-    /// is the ordinary recursive witness stored in `w`; extras start at 1.
-    pub extra_carried_sources: Vec<RecursiveCarriedSource<F>>,
+    /// Sumcheck challenges that become the next recursive opening point.
+    pub sumcheck_challenges: Vec<L>,
+    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
+    pub opening: L,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -195,41 +122,6 @@ impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
         self.logical_w.as_ref().unwrap_or(&self.w)
-    }
-
-    /// Padded domain length shared by all carried openings.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidInput`] if the carried batch is empty or
-    /// does not use one common padded field domain.
-    pub fn common_padded_len(&self) -> Result<usize, AkitaError> {
-        let first = self
-            .carried_openings
-            .first()
-            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
-        if first.padded_len == 0
-            || self
-                .carried_openings
-                .iter()
-                .any(|claim| claim.padded_len != first.padded_len)
-        {
-            return Err(AkitaError::InvalidInput(
-                "carried openings must share one padded domain".to_string(),
-            ));
-        }
-        Ok(first.padded_len)
-    }
-
-    /// Natural field length of the ordinary recursive witness claim.
-    pub fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
-        self.carried_openings
-            .iter()
-            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
-            .map(|claim| claim.natural_len)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("missing recursive witness carried opening".to_string())
-            })
     }
 }
 
@@ -387,8 +279,8 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         let partial_masks = (0..partials)
             .map(|_| self.take_ext_scalar())
             .collect::<Result<Vec<_>, _>>()?;
-        let round_pads = self
-            .take_compressed_rounds(rounds, akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE)?;
+        let round_pads =
+            self.take_compressed_rounds(rounds, akita_types::EXTENSION_OPENING_REDUCTION_DEGREE)?;
         Ok((partial_masks, round_pads))
     }
 }
@@ -424,14 +316,12 @@ pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     /// ZK plain-opening round masks for the stage-2 sumcheck.
     #[cfg(feature = "zk")]
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+    /// Stage-3 setup product-sumcheck proof for recursive setup-contribution replay.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
     pub w_eval: L,
-    /// Additional proof-visible sources carried into the first recursive suffix level.
-    pub extra_carried_sources: Vec<CarriedOpeningSourceProof<F>>,
-    /// Additional proof-visible claims carried into the first recursive suffix level.
-    pub extra_carried_openings: Vec<CarriedOpeningProof<L>>,
     /// Recursive prover state for the first suffix level.
     pub next_state: RecursiveProverState<F, L>,
 }
@@ -667,7 +557,7 @@ fn append_zk_extension_reduction_slots<F, L>(
     F: FieldCore + RandomSampling,
     L: ExtField<F>,
 {
-    let round_coeffs = akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
+    let round_coeffs = akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
     for _ in 0..(partials + rounds * round_coeffs) {
         push_random_ext_scalar_slots::<F, L>(out, rng);
     }
@@ -681,7 +571,7 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     root_commit_params: &LevelParams,
     num_vars: usize,
     num_claims: usize,
-    num_root_public_rows: usize,
+    num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -709,9 +599,9 @@ where
             &mut rng,
         );
     }
-    // Root-level ring masks: one D-coefficient ring per public y-row.
+    // Root-level ring masks: one D-coefficient ring per requested opening point.
     // Later added to `y_rings` before the root ring-switch / sumcheck flow.
-    hiding_witness.extend((0..num_root_public_rows * D).map(|_| F::random(&mut rng)));
+    hiding_witness.extend((0..num_root_points * D).map(|_| F::random(&mut rng)));
     if let Some(root_step) = fold_steps.first() {
         // Terminal folds skip Stage 1 and consume only Stage 2 pads.
         let root_has_stage1 = fold_steps.len() > 1;

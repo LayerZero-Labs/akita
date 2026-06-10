@@ -11,17 +11,19 @@ pub mod kernels;
 pub mod protocol;
 mod validation;
 
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::SparseExtensionOpeningWitness;
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_types::{
     embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
 };
 
 pub use api::{
-    batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
+    batched_commit, batched_commit_with_params, commit, commit_setup_prefix, commit_with_params,
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
@@ -40,16 +42,12 @@ pub use compute::{
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
-    build_terminal_root_batched_proof, commit_next_w_with_policy, prepare_batched_prove_inputs,
-    prove_batched_with_policy, prove_fold_level_from_ring_relation,
-    prove_folded_batched_with_policy, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy, prove_root_direct,
+    build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs, prove_batched,
+    prove_folded_batched, prove_recursive_suffix, prove_root_direct,
     prove_root_fold_from_ring_relation, prove_root_fold_with_params,
-    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
-    prove_terminal_recursive_level_with_policy, prove_terminal_root_fold_from_ring_relation,
-    prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
-    RecursiveCarriedOpening, RecursiveCarriedSource, RecursiveProverState, RecursiveSuffixOutcome,
-    RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
+    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
+    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
+    RingSwitchOutput, RootLevelRawOutput,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 /// One commitment plus the polynomials it bundles, opened at one point.
@@ -153,6 +151,15 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
             "total field elements must be a power of 2"
         );
         total.trailing_zeros() as usize
+    }
+
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation. Configs
+    /// that use a non-default one-hot security policy validate this value at
+    /// commit/prove boundaries before relying on the tighter SIS schedule.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
     }
 
     /// Prover per-block fold.
@@ -276,7 +283,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// invalid.
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -291,7 +298,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor partials require field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+        akita_types::tensor_column_partials_from_base_evals::<F, E>(
             num_vars,
             field_elems.coeffs(),
             logical_point,
@@ -311,7 +318,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -337,7 +344,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor projection requires field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
     }
 
     /// Materialize a sparse tensor-packed root witness when the backend can
@@ -558,6 +565,10 @@ where
         <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
     }
 
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        <P as AkitaPolyOps<F, D>>::onehot_chunk_size(*self)
+    }
+
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         <P as AkitaPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
     }
@@ -607,7 +618,7 @@ where
 
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
     }
@@ -617,7 +628,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::tensor_extension_column_partials_batch(&inner_refs, logical_point)

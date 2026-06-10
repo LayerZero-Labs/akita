@@ -23,7 +23,7 @@ use crate::kernels::linear::{
 use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;
@@ -352,15 +352,15 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     pub n_b: usize,
     /// Number of A-side quotient rows to produce.
     pub n_a: usize,
-    /// Flat decomposed `w_hat` digits for the D-side relation rows.
-    pub w_hat: &'a [[i8; D]],
+    /// Flat decomposed `e_hat` digits for the D-side relation rows.
+    pub e_hat: &'a [[i8; D]],
     /// Flat decomposed inner-commitment digits for the B-side relation rows.
     pub t_hat: &'a [[i8; D]],
     /// One centered `z` segment contributing to A-side quotient rows.
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_folded_rings` witness.
     pub z_folded_centered_inf_norm: u32,
-    /// Logarithm of the gadget basis used to produce `w_hat` and `t_hat`.
+    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
     pub log_basis: u32,
 }
 
@@ -934,7 +934,7 @@ where
             plan.n_d,
             plan.n_b,
             plan.n_a,
-            plan.w_hat,
+            plan.e_hat,
             plan.t_hat,
             plan.z_segment,
             plan.z_folded_centered_inf_norm,
@@ -1168,7 +1168,7 @@ mod tests {
     #[test]
     fn cpu_ring_switch_relation_rows_match_direct_kernel() {
         let prepared = prepared();
-        let w_hat = vec![[1i8; D], [2i8; D]];
+        let e_hat = vec![[1i8; D], [2i8; D]];
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
         let via_backend = CpuBackend
@@ -1178,7 +1178,7 @@ mod tests {
                     n_d: 1,
                     n_b: 1,
                     n_a: 1,
-                    w_hat: &w_hat,
+                    e_hat: &e_hat,
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_folded_centered_inf_norm: 3,
@@ -1187,7 +1187,7 @@ mod tests {
             )
             .expect("backend ring-switch relation rows");
         let direct =
-            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
+            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
                 .expect("direct fused split-eq rows");
         assert_eq!(
             (

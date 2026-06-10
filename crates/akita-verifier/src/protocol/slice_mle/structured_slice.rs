@@ -107,13 +107,13 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     }
 }
 
-/// W-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct WStructuredSlicesEvaluator<'a, F, E> {
+/// E-hat segment slice evaluator. See `specs/optimized_verifier.md`.
+pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
     /// `offset >> offset_low_bits` — slice's high-bit offset.
     pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of `w`. Length =
+    /// Gadget vector for the digit decomposition of `e`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
     /// Per-claim carry summary of the public-row ring multiplier after any
@@ -127,7 +127,7 @@ pub(crate) struct WStructuredSlicesEvaluator<'a, F, E> {
     pub challenge_weight: E,
 }
 
-impl<F, E> StructuredSliceMleEvaluator<E> for WStructuredSlicesEvaluator<'_, F, E>
+impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
@@ -393,7 +393,7 @@ mod tests {
         prepared: RingSwitchDeferredRowEval<F>,
         opening_points: Vec<RingOpeningPoint<F>>,
         full_vec_randomness: Vec<F>,
-        offset_w: usize,
+        offset_e: usize,
         offset_t: usize,
         offset_z: usize,
         offset_r: usize,
@@ -452,7 +452,7 @@ mod tests {
             &num_polys_per_point,
         )
         .expect("witness segment layout");
-        let offset_w = witness_segment_layout.offset_w;
+        let offset_e = witness_segment_layout.offset_e;
         let offset_t = witness_segment_layout.offset_t;
         let offset_z = witness_segment_layout.offset_z;
         let offset_r = witness_segment_layout.offset_r;
@@ -497,6 +497,8 @@ mod tests {
             n_d,
             m_row_layout: MRowLayout::WithDBlock,
             n_b,
+            tier_split: 1,
+            n_f: 0,
             num_points,
             rows,
             claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
@@ -516,7 +518,7 @@ mod tests {
             prepared,
             opening_points,
             full_vec_randomness,
-            offset_w,
+            offset_e,
             offset_t,
             offset_z,
             offset_r,
@@ -534,14 +536,14 @@ mod tests {
     }
 
     #[test]
-    fn w_structured_matches_materialized_range_inner_product() {
+    fn e_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let w_len = p.depth_open * p.total_blocks();
-        let eq = eq_evals(fx.offset_w + w_len, &fx.full_vec_randomness);
+        let e_len = p.depth_open * p.total_blocks();
+        let eq = eq_evals(fx.offset_e + e_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
-        let block_offset_low = fx.offset_w & (p.num_blocks - 1);
+        let block_offset_low = fx.offset_e & (p.num_blocks - 1);
 
         let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
@@ -574,9 +576,9 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
-        let got = WStructuredSlicesEvaluator {
+        let got = EStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: fx.offset_w >> offset_low_bits,
+            offset_high: fx.offset_e >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             public_block_summaries: &public_block_summaries,
             challenge_block_summaries: &challenge_block_summaries,
@@ -586,7 +588,7 @@ mod tests {
         .evaluate();
 
         let mut expected = F::zero();
-        for x in 0..w_len {
+        for x in 0..e_len {
             let total_blocks = p.total_blocks();
             let dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -598,7 +600,7 @@ mod tests {
                 * fx.opening_points[point_idx].b[block_idx]
                 + p.eq_tau1[0] * c_alphas[blk])
                 * fx.g1_open[dig];
-            expected += entry * eq[fx.offset_w + x];
+            expected += entry * eq[fx.offset_e + x];
         }
         assert_eq!(got, expected);
     }

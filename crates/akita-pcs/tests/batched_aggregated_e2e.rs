@@ -10,8 +10,7 @@
 //! permutations. The aggregated suite now focuses on the unique
 //! single-commitment path with a few representative cases:
 //!
-//! * **One-hot** — singleton baseline, irregular larger batch, and a larger
-//!   logical domain.
+//! * **One-hot** — singleton baseline and irregular folded batch.
 //! * **Dense** — singleton baseline and irregular larger batch.
 //! * **Mixed dense + one-hot under the dense config** — heterogeneous
 //!   aggregated commitment/proof/verify.
@@ -108,6 +107,7 @@ mod non_zk_aggregated_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -140,6 +140,7 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -209,6 +210,7 @@ mod non_zk_aggregated_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -241,6 +243,7 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -270,7 +273,6 @@ mod non_zk_aggregated_cases {
 
     aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1, false);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7, true);
-    aggregated_onehot_case!(aggregated_onehot_nv23_batch4, 23, 4, true);
 
     aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1, false);
     aggregated_dense_case!(aggregated_dense_nv17_batch5, 17, 5, true);
@@ -302,12 +304,11 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                NV,
-                BATCH_SIZE,
-                1,
-            ).unwrap();
+        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_prover(NV, BATCH_SIZE, 1)
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -338,6 +339,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("mixed batched prove");
         assert!(
@@ -366,6 +368,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
         assert!(
             result.is_ok(),

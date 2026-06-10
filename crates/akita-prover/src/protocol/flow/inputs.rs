@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::commitment::validate_onehot_chunk_size_for_params;
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
@@ -152,114 +153,127 @@ where
     }
 }
 
-/// Drive batched proving up to the config-selected folded-root policy.
+/// Drive batched proving end-to-end under config `Cfg`.
 ///
-/// This owns the config-free top-level prover work: validate/flatten public
-/// prover claims, derive the schedule lookup key, select the schedule through
-/// the supplied policy callback, apply the root-direct shortcut when the
-/// selected schedule says no fold is needed, and derive the first recursive
-/// schedule inputs for folded roots. Folded-root proving still runs in the
-/// caller-supplied closure while config-selected recursive commitment layouts
-/// remain outside this crate.
+/// This owns the full top-level prover work: validate/flatten public prover
+/// claims, select the schedule from `Cfg`, apply the root-direct shortcut when
+/// the selected schedule says no fold is needed, bind the transcript instance
+/// descriptor, and either emit a root-direct proof or run the folded-root
+/// prover.
 ///
 /// # Errors
 ///
 /// Returns an error if claim preparation, schedule selection, root-direct
-/// witness construction, root-next parameter selection, or folded-root proving
-/// fails.
-#[allow(clippy::too_many_arguments)]
-pub fn prove_batched_with_policy<
-    'a,
-    F,
-    E,
-    L,
-    T,
-    P,
-    const D: usize,
-    SelectSchedule,
-    SelectRootDirectParams,
-    SelectRootNext,
-    BindTranscript,
-    ProveFolded,
->(
-    expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+/// witness construction, transcript binding, or folded-root proving fails.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    claims: ProverClaims<
+        'a,
+        Cfg::ClaimField,
+        P,
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    >,
     transcript: &mut T,
     basis: BasisMode,
-    select_schedule: SelectSchedule,
-    select_root_direct_params: SelectRootDirectParams,
-    select_root_next_params: SelectRootNext,
-    bind_transcript: BindTranscript,
-    prove_folded: ProveFolded,
-) -> Result<AkitaBatchedProof<F, L>, AkitaError>
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    L: ExtField<F>,
-    T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
-    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
-    SelectRootDirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
-    SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    BindTranscript:
-        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
-    ProveFolded: FnOnce(
-        PreparedBatchedProveInputs<'a, F, E, P, D>,
-        Schedule,
-        LevelParams,
-        &mut T,
-        BasisMode,
-    ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + ExtField<Cfg::ClaimField>
+        + ExtField<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+    P: AkitaPolyOps<Cfg::Field, D>,
+    B: ProverComputeBackend<Cfg::Field>,
 {
-    let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
+    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
+    let prepared_claims = {
+        let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
+        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ClaimField, P, D>(
+            expanded.as_ref(),
+            claims,
+        )?
+    };
     let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
+    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<F, E, L, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
             &prepared_claims.opening_points,
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<F, E, L, D>(num_vars)
-        {
-            let commit_params = select_root_direct_params(&prepared_claims.incidence_summary)?;
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            num_vars,
+        ) {
+            let commit_params =
+                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
+    let root_commit_params = match schedule.steps.first() {
+        Some(Step::Fold(root)) => Some(&root.params),
+        Some(Step::Direct(root)) => root.params.as_ref(),
+        None => None,
+    }
+    .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
+    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
+        &prepared_claims.group_polys,
+        root_commit_params,
+    )?;
 
-    bind_transcript(
-        transcript,
+    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+        expanded.as_ref(),
         &prepared_claims.incidence_summary,
         &schedule,
         basis,
+        transcript,
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct::<F, L, D, P>(
+        return prove_root_direct::<Cfg::Field, Cfg::ChallengeField, D, P>(
             &prepared_claims.group_polys,
             &prepared_claims.flat_hints,
         );
     }
 
-    let Some(root_step) = schedule_root_fold_step(&schedule) else {
+    if schedule_root_fold_step(&schedule).is_none() {
         return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
         ));
-    };
-    let next_inputs = AkitaScheduleInputs {
-        num_vars,
-        level: 1,
-        current_w_len: root_step.next_w_len,
-    };
-    let root_next_params = select_root_next_params(&schedule, next_inputs)?;
+    }
+    let root_next_params = scheduled_next_level_params(&schedule, 1)?;
 
-    prove_folded(
-        prepared_claims,
-        schedule,
-        root_next_params,
+    prove_folded_batched::<Cfg, T, P, B, D>(
+        expanded,
+        prefix_slots,
+        backend,
+        prepared,
         transcript,
+        prepared_claims,
+        &schedule,
         basis,
+        &root_next_params,
+        setup_contribution_mode,
     )
+    .map(|(proof, _total_levels)| proof)
 }
 
 /// Build the recursive suffix from an intermediate-root handoff, then
@@ -293,10 +307,9 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
-        extra_carried_sources,
-        extra_carried_openings,
         next_state,
     } = raw;
     let suffix = build_suffix(next_state)?;
@@ -309,7 +322,7 @@ where
     } = suffix;
     #[cfg(feature = "zk")]
     let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
-    let mut root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
+    let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
         y_rings,
         extension_opening_reduction,
         v,
@@ -318,13 +331,10 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
     );
-    if let AkitaBatchedRootProof::Fold(fold_root) = &mut root {
-        fold_root.stage2.extra_carried_sources = extra_carried_sources;
-        fold_root.stage2.extra_carried_openings = extra_carried_openings;
-    }
     let steps = build_final_proof_steps::<F, L>(intermediate_levels, terminal);
     Ok((
         AkitaBatchedProof {
@@ -355,74 +365,55 @@ where
     }
 }
 
-/// Prove a folded batched root and assemble the recursive suffix.
+/// Prove a folded batched root and assemble the recursive suffix under config
+/// `Cfg`.
 ///
-/// The prover crate owns config-free folded-root preparation: root schedule
-/// shape checks, opening-point reduction, commitment row shape validation,
-/// root fold proving, recursive suffix handoff, and final proof assembly. The
-/// caller supplies the already-selected first recursive commitment params plus
-/// policy callbacks for committing root's next `w` and proving the suffix.
+/// The prover crate owns folded-root preparation (root schedule shape checks,
+/// opening-point reduction, commitment row shape validation), root fold
+/// proving, the next-`w` commitment, recursive suffix proving, and final proof
+/// assembly. All policy facts are obtained directly from `Cfg`.
 ///
 /// # Errors
 ///
 /// Returns an error if the schedule is not folded, root inputs are malformed,
 /// root proving fails, or suffix construction fails.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove_folded_batched_with_policy<
-    'a,
-    F,
-    E,
-    C,
-    T,
-    P,
-    B,
-    const D: usize,
-    CommitRootNext,
-    BuildSuffix,
-    AdjustRaw,
->(
-    expanded: &AkitaExpandedSetup<F>,
+pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, F, E, P, D>,
+    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,
-    commit_root_next: CommitRootNext,
-    build_suffix: BuildSuffix,
-    adjust_raw: AdjustRaw,
-) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, usize), AkitaError>
 where
-    F: FieldCore
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
-        + ExtField<F>
-        + FrobeniusExtField<F>
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+        + ExtField<Cfg::ClaimField>
+        + ExtField<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
-    CommitRootNext: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
-    BuildSuffix: FnOnce(
-        RecursiveProverState<F, C>,
-        &Schedule,
-        &mut T,
-    ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
-    AdjustRaw: FnOnce(&mut RootLevelRawOutput<F, C, D>) -> Result<(), AkitaError>,
+    T: Transcript<Cfg::Field>,
+    P: AkitaPolyOps<Cfg::Field, D>,
+    B: ProverComputeBackend<Cfg::Field>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 
     let Some(root_step) = schedule_root_fold_step(schedule) else {
         return Err(AkitaError::InvalidSetup(
@@ -433,23 +424,26 @@ where
     if prepared_claims
         .commitments_by_point
         .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+        .any(|commitment| commitment.u.len() != root_step.params.effective_commit_rows())
     {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
         ));
     }
 
+    let num_vars = prepared_claims.incidence_summary.num_vars();
+
     #[cfg(feature = "zk")]
-    let (zk_hiding_commitment, mut zk_hiding_state) = build_zk_hiding_context::<F, E, C, B, D>(
-        backend,
-        prepared,
-        schedule,
-        &root_step.params,
-        prepared_claims.incidence_summary.num_vars(),
-        prepared_claims.incidence_summary.num_claims(),
-        prepared_claims.incidence_summary.num_public_rows(),
-    )?;
+    let (zk_hiding_commitment, mut zk_hiding_state) =
+        build_zk_hiding_context::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, B, D>(
+            backend,
+            prepared,
+            schedule,
+            &root_step.params,
+            prepared_claims.incidence_summary.num_vars(),
+            prepared_claims.incidence_summary.num_claims(),
+            prepared_claims.incidence_summary.num_points(),
+        )?;
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
@@ -471,9 +465,17 @@ where
                 ));
             }
         };
-        let _ = (commit_root_next, build_suffix, root_next_params, adjust_raw);
-        let terminal = prove_terminal_root_fold_with_params::<F, E, C, T, P, B, D>(
-            expanded,
+        let _ = root_next_params;
+        let terminal = prove_terminal_root_fold_with_params::<
+            Cfg::Field,
+            Cfg::ClaimField,
+            Cfg::ChallengeField,
+            T,
+            P,
+            B,
+            D,
+        >(
+            expanded.as_ref(),
             backend,
             prepared,
             transcript,
@@ -486,13 +488,14 @@ where
             root_step.next_w_len,
             final_log_basis,
             basis,
+            setup_contribution_mode,
             #[cfg(feature = "zk")]
             &mut zk_hiding_state,
         )?;
         #[cfg(feature = "zk")]
         let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
-            build_terminal_root_batched_proof::<F, C>(
+            build_terminal_root_batched_proof::<Cfg::Field, Cfg::ChallengeField>(
                 #[cfg(feature = "zk")]
                 zk_hiding_proof,
                 terminal,
@@ -501,8 +504,18 @@ where
         ));
     }
 
-    let mut raw = prove_root_fold_with_params::<F, E, C, T, P, B, D, _>(
+    let raw = prove_root_fold_with_params::<
+        Cfg::Field,
+        Cfg::ClaimField,
+        Cfg::ChallengeField,
+        T,
+        P,
+        B,
+        Cfg,
+        D,
+    >(
         expanded,
+        prefix_slots,
         backend,
         prepared,
         transcript,
@@ -513,17 +526,29 @@ where
         prepared_claims.flat_hints,
         &root_step.params,
         root_step.next_w_len,
-        root_next_params.log_basis,
+        root_next_params,
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
-        |w| commit_root_next(w),
+        setup_contribution_mode,
     )?;
-    adjust_raw(&mut raw)?;
 
-    build_folded_batched_proof_with_suffix::<F, C, D, _>(raw, |next_state| {
-        build_suffix(next_state, schedule, transcript)
-    })
+    build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(
+        raw,
+        |next_state| {
+            crate::prove_recursive_suffix::<Cfg, T, B, D>(
+                expanded,
+                prefix_slots,
+                backend,
+                prepared,
+                num_vars,
+                transcript,
+                next_state,
+                schedule,
+                setup_contribution_mode,
+            )
+        },
+    )
 }
