@@ -888,8 +888,11 @@ where
     let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(&slot_id) else {
         return Ok(None);
     };
-    if slot_natural_len < natural_field_len || slot_padded_len != n_prefix {
+    if slot_padded_len != n_prefix {
         return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
+    }
+    if slot_natural_len < natural_field_len {
+        return Ok(None);
     }
     let setup_eval_len = n_prefix.checked_div(d_setup).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
@@ -1017,7 +1020,7 @@ mod tests {
         assert_eq!(selection.0.id, id);
         assert_eq!(selection.1, 2);
 
-        let err = select_setup_prefix_slot(
+        let selection = select_setup_prefix_slot(
             &seed,
             2,
             |candidate| {
@@ -1030,10 +1033,10 @@ mod tests {
             d_setup,
             "slot does not cover request",
         )
-        .expect_err("short slot must be rejected");
-        assert_eq!(
-            err,
-            AkitaError::InvalidSetup("slot does not cover request".to_string())
+        .expect("short slot falls back");
+        assert!(
+            selection.is_none(),
+            "undersized matching slot should behave like a missing slot"
         );
     }
 

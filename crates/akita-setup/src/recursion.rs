@@ -108,7 +108,7 @@ where
             &backend,
             &prepared,
             &next_fold.params,
-            natural_len,
+            n_prefix,
             n_prefix,
         )?;
     }
@@ -177,7 +177,7 @@ mod tests {
             id.check().expect("slot id shape");
             assert_eq!(id.d_setup, SETUP_OFFLOAD_D_SETUP);
             assert_eq!(slot.padded_len, id.n_prefix);
-            assert!(slot.natural_len <= slot.padded_len);
+            assert_eq!(slot.natural_len, slot.padded_len);
             assert!(slot.padded_len.is_power_of_two());
         }
 
