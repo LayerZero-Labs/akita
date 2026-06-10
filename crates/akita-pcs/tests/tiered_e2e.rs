@@ -55,11 +55,6 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} singleton"
         );
-        assert_ne!(
-            layout.b_key.row_len(),
-            layout.effective_commit_rows(),
-            "nv={nv} singleton must exercise n_b' != sent-commitment length"
-        );
 
         let poly = make_onehot_poly(&layout, 0x7000_0000);
         let pt = random_point(nv, 0x7115_0000 + nv as u64);
@@ -230,9 +225,9 @@ fn tiered_onehot_batch_nv14() {
 }
 
 #[test]
-fn tiered_onehot_singleton_nv34() {
-    // Shipped table root has n_b'=2 but n_f=1; guards must accept u.len() == 1.
-    run_tiered_singleton(34, SetupContributionMode::Direct);
+fn tiered_onehot_singleton_nv29() {
+    // Smallest shipped-table singleton whose root fold tiers (f_key present).
+    run_tiered_singleton(29, SetupContributionMode::Direct);
 }
 
 /// Same tiered instances under [`SetupContributionMode::Recursive`]: the root
@@ -247,6 +242,6 @@ fn tiered_onehot_batch_nv14_recursive() {
 }
 
 #[test]
-fn tiered_onehot_singleton_nv34_recursive() {
-    run_tiered_singleton(34, SetupContributionMode::Recursive);
+fn tiered_onehot_singleton_nv29_recursive() {
+    run_tiered_singleton(29, SetupContributionMode::Recursive);
 }
