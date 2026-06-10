@@ -63,7 +63,7 @@ use akita_types::{
     CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
     LevelParams, MRowLayout, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
     RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};

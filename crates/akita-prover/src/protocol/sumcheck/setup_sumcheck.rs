@@ -8,15 +8,15 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
-use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
-use akita_transcript::Transcript;
+use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, LevelParams, RingRelationInstance, RingSubfieldEncoding,
-    SetupContributionPlan, SetupContributionPlanInputs, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, LevelParams,
+    RingRelationInstance, RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
@@ -97,8 +97,10 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     /// are invalid, or any sumcheck round polynomial exceeds its degree bound.
     #[allow(clippy::too_many_arguments)]
     pub fn prove<F, T, SampleRound, const D: usize>(
-        setup_entries: &[CyclotomicRing<F, D>],
+        expanded: &AkitaExpandedSetup<F>,
+        prefix_slots: &SetupPrefixProverRegistry<F, D>,
         lp: &LevelParams,
+        next_fold_level_params: &LevelParams,
         relation: &RingRelationInstance<F, D>,
         tau1: &[E],
         alpha: E,
@@ -115,11 +117,40 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         let (required, mut bar_omega, alpha_pows) =
             prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
 
-        if required > setup_entries.len() {
+        let natural_field_len = required.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
+        })?;
+        let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+        if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected setup product".to_string(),
             ));
         }
+        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+            let setup_prefix_selection = select_setup_prefix_slot(
+                expanded.seed(),
+                setup_len,
+                |slot_id| {
+                    prefix_slots
+                        .get(slot_id)
+                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
+                },
+                next_fold_level_params,
+                natural_field_len,
+                D,
+                "selected setup-prefix slot does not cover setup product",
+            )?;
+            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+                setup_eval_len
+            } else {
+                setup_len
+            }
+        } else {
+            setup_len
+        };
+        let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
+        let setup_entries = setup_view.as_slice();
 
         let lambda_len = required.checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("setup product lambda length overflow".into())

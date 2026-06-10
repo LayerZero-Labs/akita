@@ -41,6 +41,7 @@ type EvaluatedRecursiveWitness<F, const D: usize> =
 #[allow(clippy::too_many_arguments)]
 pub fn prove_recursive_suffix<Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
@@ -89,24 +90,47 @@ where
         let (level_params, next_params) =
             scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
         let level_d = level_params.ring_dimension;
-        let out = dispatch_ring_dim_result!(
-            level_d,
-            D,
-            prepared,
-            |D, level_prepared| {
-                let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
-                    backend,
-                    level_prepared,
-                    transcript,
-                    current_state,
-                    level,
-                    &level_params,
-                    MRowLayout::WithDBlock,
-                )?;
-                prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+        let out = if level_d == D {
+            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+                backend,
+                prepared,
+                transcript,
+                current_state,
+                level,
+                &level_params,
+                MRowLayout::WithDBlock,
+            )?;
+            prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+                expanded,
+                prefix_slots,
+                backend,
+                prepared,
+                transcript,
+                level,
+                &level_params,
+                &next_params,
+                prepared_fold,
+                setup_contribution_mode,
+            )
+        } else {
+            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+                let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+                let level_prefix_slots = SetupPrefixProverRegistry::new();
+                let prepared_fold =
+                    prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
+                        backend,
+                        &level_prepared,
+                        transcript,
+                        current_state,
+                        level,
+                        &level_params,
+                        MRowLayout::WithDBlock,
+                    )?;
+                prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, { D_LEVEL }>(
                     expanded,
+                    &level_prefix_slots,
                     backend,
-                    level_prepared,
+                    &level_prepared,
                     transcript,
                     level,
                     &level_params,
@@ -114,9 +138,8 @@ where
                     prepared_fold,
                     setup_contribution_mode,
                 )
-            },
-            backend.prepare_expanded::<D>(expanded.clone())?
-        )?;
+            })
+        }?;
         intermediate_levels.push(out.level_proof);
         current_state = out.next_state;
         level += 1;
@@ -187,6 +210,7 @@ where
 #[inline(never)]
 fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -380,17 +404,11 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let setup_len = expanded
-                .as_ref()
-                .shared_matrix()
-                .total_ring_elements_at::<D>()?;
-            let setup_view = expanded
-                .as_ref()
-                .shared_matrix()
-                .ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
+                expanded.as_ref(),
+                prefix_slots,
                 lp,
+                next_level_params,
                 &instance,
                 &tau1,
                 alpha,
