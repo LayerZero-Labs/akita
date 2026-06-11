@@ -182,6 +182,21 @@ fn flat_blocks_block_panics_on_out_of_range_index() {
     let _ = blocks.block(1);
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn onehot_accumulate_skips_empty_tail_partitions() {
+    const D: usize = 4;
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    let accum = pool
+        .install(|| super::accumulate::onehot_accumulate::<SingleChunkEntry, D>(&[], &[], 0, 5));
+
+    assert_eq!(accum, vec![[0i32; D]; 5]);
+}
+
 #[test]
 fn onehot_poly_rejects_non_divisible_k_d() {
     // K=3 and D=4: neither divides the other. `OneHotPoly::new` must
@@ -622,7 +637,7 @@ fn wide_matches_reference() {
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
     let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-    let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
+    let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
     assert_eq!(ref_result.len(), wide_result.len());
     for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -659,7 +674,7 @@ fn wide_matches_reference_fp128() {
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
     let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-    let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
+    let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
     assert_eq!(ref_result.len(), wide_result.len());
     for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -692,8 +707,13 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
         .map(|i| single_chunk_blocks.block(i))
         .collect();
-    let got =
-        column_sweep_ajtai_single_chunk::<F, D>(&a_view, &single_chunk_views, 1, block_len, 1);
+    let got = column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+        &a_view,
+        &single_chunk_views,
+        1,
+        block_len,
+        1,
+    );
     let expected = inner_ajtai_wide_single_chunk_tiled::<F, D>(&a_view, &bucket, 1);
 
     assert_eq!(got.len(), 1);
@@ -733,7 +753,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         .map(|i| multi_chunk_blocks.block(i))
         .collect();
 
-    let got = column_sweep_ajtai_multi_chunk::<F, D>(
+    let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
         &a_view,
         &views,
         n_a,
@@ -745,9 +765,42 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     assert_eq!(got.len(), 1, "single-block test: expected one output row");
     assert_eq!(
         got[0], reference,
-        "column_sweep_ajtai_multi_chunk must agree with the non-wide \
+        "column_sweep_ajtai_onehot must agree with the non-wide \
          reference at fan-out totals above MAX_WIDE_SHIFT_ACCUMULATIONS"
     );
+}
+
+#[test]
+fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
+    type F = Prime24Offset3;
+    const D: usize = 64;
+
+    let n_a = 1;
+    let num_digits_commit = 1;
+    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
+    let a_matrix = [vec![dense_ring]];
+
+    let coeffs = vec![0u16; MAX_WIDE_SHIFT_ACCUMULATIONS + 1];
+    let bucket = vec![MultiChunkEntry::new(0, coeffs)];
+    let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
+    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
+        .map(|i| multi_chunk_blocks.block(i))
+        .collect();
+
+    let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
+    let a_view = a_flat.ring_view::<D>(n_a, num_digits_commit).unwrap();
+
+    let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
+        &a_view,
+        &views,
+        n_a,
+        num_digits_commit,
+        num_digits_commit,
+    );
+    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
+
+    assert_eq!(got[0], reference);
 }
 
 #[test]
