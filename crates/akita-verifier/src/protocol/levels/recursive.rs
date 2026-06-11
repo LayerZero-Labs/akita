@@ -761,15 +761,17 @@ where
             if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_terminal_root_level::<F, E, C, T, D>(
-                &terminal.y_rings,
-                terminal.extension_opening_reduction.as_ref(),
-                #[cfg(not(feature = "zk"))]
-                &terminal.stage2_sumcheck,
-                #[cfg(feature = "zk")]
-                &terminal.stage2_sumcheck_proof_masked,
-                &terminal.final_witness,
-                root_step.next_w_len,
+            verify_root_level::<F, E, C, T, D>(
+                RootLevelProofView::Terminal {
+                    y_rings_flat: &terminal.y_rings,
+                    extension_opening_reduction: terminal.extension_opening_reduction.as_ref(),
+                    #[cfg(not(feature = "zk"))]
+                    stage2_sumcheck: &terminal.stage2_sumcheck,
+                    #[cfg(feature = "zk")]
+                    stage2_sumcheck_masked: &terminal.stage2_sumcheck_proof_masked,
+                    final_witness: &terminal.final_witness,
+                    final_w_len: root_step.next_w_len,
+                },
                 setup,
                 transcript,
                 opening_points,
@@ -777,12 +779,12 @@ where
                 commitments,
                 incidence_summary,
                 basis,
+                root_lp,
+                &root_step.params,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
                 &mut zk_relations,
-                root_lp,
-                &root_step.params,
             )?;
             #[cfg(feature = "zk")]
             {
@@ -818,13 +820,17 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
-            let root_challenges = verify_intermediate_root_level::<F, E, C, T, D>(
-                &fold_root.y_rings,
-                fold_root.extension_opening_reduction.as_ref(),
-                &fold_root.v,
-                &fold_root.stage1,
-                &fold_root.stage2,
-                fold_root.stage3_sumcheck_proof.as_ref(),
+            let root_challenges = verify_root_level::<F, E, C, T, D>(
+                RootLevelProofView::Intermediate {
+                    y_rings_flat: &fold_root.y_rings,
+                    extension_opening_reduction: fold_root.extension_opening_reduction.as_ref(),
+                    v_flat: &fold_root.v,
+                    stage1: &fold_root.stage1,
+                    stage2: &fold_root.stage2,
+                    stage3_sumcheck_proof: fold_root.stage3_sumcheck_proof.as_ref(),
+                    setup_contribution_mode,
+                    next_fold_level_params: root_next_fold_level_params,
+                },
                 setup,
                 transcript,
                 opening_points,
@@ -832,14 +838,12 @@ where
                 commitments,
                 incidence_summary,
                 basis,
-                setup_contribution_mode,
+                root_lp,
+                &root_step.params,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
                 &mut zk_relations,
-                root_lp,
-                &root_step.params,
-                root_next_fold_level_params,
             )?;
 
             let first_level_d = next_level_params.ring_dimension;

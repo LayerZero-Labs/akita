@@ -106,168 +106,24 @@ where
     Ok(TerminalWitnessReplay { parts })
 }
 
-/// Verify the intermediate-root proof payload for batched proofs whose root
-/// is followed by additional recursive levels.
-///
-/// This replays the canonical root transcript layout: batch-shape header,
-/// commitments, padded opening points, per-claim field openings, one gamma
-/// challenge per claim, and gamma-combined per-point y-rings, then runs the
-/// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
-/// `next_w_commitment` through `ABSORB_NEXT_LEVEL_WITNESS_BINDING`.
-///
-/// # Errors
-///
-/// Returns an error if the proof shape is inconsistent, any public trace check
-/// fails, ring-switch replay fails, or either sumcheck verifier rejects.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
-    y_rings_flat: &FlatRingVec<F>,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    v_flat: &FlatRingVec<F>,
-    stage1: &AkitaStage1Proof<C>,
-    stage2: &AkitaStage2Proof<F, C>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    claim_points: &[&[E]],
-    openings: &[E],
-    commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
-    basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
-    root_lp: &LevelParams,
-    batched_lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
-) -> Result<Vec<C>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let stage3_sumcheck_proof =
-        stage3_sumcheck_proof_for_mode(setup_contribution_mode, stage3_sumcheck_proof)?;
-    verify_root_level_inner::<F, E, C, T, D>(
-        y_rings_flat,
-        extension_opening_reduction,
-        Some(v_flat),
-        Some(stage1),
-        #[cfg(not(feature = "zk"))]
-        &stage2.sumcheck_proof,
-        #[cfg(feature = "zk")]
-        &stage2.sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        setup,
-        transcript,
-        claim_points,
-        openings,
-        commitments,
-        incidence_summary,
-        basis,
-        root_lp,
-        batched_lp,
-        next_fold_level_params,
-        RootStageInput::Intermediate {
-            next_w_commitment: &stage2.next_w_commitment,
-            next_w_eval: stage2.next_w_eval(),
-        },
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
-}
-
-/// Verify the terminal-root proof payload — used when the schedule contains a
-/// single fold level (the root is itself the terminal fold and ships
-/// `final_witness` in cleartext).
-///
-/// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
-/// preamble; at the terminal, [`ABSORB_NEXT_LEVEL_WITNESS_BINDING`] absorbs `final_witness`
-/// instead of a next-witness commitment, stage-1 is skipped entirely, and
-/// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
-///
-/// # Errors
-///
-/// Returns an error if the proof shape is inconsistent, any public trace
-/// check fails, ring-switch replay fails, or the stage-2 sumcheck rejects.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
-    y_rings_flat: &FlatRingVec<F>,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
-    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    final_witness: &CleartextWitnessProof<F>,
-    final_w_len: usize,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    claim_points: &[&[E]],
-    openings: &[E],
-    commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
-    basis: BasisMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
-    root_lp: &LevelParams,
-    batched_lp: &LevelParams,
-) -> Result<Vec<C>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    verify_root_level_inner::<F, E, C, T, D>(
-        y_rings_flat,
-        extension_opening_reduction,
-        None,
-        None,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_masked,
-        None,
-        setup,
-        transcript,
-        claim_points,
-        openings,
-        commitments,
-        incidence_summary,
-        basis,
-        root_lp,
-        batched_lp,
-        root_lp,
-        RootStageInput::Terminal {
-            final_witness,
-            final_w_len,
-        },
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
-}
-
-enum RootStageInput<'a, F: FieldCore, C: FieldCore> {
+enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
     Intermediate {
-        next_w_commitment: &'a FlatRingVec<F>,
-        next_w_eval: C,
+        y_rings_flat: &'a FlatRingVec<F>,
+        extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<C>>,
+        v_flat: &'a FlatRingVec<F>,
+        stage1: &'a AkitaStage1Proof<C>,
+        stage2: &'a AkitaStage2Proof<F, C>,
+        stage3_sumcheck_proof: Option<&'a SetupSumcheckProof<C>>,
+        setup_contribution_mode: SetupContributionMode,
+        next_fold_level_params: &'a LevelParams,
     },
     Terminal {
+        y_rings_flat: &'a FlatRingVec<F>,
+        extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<C>>,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck: &'a akita_sumcheck::SumcheckProof<C>,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_masked: &'a akita_sumcheck::SumcheckProofMasked<C>,
         final_witness: &'a CleartextWitnessProof<F>,
         final_w_len: usize,
     },
@@ -340,15 +196,22 @@ where
     })
 }
 
+/// Verify the folded-root proof payload for either an intermediate root or the
+/// 1-fold terminal root.
+///
+/// This replays the canonical root transcript layout: batch-shape header,
+/// commitments, padded opening points, per-claim field openings, row
+/// coefficients, EOR if present, y-rings, ring switch, stage-1 when present,
+/// stage-2, and setup replay when required by the intermediate branch.
+///
+/// # Errors
+///
+/// Returns an error if the proof shape is inconsistent, any public trace check
+/// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
-fn verify_root_level_inner<F, E, C, T, const D: usize>(
-    y_rings_flat: &FlatRingVec<F>,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    v_flat: Option<&FlatRingVec<F>>,
-    stage1: Option<&AkitaStage1Proof<C>>,
-    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
-    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
+#[inline(never)]
+fn verify_root_level<F, E, C, T, const D: usize>(
+    proof: RootLevelProofView<'_, F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -358,8 +221,6 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     basis: BasisMode,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
-    stage_input: RootStageInput<'_, F, C>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
 ) -> Result<Vec<C>, AkitaError>
@@ -375,19 +236,49 @@ where
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
-    let is_terminal = matches!(stage_input, RootStageInput::Terminal { .. });
-    let final_w_len_opt = match &stage_input {
-        RootStageInput::Terminal { final_w_len, .. } => Some(*final_w_len),
-        RootStageInput::Intermediate { .. } => None,
+    let (m_row_layout, y_rings_flat, extension_opening_reduction) = match &proof {
+        RootLevelProofView::Intermediate {
+            y_rings_flat,
+            extension_opening_reduction,
+            ..
+        } => (
+            MRowLayout::WithDBlock,
+            *y_rings_flat,
+            *extension_opening_reduction,
+        ),
+        RootLevelProofView::Terminal {
+            y_rings_flat,
+            extension_opening_reduction,
+            ..
+        } => (
+            MRowLayout::WithoutDBlock,
+            *y_rings_flat,
+            *extension_opening_reduction,
+        ),
     };
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed_owned: Vec<CyclotomicRing<F, D>>;
-    let v_typed: &[CyclotomicRing<F, D>] = match v_flat {
-        Some(v_flat) => v_flat.as_ring_slice::<D>()?,
-        None => {
+    let v_typed: &[CyclotomicRing<F, D>] = match &proof {
+        RootLevelProofView::Intermediate { v_flat, .. } => v_flat.as_ring_slice::<D>()?,
+        RootLevelProofView::Terminal { .. } => {
             v_typed_owned = Vec::new();
             &v_typed_owned
         }
+    };
+    let next_fold_level_params = match &proof {
+        RootLevelProofView::Intermediate {
+            next_fold_level_params,
+            ..
+        } => *next_fold_level_params,
+        RootLevelProofView::Terminal { .. } => root_lp,
+    };
+    let stage3_sumcheck_proof = match &proof {
+        RootLevelProofView::Intermediate {
+            stage3_sumcheck_proof,
+            setup_contribution_mode,
+            ..
+        } => stage3_sumcheck_proof_for_mode(*setup_contribution_mode, *stage3_sumcheck_proof)?,
+        RootLevelProofView::Terminal { .. } => None,
     };
     let num_claims = incidence_summary.num_claims();
     let num_points = incidence_summary.num_points();
@@ -561,10 +452,9 @@ where
         )?;
     }
 
-    let w_len = if is_terminal {
-        final_w_len_opt.ok_or(AkitaError::InvalidProof)?
-    } else {
-        w_ring_element_count_with_counts::<F>(
+    let w_len = match &proof {
+        RootLevelProofView::Terminal { final_w_len, .. } => *final_w_len,
+        RootLevelProofView::Intermediate { .. } => w_ring_element_count_with_counts::<F>(
             batched_lp,
             incidence_summary.num_polys_per_point().len(),
             incidence_summary.num_polys_per_point().iter().sum(),
@@ -572,23 +462,24 @@ where
             incidence_summary.num_public_rows(),
         )?
         .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
     };
-    let terminal_replay = if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
-        let layout = terminal_witness_segment_layout(
-            batched_lp,
-            num_claims,
-            incidence_summary.num_public_rows(),
-            F::modulus_bits(),
-        )?;
-        Some(prepare_terminal_witness_replay::<F, T>(
-            transcript,
-            final_witness,
-            w_len,
-            layout,
-        )?)
-    } else {
-        None
+    let terminal_replay = match &proof {
+        RootLevelProofView::Terminal { final_witness, .. } => {
+            let layout = terminal_witness_segment_layout(
+                batched_lp,
+                num_claims,
+                incidence_summary.num_public_rows(),
+                F::modulus_bits(),
+            )?;
+            Some(prepare_terminal_witness_replay::<F, T>(
+                transcript,
+                *final_witness,
+                w_len,
+                layout,
+            )?)
+        }
+        RootLevelProofView::Intermediate { .. } => None,
     };
 
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
@@ -597,11 +488,7 @@ where
         root_lp.num_blocks,
         num_claims,
         batched_lp,
-        if is_terminal {
-            MRowLayout::WithoutDBlock
-        } else {
-            MRowLayout::WithDBlock
-        },
+        m_row_layout,
     )?;
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
@@ -618,11 +505,6 @@ where
                 .clone()
         })
         .collect();
-    let m_row_layout = if is_terminal {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
-    };
     let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
@@ -646,16 +528,14 @@ where
         row_coefficients: &row_coefficients,
         lp: batched_lp,
     };
-    let rs = match &stage_input {
-        RootStageInput::Intermediate {
-            next_w_commitment, ..
-        } => ring_switch_verifier::<F, C, T, D>(
+    let rs = match &proof {
+        RootLevelProofView::Intermediate { stage2, .. } => ring_switch_verifier::<F, C, T, D>(
             &ring_switch_replay,
             w_len,
-            next_w_commitment,
+            &stage2.next_w_commitment,
             transcript,
         )?,
-        RootStageInput::Terminal { .. } => {
+        RootLevelProofView::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
             ring_switch_verifier_terminal::<F, C, T, D>(
                 &ring_switch_replay,
@@ -675,10 +555,9 @@ where
     #[cfg(feature = "zk")]
     let relation_claim_mask =
         zk_relation_claim_mask_from_y_masks::<C, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
-    let stage1_proof = match (&stage_input, stage1) {
-        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => Some(stage1_proof),
-        (RootStageInput::Terminal { .. }, None) => None,
-        _ => return Err(AkitaError::InvalidProof),
+    let stage1_proof = match &proof {
+        RootLevelProofView::Intermediate { stage1, .. } => Some(*stage1),
+        RootLevelProofView::Terminal { .. } => None,
     };
     let stage1_replay = verify_stage1_or_terminal::<F, C, T>(
         stage1_proof,
@@ -692,21 +571,28 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let stage2_replay = match &stage_input {
-        RootStageInput::Intermediate { next_w_eval, .. } => Stage2ProofReplay::Intermediate {
-            next_w_eval: *next_w_eval,
+    let stage2_replay = match &proof {
+        RootLevelProofView::Intermediate { stage2, .. } => Stage2ProofReplay::Intermediate {
+            next_w_eval: stage2.next_w_eval(),
             #[cfg(not(feature = "zk"))]
-            sumcheck: stage2_sumcheck,
+            sumcheck: &stage2.sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_masked: stage2_sumcheck_masked,
+            sumcheck_masked: &stage2.sumcheck_proof_masked,
         },
-        RootStageInput::Terminal { final_witness, .. } => Stage2ProofReplay::Terminal {
+        RootLevelProofView::Terminal {
             final_witness,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_masked,
+            ..
+        } => Stage2ProofReplay::Terminal {
+            final_witness: *final_witness,
             physical_w_len: w_len,
             #[cfg(not(feature = "zk"))]
-            sumcheck: stage2_sumcheck,
+            sumcheck: *stage2_sumcheck,
             #[cfg(feature = "zk")]
-            sumcheck_masked: stage2_sumcheck_masked,
+            sumcheck_masked: *stage2_sumcheck_masked,
         },
     };
     let stage2_input = Stage2ReplayInput {
