@@ -237,9 +237,11 @@ impl AjtaiKeyParams {
     ///
     /// Use this only for intermediate construction steps that carry
     /// incomplete data (`params_only` placeholders with `col_len = 0` or
-    /// `collision_l2_sq = 0`, iterative SIS fixed-point loops, etc.).
-    /// Production-facing layouts must reach [`try_new`](Self::try_new) before
-    /// they're emitted into a schedule or setup.
+    /// `collision_l2_sq = 0`, iterative SIS fixed-point loops, etc.) and for
+    /// synthetic test/descriptor/proof-size layouts that intentionally carry
+    /// degenerate ranks. Production-facing schedule layouts are built through
+    /// [`try_new`](Self::try_new), which audits the SIS floor against the final
+    /// width as the key is constructed.
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,
