@@ -42,7 +42,7 @@ Workspace members under `crates/`:
 - `akita-config` — runtime config presets, the single `CommitmentConfig` trait, config-backed schedule adapters, the `policy_of::<Cfg>()` bridge, the generated-table family list (`generated_families`) + `gen_schedule_tables` binary, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. **Depends on `akita-planner`.** `CommitmentConfig::runtime_schedule` is a one-line delegation to `akita_planner::get_schedule(key, &policy_of::<Self>(), …)`; the planner owns table selection (`shipped_table`), so the trait has **no** `schedule_table()` / `resolve_schedule()` hooks. Runtime DP fallback on a table miss is the default for every preset (no opt-in wrapper, no `test-utils` feature)
 - `akita-setup` — config-backed setup construction + optional setup cache
 - `akita-verifier` — verifier replay (no prover-only polynomial backends). **Depends on `akita-config`** and is directly `<Cfg>`-generic: `verify_batched::<Cfg, T, D>` (in `protocol::batched`) calls `Cfg::…` and `bind_transcript_instance_descriptor` directly — there is no `_with_policy` closure layer. Reaches `akita-planner` transitively via `akita-config` (DP fallback is verifier-reachable)
-- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. **Depends on `akita-config`** and is directly `<Cfg>`-generic: `prove_batched::<Cfg, T, P, B, D>` (in `protocol::flow`), `commit::<Cfg, D, P, B>` / `batched_commit::<Cfg, D, P, B>` (in `api::commitment`), `commit_next_w::<Cfg, B, D>` and `prove_recursive_suffix::<Cfg, T, B, D>` (in `protocol`), calling `Cfg::…` and `bind_transcript_instance_descriptor` directly with no `_with_policy` closures. The root tensor-projection transform and the multi-`D` dispatch helpers live here (not in the scheme)
+- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. **Depends on `akita-config`** and is directly `<Cfg>`-generic: `prove_batched::<Cfg, T, P, B, D>` (in `protocol::flow`), `commit::<Cfg, D, P, B>` / `batched_commit::<Cfg, D, P, B>` (in `api::commitment`), `commit_next_w::<Cfg, B, D>` and `prove_suffix::<Cfg, T, B, D>` (in `protocol`), calling `Cfg::…` and `bind_transcript_instance_descriptor` directly with no `_with_policy` closures. The root tensor-projection transform and the multi-`D` dispatch helpers live here (not in the scheme)
 - `akita-planner` — pure, **`Cfg`-free** schedule owner. It holds the generated schedule-table representation (`Generated*` types, `table_entry`, `generated_schedule_lookup_key`), the shipped `src/generated/*.rs` tables + `*_table()` constructors, the `policy → table` registry `shipped_table(&PlannerPolicy, root_fold_is_tensor)`, the on-demand compact→`LevelParams` expansion (`generated::expand`, `schedule_from_entry`), and the schedule-search DP `find_schedule(key, &PlannerPolicy, stage1, fold_shape)`. The single resolution entry point is `get_schedule(key, &PlannerPolicy, stage1, fold_shape)` — it selects the shipped table from the policy (and the level-0 fold shape, which disambiguates the tensor table), expands the compact entry on a hit, and runs the DP on a miss. It names no `CommitmentConfig` type and depends only on `akita-types` / `akita-challenges` / `akita-field`. Sits **BELOW** `akita-config` (the arrow is inverted): `akita-config::runtime_schedule` is a one-line delegation to `get_schedule`. The preset family list and the `gen_schedule_tables` binary live in `akita-config` (the only crate that can name presets); the binary writes its output into `crates/akita-planner/src/generated/`
 - `akita-pcs` — umbrella crate with `AkitaCommitmentScheme` orchestration, examples, benches, integration tests, and public re-exports
 
@@ -86,6 +86,13 @@ The active transcript-hardening pillars are:
 - P3: use `LoggingTranscript` tests for prover/verifier event-stream equality and wire-before-squeeze smell checks.
 
 Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardening.md): prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, and NARG migration.
+
+## Offline SIS table regen
+
+`scripts/stitch_generated_sis_table.py` regenerates `generated_sis_table/` using Sage and the
+pinned `third_party/lattice-estimator` checkout (`git submodule update --init`).
+Reference replay: `sage -python scripts/sis_golden/check.py`. Rust CI does not
+require Sage or an initialized submodule.
 
 ## Profiling
 
