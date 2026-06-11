@@ -37,6 +37,23 @@ pub(super) enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
     },
 }
 
+pub(super) struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usize> {
+    pub(super) setup: &'a AkitaVerifierSetup<F>,
+    pub(super) stage2: Stage2ProofReplay<'a, F, E>,
+    pub(super) stage1: Stage1Replay<E>,
+    pub(super) rs: RingSwitchVerifyOutput<E>,
+    pub(super) relation_claim: E,
+    #[cfg(feature = "zk")]
+    pub(super) relation_claim_mask: ZkR1csLinearCombination<E>,
+    pub(super) setup_sumcheck_proof: Option<&'a SetupSumcheckProof<E>>,
+    pub(super) next_fold_level_params: &'a LevelParams,
+    pub(super) opening_points: &'a [RingOpeningPoint<F>],
+    pub(super) ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+    pub(super) v: &'a [CyclotomicRing<F, D>],
+    pub(super) u: &'a [CyclotomicRing<F, D>],
+    pub(super) y_rings: &'a [CyclotomicRing<F, D>],
+}
+
 pub(super) fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     mode: SetupContributionMode,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
@@ -53,22 +70,9 @@ pub(super) fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn verify_stage2_and_setup_replay<F, E, T, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    stage2: Stage2ProofReplay<'_, F, E>,
-    stage1: Stage1Replay<E>,
-    rs: RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-    setup_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
-    next_fold_level_params: &LevelParams,
-    opening_points: &[RingOpeningPoint<F>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
-    y_rings: &[CyclotomicRing<F, D>],
+    input: Stage2ReplayInput<'_, F, E, D>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
@@ -77,6 +81,22 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let Stage2ReplayInput {
+        setup,
+        stage2,
+        stage1,
+        rs,
+        relation_claim,
+        #[cfg(feature = "zk")]
+        relation_claim_mask,
+        setup_sumcheck_proof,
+        next_fold_level_params,
+        opening_points,
+        ring_multiplier_points,
+        v,
+        u,
+        y_rings,
+    } = input;
     let Stage1Replay {
         batching_coeff,
         s_claim,

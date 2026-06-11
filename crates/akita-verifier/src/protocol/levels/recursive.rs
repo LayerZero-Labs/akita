@@ -512,22 +512,25 @@ where
             sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
         },
     };
-    verify_stage2_and_setup_replay::<F, L, T, D>(
+    let stage2_input = Stage2ReplayInput {
         setup,
-        transcript,
-        stage2_replay,
-        stage1_replay,
+        stage2: stage2_replay,
+        stage1: stage1_replay,
         rs,
         relation_claim,
         #[cfg(feature = "zk")]
         relation_claim_mask,
-        stage3_sumcheck_proof,
+        setup_sumcheck_proof: stage3_sumcheck_proof,
         next_fold_level_params,
-        &ring_opening_points,
-        &ring_multiplier_points,
-        v_typed,
-        commitment_u,
-        &y_rings,
+        opening_points: &ring_opening_points,
+        ring_multiplier_points: &ring_multiplier_points,
+        v: v_typed,
+        u: commitment_u,
+        y_rings: &y_rings,
+    };
+    verify_stage2_and_setup_replay::<F, L, T, D>(
+        transcript,
+        stage2_input,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
