@@ -967,7 +967,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    num_points,
+                    1,
                     MRowLayout::WithDBlock,
                 ),
                 root_proof.serialized_size(Compress::No),
