@@ -191,8 +191,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
-    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(TerminalWitnessReplay { parts })
 }
 
@@ -657,6 +656,7 @@ where
         }
         for &claim_idx in row.claim_indices() {
             if claim_idx >= openings.len()
+                || incidence_summary.claim_to_point()[claim_idx] != row_idx
                 || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
             {
                 return Err(AkitaError::InvalidProof);
@@ -837,6 +837,9 @@ where
     // The fused trace term is the `γ²` addend of the stage-2 batching challenge.
     let trace_coeff = trace_gamma * trace_gamma;
     ensure_trace_stage2_supported(<C as ExtField<F>>::EXT_DEGREE)?;
+    // EOR output is bound through `trace_eval_target` and per-claim `claim_scales`,
+    // not a standalone on-wire `y_ring`. The stage-2 sumcheck closes the same
+    // TraceOpen functional the old y-ring transcript absorb enforced.
     let trace_wire = {
         let segment = relation_instance.segment_layout(batched_lp)?;
         let num_trace_blocks = incidence_summary
@@ -1019,8 +1022,7 @@ where
         }
     };
     if let RootStageInput::Intermediate { next_w_eval, .. } = &stage_input {
-        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
-        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
     }
     if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
         let setup_prepared_row_eval = setup_prepared_row_eval

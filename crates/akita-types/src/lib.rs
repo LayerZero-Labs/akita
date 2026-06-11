@@ -105,7 +105,7 @@ pub use schedule::{
     DirectStep, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
-pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
+pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
     batched_eval_target_from_incidence, build_trace_stage2_compact,
     build_trace_stage2_compact_scaled, build_trace_table_scaled,

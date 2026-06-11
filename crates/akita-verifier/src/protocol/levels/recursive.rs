@@ -585,8 +585,7 @@ where
     };
     if let FoldProofView::Intermediate(level_proof) = &proof {
         let next_w_eval = level_proof.stage2.next_w_eval();
-        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
-        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
     }
     if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
         let setup_prepared_row_eval = setup_prepared_row_eval
