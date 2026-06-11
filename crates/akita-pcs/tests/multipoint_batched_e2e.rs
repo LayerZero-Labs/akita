@@ -628,15 +628,22 @@ mod non_zk_negative_cases {
         });
     }
 
-    /// Per-point soundness regression for the point axis (the
-    /// `(z^(1)+δ, z^(2)−δ)` mass-shift attack). The prover commits and proves
-    /// honestly; the verifier is then handed openings that move `δ` from
-    /// point 0's claim to point 1's claim, leaving the *sum* of the two claims
-    /// unchanged. Under a protocol that summed the point axis this would
-    /// verify; with explicit per-point fold/A rows each point's opening is
-    /// bound independently, so the tampered openings must be rejected.
+    /// Claimed-opening binding regression: a verifier handed sum-preserving
+    /// tampered openings against an honest proof must reject.
+    ///
+    /// This exercises the transcript binding of the claimed openings, *not* the
+    /// per-point fold/A rows directly: the prover proves honestly, then the
+    /// verifier is given openings that move `δ` from point 0's claim to
+    /// point 1's claim (sum preserved). Because claimed openings are absorbed
+    /// into the transcript before `gamma` is sampled (`levels.rs`), any change
+    /// diverges Fiat-Shamir and is rejected. The deeper per-point soundness
+    /// property (a complicit prover emitting an internally-inconsistent but
+    /// sum-preserving *witness*) is not reachable from an e2e tamper, since
+    /// `build_w` always produces an internally-consistent witness and the
+    /// public rows carrying the claims were already per-point; exercising it
+    /// requires witness-column surgery at the `compute_m_evals_x` layer.
     #[test]
-    fn multipoint_dense_verify_rejects_shifted_opening_across_points() {
+    fn multipoint_dense_verify_rejects_tampered_claimed_openings() {
         init_rayon_pool();
         let _guard = E2E_TEST_LOCK.lock().unwrap();
         run_on_large_stack(|| {
@@ -723,8 +730,8 @@ mod non_zk_negative_cases {
             .expect("multipoint batched prove");
 
             // Move `δ = 1` from point 0's first claim to point 1's first claim:
-            // the summed claim is preserved, but neither point's opening is
-            // honest anymore.
+            // the summed claim is preserved, but the per-claim openings differ
+            // from what the honest proof was bound to.
             let mut shifted = openings_per_point.clone();
             shifted[0][0] += F::one();
             shifted[1][0] -= F::one();
@@ -745,7 +752,7 @@ mod non_zk_negative_cases {
             );
             assert!(
                 result.is_err(),
-                "point-axis mass shift (sum-preserving) must be rejected"
+                "tampered claimed openings must be rejected"
             );
         });
     }

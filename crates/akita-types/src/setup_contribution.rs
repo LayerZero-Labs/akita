@@ -438,6 +438,19 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: inputs.num_polys_per_commitment_group.len(),
             });
         }
+        // This evaluator indexes the per-point families (consistency / public /
+        // A) by `num_points` rather than `num_public_rows`. That is only correct
+        // when the commitment-group axis coincides with the opening-point axis
+        // (`G == P`), which the batched front-end enforces structurally
+        // (`CommitmentRouting::check_matches_incidence`). Reject any input that
+        // would violate it so a future `G != P` unlock fails loudly here instead
+        // of silently sizing the consistency/A blocks on the wrong axis.
+        if inputs.num_points != inputs.num_public_rows {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution requires commitment groups to equal opening points (G == P)"
+                    .into(),
+            ));
+        }
 
         let block_bits = inputs.num_blocks.trailing_zeros() as usize;
         if block_bits > full_vec_randomness.len() {
@@ -494,9 +507,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             MRowLayout::WithoutDBlock => 0,
         };
         // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
-        // COMMIT (F when tiered, else B) | B_inner (tiered) | A (P · n_a). The
-        // point axis P is `num_points`, matching the prover M-eval `eq_tau1`
-        // layout (consistency `eq_tau1[0..P]`, public `eq_tau1[P..2P]`).
+        // COMMIT (F when tiered, else B; per group G) | B_inner (tiered; per
+        // group G) | A (P · n_a; per point). The per-point axis P uses
+        // `num_points` here, valid only under the `G == P` invariant enforced
+        // above, matching the prover M-eval `eq_tau1` layout (consistency
+        // `eq_tau1[0..P]`, public `eq_tau1[P..2P]`).
         let d_start = checked_add(inputs.num_points, inputs.num_points, "D row start")?;
         // COMMIT block start (the F block when tiered, the B block otherwise).
         let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
@@ -1272,7 +1287,7 @@ mod tests {
             // Per-point layout: consistency (P=1) | public (P=1) | A (P·n_a=1).
             rows: 3,
             num_polys_per_commitment_group: vec![0],
-            num_public_rows: 0,
+            num_public_rows: 1,
             tier_split: 1,
             n_f: 0,
         };

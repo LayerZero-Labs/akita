@@ -339,9 +339,10 @@ impl LevelParams {
 
     // ---- Canonical M-row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (1) | public (num_public_outputs) |
-    //   D (n_d_active) | COMMIT (effective_commit_rows · nc) |
-    //   B_inner (b_inner_rows_per_group · nc) | A (n_a).
+    // Row layout: consistency (num_public_outputs) |
+    //   public (num_public_outputs) | D (n_d_active) |
+    //   COMMIT (effective_commit_rows · nc) |
+    //   B_inner (b_inner_rows_per_group · nc) | A (n_a · num_public_outputs).
     //
     // `COMMIT` is the sent-commitment block (the second-tier `F` rows when
     // tiered, the first-tier `B` rows otherwise); `B_inner` is the inner
