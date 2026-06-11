@@ -1,4 +1,35 @@
-//! Gadget-decomposition digit counts.
+//! Gadget-decomposition digit counts and the committed-matrix widths derived
+//! from them.
+//!
+//! Three layers live here, lowest to highest:
+//!
+//! 1. **Core digit-count math** — how many balanced base-`2^log_basis` digits
+//!    represent a bound. Two centering conventions exist:
+//!    - `compute_num_digits` (crate-private): the *symmetric* signed range
+//!      `[-2^(k-1), 2^(k-1) - 1]`, including the sign-bit correction. Reached
+//!      only through the router below.
+//!    - [`compute_num_digits_full_field`]: the *asymmetric* full-field residue,
+//!      plain `ceil(field_bits / log_basis)` with no correction.
+//!    - [`num_digits_for_bound`]: the router. Full-field bounds
+//!      (`log_bound >= field_bits`) use the asymmetric count; smaller bounds use
+//!      the symmetric one. This is the *only* symmetric entry point, so a caller
+//!      cannot accidentally request the symmetric count of a full-field bound
+//!      (the historical `compute_num_digits(128, _)` footgun).
+//!
+//! 2. **Per-role selectors** — map a [`DecompositionParams`] to the digit depth
+//!    of a specific witness role, encoding which bound applies to each:
+//!    - [`num_digits_s_commit`]: committed witness `s` (`log_commit_bound` at
+//!      the root, `log_basis` at recursive levels).
+//!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
+//!    - [`num_digits_fold`]: folded witness `z` — the digit count for the
+//!      norm-derived bound `β`, which is not a [`DecompositionParams`] field.
+//!
+//! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
+//!    digit depth plus block geometry into a matrix's ring-column count:
+//!    [`decomposed_s_block_ring_count`] (A), [`decomposed_t_ring_count`] (B),
+//!    [`decomposed_w_ring_count`] (D). These are layout arithmetic, not digit
+//!    math; they sit here so each width formula lives beside the depth it
+//!    multiplies.
 
 use akita_field::AkitaError;
 
@@ -23,13 +54,36 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
 }
 
-/// Minimum number of balanced base-`2^log_basis` digits needed to represent any
-/// value in `[-V, V]` with `V < 2^log_bound`, using symmetric centering.
+/// Minimum number of balanced base-`2^log_basis` digits needed to represent a
+/// `log_bound`-bit *signed* coefficient, using symmetric centering.
+///
+/// Following [`crate::DecompositionParams::log_commit_bound`], a bound of `k`
+/// bits denotes the centered range `[-2^(k-1), 2^(k-1) - 1]`, i.e. one sign bit
+/// plus `k-1` magnitude bits. The binding constraint is the positive end,
+/// `2^(k-1) - 1`, since the balanced digit range `[-b/2, b/2 - 1]` reaches
+/// further on the negative side. This is *not* `2^log_bound - 1`: the leading
+/// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
+/// `log_bound = m + 1` (this is exactly what [`num_digits_fold`] does).
+///
+/// The count is `ceil(log_bound / log_basis)`, plus one more digit when the
+/// balanced-digit positive reach `balanced_digit_max` still falls short of
+/// `2^(log_bound-1) - 1`. The extra digit is only ever needed when `log_basis`
+/// divides `log_bound` exactly (otherwise `ceil(log_bound/log_basis)·log_basis
+/// > log_bound`, so the reach already clears `2^(log_bound-1)`); the check is
+/// run unconditionally because it is cheap and self-evidently correct. Both the
+/// coverage and the minimality of the result are pinned by the
+/// `compute_num_digits_covers_signed_range` unit test.
+///
+/// This symmetric count is for *small* bounds (`log_bound < field_bits`):
+/// one-hot `log_commit_bound = 1`, recursive `log_basis`, and fold `log_beta`.
+/// It is crate-private and reached only through [`num_digits_for_bound`], which
+/// routes full-field bounds to the asymmetric [`compute_num_digits_full_field`]
+/// instead — so no caller can ask for the symmetric count of a full-field bound.
 ///
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or at least 128, or if `log_bound` exceeds 128.
-pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
+pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     assert!(
         log_bound <= 128,
@@ -41,12 +95,9 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     }
 
     let mut num_digits = (log_bound as usize).div_ceil(log_basis as usize);
-    let total_bits = (num_digits as u32).saturating_mul(log_basis);
-    if total_bits <= log_bound {
-        let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
-        if balanced_digit_max(log_basis, num_digits) < required_positive {
-            num_digits += 1;
-        }
+    let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
+    if balanced_digit_max(log_basis, num_digits) < required_positive {
+        num_digits += 1;
     }
     num_digits.max(1)
 }
@@ -79,22 +130,6 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
     } else {
         compute_num_digits(log_bound, log_basis)
     }
-}
-
-/// `(δ_commit, δ_open)` for one decomposition (commit-bound digits, open-bound
-/// digits). Renames the former `decomp_depths`.
-pub fn decomp_depths(decomposition: DecompositionParams) -> (usize, usize) {
-    let field_bits = decomposition.field_bits();
-    let depth_commit = num_digits_for_bound(
-        decomposition.log_commit_bound,
-        field_bits,
-        decomposition.log_basis,
-    );
-    let open_bound = decomposition
-        .log_open_bound
-        .unwrap_or(decomposition.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, field_bits, decomposition.log_basis);
-    (depth_commit, depth_open)
 }
 
 /// `δ_commit`: digits per coefficient of the committed witness `s`, using the
@@ -199,10 +234,43 @@ mod tests {
 
     #[test]
     fn digits_basic() {
-        assert_eq!(compute_num_digits(128, 2), 65);
-        assert_eq!(compute_num_digits(128, 3), 43);
+        // Production `compute_num_digits` inputs are small symmetric bounds:
+        // one-hot `log_commit_bound = 1`, recursive `log_basis`, fold
+        // `log_beta`. Full-field bounds go through `num_digits_for_bound` to
+        // `compute_num_digits_full_field`, not here.
         assert_eq!(compute_num_digits(1, 2), 1);
         assert_eq!(compute_num_digits(0, 2), 1);
+        // `log_basis` itself (the recursive commit bound): one base-`2^lb`
+        // digit covers the balanced range `[-2^(lb-1), 2^(lb-1) - 1]` exactly.
+        assert_eq!(compute_num_digits(2, 2), 1);
+        assert_eq!(compute_num_digits(3, 3), 1);
+    }
+
+    /// The returned digit count must actually cover the signed range
+    /// `[-2^(log_bound-1), 2^(log_bound-1) - 1]` its contract promises, for
+    /// every production base and bound. This pins the invariant the previous
+    /// conditional guard left unchecked whenever `log_basis ∤ log_bound`.
+    #[test]
+    fn compute_num_digits_covers_signed_range() {
+        for log_basis in 2u32..=8 {
+            for log_bound in 1u32..=120 {
+                let n = compute_num_digits(log_bound, log_basis);
+                let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
+                assert!(
+                    balanced_digit_max(log_basis, n) >= required_positive,
+                    "log_bound={log_bound} log_basis={log_basis} n={n} \
+                     reach={} < required={required_positive}",
+                    balanced_digit_max(log_basis, n),
+                );
+                // Minimality: one fewer digit must be insufficient (unless n==1).
+                if n > 1 {
+                    assert!(
+                        balanced_digit_max(log_basis, n - 1) < required_positive,
+                        "non-minimal: log_bound={log_bound} log_basis={log_basis} n={n}",
+                    );
+                }
+            }
+        }
     }
 
     #[test]
