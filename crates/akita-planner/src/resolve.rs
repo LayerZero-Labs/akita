@@ -36,8 +36,6 @@ use crate::generated::{
     // @generated schedule table imports begin
     fp128_d128_full_table,
     fp128_d128_onehot_table,
-    fp128_d32_full_table,
-    fp128_d32_onehot_table,
     fp128_d64_onehot_table,
     fp128_d64_onehot_tensor_table,
     fp32_d128_onehot_table,
@@ -84,13 +82,13 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 ///   identical `fp128_d64_onehot` and `fp128_d64_onehot_tensor` policies.
 ///
 /// Under the committed-fold A-role SIS pricing, `D=128` is the proof-size
-/// optimum for fp128; `D=32` dense/onehot tables are also shipped for the
-/// recursion profile and low-`num_vars` tooling. The small primes ship
-/// one-hot only (full-field small primes exceed the small-modulus SIS floor
-/// at realistic `num_vars`). `(family, ring_degree, onehot)` combinations
-/// with no shipped table (full-field small primes, retired full-field fp128
-/// `D=64`, or any recursive-w derived policy whose `log_commit_bound` is
-/// its `log_basis`) return `None`, so the caller regenerates from scratch.
+/// optimum and the shipped production dimension for every field; the small
+/// primes ship one-hot only (full-field small primes exceed the small-modulus
+/// SIS floor at realistic `num_vars`). `(family, ring_degree, onehot)`
+/// combinations with no shipped table (full-field small primes, the retired
+/// `D<=64` small-prime / full-field-`fp128` presets, or any recursive-w
+/// derived policy whose `log_commit_bound` is its `log_basis`) return `None`,
+/// so the caller regenerates from scratch.
 pub fn shipped_table(
     policy: &PlannerPolicy,
     root_fold_is_tensor: bool,
@@ -114,8 +112,6 @@ pub fn shipped_table(
     Some(match (policy.sis_family, policy.ring_dimension, onehot) {
         (SisModulusFamily::Q128, 128, true) => fp128_d128_onehot_table(),
         (SisModulusFamily::Q128, 128, false) => fp128_d128_full_table(),
-        (SisModulusFamily::Q128, 32, true) => fp128_d32_onehot_table(),
-        (SisModulusFamily::Q128, 32, false) => fp128_d32_full_table(),
         (SisModulusFamily::Q128, 64, true) => {
             if root_fold_is_tensor {
                 fp128_d64_onehot_tensor_table()

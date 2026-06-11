@@ -98,22 +98,6 @@ fn table_backed<Cfg: CommitmentConfig>(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     GeneratedFamily {
-        module_name: "fp128_d32_full",
-        const_name: "FP128_D32_FULL_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        regen: regen::<fp128::D32Full>,
-        table_backed: table_backed::<fp128::D32Full>,
-    },
-    GeneratedFamily {
-        module_name: "fp128_d32_onehot",
-        const_name: "FP128_D32_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        regen: regen::<fp128::D32OneHot>,
-        table_backed: table_backed::<fp128::D32OneHot>,
-    },
-    GeneratedFamily {
         module_name: "fp128_d128_full",
         const_name: "FP128_D128_FULL_SCHEDULES",
         min_num_vars: 1,
