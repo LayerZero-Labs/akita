@@ -1,5 +1,5 @@
 #[cfg(feature = "zk")]
-use super::super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
+use super::super::slice_mle::compute_zk_blinding_part;
 use super::super::slice_mle::{
     compute_r_contribution, EStructuredSlicesEvaluator, SetupEvaluation, SetupEvaluator,
     SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
@@ -485,9 +485,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         #[cfg(feature = "zk")]
         {
-            let b_blinding = compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
-            let d_blinding = compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
-            total = total + b_blinding + d_blinding;
+            total = total + compute_zk_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
         }
 
         Ok(total)

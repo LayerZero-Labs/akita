@@ -23,4 +23,4 @@ pub(super) use structured_slice::{
     TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 #[cfg(feature = "zk")]
-pub(super) use zk_blinding::{compute_b_blinding_part, compute_d_blinding_part};
+pub(super) use zk_blinding::compute_zk_blinding_part;

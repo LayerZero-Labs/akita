@@ -2,18 +2,49 @@ use akita_algebra::offset_eq::eval_offset_eq_tensor;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::AkitaExpandedSetup;
+use akita_types::{AkitaExpandedSetup, RingRelationSegmentLayout};
 
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
-/// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
-pub(crate) fn compute_b_blinding_part<F, E, const D: usize>(
+/// ZK blinding contribution. See `specs/optimized_verifier.md`.
+pub(crate) fn compute_zk_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
     alpha: E,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    let layout = prepared.segment_layout()?;
+    let alpha_pows = scalar_powers(alpha, D);
+    let b_blinding = compute_b_blinding_part::<F, E, D>(
+        prepared,
+        full_vec_randomness,
+        setup,
+        &layout,
+        &alpha_pows,
+    )?;
+    let d_blinding = compute_d_blinding_part::<F, E, D>(
+        prepared,
+        full_vec_randomness,
+        setup,
+        &layout,
+        &alpha_pows,
+    )?;
+    Ok(b_blinding + d_blinding)
+}
+
+/// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
+fn compute_b_blinding_part<F, E, const D: usize>(
+    prepared: &RingSwitchDeferredRowEval<E>,
+    full_vec_randomness: &[E],
+    setup: &AkitaExpandedSetup<F>,
+    layout: &RingRelationSegmentLayout,
+    alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -25,8 +56,6 @@ where
     }
     let _span = tracing::info_span!("b_blinding").entered();
 
-    let layout = prepared.segment_layout()?;
-    let alpha_pows = scalar_powers(alpha, D);
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
@@ -64,11 +93,12 @@ where
 }
 
 /// ZK D-blinding contribution. See `specs/optimized_verifier.md`.
-pub(crate) fn compute_d_blinding_part<F, E, const D: usize>(
+fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
-    alpha: E,
+    layout: &RingRelationSegmentLayout,
+    alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -80,8 +110,6 @@ where
     }
     let _span = tracing::info_span!("d_blinding").entered();
 
-    let layout = prepared.segment_layout()?;
-    let alpha_pows = scalar_powers(alpha, D);
     let d_start = 1 + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
@@ -291,8 +319,9 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
+        let layout = p.segment_layout().unwrap();
         let b_start = 1 + p.num_public_rows + p.n_d;
-        let b_offset = p.segment_layout().unwrap().b_blinding_offset;
+        let b_offset = layout.b_blinding_offset;
         let b_zk_view = fx
             .setup
             .zk_b_matrix()
@@ -300,9 +329,14 @@ mod tests {
             .unwrap();
         let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
 
-        let got =
-            compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
-                .unwrap();
+        let got = compute_b_blinding_part::<F, F, D>(
+            p,
+            &fx.full_vec_randomness,
+            &fx.setup,
+            &layout,
+            &alpha_pows,
+        )
+        .unwrap();
         let mut expected = F::zero();
         for idx in 0..p.b_blinding_segment_len {
             let point_idx = idx / p.b_blinding_digit_planes_per_point;
@@ -325,8 +359,9 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
+        let layout = p.segment_layout().unwrap();
         let d_start = 1 + p.num_public_rows;
-        let d_offset = p.segment_layout().unwrap().d_blinding_offset;
+        let d_offset = layout.d_blinding_offset;
         let d_zk_view = fx
             .setup
             .zk_d_matrix()
@@ -334,9 +369,14 @@ mod tests {
             .unwrap();
         let d_zk_rows: Vec<_> = d_zk_view.rows().collect();
 
-        let got =
-            compute_d_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
-                .unwrap();
+        let got = compute_d_blinding_part::<F, F, D>(
+            p,
+            &fx.full_vec_randomness,
+            &fx.setup,
+            &layout,
+            &alpha_pows,
+        )
+        .unwrap();
         let mut expected = F::zero();
         for local in 0..p.d_blinding_segment_len {
             let mut entry = F::zero();
