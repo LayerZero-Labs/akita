@@ -20,11 +20,10 @@ use akita_types::sis::{
     FoldChallengeNorms, FoldWitnessNorms,
 };
 use akita_types::{
-    decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    level_proof_bytes, root_extension_opening_partials,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -696,7 +695,10 @@ fn compute_root_direct_level_params(
         log_basis,
         ..decomp
     };
-    let (depth_commit, depth_open) = decomp_depths(level_decomp);
+    // Root-direct commits against `log_commit_bound` (the root form of
+    // `num_digits_s_commit`) and opens at `log_open_bound`.
+    let depth_commit = num_digits_s_commit(level_decomp, true);
+    let depth_open = num_digits_open(level_decomp);
 
     // Outer/inner variable split: brute-force the optimum for a normal root,
     // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The

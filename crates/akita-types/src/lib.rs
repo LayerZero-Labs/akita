@@ -107,5 +107,5 @@ pub use schedule::{
     DirectStep, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
-pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
+pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use transcript::AppendToTranscript;

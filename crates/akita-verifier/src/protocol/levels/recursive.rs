@@ -367,6 +367,9 @@ where
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
+    // See the root verifier comment at `levels.rs` on absorbing `y_rings` before
+    // EOR for the recommended (transcript-breaking) reorder and the invariant
+    // it relies on.
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
@@ -668,8 +671,7 @@ where
     };
     if let FoldProofView::Intermediate(level_proof) = &proof {
         let next_w_eval = level_proof.stage2.next_w_eval();
-        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
-        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
     }
     if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
         let setup_prepared_row_eval = setup_prepared_row_eval
