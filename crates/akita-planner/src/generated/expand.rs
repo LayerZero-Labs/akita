@@ -201,7 +201,7 @@ impl GeneratedFoldStep {
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
-        Ok(LevelParams {
+        let params = LevelParams {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
@@ -236,7 +236,8 @@ impl GeneratedFoldStep {
             onehot_chunk_size,
             tier_split,
             f_key,
-        })
+        };
+        Ok(params)
     }
 }
 

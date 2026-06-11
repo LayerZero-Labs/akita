@@ -215,8 +215,7 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
-    transcript.record_wire_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
+    transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
         .into_intermediate()
 }
@@ -244,8 +243,7 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)?
         .into_terminal_as_output()
 }
