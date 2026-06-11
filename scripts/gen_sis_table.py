@@ -148,6 +148,7 @@ DEFAULT_RANK_SWEEP = 4
 D128_SEARCH_CAP = 50_000_000_000
 DEFAULT_SEARCH_CAP = 10_000_000_000
 DEFAULT_JOBS_CAP = 6
+PINNED_LATTICE_ESTIMATOR_SHA = "27a581bb8e9d49f5e9e2db315bd48ac769d5f5f5"
 
 
 def parse_args() -> argparse.Namespace:
@@ -258,6 +259,15 @@ def estimator_git_sha(path: Path) -> str:
         return "unknown"
 
 
+def assert_pinned_estimator(path: Path) -> None:
+    actual = estimator_git_sha(path)
+    if actual != PINNED_LATTICE_ESTIMATOR_SHA:
+        raise SystemExit(
+            "lattice-estimator SHA mismatch: "
+            f"expected {PINNED_LATTICE_ESTIMATOR_SHA}, got {actual} at {path}"
+        )
+
+
 def estimator_remote_url(path: Path) -> str:
     try:
         out = subprocess.run(
@@ -266,17 +276,26 @@ def estimator_remote_url(path: Path) -> str:
             text=True,
             check=True,
         )
-        return out.stdout.strip()
+        return normalize_git_remote_url(out.stdout.strip())
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
+
+
+def normalize_git_remote_url(url: str) -> str:
+    """Canonicalize common GitHub SSH remotes for reproducible metadata."""
+    if url.startswith("git@github.com:"):
+        return "https://github.com/" + url.removeprefix("git@github.com:")
+    if url.startswith("ssh://git@github.com/"):
+        return "https://github.com/" + url.removeprefix("ssh://git@github.com/")
+    return url
 
 
 def load_estimator(path: Path):
     sys.path.insert(0, str(path))
     from estimator import SIS
     from estimator.reduction import RC
-    from sage.all import log, oo
-    return SIS, RC, log, oo
+    from sage.all import RealField, ZZ, log, oo
+    return SIS, RC, log, oo, ZZ, RealField
 
 
 def family_entries(family: str) -> list[tuple[int, int]]:
@@ -316,14 +335,30 @@ def select_entries(args: argparse.Namespace) -> list[tuple[int, int]]:
     return entries
 
 
-def estimate_bits(SIS, RC, log, oo, q: int, d: int, rank: int, width: int, collision: int) -> float:
+def sis_length_bound(ZZ, RealField, width: int, collision: int):
+    """High-precision Euclidean SIS solution bound `sqrt(width * collision_l2_sq)`.
+
+    Build the integer product exactly, then convert it to an upward-rounded Sage
+    real with precision scaled to the product size. This avoids Python's f64
+    `** 0.5` path while still giving lattice-estimator the numeric real it
+    expects (rather than a symbolic `sqrt(...)` expression).
+    """
+    squared = ZZ(width) * ZZ(collision)
+    precision = max(256, int(squared.nbits()) + 128)
+    return RealField(precision, rnd="RNDU")(squared).sqrt()
+
+
+def estimate_bits(
+    SIS, RC, log, oo, ZZ, RealField,
+    q: int, d: int, rank: int, width: int, collision: int,
+) -> float:
     # `collision` is the per-ring-row squared Euclidean bound (collision_l2_sq).
     # The SIS solution spans `width` ring rows, so the whole-vector Euclidean
     # length bound is sqrt(width * collision_l2_sq). The SIS matrix still has
     # m = width * d scalar columns and n = rank * d scalar rows.
     n = rank * d
     m = width * d
-    length_bound = (width * collision) ** 0.5
+    length_bound = sis_length_bound(ZZ, RealField, width, collision)
     try:
         out = SIS.lattice(
             SIS.Parameters(n=n, q=q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
@@ -341,7 +376,7 @@ def estimate_bits(SIS, RC, log, oo, q: int, d: int, rank: int, width: int, colli
 
 
 def binary_search_max_width(
-    SIS, RC, log, oo,
+    SIS, RC, log, oo, ZZ, RealField,
     q: int,
     d: int, rank: int, collision: int,
     target_bits: float, search_cap: int,
@@ -360,22 +395,22 @@ def binary_search_max_width(
          the common small-answer cells cheap (small `m = width*d`), instead of
          the cap-first binary search's ~log2(cap) huge-`m` probes per cell.
     """
-    if estimate_bits(SIS, RC, log, oo, q, d, rank, 1, collision) < target_bits:
+    if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, 1, collision) < target_bits:
         return 0
 
-    if estimate_bits(SIS, RC, log, oo, q, d, rank, search_cap, collision) >= target_bits:
+    if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, search_cap, collision) >= target_bits:
         return search_cap
 
     hi = 1
     while True:
         nxt = min(hi * 2, search_cap)
-        if estimate_bits(SIS, RC, log, oo, q, d, rank, nxt, collision) >= target_bits:
+        if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, nxt, collision) >= target_bits:
             hi = nxt
             continue
         lo, high = hi, nxt
         while lo < high - 1:
             mid = (lo + high) // 2
-            if estimate_bits(SIS, RC, log, oo, q, d, rank, mid, collision) >= target_bits:
+            if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, mid, collision) >= target_bits:
                 lo = mid
             else:
                 high = mid
@@ -439,7 +474,7 @@ def run_entries(
     entries: list[tuple[int, int]],
     estimator_path: Path,
 ) -> list[tuple[int, int, list[int]]]:
-    SIS, RC, log, oo = load_estimator(estimator_path)
+    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
     family_q, _, _, _ = FAMILIES[args.family]
     q = args.q if args.q is not None else family_q
 
@@ -455,7 +490,7 @@ def run_entries(
         for rank in range(1, args.max_rank + 1):
             t0 = time.time()
             w = binary_search_max_width(
-                SIS, RC, log, oo, q, d, rank, collision,
+                SIS, RC, log, oo, ZZ, RealField, q, d, rank, collision,
                 args.target_bits, search_cap,
             )
             elapsed = time.time() - t0
@@ -590,6 +625,7 @@ def main() -> None:
         return
 
     estimator_path = locate_estimator(args.estimator_path)
+    assert_pinned_estimator(estimator_path)
     family_q, family_label, _, _ = FAMILIES[args.family]
     q = args.q if args.q is not None else family_q
     q_label = str(q) if args.q is not None else family_label

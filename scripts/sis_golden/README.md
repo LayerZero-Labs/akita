@@ -28,17 +28,17 @@ Replay golden cells, rank monotonicity, and secure/insecure brackets:
 sage -python scripts/sis_golden/check.py
 ```
 
-## Full table regen (smoke / production)
+## Full table regen
 
-Per family, shard over `(d, collision)` work items:
+Regenerate and stitch every SIS table row with the pinned
+`third_party/lattice-estimator` checkout:
 
 ```bash
-sage -python scripts/gen_sis_table.py --family q32 --jobs 6
-sage -python scripts/gen_sis_table.py --family q64 --jobs 6
-sage -python scripts/gen_sis_table.py --family q128 --jobs 6
+sage -python scripts/stitch_generated_sis_table.py --jobs 6
 ```
 
-Stitch rust output into `crates/akita-types/src/sis/generated_sis_table/` in the
-table cutover PR (separate from golden refresh).
+The stitcher uses `--max-rank 20`, passes `--estimator-path
+third_party/lattice-estimator` to every shard, and rejects any estimator checkout
+whose `HEAD` does not match `metadata.json`.
 
 Manual workflow only. Rust CI does not require Sage or an initialized submodule.
