@@ -36,10 +36,9 @@
 //! conj(zeta_k)` and `c` is real, so `|c_hat(D-1-k)| = |c_hat(k)|`.
 //!
 //! This is the acceptance oracle for operator-norm rejection sampling of fold
-//! challenges: a sampled challenge is retained only if it passes
-//! [`OpNormTable::accept_strict`]. It is not yet wired into the sampler, hence
-//! the crate-internal visibility and the `dead_code` allow below.
-#![allow(dead_code)]
+//! challenges: [`crate::sample_sparse_challenges`] retains a sampled challenge
+//! only if it passes [`OpNormTable::accept_strict`] (see the rejection loop in
+//! [`crate::sampler`]).
 
 use akita_field::AkitaError;
 
@@ -953,6 +952,7 @@ mod perf {
         let cfg = SparseChallengeConfig::ExactShell {
             count_mag1: C1,
             count_mag2: C2,
+            operator_norm_threshold: T as u32,
         };
         let batch_ns = |n: usize, iters: u64| -> f64 {
             time_ns(iters, || {
