@@ -1,7 +1,4 @@
-use super::inner_ajtai::{
-    inner_ajtai_wide_multi_chunk, inner_ajtai_wide_single_chunk,
-    inner_ajtai_wide_single_chunk_tiled,
-};
+use super::inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_onehot_safe};
 use super::*;
 
 /// L2 cache budget (in bytes) for the tile of wide accumulators in the
@@ -28,21 +25,19 @@ type ColEntry = (usize, u32, u16);
 ///
 /// Threads partition blocks evenly (outer, for parallelism); within each
 /// thread, blocks are processed in L2-sized tiles (inner, for cache
-/// locality). For each tile, `push_entries` writes one `(col, local_b,
-/// coeff_idx)` tuple per hot contribution; sort-by-col then drives a single
-/// sweep per A row.
+/// locality). For each tile, entries are pushed as `(col, local_b,
+/// coeff_idx)` tuples; sort-by-col then drives a single sweep per A row.
 #[inline]
 fn column_sweep_core<E, F, const D: usize>(
-    a_view: &akita_types::RingMatrixView<'_, F, D>,
+    a_view: &RingMatrixView<'_, F, D>,
     blocks: &[&[E]],
     n_a: usize,
     num_digits_commit: usize,
-    push_entries: impl Fn(&[E], u32, usize, &mut Vec<ColEntry>) + Send + Sync + Copy,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    E: Sync,
+    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -80,12 +75,12 @@ where
                 col_entries.clear();
                 for local_b in 0..tile_len {
                     let block_entries = blocks[block_start + tile_start + local_b];
-                    push_entries(
-                        block_entries,
-                        local_b as u32,
-                        num_digits_commit,
-                        &mut col_entries,
-                    );
+                    for entry in block_entries {
+                        let col = entry.commit_col(num_digits_commit);
+                        for &ci in entry.coeffs() {
+                            col_entries.push((col, local_b as u32, ci));
+                        }
+                    }
                 }
                 col_entries.sort_unstable_by_key(|&(col, _, _)| col);
 
@@ -126,40 +121,36 @@ where
     out
 }
 
-/// Column-sweep Ajtai commitment for single-chunk one-hot blocks.
+/// Column-sweep Ajtai commitment for one-hot blocks.
 ///
 /// Uses [`column_sweep_core`] for the tiled sweep plus a safety fallback when
-/// any block has more than `MAX_WIDE_SHIFT_ACCUMULATIONS` hot entries (the
+/// any block would exceed [`MAX_WIDE_SHIFT_ACCUMULATIONS`] shift-adds (the
 /// wide accumulator would overflow) and a small-block fast path when
 /// `blocks_per_thread` is already L2-friendly.
-pub(crate) fn column_sweep_ajtai_single_chunk<F, const D: usize>(
-    a_view: &akita_types::RingMatrixView<'_, F, D>,
-    single_chunk_blocks: &[&[SingleChunkEntry]],
+pub(crate) fn column_sweep_ajtai_onehot<E, F, const D: usize>(
+    a_view: &RingMatrixView<'_, F, D>,
+    blocks: &[&[E]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
+    E: OneHotEntry,
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    let num_blocks = single_chunk_blocks.len();
+    let num_blocks = blocks.len();
     debug_assert!(
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
-    if single_chunk_blocks
+
+    if blocks
         .iter()
-        .any(|entries| entries.len() > MAX_WIDE_SHIFT_ACCUMULATIONS)
+        .any(|entries| shift_accumulation_count(entries) > MAX_WIDE_SHIFT_ACCUMULATIONS)
     {
         return cfg_into_iter!(0..num_blocks)
-            .map(|i| {
-                inner_ajtai_wide_single_chunk_tiled(
-                    a_view,
-                    single_chunk_blocks[i],
-                    num_digits_commit,
-                )
-            })
+            .map(|i| inner_ajtai_wide_onehot_safe(a_view, blocks[i], num_digits_commit))
             .collect();
     }
 
@@ -171,91 +162,9 @@ where
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_into_iter!(0..num_blocks)
-            .map(|i| {
-                inner_ajtai_wide_single_chunk(a_view, single_chunk_blocks[i], num_digits_commit)
-            })
+            .map(|i| inner_ajtai_wide_onehot(a_view, blocks[i], num_digits_commit))
             .collect();
     }
 
-    column_sweep_core::<SingleChunkEntry, F, D>(
-        a_view,
-        single_chunk_blocks,
-        n_a,
-        num_digits_commit,
-        |block_entries, local_b, num_digits, sink| {
-            for entry in block_entries {
-                let col = entry.pos_in_block() * num_digits;
-                sink.push((col, local_b, entry.coeff_idx() as u16));
-            }
-        },
-    )
-}
-
-/// Column-sweep Ajtai commitment for multi-chunk one-hot blocks.
-///
-/// Same two-level tiling as [`column_sweep_ajtai_single_chunk`]; each hot
-/// ring element may contribute multiple coefficients, so `push_entries`
-/// fans out the `nonzero_coeffs` list into individual `ColEntry` tuples.
-///
-/// Like the single-chunk twin, this falls back to the per-block inner kernel
-/// whenever any block's total shift-accumulate count would overflow the
-/// column-sweep wide accumulator. For the multi-chunk layout each entry
-/// contributes `nonzero_coeffs.len()` shift-accumulates (not `1` like the
-/// single-chunk case), so the overflow threshold is reached at smaller block
-/// sizes when `K << D`.
-pub(crate) fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
-    a_view: &akita_types::RingMatrixView<'_, F, D>,
-    multi_chunk_blocks: &[&[MultiChunkEntry]],
-    n_a: usize,
-    active_a_cols: usize,
-    num_digits_commit: usize,
-) -> Vec<Vec<CyclotomicRing<F, D>>>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
-{
-    let num_blocks = multi_chunk_blocks.len();
-    debug_assert!(
-        active_a_cols <= a_view.num_cols(),
-        "active A width exceeds setup envelope"
-    );
-
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(num_blocks).max(1);
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-    let blocks_per_thread = num_blocks.div_ceil(num_threads);
-
-    if blocks_per_thread <= SWEEP_THRESHOLD {
-        return cfg_into_iter!(0..num_blocks)
-            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
-            .collect();
-    }
-
-    if multi_chunk_blocks.iter().any(|entries| {
-        entries
-            .iter()
-            .map(|e| e.nonzero_coeffs().len())
-            .sum::<usize>()
-            > MAX_WIDE_SHIFT_ACCUMULATIONS
-    }) {
-        return cfg_into_iter!(0..num_blocks)
-            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
-            .collect();
-    }
-
-    column_sweep_core::<MultiChunkEntry, F, D>(
-        a_view,
-        multi_chunk_blocks,
-        n_a,
-        num_digits_commit,
-        |block_entries, local_b, num_digits, sink| {
-            for entry in block_entries {
-                let col = entry.pos_in_block() * num_digits;
-                for &ci in entry.nonzero_coeffs() {
-                    sink.push((col, local_b, ci));
-                }
-            }
-        },
-    )
+    column_sweep_core::<E, F, D>(a_view, blocks, n_a, num_digits_commit)
 }

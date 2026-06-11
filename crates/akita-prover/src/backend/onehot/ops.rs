@@ -1,7 +1,4 @@
-use super::fold::{
-    fold_multi_chunk_onehot_block, fold_multi_chunk_onehot_block_ring,
-    fold_single_chunk_onehot_block, fold_single_chunk_onehot_block_ring,
-};
+use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
 use akita_field::MulBaseUnreduced;
 
@@ -35,10 +32,10 @@ where
         let num_blocks = blocks.num_blocks();
         match blocks {
             OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_single_chunk_onehot_block(flat.block(i), scalars, block_len))
+                .map(|i| fold_onehot_block(flat.block(i), scalars, block_len))
                 .collect(),
             OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_multi_chunk_onehot_block(flat.block(i), scalars, block_len))
+                .map(|i| fold_onehot_block(flat.block(i), scalars, block_len))
                 .collect(),
         }
     }
@@ -54,10 +51,10 @@ where
         let num_blocks = blocks.num_blocks();
         match blocks {
             OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_single_chunk_onehot_block_ring(flat.block(i), scalars, block_len))
+                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, block_len))
                 .collect(),
             OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_multi_chunk_onehot_block_ring(flat.block(i), scalars, block_len))
+                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, block_len))
                 .collect(),
         }
     }
@@ -426,12 +423,12 @@ where
             .blocks_for(block_len)
             .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
         match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                self.decompose_fold_single_chunk_onehot(blocks, challenges, block_len, num_digits)
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                self.decompose_fold_multi_chunk_onehot(blocks, challenges, block_len, num_digits)
-            }
+            OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry>(
+                blocks, challenges, block_len, num_digits,
+            ),
+            OneHotBlocks::MultiChunk(blocks) => self.decompose_fold_onehot::<MultiChunkEntry>(
+                blocks, challenges, block_len, num_digits,
+            ),
         }
     }
 

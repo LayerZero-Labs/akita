@@ -211,6 +211,7 @@ fn bounded_l1_domain_separator_is_canonical() {
     let shell = SparseChallengeConfig::ExactShell {
         count_mag1: 8,
         count_mag2: 0,
+        operator_norm_threshold: 8,
     }
     .domain_separator_bytes();
     assert_ne!(bytes, uniform);
@@ -321,6 +322,7 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
     let cfg = SparseChallengeConfig::ExactShell {
         count_mag1: 4,
         count_mag2: 2,
+        operator_norm_threshold: 8,
     };
     cfg.validate::<D>().unwrap();
 
@@ -341,6 +343,107 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
         challenge.coeffs.iter().filter(|&&c| c.abs() == 2).count(),
         2
     );
+}
+
+/// f64 reference for the negacyclic operator norm `gamma_D(c) = max_k |c(zeta_k)|`,
+/// used only to confirm the certified integer predicate actually bounds the
+/// accepted challenges in the end-to-end sampling path.
+fn gamma_f64<const D: usize>(c: &SparseChallenge) -> f64 {
+    use std::f64::consts::PI;
+    let mut max_sq = 0.0f64;
+    for k in 0..D {
+        let base = (2 * k + 1) as f64 * PI / D as f64;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
+            let theta = base * pos as f64;
+            re += coeff as f64 * theta.cos();
+            im += coeff as f64 * theta.sin();
+        }
+        max_sq = max_sq.max(re * re + im * im);
+    }
+    max_sq.sqrt()
+}
+
+#[test]
+fn exact_shell_op_norm_rejection_is_deterministic_and_bounded() {
+    const DR: usize = 64;
+    let cfg = SparseChallengeConfig::ExactShell {
+        count_mag1: 31,
+        count_mag2: 11,
+        operator_norm_threshold: 16,
+    };
+    cfg.validate::<DR>().unwrap();
+    // The accepted cap is the threshold (binding, since T = 16 < ||c||_1 = 53).
+    assert_eq!(cfg.operator_norm_cap(), 16);
+
+    let sample = || {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0xA17A));
+        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm", 64, &cfg).unwrap()
+    };
+
+    // Fiat-Shamir replay stability: prover and verifier draw the identical
+    // post-rejection stream.
+    let first = sample();
+    let second = sample();
+    assert_eq!(
+        first, second,
+        "rejection sampling must be transcript-stable"
+    );
+
+    for c in &first {
+        // Structure is preserved by rejection: it only filters, never edits.
+        assert_eq!(l1_norm(c), cfg.l1_norm() as u64);
+        assert_eq!(c.coeffs.iter().filter(|&&v| v.abs() == 1).count(), 31);
+        assert_eq!(c.coeffs.iter().filter(|&&v| v.abs() == 2).count(), 11);
+        // Every retained challenge respects the operator-norm cap.
+        assert!(
+            gamma_f64::<DR>(c) <= 16.0 + 1e-6,
+            "accepted challenge exceeds the operator-norm cap: gamma = {}",
+            gamma_f64::<DR>(c)
+        );
+    }
+}
+
+#[test]
+fn exact_shell_non_binding_threshold_skips_rejection() {
+    const DR: usize = 64;
+    // T >= ||c||_1 = 53, so gamma_D(c) <= ||c||_1 <= T always: no rejection,
+    // and the cap collapses to the deterministic ||c||_1.
+    let rejecting = SparseChallengeConfig::ExactShell {
+        count_mag1: 31,
+        count_mag2: 11,
+        operator_norm_threshold: 16,
+    };
+    let non_binding = SparseChallengeConfig::ExactShell {
+        count_mag1: 31,
+        count_mag2: 11,
+        operator_norm_threshold: 1_000,
+    };
+    assert_eq!(
+        non_binding.operator_norm_cap(),
+        non_binding.l1_norm() as u32
+    );
+
+    let draw = |cfg: &SparseChallengeConfig| {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0xBEEF));
+        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm", 32, cfg).unwrap()
+    };
+
+    // The two configs bind different domain-separator bytes (the threshold is
+    // part of the transcript), so they must not collide even though the shell
+    // shape is identical.
+    assert_ne!(
+        rejecting.domain_separator_bytes(),
+        non_binding.domain_separator_bytes()
+    );
+    // The non-binding draw still produces a well-formed shell sequence.
+    let challenges = draw(&non_binding);
+    assert_eq!(challenges.len(), 32);
+    for c in &challenges {
+        assert_eq!(l1_norm(c), non_binding.l1_norm() as u64);
+    }
 }
 
 #[test]

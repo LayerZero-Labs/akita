@@ -34,6 +34,18 @@ impl OneHotIndex for usize {
     }
 }
 
+/// Entry semantics shared by the one-hot kernel modules.
+pub(crate) trait OneHotEntry: Sync {
+    fn pos_in_block(&self) -> usize;
+
+    fn coeffs(&self) -> &[u16];
+
+    #[inline(always)]
+    fn commit_col(&self, num_digits: usize) -> usize {
+        self.pos_in_block() * num_digits
+    }
+}
+
 /// Compact record for a single nonzero ring element in the
 /// single-chunk layout.
 ///
@@ -70,9 +82,9 @@ impl OneHotIndex for usize {
 ///
 /// # Invariants
 ///
-/// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
-/// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
-/// and `coeff_idx < D <= 65536` are pre-validated in
+/// Fields are private and accessed via public accessors or the
+/// internal `OneHotEntry` trait. The caller-owned invariants
+/// `pos_in_block < block_len <= u32::MAX` and `coeff_idx < D <= 65536` are pre-validated in
 /// `FlatBlocks::<SingleChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +113,18 @@ impl SingleChunkEntry {
     #[inline]
     pub fn coeff_idx(self) -> usize {
         self.coeff_idx as usize
+    }
+}
+
+impl OneHotEntry for SingleChunkEntry {
+    #[inline(always)]
+    fn pos_in_block(&self) -> usize {
+        self.pos_in_block as usize
+    }
+
+    #[inline(always)]
+    fn coeffs(&self) -> &[u16] {
+        std::slice::from_ref(&self.coeff_idx)
     }
 }
 
@@ -149,10 +173,9 @@ impl SingleChunkEntry {
 ///
 /// # Invariants
 ///
-/// Fields are private and accessed via `pos_in_block()` /
-/// `nonzero_coeffs()`. The caller-owned invariants
-/// `pos_in_block < block_len <= u32::MAX` and every
-/// `coeff < D <= 65536` are pre-validated in
+/// Fields are private and accessed via public accessors or the
+/// internal `OneHotEntry` trait. The caller-owned invariants
+/// `pos_in_block < block_len <= u32::MAX` and every `coeff < D <= 65536` are pre-validated in
 /// `FlatBlocks::<MultiChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
@@ -183,4 +206,21 @@ impl MultiChunkEntry {
     pub fn nonzero_coeffs(&self) -> &[u16] {
         &self.nonzero_coeffs
     }
+}
+
+impl OneHotEntry for MultiChunkEntry {
+    #[inline(always)]
+    fn pos_in_block(&self) -> usize {
+        self.pos_in_block as usize
+    }
+
+    #[inline(always)]
+    fn coeffs(&self) -> &[u16] {
+        &self.nonzero_coeffs
+    }
+}
+
+#[inline]
+pub(crate) fn shift_accumulation_count<E: OneHotEntry>(entries: &[E]) -> usize {
+    entries.iter().map(|entry| entry.coeffs().len()).sum()
 }
