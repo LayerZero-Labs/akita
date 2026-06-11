@@ -213,20 +213,57 @@ fn table_fn_name(module_name: &str) -> String {
     format!("{module_name}_table")
 }
 
+fn is_tiered_only_family(module_name: &str) -> bool {
+    module_name == "fp128_d64_onehot_tiered"
+}
+
+fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
+    writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+    writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn emit_tiered_table_accessor() -> String {
+    "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n\
+     /// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n\
+     /// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n\
+     /// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n\
+     #[cfg(not(feature = \"zk\"))]\n\
+     pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n\
+         GeneratedScheduleTable {\n\
+             sis_family: SisModulusFamily::Q128,\n\
+             entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n\
+         }\n\
+     }\n"
+        .to_string()
+}
+
 fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, String> {
     let mut out = String::new();
+    let mut tiered_wired = false;
     for family in families {
         let module_name = family.module_name;
+        if is_tiered_only_family(module_name) {
+            emit_tiered_module_declaration(&mut out)?;
+            tiered_wired = true;
+            continue;
+        }
         writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
         writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
+    }
+    if !tiered_wired {
+        emit_tiered_module_declaration(&mut out)?;
     }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
 }
 
 fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
+    if is_tiered_only_family(family.module_name) {
+        return Ok(emit_tiered_table_accessor());
+    }
     let fn_name = table_fn_name(family.module_name);
     let sis_family = sis_family_for_module(family.module_name)?;
     let module_name = family.module_name;
@@ -241,8 +278,16 @@ fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
 
 fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
     let mut out = emit_module_declarations(families)?;
+    let mut tiered_wired = false;
     for family in families {
+        if is_tiered_only_family(family.module_name) {
+            tiered_wired = true;
+        }
         out.push_str(&emit_table_accessor(family)?);
+        out.push('\n');
+    }
+    if !tiered_wired {
+        out.push_str(&emit_tiered_table_accessor());
         out.push('\n');
     }
     Ok(out)
@@ -250,8 +295,10 @@ fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
 
 fn emit_resolve_cfg_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
     let mut out = String::new();
+    let mut tiered_wired = false;
     for family in families {
-        if family.module_name == "fp128_d64_onehot_tiered" {
+        if is_tiered_only_family(family.module_name) {
+            tiered_wired = true;
             writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
             writeln!(
                 out,
@@ -260,6 +307,14 @@ fn emit_resolve_cfg_imports(families: &[&GeneratedFamily]) -> Result<String, Str
             )
             .map_err(|e| e.to_string())?;
         }
+    }
+    if !tiered_wired {
+        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+        writeln!(
+            out,
+            "use crate::generated::fp128_d64_onehot_tiered_table;"
+        )
+        .map_err(|e| e.to_string())?;
     }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
