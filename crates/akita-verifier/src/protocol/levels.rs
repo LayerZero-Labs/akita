@@ -656,7 +656,6 @@ where
         }
         for &claim_idx in row.claim_indices() {
             if claim_idx >= openings.len()
-                || incidence_summary.claim_to_point()[claim_idx] != row_idx
                 || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
             {
                 return Err(AkitaError::InvalidProof);
@@ -919,6 +918,8 @@ where
     let mut trace_claim_mask = ZkR1csLinearCombination::<C>::zero();
     #[cfg(feature = "zk")]
     if trace_wire.is_some() {
+        // Root batched openings are public transcript values, so the mask stays
+        // zero unless the EOR final claim carries a masked output.
         if let Some((final_claim, _)) = &zk_eor_final {
             trace_claim_mask.add_scaled(trace_coeff, &final_claim.mask);
         }

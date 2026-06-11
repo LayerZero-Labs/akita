@@ -243,8 +243,9 @@ impl ClaimIncidenceSummary {
         }
 
         let mut row_claims = BTreeSet::new();
-        for row in &self.public_rows {
-            if row.point_idx >= num_points
+        for (row_idx, row) in self.public_rows.iter().enumerate() {
+            if row.point_idx != row_idx
+                || row.point_idx >= num_points
                 || row.claim_indices.len() != self.num_polys_per_point[row.point_idx]
             {
                 return Err(AkitaError::InvalidProof);
