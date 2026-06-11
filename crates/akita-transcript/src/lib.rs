@@ -38,6 +38,26 @@ where
     /// Record verifier-side canonical bytes for logging checks.
     fn record_wire_bytes(&mut self, _label: &[u8], _bytes: &[u8]) {}
 
+    /// Record a structured proof field for logging checks *and* absorb it into
+    /// the transcript, in one call.
+    ///
+    /// `record_wire_*` alone is a no-op in production — only the paired
+    /// `append_*` binds the value into the sponge / Fiat-Shamir state. Keeping
+    /// the two as separate adjacent calls means a future edit can silently drop
+    /// the `append_*` and remove a value from the transcript with no compile
+    /// error and no failure outside the `logging-transcript` feature. Prefer
+    /// this helper at every wire-value absorb site so the pair cannot drift.
+    fn absorb_and_record_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
+        self.record_wire_serde(label, s);
+        self.append_serde(label, s);
+    }
+
+    /// Bytes counterpart of [`Self::absorb_and_record_serde`].
+    fn absorb_and_record_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        self.record_wire_bytes(label, bytes);
+        self.append_bytes(label, bytes);
+    }
+
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
 
