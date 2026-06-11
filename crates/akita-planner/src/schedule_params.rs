@@ -103,7 +103,7 @@ fn multi_tiered_keys(
         let Some(n_b_small) = min_secure_rank(
             b_key.sis_family(),
             ring_d as u32,
-            b_key.collision_inf(),
+            b_key.collision_l2_sq(),
             shrunk_width as u64,
         ) else {
             continue;
@@ -130,7 +130,7 @@ fn multi_tiered_keys(
             b_key.sis_family(),
             n_b_small,
             shrunk_width,
-            b_key.collision_inf(),
+            b_key.collision_l2_sq(),
             ring_d,
         )?;
         return Ok((f, tiered_b_key, Some(f_key)));
@@ -1032,13 +1032,15 @@ mod tiering_tests {
 
     const D: usize = 64;
     const FAMILY: SisModulusFamily = SisModulusFamily::Q128;
-    // log_basis = 3 ⟹ B/F collision bucket = 2^3 − 1 = 7.
     const LOG_BASIS: u32 = 3;
-    const NORM: u32 = 7;
     const DELTA_OPEN: usize = 43;
 
+    fn tiered_collision() -> u128 {
+        rounded_up_collision_norm_tiered_commitment(FAMILY, D, LOG_BASIS).unwrap()
+    }
+
     fn b_key(n_b: usize, width: usize) -> AjtaiKeyParams {
-        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, NORM, D)
+        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, tiered_collision(), D)
     }
 
     #[test]
@@ -1068,15 +1070,16 @@ mod tiering_tests {
         assert_eq!(out_b.col_len(), width_t / f);
         // F width = f · n_b' · δ_open, same collision bucket as B.
         assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
-        assert_eq!(out_b.collision_inf(), NORM);
-        assert_eq!(fk.collision_inf(), NORM);
+        let norm = tiered_collision();
+        assert_eq!(out_b.collision_l2_sq(), norm);
+        assert_eq!(fk.collision_l2_sq(), norm);
         // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
         for smaller in 2..f {
             if !width_t.is_multiple_of(smaller) {
                 continue;
             }
             let w = width_t / smaller;
-            let n = min_secure_rank(FAMILY, D as u32, NORM, w as u64).unwrap();
+            let n = min_secure_rank(FAMILY, D as u32, norm, w as u64).unwrap();
             assert!(
                 n * w > a_matrix_size,
                 "split f={smaller} should not fit under A"
