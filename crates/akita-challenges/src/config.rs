@@ -44,18 +44,32 @@ pub enum SparseChallengeConfig {
         nonzero_coeffs: Vec<i8>,
     },
 
-    /// Exact-shell sparse challenge over the full ring.
+    /// Exact-shell sparse challenge over the full ring, with operator-norm
+    /// rejection.
     ///
     /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
     /// `0..D`, assigns `count_mag1` of them a random sign with magnitude 1, and
     /// assigns the remaining `count_mag2` a random sign with magnitude 2.
     ///
-    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`.
+    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. A sampled candidate
+    /// is retained only if its negacyclic operator norm satisfies
+    /// `gamma_D(c) <= operator_norm_threshold` (the crate-internal certified
+    /// `OpNormTable` predicate); otherwise it is rejected and the next
+    /// candidate is drawn from the same transcript-derived stream. This is the
+    /// family used for L2 / operator-norm fold pricing, where the accepted cap
+    /// `Gamma` (not `||c||_1`) governs the folded-witness and weak-binding
+    /// bounds.
     ExactShell {
         /// Number of coefficients with magnitude 1.
         count_mag1: usize,
         /// Number of coefficients with magnitude 2.
         count_mag2: usize,
+        /// Operator-norm acceptance cap `T`: a candidate is kept only when the
+        /// certified predicate proves `gamma_D(c) <= T`. Setting
+        /// `T >= count_mag1 + 2 * count_mag2` (the exact `||c||_1`) disables
+        /// rejection, since `gamma_D(c) <= ||c||_1` always holds; the family
+        /// then degrades to the deterministic `||c||_1` operator-norm bound.
+        operator_norm_threshold: u32,
     },
 
     /// Bounded-`L1` production preset for `D = 32`.
@@ -101,8 +115,38 @@ impl SparseChallengeConfig {
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
+                ..
             } => count_mag1 + 2 * count_mag2,
             Self::BoundedL1Norm => MAX_L1_NORM_32,
+        }
+    }
+
+    /// The challenge -> `Gamma` policy: the operator-norm cap this family
+    /// guarantees for every sampled challenge.
+    ///
+    /// This is the single, reversible knob the L2 / operator-norm pricing reads.
+    /// For [`Self::ExactShell`] the sampler rejects any candidate with
+    /// `gamma_D(c) > T`, so the cap is `min(T, ||c||_1)` (the `min` makes a
+    /// `T >= ||c||_1` setting collapse cleanly to the always-true deterministic
+    /// bound `gamma_D(c) <= ||c||_1`, i.e. no rejection). For the families that
+    /// do not operator-norm reject, the only sound cap is the deterministic
+    /// `gamma_D(c) <= ||c||_1`.
+    ///
+    /// To revert the operator-norm policy for a preset, set its `ExactShell`
+    /// threshold to `>= ||c||_1`; the cap then becomes `||c||_1` and sampling
+    /// performs no rejection.
+    #[inline]
+    pub fn operator_norm_cap(&self) -> u32 {
+        match self {
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+                operator_norm_threshold,
+            } => {
+                let l1 = (count_mag1 + 2 * count_mag2) as u32;
+                (*operator_norm_threshold).min(l1)
+            }
+            Self::Uniform { .. } | Self::BoundedL1Norm => self.l1_norm() as u32,
         }
     }
 
@@ -173,6 +217,7 @@ impl SparseChallengeConfig {
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
+                ..
             } => {
                 let w = count_mag1 + count_mag2;
                 if w > D {
@@ -245,10 +290,12 @@ impl SparseChallengeConfig {
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
+                operator_norm_threshold,
             } => {
                 out.push(1);
                 out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
                 out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
+                out.extend_from_slice(&operator_norm_threshold.to_le_bytes());
             }
             Self::BoundedL1Norm => {
                 out.push(2);
@@ -279,6 +326,7 @@ impl SparseChallengeConfig {
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
+                ..
             } => {
                 if count_mag1
                     .checked_add(*count_mag2)
@@ -308,6 +356,7 @@ mod entropy_tests {
         let tiny = SparseChallengeConfig::ExactShell {
             count_mag1: 2,
             count_mag2: 0,
+            operator_norm_threshold: 2,
         };
         assert!(tiny.log2_support_bits::<32>() < 128.0);
         assert!(tiny.validate_min_entropy::<32>(128).is_err());
@@ -328,6 +377,7 @@ mod entropy_tests {
         let shell = SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
+            operator_norm_threshold: 54,
         };
         assert!(shell.log2_support_bits::<64>() >= 128.0);
         assert!(shell.validate_min_entropy::<64>(128).is_ok());
@@ -347,6 +397,7 @@ mod entropy_tests {
         let weak = SparseChallengeConfig::ExactShell {
             count_mag1: 1,
             count_mag2: 0,
+            operator_norm_threshold: 1,
         };
         let per_draw = weak.log2_support_bits::<4>();
         assert!(per_draw < 128.0);
@@ -361,6 +412,7 @@ mod entropy_tests {
         let cfg = SparseChallengeConfig::ExactShell {
             count_mag1: 1,
             count_mag2: 0,
+            operator_norm_threshold: 1,
         };
         assert!((cfg.log2_support_bits::<4>() - 3.0).abs() < 1e-9);
         // Uniform, D=4, weight 2, alphabet {-1,1}: C(4,2)*2^2 = 24.

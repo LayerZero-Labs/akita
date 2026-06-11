@@ -1,10 +1,10 @@
 /// Test-only helpers for this module that need access to private invariants
 /// (`FlatBlocks`' monotonic `offsets` / contiguous `entries`, and the
-/// non-wide reference path for `inner_ajtai_wide_multi_chunk`).
+/// non-wide reference path for `inner_ajtai_wide_onehot`).
 ///
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
-use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotIndex, OneHotPoly};
+use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotEntry, OneHotIndex, OneHotPoly};
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 
@@ -68,7 +68,7 @@ pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
 }
 
 /// Reference (non-wide) multi-chunk inner Ajtai used to cross-check
-/// [`super::inner_ajtai_wide_multi_chunk`].
+/// [`super::inner_ajtai_wide_onehot`].
 ///
 /// Production code always uses the wide accumulator; this simpler
 /// variant only exists so tests can assert the two paths agree.
@@ -81,9 +81,9 @@ pub(crate) fn inner_ajtai_multi_chunk_t_only<F: FieldCore + CanonicalField, cons
     let n_a = A.len();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
     for entry in multi_chunk_entries {
-        let col = entry.pos_in_block() * num_digits;
+        let col = entry.commit_col(num_digits);
         for a in 0..n_a {
-            for &ci in entry.nonzero_coeffs() {
+            for &ci in entry.coeffs() {
                 A[a][col].shift_accumulate_into(&mut t[a], ci as usize);
             }
         }

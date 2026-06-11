@@ -25,6 +25,7 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 aes = "0.8.4"
+cfg-if = "1.0.4"
 ctr = "0.9.2"
 rand_core = "0.6"
 rayon = { version = "1.10", optional = true }

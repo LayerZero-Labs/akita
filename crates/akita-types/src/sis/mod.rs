@@ -25,7 +25,11 @@ pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
 
-pub use ajtai_key::{ceil_supported_collision, min_secure_rank, AjtaiKeyParams, SisModulusFamily};
+pub use ajtai_key::{
+    ceil_coeff_linf_bucket, ceil_supported_collision, collision_l2_sq_for_linf_envelope,
+    derived_collision_l2_sq_key, min_secure_rank, AjtaiKeyParams, SisModulusFamily,
+    COEFF_LINF_BUCKETS,
+};
 pub use decomposition_digits::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
@@ -33,8 +37,8 @@ pub use decomposition_digits::{
 };
 pub use four_square::four_squares;
 pub use norm_bound::{
-    beta_l2_squared, committed_fold_collision_s, fold_witness_beta, l2_bound_squared,
-    l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, s_l2_max_squared, FoldChallengeNorms, FoldWitnessNorms,
+    committed_fold_collision_l2_sq, fold_witness_beta, l2_sq_from_linf,
+    ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
+    FoldWitnessNorms,
 };
