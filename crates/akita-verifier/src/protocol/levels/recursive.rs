@@ -14,138 +14,65 @@ use akita_types::{
     CommitmentRouting, RingRelationInstance,
 };
 
-/// Verify one intermediate recursive fold level.
-///
-/// The returned challenges become the opening point for the next level.
-///
-/// # Errors
-///
-/// Returns an error if the level proof shape is inconsistent, the public
-/// trace check fails, ring-switch replay fails, or either sumcheck verifier
-/// rejects.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-#[tracing::instrument(skip_all, name = "verify_intermediate_level")]
-pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
-    level_proof: &AkitaLevelProof<F, L>,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-    lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
-    block_order: BlockOrder,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
-) -> Result<Vec<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    verify_one_level_inner::<F, L, T, D>(
-        FoldProofView::Intermediate(level_proof),
-        setup,
-        transcript,
-        current_state,
-        None,
-        lp,
-        next_fold_level_params,
-        block_order,
-        setup_contribution_mode,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
+enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
+    Intermediate {
+        proof: &'a AkitaLevelProof<F, L>,
+        next_fold_level_params: &'a LevelParams,
+    },
+    Terminal {
+        proof: &'a TerminalLevelProof<F, L>,
+        final_w_len: usize,
+    },
 }
 
-/// Verify one terminal recursive fold level.
-///
-/// At the terminal level the cleartext `final_witness` is absorbed via
-/// [`ABSORB_NEXT_LEVEL_WITNESS_BINDING`] in place of a next-witness commitment, stage-1 is
-/// skipped (packed-digit range is structurally enforced), and stage-2 runs
-/// in relation-only mode.
-///
-/// # Errors
-///
-/// Returns an error if the proof shape is inconsistent, the public trace
-/// check fails, ring-switch replay fails, or the stage-2 sumcheck verifier
-/// rejects.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-#[tracing::instrument(skip_all, name = "verify_terminal_level")]
-pub(crate) fn verify_terminal_level<F, L, T, const D: usize>(
-    terminal_proof: &TerminalLevelProof<F, L>,
-    final_w_len: usize,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-    lp: &LevelParams,
-    block_order: BlockOrder,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
-) -> Result<Vec<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    verify_one_level_inner::<F, L, T, D>(
-        FoldProofView::Terminal(terminal_proof),
-        setup,
-        transcript,
-        current_state,
-        Some(final_w_len),
-        lp,
-        lp,
-        block_order,
-        setup_contribution_mode,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
-}
-
-enum FoldProofView<'a, F: FieldCore, L: FieldCore> {
-    Intermediate(&'a AkitaLevelProof<F, L>),
-    Terminal(&'a TerminalLevelProof<F, L>),
-}
-
-impl<F: FieldCore, L: FieldCore> FoldProofView<'_, F, L> {
+impl<F: FieldCore, L: FieldCore> RecursiveFoldProofView<'_, F, L> {
     fn y_rings_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         match self {
-            Self::Intermediate(proof) => proof.try_y_rings_typed::<D>(),
-            Self::Terminal(proof) => proof.try_y_rings_typed::<D>(),
+            Self::Intermediate { proof, .. } => proof.try_y_rings_typed::<D>(),
+            Self::Terminal { proof, .. } => proof.try_y_rings_typed::<D>(),
         }
     }
     fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
         match self {
-            Self::Intermediate(proof) => proof.extension_opening_reduction.as_ref(),
-            Self::Terminal(proof) => proof.extension_opening_reduction.as_ref(),
+            Self::Intermediate { proof, .. } => proof.extension_opening_reduction.as_ref(),
+            Self::Terminal { proof, .. } => proof.extension_opening_reduction.as_ref(),
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        matches!(self, Self::Terminal { .. })
+    }
+
+    fn next_fold_level_params<'a>(&'a self, current_lp: &'a LevelParams) -> &'a LevelParams {
+        match self {
+            Self::Intermediate {
+                next_fold_level_params,
+                ..
+            } => next_fold_level_params,
+            Self::Terminal { .. } => current_lp,
         }
     }
 }
 
+/// Verify one recursive fold level.
+///
+/// The returned challenges become the opening point for the next level. Terminal
+/// levels absorb the cleartext final witness instead of a next-witness
+/// commitment and run stage-2 in relation-only mode.
+///
+/// # Errors
+///
+/// Returns an error if the proof shape is inconsistent, the public trace check
+/// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
-fn verify_one_level_inner<F, L, T, const D: usize>(
-    proof: FoldProofView<'_, F, L>,
+#[inline(never)]
+#[tracing::instrument(skip_all, name = "verify_recursive_level")]
+fn verify_recursive_level<F, L, T, const D: usize>(
+    proof: RecursiveFoldProofView<'_, F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
-    final_w_len: Option<usize>,
     lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -161,12 +88,13 @@ where
     T: Transcript<F>,
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
-    let is_last = matches!(proof, FoldProofView::Terminal(_));
+    let is_last = proof.is_terminal();
+    let next_fold_level_params = proof.next_fold_level_params(lp);
     let y_rings = proof.y_rings_typed::<D>()?;
     let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
-        FoldProofView::Intermediate(level_proof) => level_proof.v.as_ring_slice::<D>()?,
-        FoldProofView::Terminal(_) => {
+        RecursiveFoldProofView::Intermediate { proof, .. } => proof.v.as_ring_slice::<D>()?,
+        RecursiveFoldProofView::Terminal { .. } => {
             v_typed_owned = Vec::new();
             &v_typed_owned
         }
@@ -383,14 +311,21 @@ where
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
     let num_claims = y_rings.len();
-    let w_len = if is_last {
-        final_w_len.ok_or(AkitaError::InvalidProof)?
-    } else {
-        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+    let w_len = match &proof {
+        RecursiveFoldProofView::Terminal { final_w_len, .. } => *final_w_len,
+        RecursiveFoldProofView::Intermediate { .. } => {
+            w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+                .checked_mul(D)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness length overflow".to_string())
+                })?
+        }
     };
-    let terminal_replay = if let FoldProofView::Terminal(terminal_proof) = &proof {
+    let terminal_replay = if let RecursiveFoldProofView::Terminal {
+        proof: terminal_proof,
+        ..
+    } = &proof
+    {
         let layout =
             terminal_witness_segment_layout(lp, num_claims, num_claims, F::modulus_bits())?;
         Some(prepare_terminal_witness_replay::<F, T>(
@@ -446,13 +381,13 @@ where
     };
 
     let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, D>(
+        RecursiveFoldProofView::Intermediate { proof, .. } => ring_switch_verifier::<F, L, T, D>(
             &ring_switch_replay,
             w_len,
-            level_proof.next_w_commitment(),
+            proof.next_w_commitment(),
             transcript,
         )?,
-        FoldProofView::Terminal(_) => {
+        RecursiveFoldProofView::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
             ring_switch_verifier_terminal::<F, L, T, D>(
                 &ring_switch_replay,
@@ -473,8 +408,8 @@ where
     let relation_claim_mask =
         zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
     let stage1_proof = match &proof {
-        FoldProofView::Intermediate(level_proof) => Some(&level_proof.stage1),
-        FoldProofView::Terminal(_) => None,
+        RecursiveFoldProofView::Intermediate { proof, .. } => Some(&proof.stage1),
+        RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
         stage1_proof,
@@ -489,21 +424,24 @@ where
         zk_relations,
     )?;
     let stage3_sumcheck_proof = match &proof {
-        FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
+        RecursiveFoldProofView::Intermediate { proof, .. } => stage3_sumcheck_proof_for_mode(
             setup_contribution_mode,
-            level_proof.stage3_sumcheck_proof.as_ref(),
+            proof.stage3_sumcheck_proof.as_ref(),
         )?,
-        FoldProofView::Terminal(_) => None,
+        RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage2_replay = match &proof {
-        FoldProofView::Intermediate(level_proof) => Stage2ProofReplay::Intermediate {
-            next_w_eval: level_proof.stage2.next_w_eval(),
+        RecursiveFoldProofView::Intermediate { proof, .. } => Stage2ProofReplay::Intermediate {
+            next_w_eval: proof.stage2.next_w_eval(),
             #[cfg(not(feature = "zk"))]
-            sumcheck: &level_proof.stage2.sumcheck_proof,
+            sumcheck: &proof.stage2.sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_masked: &level_proof.stage2.sumcheck_proof_masked,
+            sumcheck_masked: &proof.stage2.sumcheck_proof_masked,
         },
-        FoldProofView::Terminal(terminal_proof) => Stage2ProofReplay::Terminal {
+        RecursiveFoldProofView::Terminal {
+            proof: terminal_proof,
+            ..
+        } => Stage2ProofReplay::Terminal {
             final_witness: &terminal_proof.final_witness,
             physical_w_len: w_len,
             #[cfg(not(feature = "zk"))]
@@ -638,7 +576,6 @@ where
             AkitaProofStep::Intermediate(level_proof) => {
                 let scheduled_next_params =
                     scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
-                let next_fold_level_params = scheduled_next_params.clone();
                 if is_last {
                     // The terminal slot must be a Terminal variant.
                     return Err(AkitaError::InvalidProof);
@@ -651,13 +588,15 @@ where
                 }
 
                 let challenges = dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
-                    verify_intermediate_level::<F, L, T, D_LEVEL>(
-                        level_proof,
+                    verify_recursive_level::<F, L, T, D_LEVEL>(
+                        RecursiveFoldProofView::Intermediate {
+                            proof: level_proof,
+                            next_fold_level_params: &scheduled_next_params,
+                        },
                         setup,
                         transcript,
                         &current_state,
                         &current_lp,
-                        &next_fold_level_params,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -711,9 +650,11 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
-                    verify_terminal_level::<F, L, T, D_LEVEL>(
-                        terminal_proof,
-                        next_w_len,
+                    verify_recursive_level::<F, L, T, D_LEVEL>(
+                        RecursiveFoldProofView::Terminal {
+                            proof: terminal_proof,
+                            final_w_len: next_w_len,
+                        },
                         setup,
                         transcript,
                         &current_state,
