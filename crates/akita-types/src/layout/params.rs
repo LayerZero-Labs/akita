@@ -103,7 +103,7 @@ impl LevelParams {
     /// is a terminal `Direct(PackedDigits)`: that step does not commit
     /// anything, so it has no Ajtai keys, no block geometry, and no
     /// digit depths. The only field consumers downstream actually read is
-    /// `log_basis` (used by `prove_recursive_suffix` as
+    /// `log_basis` (used by `prove_suffix` as
     /// `final_log_basis` for the terminal fold's witness packing); every
     /// other field is left at the zero/empty defaults to make accidental
     /// use surface as obviously-degenerate output. Do not feed this stub
@@ -628,7 +628,7 @@ impl LevelParams {
             onehot_chunk_size: other.onehot_chunk_size,
             // The tier (split factor + `f_key` rank/bucket) is sized against the
             // same SIS floor as the ranks, so it stays with `self`, matching the
-            // placement of `b_key`'s `row_len`/`collision_inf`.
+            // placement of `b_key`'s `row_len`/`collision_l2_sq`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
         }

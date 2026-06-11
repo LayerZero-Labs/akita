@@ -63,7 +63,7 @@ If the answers are unclear, keep the PR in `spec-review-request` and ask questio
 
 ## Offline SIS table regen
 
-Regenerating `generated_sis_table.rs` is a manual Sage workflow, not part of Rust CI.
+Regenerating `generated_sis_table/` is a manual Sage workflow, not part of Rust CI.
 See [`scripts/sis_golden/README.md`](scripts/sis_golden/README.md) for submodule init,
 golden refresh (`refresh_golden.py`), replay check (`check.py`), per-family regen
 (`gen_sis_table.py --jobs`), and full table stitch

@@ -19,6 +19,7 @@ sys.path.insert(0, str(GOLDEN_DIR))
 
 from gen_sis_table import (  # noqa: E402
     FAMILIES,
+    assert_pinned_estimator,
     binary_search_max_width,
     default_search_cap,
     estimator_git_sha,
@@ -53,7 +54,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     estimator_path = locate_estimator(args.estimator_path)
-    SIS, RC, log, oo = load_estimator(estimator_path)
+    assert_pinned_estimator(estimator_path)
+    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
 
     rows: list[dict[str, object]] = []
     t0 = time.time()
@@ -63,7 +65,7 @@ def main() -> int:
         for rank in GOLDEN_RANKS:
             cell_t0 = time.time()
             max_width = binary_search_max_width(
-                SIS, RC, log, oo,
+                SIS, RC, log, oo, ZZ, RealField,
                 q, d, rank, collision,
                 args.target_bits, search_cap,
             )
@@ -90,6 +92,7 @@ def main() -> int:
             fieldnames=[
                 "q", "d", "collision", "rank", "max_width", "target_bits", "search_cap",
             ],
+            lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(rows)

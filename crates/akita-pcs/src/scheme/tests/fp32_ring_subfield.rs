@@ -53,10 +53,8 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `with_decomp` arguments. Constructs the placeholder via
 /// `params_only` and stamps the A and B/D collision buckets via
 /// `new_unchecked` so the layout carries real buckets instead of the
-/// `0` `params_only` default. This `(family, D)` is intentionally
-/// outside the audited SIS-floor tables, so the fixture scales via
-/// [`scale_batched_root_layout_unchecked`] rather than the strict,
-/// table-audited expansion path.
+/// `0` `params_only` default. The fixture scales batched B/D widths
+/// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
 fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
@@ -72,10 +70,10 @@ fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     };
     // Match the verifier-reachable derivation for this fixture's
     // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
-    // B/D: `l2_sq_from_linf(32, 7) = 1568` → bucket `2048`.
-    // A: `collision_linf = 14` → `l2_sq_from_linf(32, 14) = 6272` → bucket `8192`.
-    let a_bucket: u128 = 8192;
-    let bd_bucket: u128 = 2048;
+    // B/D use the exact derived key `32 * 7^2`; A rounds `linf=14` up to
+    // coefficient bucket 15, giving `32 * 15^2`.
+    let a_bucket: u128 = 7200;
+    let bd_bucket: u128 = 1568;
     let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
     params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
     params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);

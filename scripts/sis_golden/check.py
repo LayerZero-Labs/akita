@@ -71,7 +71,7 @@ def main() -> int:
         key = (int(row["q"]), int(row["d"]), int(row["collision"]))
         grouped[key].append(row)
 
-    SIS, RC, log, oo = load_estimator(estimator_path)
+    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
     failures = 0
 
     for (q, d, collision), group in sorted(grouped.items()):
@@ -83,7 +83,7 @@ def main() -> int:
             target_bits = float(row["target_bits"])
             search_cap = int(row["search_cap"])
             actual = binary_search_max_width(
-                SIS, RC, log, oo,
+                SIS, RC, log, oo, ZZ, RealField,
                 q, d, rank, collision,
                 target_bits, search_cap,
             )
@@ -109,7 +109,7 @@ def main() -> int:
                 continue
 
             secure_bits = estimate_bits(
-                SIS, RC, log, oo, q, d, rank, expected, collision,
+                SIS, RC, log, oo, ZZ, RealField, q, d, rank, expected, collision,
             )
             if secure_bits < target_bits:
                 failures += 1
@@ -121,7 +121,7 @@ def main() -> int:
                 continue
 
             insecure_bits = estimate_bits(
-                SIS, RC, log, oo, q, d, rank, expected + 1, collision,
+                SIS, RC, log, oo, ZZ, RealField, q, d, rank, expected + 1, collision,
             )
             if insecure_bits >= target_bits:
                 failures += 1
