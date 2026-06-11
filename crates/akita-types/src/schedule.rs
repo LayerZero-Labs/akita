@@ -633,7 +633,7 @@ mod tests {
         root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
         AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        MRowLayout, PackedDigits, RootLevelRawOutput, SisModulusFamily, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
@@ -948,16 +948,18 @@ mod tests {
             ])
             .into_compact();
             let num_points = 5;
-            let root_proof = AkitaBatchedRootProof::new_two_stage::<D>(
-                vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
-                dummy_stage1_proof(rounds, b),
+            let root_proof = AkitaBatchedRootProof::new::<D>(RootLevelRawOutput {
+                extension_opening_reduction: None,
+                v: vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+                stage1: dummy_stage1_proof(rounds, b),
                 #[cfg(not(feature = "zk"))]
-                dummy_sumcheck(rounds, 3),
+                stage2_sumcheck_proof: dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
-                dummy_sumcheck_proof_masked(rounds, 3),
-                next_commitment,
-                F::zero(),
-            );
+                stage2_sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
+                stage3_sumcheck_proof: None,
+                w_commitment_proof: next_commitment,
+                w_eval: F::zero(),
+            });
 
             assert_eq!(
                 level_proof_bytes(

@@ -66,6 +66,31 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 }
 
+/// Raw proof payload produced by the root-level prover before assembling the
+/// batched root proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
+    /// Optional extension-opening reduction payload for folded root openings.
+    /// `None` when the root proof uses ordinary degree-one openings.
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+    /// Public v rows for the root relation.
+    pub v: Vec<CyclotomicRing<F, D>>,
+    /// Stage-1 sumcheck proof.
+    pub stage1: AkitaStage1Proof<L>,
+    /// Stage-2 sumcheck proof.
+    #[cfg(not(feature = "zk"))]
+    pub stage2_sumcheck_proof: SumcheckProof<L>,
+    /// ZK plain-opening round masks for the stage-2 sumcheck.
+    #[cfg(feature = "zk")]
+    pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+    /// Stage-3 setup product-sumcheck proof for recursive setup-contribution replay.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+    /// Recursive witness commitment carried in the proof.
+    pub w_commitment_proof: FlatRingVec<F>,
+    /// Claimed terminal evaluation of the recursive witness at this level.
+    pub w_eval: L,
+}
+
 /// Optional proof that reduces a logical extension-field opening into one
 /// ordinary opening of the transformed committed witness.
 ///
@@ -430,18 +455,41 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
+    /// Construct a batched root proof from the raw root-level prover payload.
+    pub fn new<const D: usize>(raw: RootLevelRawOutput<F, L, D>) -> Self {
+        Self::from_parts::<D>(
+            raw.extension_opening_reduction,
+            raw.v,
+            raw.stage1,
+            AkitaStage2Proof {
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: raw.stage2_sumcheck_proof,
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: raw.stage2_sumcheck_proof_masked,
+                next_w_commitment: raw.w_commitment_proof.into_compact(),
+                #[cfg(not(feature = "zk"))]
+                next_w_eval: raw.w_eval,
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: raw.w_eval,
+            },
+            raw.stage3_sumcheck_proof,
+        )
+    }
+
     /// Construct from typed ring elements for the batched root level.
-    pub fn new<const D: usize>(
+    pub fn from_parts<const D: usize>(
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         stage2: AkitaStage2Proof<F, L>,
+        stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
     ) -> Self {
         Self::Fold(AkitaBatchedFoldRoot {
-            extension_opening_reduction: None,
+            extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
-            stage3_sumcheck_proof: None,
+            stage3_sumcheck_proof,
         })
     }
 
@@ -482,7 +530,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
-        Self::new::<D>(
+        Self::from_parts::<D>(
+            extension_opening_reduction,
             v,
             stage1,
             AkitaStage2Proof {
@@ -496,9 +545,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
             },
+            stage3_sumcheck_proof,
         )
-        .with_stage3_sumcheck_proof(stage3_sumcheck_proof)
-        .with_extension_opening_reduction(extension_opening_reduction)
     }
 
     /// Attach a stage-3 setup sumcheck proof to a folded root proof.

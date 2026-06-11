@@ -276,75 +276,6 @@ where
     .map(|(proof, _total_levels)| proof)
 }
 
-/// Build the recursive suffix from an intermediate-root handoff, then
-/// assemble the final folded batched proof.
-///
-/// The caller owns suffix schedule/config policy inside `build_suffix`; this
-/// helper owns the config-free handoff from root raw output into suffix
-/// construction and final proof assembly.
-///
-/// # Errors
-///
-/// Returns an error if suffix construction fails.
-pub fn build_folded_batched_proof_with_suffix<F, L, const D: usize, BuildSuffix>(
-    raw: RootLevelRawOutput<F, L, D>,
-    build_suffix: BuildSuffix,
-) -> Result<(AkitaBatchedProof<F, L>, usize), AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-    BuildSuffix:
-        FnOnce(RecursiveProverState<F, L>) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>,
-{
-    let RootLevelRawOutput {
-        #[cfg(feature = "zk")]
-        zk_hiding_commitment,
-        extension_opening_reduction,
-        v,
-        stage1,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval,
-        next_state,
-    } = raw;
-    let suffix = build_suffix(next_state)?;
-    let RecursiveSuffixOutcome {
-        intermediate_levels,
-        terminal,
-        #[cfg(feature = "zk")]
-        zk_hiding,
-        num_levels,
-    } = suffix;
-    #[cfg(feature = "zk")]
-    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
-    let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
-        extension_opening_reduction,
-        v,
-        stage1,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval,
-    );
-    let steps = build_final_proof_steps::<F, L>(intermediate_levels, terminal);
-    Ok((
-        AkitaBatchedProof {
-            #[cfg(feature = "zk")]
-            zk_hiding,
-            root,
-            steps,
-        },
-        num_levels,
-    ))
-}
-
 /// Assemble the 1-fold batched proof when the root level is itself the
 /// terminal fold (no recursive suffix follows).
 pub fn build_terminal_root_batched_proof<F, L>(
@@ -502,7 +433,7 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<
+    let root = prove_root_fold_with_params::<
         Cfg::Field,
         Cfg::ClaimField,
         Cfg::ChallengeField,
@@ -532,21 +463,40 @@ where
         basis,
         setup_contribution_mode,
     )?;
-
-    build_folded_batched_proof_with_suffix::<Cfg::Field, Cfg::ChallengeField, D, _>(
+    let RootLevelProverOutput {
+        #[cfg(feature = "zk")]
+        zk_hiding_commitment,
         raw,
-        |next_state| {
-            crate::prove_recursive_suffix::<Cfg, T, B, D>(
-                expanded,
-                prefix_slots,
-                backend,
-                prepared,
-                num_vars,
-                transcript,
-                next_state,
-                schedule,
-                setup_contribution_mode,
-            )
+        next_state: starting_state,
+    } = root;
+    let root = AkitaBatchedRootProof::new::<D>(raw);
+
+    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
+        expanded,
+        prefix_slots,
+        backend,
+        prepared,
+        num_vars,
+        transcript,
+        starting_state,
+        schedule,
+        setup_contribution_mode,
+    )?;
+    let RecursiveSuffixOutcome {
+        steps,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        num_levels,
+    } = suffix;
+    #[cfg(feature = "zk")]
+    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
+    Ok((
+        AkitaBatchedProof {
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            root,
+            steps,
         },
-    )
+        num_levels,
+    ))
 }

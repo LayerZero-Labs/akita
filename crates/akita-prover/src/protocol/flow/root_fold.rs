@@ -41,7 +41,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -106,7 +106,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
+    let mut output = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,
@@ -130,8 +130,8 @@ where
         row_coefficients,
         setup_contribution_mode,
     )?;
-    raw.extension_opening_reduction = extension_opening_reduction;
-    Ok(raw)
+    output.raw.extension_opening_reduction = extension_opening_reduction;
+    Ok(output)
 }
 
 /// Prove the folded root level using already-selected root and next-level
@@ -166,7 +166,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
@@ -944,7 +944,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
     trace_claim_scales: Option<&[C]>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -983,14 +983,14 @@ where
 
     let rs = {
         let _span = tracing::info_span!("root_ring_switch_finalize").entered();
-        ring_switch_finalize_with_gamma::<F, C, T, D>(
+        transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &w_commitment_proof);
+        ring_switch_finalize::<F, C, T, D>(
             &instance,
             expanded.as_ref(),
             transcript,
             &logical_w,
-            &w_commitment_proof,
             lp,
-            &row_coefficients,
+            Some(&row_coefficients),
             MRowLayout::WithDBlock,
         )?
     };
@@ -1170,19 +1170,21 @@ where
         SetupContributionMode::Direct => None,
     };
 
-    Ok(RootLevelRawOutput {
+    Ok(RootLevelProverOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        extension_opening_reduction: None,
-        v: instance.v,
-        stage1: stage1_proof,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval: proof_w_eval,
+        raw: RootLevelRawOutput {
+            extension_opening_reduction: None,
+            v: instance.v,
+            stage1: stage1_proof,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck_proof,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_proof_masked,
+            stage3_sumcheck_proof,
+            w_commitment_proof,
+            w_eval: proof_w_eval,
+        },
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
@@ -1259,15 +1261,21 @@ where
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
 
-    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    let rs = ring_switch_finalize::<F, C, T, D>(
         &instance,
         expanded,
         transcript,
         &logical_w,
-        &final_witness,
-        terminal_layout,
         lp,
-        &row_coefficients,
+        Some(&row_coefficients),
+        MRowLayout::WithoutDBlock,
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
@@ -1292,9 +1300,8 @@ where
     } = rs;
     // Terminal levels run stage-2 in relation-only mode (`batching_coeff = 0`),
     // but the fused trace term still reuses the stage-2 batching challenge as
-    // its `γ²` weight. Sample it here, after the terminal witness is bound by
-    // `ring_switch_finalize_terminal_with_gamma`, so it is randomized against
-    // the committed witness.
+    // its `γ²` weight. Sample it here, after the terminal witness is bound, so
+    // it is randomized against the committed witness.
     let trace_gamma: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let trace_coeff = trace_gamma * trace_gamma;
     let trace_opening_claim = trace_input_claim(trace_coeff, trace_eval_target);
