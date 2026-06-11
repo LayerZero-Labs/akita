@@ -70,3 +70,11 @@ for the full policy. In short:
 - Review the **documentation blast-radius** PR comment (`<!-- akita-doc-blast-radius -->`).
 - Run `./scripts/check-doc-guardrails.sh` before pushing when you touch book, specs, or `docs/`.
 - Fold shipped specs into the book and archive them per [`specs/PRUNING.md`](specs/PRUNING.md).
+
+## Offline SIS table regen
+
+Regenerating `generated_sis_table/` is a manual Sage workflow, not part of Rust CI.
+See [`scripts/sis_golden/README.md`](scripts/sis_golden/README.md) for submodule init,
+golden refresh (`refresh_golden.py`), replay check (`check.py`), per-family regen
+(`gen_sis_table.py --jobs`), and full table stitch
+(`stitch_generated_sis_table.py --jobs 6 --max-rank 20`).

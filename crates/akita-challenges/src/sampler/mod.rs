@@ -35,8 +35,26 @@ use crate::{SparseChallenge, SparseChallengeConfig};
 
 use bounded_l1::{sample_bounded_l1_challenge, D_32};
 use exact_shell::sample_exact_shell_challenge;
+use op_norm::OpNormTable;
 use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 use xof::XofCursor;
+
+/// Fixed-point scale for the certified operator-norm predicate tables built
+/// during rejection sampling. `q = 48` keeps the predicate's `i128`
+/// accumulators within range for every shipping shell (`||c||_1 <= 2D`,
+/// `T <= 2D`, `D <= MAX_STACK_RING_DIM`) while leaving the certified
+/// uncertainty band negligible.
+const OP_NORM_PREDICATE_SCALE: u32 = 48;
+
+/// Liveness cap on operator-norm rejection attempts per challenge slot.
+///
+/// Prover and verifier replay the identical transcript-derived XOF stream and
+/// the identical certified predicate, so this bound is reached (or not)
+/// identically on both sides: rejection sampling can only fail closed, never
+/// diverge. At the shipping acceptance probabilities (`p >= ~0.5`) exceeding
+/// even a few dozen attempts is astronomically unlikely; the cap exists only to
+/// keep sampling a terminating, no-panic operation under a pathological threshold.
+const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
 fn parse_challenge<const D: usize>(
@@ -51,6 +69,7 @@ fn parse_challenge<const D: usize>(
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
+            ..
         } => sample_exact_shell_challenge(cursor, D, *count_mag1, *count_mag2),
         SparseChallengeConfig::BoundedL1Norm => {
             debug_assert_eq!(D, D_32);
@@ -72,6 +91,59 @@ fn sparse_challenge_absorb_buf<const D: usize>(
     absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
     absorb_buf.extend_from_slice(&domain_sep);
     absorb_buf
+}
+
+/// Build the operator-norm rejection oracle for `cfg`, when the family rejects.
+///
+/// Returns `Some((table, t))` for an [`SparseChallengeConfig::ExactShell`]
+/// whose threshold is strictly below `||c||_1` (so rejection actually fires),
+/// and `None` for every other family (and for a non-binding threshold
+/// `T >= ||c||_1`, where `gamma_D(c) <= ||c||_1 <= T` always holds and the
+/// predicate would accept every candidate). The certified table is built once
+/// per [`sample_sparse_challenges`] call and shared across all `n` slots.
+fn op_norm_rejection_oracle<const D: usize>(
+    cfg: &SparseChallengeConfig,
+) -> Result<Option<(OpNormTable, u64)>, AkitaError> {
+    match cfg {
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+            operator_norm_threshold,
+        } => {
+            let l1 = (count_mag1 + 2 * count_mag2) as u64;
+            let t = u64::from(*operator_norm_threshold);
+            if t >= l1 {
+                return Ok(None);
+            }
+            let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
+            Ok(Some((table, t)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Draw candidates from `cursor` until one passes the certified operator-norm
+/// predicate `gamma_D(c) <= t`, bounded by [`MAX_OP_NORM_ATTEMPTS`].
+///
+/// Each rejected candidate advances the shared XOF cursor identically for
+/// prover and verifier, so the accepted challenge (and the cursor position the
+/// next slot starts from) is a deterministic function of the transcript.
+fn sample_with_op_norm_rejection<const D: usize>(
+    cursor: &mut XofCursor,
+    cfg: &SparseChallengeConfig,
+    table: &OpNormTable,
+    t: u64,
+) -> Result<SparseChallenge, AkitaError> {
+    for _ in 0..MAX_OP_NORM_ATTEMPTS {
+        let candidate = parse_challenge::<D>(cursor, cfg);
+        if table.accept_strict(&candidate, t)? {
+            return Ok(candidate);
+        }
+    }
+    Err(AkitaError::InvalidInput(format!(
+        "operator-norm rejection sampling exceeded {MAX_OP_NORM_ATTEMPTS} attempts: \
+         threshold T = {t} is too tight for the configured shell"
+    )))
 }
 
 /// Absorb context into the transcript, derive a PRG seed, and create a
@@ -119,8 +191,22 @@ where
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     let mut challenges = Vec::with_capacity(n);
-    for _ in 0..n {
-        challenges.push(parse_challenge::<D>(&mut cursor, cfg));
+    match op_norm_rejection_oracle::<D>(cfg)? {
+        Some((table, t)) => {
+            for _ in 0..n {
+                challenges.push(sample_with_op_norm_rejection::<D>(
+                    &mut cursor,
+                    cfg,
+                    &table,
+                    t,
+                )?);
+            }
+        }
+        None => {
+            for _ in 0..n {
+                challenges.push(parse_challenge::<D>(&mut cursor, cfg));
+            }
+        }
     }
     Ok(challenges)
 }
