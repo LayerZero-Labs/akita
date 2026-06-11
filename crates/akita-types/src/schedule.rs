@@ -947,7 +947,6 @@ mod tests {
                 next_lp.b_key.row_len()
             ])
             .into_compact();
-            let num_points = 5;
             let root_proof = AkitaBatchedRootProof::new::<D>(RootLevelRawOutput {
                 extension_opening_reduction: None,
                 v: vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],

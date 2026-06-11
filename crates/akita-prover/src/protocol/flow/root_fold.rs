@@ -1,4 +1,5 @@
 use super::*;
+use cfg_if::cfg_if;
 
 fn root_trace_claim_scales<C: Copy>(
     incidence_summary: &ClaimIncidenceSummary,
@@ -475,7 +476,14 @@ where
     )
 }
 
-/// Terminal-root analogue of [`prove_root_fold_with_params`].
+/// Terminal-root analogue of [`prove_root_fold_with_params`] used when the
+/// schedule has exactly one fold level (the root is itself the terminal).
+///
+/// Mirrors the intermediate-root path through claim-incidence absorbs,
+/// optional extension-opening reduction, and ring-relation setup, then
+/// emits a [`TerminalLevelProof`] via
+/// [`prove_terminal_root_fold_from_ring_relation`] instead of a
+/// [`RootLevelProverOutput`].
 ///
 /// # Errors
 ///
@@ -1016,9 +1024,12 @@ where
         alpha,
     } = rs;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
-    #[cfg(feature = "zk")]
-    let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
-        zk_hiding.take_current_level_pads::<C>(col_bits + ring_bits, b)?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
+                zk_hiding.take_current_level_pads::<C>(col_bits + ring_bits, b)?;
+        }
+    }
     let (stage1_proof, stage1_point, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
@@ -1029,15 +1040,14 @@ where
             col_bits,
             ring_bits,
         )?;
-        #[cfg(feature = "zk")]
-        {
-            stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
-            let s_claim = stage1_proof.s_claim;
-            (stage1_proof, stage1_point, s_claim)
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
+            } else {
+                let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
+                let s_claim = stage1_proof.s_claim;
+                (stage1_proof, stage1_point, s_claim)
+            }
         }
     };
 
@@ -1127,26 +1137,38 @@ where
             trace_compact,
             trace_opening_claim,
         )?;
-        let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
-            .prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let stage2_public_input =
+                    batching_coeff * stage1_proof.s_claim + relation_claim_public;
+                let (stage2_sumcheck_proof, sumcheck_challenges) = stage2_prover
+                    .prove_zk::<F, T, _>(
+                        stage2_public_input,
+                        transcript,
+                        |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                        stage2_round_pads,
+                    )?;
+            } else {
+                let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+                    .prove::<F, T, _>(transcript, |tr| {
+                        sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                    })?;
+            }
+        }
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
             stage2_prover.final_w_eval()
         };
         (stage2_sumcheck_proof, sumcheck_challenges, w_eval)
     };
+    #[cfg(feature = "zk")]
+    let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<C>()?;
+    #[cfg(not(feature = "zk"))]
+    let proof_w_eval = w_eval;
     let (committed_witness, logical_w) = match packed_witness {
         Some(packed_witness) => (packed_witness, Some(logical_w)),
         None => (logical_w, None),
     };
-
-    #[cfg(not(feature = "zk"))]
-    let proof_w_eval = w_eval;
-    #[cfg(feature = "zk")]
-    let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {

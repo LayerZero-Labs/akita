@@ -854,20 +854,22 @@ where
         num_rounds = prover.num_rounds()
     )
     .entered();
-    #[cfg(not(feature = "zk"))]
-    let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-    })?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
-        input_claim,
-        transcript,
-        |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-        sumcheck_pads,
-    )?;
-    #[cfg(feature = "zk")]
-    let final_claim_public =
-        masked_sumcheck_final_claim(input_claim, &sumcheck_proof_masked, &rho)?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let (sumcheck_proof, rho) = prover.prove_zk::<F, T, _>(
+                input_claim,
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                sumcheck_pads,
+            )?;
+            let final_claim_public =
+                masked_sumcheck_final_claim(input_claim, &sumcheck_proof, &rho)?;
+        } else {
+            let (sumcheck_proof, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        }
+    }
     let (final_witness, final_factor_from_table) =
         prover.final_witness_and_factor_evals().ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -887,9 +889,9 @@ where
         proof: ExtensionOpeningReductionProof {
             partials: proof_partials,
             #[cfg(not(feature = "zk"))]
-            sumcheck,
+            sumcheck: sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_proof_masked,
+            sumcheck_proof_masked: sumcheck_proof,
         },
         rho,
         final_claim,
