@@ -461,40 +461,28 @@ where
     #[cfg(feature = "zk")]
     let relation_claim_mask =
         zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
-    #[cfg(feature = "zk")]
-    let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
-    let (batching_coeff, s_claim, stage1_point) = match &proof {
-        FoldProofView::Intermediate(level_proof) => {
-            let stage1 = &level_proof.stage1;
-            let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-            let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
-            #[cfg(not(feature = "zk"))]
-            let stage1_point = {
-                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                stage1_verifier.verify::<F, T>(stage1, transcript)?
-            };
-            #[cfg(feature = "zk")]
-            let stage1_point = {
-                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                let (r, mask) = stage1_verifier.verify::<F, T>(
-                    stage1,
-                    transcript,
-                    zk_relations,
-                    zk_hiding_cursor,
-                )?;
-                s_claim_mask = mask;
-                r
-            };
-            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-            let batching_coeff: L =
-                sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1.s_claim, stage1_point)
-        }
-        FoldProofView::Terminal(_) => {
-            let stage1_point = vec![L::zero(); rs.col_bits + rs.ring_bits];
-            (L::zero(), L::zero(), stage1_point)
-        }
+    let stage1_proof = match &proof {
+        FoldProofView::Intermediate(level_proof) => Some(&level_proof.stage1),
+        FoldProofView::Terminal(_) => None,
     };
+    let Stage1Replay {
+        batching_coeff,
+        s_claim,
+        stage1_point,
+        #[cfg(feature = "zk")]
+        s_claim_mask,
+    } = verify_stage1_or_terminal::<F, L, T>(
+        stage1_proof,
+        &rs.tau0,
+        rs.col_bits,
+        rs.ring_bits,
+        rs.b,
+        transcript,
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
+    )?;
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let stage3_sumcheck_proof = match &proof {
         FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
@@ -512,57 +500,40 @@ where
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
-    let stage2_verifier = match &proof {
-        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_cleartext_witness(
-            batching_coeff,
-            s_claim,
+    let witness_oracle = match &proof {
+        FoldProofView::Terminal(terminal_proof) => Stage2WitnessOracle::Cleartext {
+            witness: &terminal_proof.final_witness,
+            physical_w_len: w_len,
+        },
+        FoldProofView::Intermediate(level_proof) => Stage2WitnessOracle::ClaimedEval {
+            eval: level_proof.stage2.next_w_eval(),
             #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            &terminal_proof.final_witness,
-            w_len,
-            stage1_point,
-            rs.alpha_evals_y,
-            row_eval_source,
-            &setup.expanded,
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &rs.tau1,
-            v_typed,
-            commitment_u,
-            &y_rings,
-            Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )?,
-        FoldProofView::Intermediate(level_proof) => AkitaStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            level_proof.stage2.next_w_eval(),
-            #[cfg(feature = "zk")]
-            zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
-            stage1_point,
-            rs.alpha_evals_y,
-            row_eval_source,
-            &setup.expanded,
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &rs.tau1,
-            v_typed,
-            commitment_u,
-            &y_rings,
-            Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )?,
+            mask: zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
+        },
     };
+    let stage2_verifier = AkitaStage2Verifier::new(
+        batching_coeff,
+        s_claim,
+        #[cfg(feature = "zk")]
+        s_claim_mask,
+        #[cfg(feature = "zk")]
+        relation_claim_mask,
+        witness_oracle,
+        stage1_point,
+        rs.alpha_evals_y,
+        row_eval_source,
+        &setup.expanded,
+        &ring_opening_points,
+        &ring_multiplier_points,
+        &rs.tau1,
+        v_typed,
+        commitment_u,
+        &y_rings,
+        Some(relation_claim),
+        rs.alpha,
+        rs.col_bits,
+        rs.ring_bits,
+    )?;
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
@@ -651,106 +622,28 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
     Ok((step.params.clone(), step.next_w_len, next_level_params))
 }
 
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn dispatch_verify_intermediate_level<F, L, T, const D: usize>(
-    level_d: usize,
-    level_proof: &AkitaLevelProof<F, L>,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-    lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
-    block_order: BlockOrder,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
-) -> Result<Vec<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    macro_rules! dispatch {
-        ($d:literal) => {
-            verify_intermediate_level::<F, L, T, $d>(
-                level_proof,
-                setup,
-                transcript,
-                current_state,
-                lp,
-                next_fold_level_params,
-                block_order,
-                setup_contribution_mode,
-                #[cfg(feature = "zk")]
-                zk_hiding_cursor,
-                #[cfg(feature = "zk")]
-                zk_relations,
-            )
-        };
-    }
-    match level_d {
-        32 => dispatch!(32),
-        64 => dispatch!(64),
-        128 => dispatch!(128),
-        256 => dispatch!(256),
-        _ => Err(AkitaError::InvalidProof),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn dispatch_verify_terminal_level<F, L, T>(
-    level_d: usize,
-    terminal_proof: &TerminalLevelProof<F, L>,
-    final_w_len: usize,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-    lp: &LevelParams,
-    block_order: BlockOrder,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
-) -> Result<Vec<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-{
-    macro_rules! dispatch {
-        ($d:literal) => {
-            verify_terminal_level::<F, L, T, $d>(
-                terminal_proof,
-                final_w_len,
-                setup,
-                transcript,
-                current_state,
-                lp,
-                block_order,
-                setup_contribution_mode,
-                #[cfg(feature = "zk")]
-                zk_hiding_cursor,
-                #[cfg(feature = "zk")]
-                zk_relations,
-            )
-        };
-    }
-    match level_d {
-        32 => dispatch!(32),
-        64 => dispatch!(64),
-        128 => dispatch!(128),
-        256 => dispatch!(256),
-        _ => Err(AkitaError::InvalidProof),
-    }
+macro_rules! dispatch_verifier_ring_dim_result {
+    ($d:expr, |$D:ident| $body:expr) => {{
+        match $d {
+            32 => {
+                const $D: usize = 32;
+                $body
+            }
+            64 => {
+                const $D: usize = 64;
+                $body
+            }
+            128 => {
+                const $D: usize = 128;
+                $body
+            }
+            256 => {
+                const $D: usize = 256;
+                $body
+            }
+            _ => Err(AkitaError::InvalidProof),
+        }
+    }};
 }
 
 /// Verify all recursive fold levels after the root proof.
@@ -813,8 +706,8 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
 
-                let challenges = if level_d == D {
-                    verify_intermediate_level::<F, L, T, D>(
+                let challenges = dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
+                    verify_intermediate_level::<F, L, T, D_LEVEL>(
                         level_proof,
                         setup,
                         transcript,
@@ -827,24 +720,8 @@ where
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
                         zk_relations,
-                    )?
-                } else {
-                    dispatch_verify_intermediate_level::<F, L, T, D>(
-                        level_d,
-                        level_proof,
-                        setup,
-                        transcript,
-                        &current_state,
-                        &current_lp,
-                        &next_fold_level_params,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )?
-                };
+                    )
+                })?;
 
                 let next_level_d = scheduled_next_params.ring_dimension;
                 if next_level_d == 0
@@ -889,8 +766,8 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                if level_d == D {
-                    verify_terminal_level::<F, L, T, D>(
+                dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
+                    verify_terminal_level::<F, L, T, D_LEVEL>(
                         terminal_proof,
                         next_w_len,
                         setup,
@@ -903,24 +780,8 @@ where
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
                         zk_relations,
-                    )?
-                } else {
-                    dispatch_verify_terminal_level::<F, L, T>(
-                        level_d,
-                        terminal_proof,
-                        next_w_len,
-                        setup,
-                        transcript,
-                        &current_state,
-                        &current_lp,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )?
-                };
+                    )
+                })?;
                 // Invariant: a terminal step implies the scheduled successor
                 // is a Direct step (not a Fold), which `scheduled_recursive_verify_level`
                 // signals by returning `None`. The trailing-`Direct` witness

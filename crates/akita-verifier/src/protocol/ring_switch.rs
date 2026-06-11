@@ -181,6 +181,21 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 
 pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
 
+struct RowEvalPointContext<'a, F: FieldCore, E: FieldCore> {
+    layout: RingSwitchSegmentLayout,
+    alpha_pows: Vec<E>,
+    g1_open: Vec<F>,
+    fold_gadget: Vec<F>,
+    eq_low: Vec<E>,
+    z_block_low_eq: Vec<E>,
+    offset_low_bits: usize,
+    z_offset_low_bits: usize,
+    block_offset_low: usize,
+    x_low_challenges: &'a [E],
+    high_challenges: &'a [E],
+    z_high_challenges: &'a [E],
+}
+
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
     pub relation: &'a RingRelationInstance<F, D>,
@@ -671,6 +686,57 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
+    fn prepare_point_context<'a, F, const D: usize>(
+        &self,
+        x_challenges: &'a [E],
+        alpha: E,
+    ) -> Result<RowEvalPointContext<'a, F, E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    {
+        let layout = self.segment_layout()?;
+        validate_log_basis(self.log_basis)?;
+        let alpha_pows = scalar_powers(alpha, D);
+        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+
+        let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
+        if offset_low_bits > x_challenges.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: offset_low_bits,
+                actual: x_challenges.len(),
+            });
+        }
+        let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits])?;
+        let block_offset_low = layout.offset_e & (self.num_blocks - 1);
+        debug_assert_eq!(block_offset_low, layout.offset_t & (self.num_blocks - 1));
+
+        let z_offset_low_bits = self.block_len.trailing_zeros() as usize;
+        if z_offset_low_bits > x_challenges.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: z_offset_low_bits,
+                actual: x_challenges.len(),
+            });
+        }
+        let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
+
+        Ok(RowEvalPointContext {
+            layout,
+            alpha_pows,
+            g1_open,
+            fold_gadget,
+            eq_low,
+            z_block_low_eq,
+            offset_low_bits,
+            z_offset_low_bits,
+            block_offset_low,
+            x_low_challenges: &x_challenges[..offset_low_bits],
+            high_challenges: &x_challenges[offset_low_bits..],
+            z_high_challenges: &x_challenges[z_offset_low_bits..],
+        })
+    }
+
     /// Evaluate the prepared ring-switch row table at the supplied point.
     ///
     /// # Errors
@@ -695,9 +761,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         if ring_multiplier_points.len() != opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }
-        // ----- Witness-layout offsets ----------------------------------------
-        let layout = self.segment_layout()?;
-        validate_log_basis(self.log_basis)?;
+        let context = self.prepare_point_context::<F, D>(x_challenges, alpha)?;
         if opening_points.len() != self.num_points {
             return Err(AkitaError::InvalidSize {
                 expected: self.num_points,
@@ -715,38 +779,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             }
         }
 
-        // ----- Shared precomputes --------------------------------------------
-        let alpha_pows = scalar_powers(alpha, D);
-        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
-        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
-
-        // Eq table over the low `log₂(num_blocks)` bits, shared by e-hat/T
-        // peeled summaries and by `SetupEvaluator` direct mode.
-        let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
-        if offset_low_bits > x_challenges.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: offset_low_bits,
-                actual: x_challenges.len(),
-            });
-        }
-        let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits])?;
-        let block_offset_low = layout.offset_e & (self.num_blocks - 1);
-        debug_assert_eq!(block_offset_low, layout.offset_t & (self.num_blocks - 1));
-
-        // `z` peels `block_len` (not `num_blocks`) and uses its own
-        // low-bit eq table.
-        let z_offset_low_bits = self.block_len.trailing_zeros() as usize;
-        if z_offset_low_bits > x_challenges.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: z_offset_low_bits,
-                actual: x_challenges.len(),
-            });
-        }
-        let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
-
-        let high_challenges = &x_challenges[offset_low_bits..];
-
-        let x_low_challenges = &x_challenges[..offset_low_bits];
         let total_blocks = self.total_blocks();
         if let Some(c_alphas) = self.c_alphas.as_flat() {
             if c_alphas.len() != total_blocks {
@@ -759,9 +791,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let challenge_block_summaries: Vec<[E; 2]> =
             self.c_alphas.summarize_all_block_carries::<F, D>(
                 self.num_claims,
-                x_low_challenges,
-                &eq_low,
-                block_offset_low,
+                context.x_low_challenges,
+                &context.eq_low,
+                context.block_offset_low,
                 self.num_blocks,
             )?;
         let mut challenge_block_summaries_by_t_vector =
@@ -819,15 +851,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         .as_ref()
                         .map(|rings| &rings[claim_idx]);
                     summarize_pow2_multiplier_block_carries(
-                        &eq_low,
-                        block_offset_low,
+                        &context.eq_low,
+                        context.block_offset_low,
                         point.b_len(),
                         |idx| {
                             point.eval_b_with_coefficient(
                                 idx,
                                 self.gamma[claim_idx],
                                 coefficient_ring,
-                                &alpha_pows,
+                                &context.alpha_pows,
                             )
                         },
                     )
@@ -845,9 +877,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 })
                 .collect::<Result<_, _>>()?;
             EStructuredSlicesEvaluator {
-                high_challenges,
-                offset_high: layout.offset_e >> offset_low_bits,
-                gadget_vector: &g1_open,
+                high_challenges: context.high_challenges,
+                offset_high: context.layout.offset_e >> context.offset_low_bits,
+                gadget_vector: &context.g1_open,
                 public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
                 public_row_weights_by_claim: &public_row_weights_by_claim,
@@ -877,9 +909,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
             TStructuredSlicesEvaluator {
-                high_challenges,
-                offset_high: layout.offset_t >> offset_low_bits,
-                gadget_vector: &g1_open,
+                high_challenges: context.high_challenges,
+                offset_high: context.layout.offset_t >> context.offset_low_bits,
+                gadget_vector: &context.g1_open,
                 challenge_block_summaries: &challenge_block_summaries_by_t_vector,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
             }
@@ -897,14 +929,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 let evaluator = SetupEvaluator::new(
                     &setup_contribution_inputs,
                     x_challenges,
-                    Some(&eq_low),
-                    Some(&z_block_low_eq),
-                    &alpha_pows,
-                    &fold_gadget,
-                    layout.offset_e,
-                    layout.offset_t,
-                    layout.offset_z,
-                    layout.offset_u,
+                    Some(&context.eq_low),
+                    Some(&context.z_block_low_eq),
+                    &context.alpha_pows,
+                    &context.fold_gadget,
+                    context.layout.offset_e,
+                    context.layout.offset_t,
+                    context.layout.offset_z,
+                    context.layout.offset_u,
                 );
                 match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
                     SetupEvaluation::Direct(value) => Ok(value),
@@ -923,23 +955,23 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let _span = tracing::info_span!("z_structured").entered();
             let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
             if self.block_len.is_power_of_two() {
-                let z_offset_low = layout.offset_z & (self.block_len - 1);
+                let z_offset_low = context.layout.offset_z & (self.block_len - 1);
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
                     .iter()
                     .map(|ring_multiplier_point| {
                         summarize_pow2_multiplier_block_carries(
-                            &z_block_low_eq,
+                            &context.z_block_low_eq,
                             z_offset_low,
                             self.block_len,
-                            |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
+                            |idx| ring_multiplier_point.eval_a_at::<E>(idx, &context.alpha_pows),
                         )
                     })
                     .collect::<Result<_, _>>()?;
                 ZStructuredPow2SlicesEvaluator {
-                    high_challenges: &x_challenges[z_offset_low_bits..],
-                    offset_high: layout.offset_z >> z_offset_low_bits,
+                    high_challenges: context.z_high_challenges,
+                    offset_high: context.layout.offset_z >> context.z_offset_low_bits,
                     g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
+                    fold_gadget: &context.fold_gadget,
                     a_block_summary: &a_block_summary,
                     consistency_weight: self.eq_tau1[0],
                 }
@@ -949,17 +981,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     .iter()
                     .map(|ring_multiplier_point| {
                         (0..self.block_len)
-                            .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
+                            .map(|idx| {
+                                ring_multiplier_point.eval_a_at::<E>(idx, &context.alpha_pows)
+                            })
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .collect::<Result<_, AkitaError>>()?;
                 ZDenseSlicesEvaluator {
                     g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
+                    fold_gadget: &context.fold_gadget,
                     consistency_weight: self.eq_tau1[0],
                     a_evals_by_point: &a_evals_by_point,
                     full_vec_randomness: x_challenges,
-                    offset_z: layout.offset_z,
+                    offset_z: context.layout.offset_z,
                     block_len: self.block_len,
                 }
                 .evaluate()?
@@ -970,8 +1004,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let r_contribution = {
             let r_gadget =
                 gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
-            let denom = alpha_pows[D - 1] * alpha + E::one();
-            compute_r_contribution(self, x_challenges, layout.offset_r, denom, &r_gadget)?
+            let denom = context.alpha_pows[D - 1] * alpha + E::one();
+            compute_r_contribution(
+                self,
+                x_challenges,
+                context.layout.offset_r,
+                denom,
+                &r_gadget,
+            )?
         };
 
         // ----- Tiered B_inner RHS: -recompose(û_concat) ----------------------
@@ -986,7 +1026,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let n_b_small = self.n_b;
             let inner_rows_pg = self.tier_split * n_b_small;
             let width_f = inner_rows_pg * self.depth_open;
-            let offset_u = layout.offset_u;
+            let offset_u = context.layout.offset_u;
             let mut acc = E::zero();
             for g in 0..self.num_points {
                 for slice_row in 0..inner_rows_pg {
@@ -997,7 +1037,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     }
                     let base_col = offset_u + g * width_f + slice_row * self.depth_open;
                     let mut recomp = E::zero();
-                    for (digit, &gd) in g1_open.iter().enumerate().take(self.depth_open) {
+                    for (digit, &gd) in context.g1_open.iter().enumerate().take(self.depth_open) {
                         let eq_col = akita_algebra::offset_eq::eq_eval_at_index(
                             x_challenges,
                             base_col + digit,

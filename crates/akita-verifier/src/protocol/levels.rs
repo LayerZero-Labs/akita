@@ -13,7 +13,7 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay,
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
+use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
@@ -355,6 +355,73 @@ enum RootStageInput<'a, F: FieldCore, C: FieldCore> {
         final_witness: &'a CleartextWitnessProof<F>,
         final_w_len: usize,
     },
+}
+
+pub(super) struct Stage1Replay<E: FieldCore> {
+    pub(super) batching_coeff: E,
+    pub(super) s_claim: E,
+    pub(super) stage1_point: Vec<E>,
+    #[cfg(feature = "zk")]
+    pub(super) s_claim_mask: ZkR1csLinearCombination<E>,
+}
+
+pub(super) fn verify_stage1_or_terminal<F, E, T>(
+    stage1: Option<&AkitaStage1Proof<E>>,
+    tau0: &[E],
+    col_bits: usize,
+    ring_bits: usize,
+    b: usize,
+    transcript: &mut T,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
+) -> Result<Stage1Replay<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let num_rounds = col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
+    if let Some(stage1_proof) = stage1 {
+        let tau0_reordered = reorder_stage1_coords(tau0, col_bits, ring_bits);
+        let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, b);
+        #[cfg(not(feature = "zk"))]
+        let stage1_point = {
+            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+            stage1_verifier.verify::<F, T>(stage1_proof, transcript)?
+        };
+        #[cfg(feature = "zk")]
+        let (stage1_point, s_claim_mask) = {
+            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+            stage1_verifier.verify::<F, T>(
+                stage1_proof,
+                transcript,
+                zk_relations,
+                zk_hiding_cursor,
+            )?
+        };
+        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
+        let batching_coeff: E =
+            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+        return Ok(Stage1Replay {
+            batching_coeff,
+            s_claim: stage1_proof.s_claim,
+            stage1_point,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+        });
+    }
+
+    Ok(Stage1Replay {
+        batching_coeff: E::zero(),
+        s_claim: E::zero(),
+        // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
+        // stage1_point + batching_coeff zero out the virtual half.
+        stage1_point: vec![E::zero(); num_rounds],
+        #[cfg(feature = "zk")]
+        s_claim_mask: ZkR1csLinearCombination::zero(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -887,42 +954,29 @@ where
     #[cfg(feature = "zk")]
     let relation_claim_mask =
         zk_relation_claim_mask_from_y_masks::<C, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
-    #[cfg(feature = "zk")]
-    let mut s_claim_mask = ZkR1csLinearCombination::<C>::zero();
-    let (batching_coeff, s_claim, stage1_point) = match (&stage_input, stage1) {
-        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
-            let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-            let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
-            #[cfg(not(feature = "zk"))]
-            let stage1_point = {
-                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                stage1_verifier.verify::<F, T>(stage1_proof, transcript)?
-            };
-            #[cfg(feature = "zk")]
-            let stage1_point = {
-                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                let (r, mask) = stage1_verifier.verify::<F, T>(
-                    stage1_proof,
-                    transcript,
-                    zk_relations,
-                    zk_hiding_cursor,
-                )?;
-                s_claim_mask = mask;
-                r
-            };
-            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
-            let batching_coeff: C =
-                sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1_proof.s_claim, stage1_point)
-        }
-        (RootStageInput::Terminal { .. }, None) => {
-            // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
-            // stage1_point + batching_coeff zero out the virtual half.
-            let stage1_point = vec![C::zero(); rs.col_bits + rs.ring_bits];
-            (C::zero(), C::zero(), stage1_point)
-        }
+    let stage1_proof = match (&stage_input, stage1) {
+        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => Some(stage1_proof),
+        (RootStageInput::Terminal { .. }, None) => None,
         _ => return Err(AkitaError::InvalidProof),
     };
+    let Stage1Replay {
+        batching_coeff,
+        s_claim,
+        stage1_point,
+        #[cfg(feature = "zk")]
+        s_claim_mask,
+    } = verify_stage1_or_terminal::<F, C, T>(
+        stage1_proof,
+        &rs.tau0,
+        rs.col_bits,
+        rs.ring_bits,
+        rs.b,
+        transcript,
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
+    )?;
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let setup_prepared_row_eval = stage3_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
     let row_eval_source = if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
@@ -933,61 +987,40 @@ where
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <C as ExtField<F>>::EXT_DEGREE;
-    let stage2_verifier = match &stage_input {
-        RootStageInput::Terminal { final_witness, .. } => {
-            AkitaStage2Verifier::new_with_cleartext_witness(
-                batching_coeff,
-                s_claim,
-                #[cfg(feature = "zk")]
-                s_claim_mask,
-                #[cfg(feature = "zk")]
-                relation_claim_mask,
-                final_witness,
-                w_len,
-                stage1_point,
-                rs.alpha_evals_y,
-                row_eval_source,
-                &setup.expanded,
-                &ring_opening_points,
-                &ring_multiplier_points,
-                &rs.tau1,
-                v_typed,
-                commitment_rows,
-                y_rings,
-                Some(relation_claim),
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
-            )?
-        }
-        RootStageInput::Intermediate { next_w_eval, .. } => {
-            AkitaStage2Verifier::new_with_claimed_w_eval(
-                batching_coeff,
-                s_claim,
-                #[cfg(feature = "zk")]
-                s_claim_mask,
-                #[cfg(feature = "zk")]
-                relation_claim_mask,
-                *next_w_eval,
-                #[cfg(feature = "zk")]
-                zk_ext_mask_lc_at::<F, C>(stage2_next_w_eval_mask_cursor),
-                stage1_point,
-                rs.alpha_evals_y,
-                row_eval_source,
-                &setup.expanded,
-                &ring_opening_points,
-                &ring_multiplier_points,
-                &rs.tau1,
-                v_typed,
-                commitment_rows,
-                y_rings,
-                Some(relation_claim),
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
-            )?
-        }
+    let witness_oracle = match &stage_input {
+        RootStageInput::Terminal { final_witness, .. } => Stage2WitnessOracle::Cleartext {
+            witness: final_witness,
+            physical_w_len: w_len,
+        },
+        RootStageInput::Intermediate { next_w_eval, .. } => Stage2WitnessOracle::ClaimedEval {
+            eval: *next_w_eval,
+            #[cfg(feature = "zk")]
+            mask: zk_ext_mask_lc_at::<F, C>(stage2_next_w_eval_mask_cursor),
+        },
     };
+    let stage2_verifier = AkitaStage2Verifier::new(
+        batching_coeff,
+        s_claim,
+        #[cfg(feature = "zk")]
+        s_claim_mask,
+        #[cfg(feature = "zk")]
+        relation_claim_mask,
+        witness_oracle,
+        stage1_point,
+        rs.alpha_evals_y,
+        row_eval_source,
+        &setup.expanded,
+        &ring_opening_points,
+        &ring_multiplier_points,
+        &rs.tau1,
+        v_typed,
+        commitment_rows,
+        y_rings,
+        Some(relation_claim),
+        rs.alpha,
+        rs.col_bits,
+        rs.ring_bits,
+    )?;
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }

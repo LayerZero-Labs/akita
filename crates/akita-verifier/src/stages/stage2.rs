@@ -144,7 +144,7 @@ where
     }
 }
 
-enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
+pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     Cleartext {
         witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
@@ -211,8 +211,11 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
+    /// Construct a verifier from the shared stage-2 context and the witness
+    /// oracle selected by the current proof level.
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new")]
+    pub(crate) fn new(
         batching_coeff: E,
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
@@ -280,113 +283,6 @@ where
             relation_claim,
             _marker: PhantomData,
         })
-    }
-
-    /// Construct a verifier that evaluates the final cleartext witness locally.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_cleartext_witness")]
-    pub(crate) fn new_with_cleartext_witness(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        cleartext_witness: &'a CleartextWitnessProof<F>,
-        physical_w_len: usize,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        row_eval_source: Stage2RowEvalSource<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            Stage2WitnessOracle::Cleartext {
-                witness: cleartext_witness,
-                physical_w_len,
-            },
-            stage1_point,
-            alpha_evals_y,
-            row_eval_source,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            tau1,
-            v,
-            u,
-            y_rings,
-            relation_claim_override,
-            alpha,
-            col_bits,
-            ring_bits,
-        )
-    }
-
-    /// Construct a verifier that consumes an already claimed next-witness eval.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
-    pub(crate) fn new_with_claimed_w_eval(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        w_eval: E,
-        #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        row_eval_source: Stage2RowEvalSource<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            Stage2WitnessOracle::ClaimedEval {
-                eval: w_eval,
-                #[cfg(feature = "zk")]
-                mask: w_eval_mask,
-            },
-            stage1_point,
-            alpha_evals_y,
-            row_eval_source,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            tau1,
-            v,
-            u,
-            y_rings,
-            relation_claim_override,
-            alpha,
-            col_bits,
-            ring_bits,
-        )
     }
 
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
