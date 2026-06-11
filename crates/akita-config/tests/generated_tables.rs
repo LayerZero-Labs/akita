@@ -24,7 +24,7 @@
 //! which the compact 7-tuple drops), step kinds / witness shapes, and total
 //! proof bytes. This is strictly stronger than diffing the compact
 //! `GeneratedStep` tuples: it catches any drift where the table-hit
-//! expansion would carry a different `a_key.collision_inf()` (or width, or
+//! expansion would carry a different `a_key.collision_l2_sq()` (or width, or
 //! rank) than the DP used, not just a different stored tuple.
 //!
 //! When this test fails the panic message lists per-family mismatch counts,

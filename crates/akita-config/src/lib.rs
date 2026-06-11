@@ -478,143 +478,152 @@ mod tests {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
-mod fp128_policy_tests {
-    use super::proof_optimized::fp128;
+#[cfg(test)]
+mod sis_schedule_width_audit {
     use super::*;
-    #[cfg(not(feature = "zk"))]
-    use akita_types::sis::{ceil_supported_collision, min_secure_rank};
+    use akita_types::sis::min_secure_rank;
 
-    #[cfg(not(feature = "zk"))]
-    fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
-        min_num_vars: usize,
-        max_num_vars: usize,
+    pub(super) fn assert_schedule_stays_within_audited_sis_widths(
+        schedule: &Schedule,
+        num_vars: usize,
     ) {
-        let d = Cfg::D as u32;
-        for num_vars in min_num_vars..=max_num_vars {
-            let schedule =
-                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
+        for (level_idx, fold) in schedule.fold_steps().enumerate() {
+            let lp = &fold.params;
+            let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
+            let family = lp.a_key.sis_family();
 
-            for (level_idx, fold) in schedule.fold_steps().enumerate() {
-                let lp = &fold.params;
-                let a_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_inf())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.a_key.collision_inf(),
-                            )
-                        });
-                let a_rank = min_secure_rank(
-                    Cfg::sis_modulus_family(),
-                    d,
-                    a_collision,
-                    u64::try_from(lp.inner_width())
-                        .expect("inner width should fit in u64"),
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                        lp.log_basis,
-                        lp.inner_width()
-                    )
-                });
-                assert!(
-                    a_rank <= lp.a_key.row_len(),
-                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
+            let a_collision = lp.a_key.collision_l2_sq();
+            let a_rank = min_secure_rank(
+                family,
+                d,
+                a_collision,
+                u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
                     lp.log_basis,
-                    lp.inner_width(),
-                    lp.a_key.row_len(),
-                );
+                    lp.inner_width()
+                )
+            });
+            assert!(
+                a_rank <= lp.a_key.row_len(),
+                "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
+                lp.log_basis,
+                lp.inner_width(),
+                lp.a_key.row_len(),
+            );
 
-                let b_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_inf())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.b_key.collision_inf(),
-                            )
-                        });
-                let b_rank = min_secure_rank(
-                    Cfg::sis_modulus_family(),
-                    d,
-                    b_collision,
-                    u64::try_from(lp.outer_width())
-                        .expect("outer width should fit in u64"),
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                        lp.log_basis,
-                        lp.outer_width()
-                    )
-                });
-                assert!(
-                    b_rank <= lp.b_key.row_len(),
-                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
+            let b_collision = lp.b_key.collision_l2_sq();
+            let b_rank = min_secure_rank(
+                family,
+                d,
+                b_collision,
+                u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
                     lp.log_basis,
-                    lp.outer_width(),
-                    lp.b_key.row_len(),
-                );
+                    lp.outer_width()
+                )
+            });
+            assert!(
+                b_rank <= lp.b_key.row_len(),
+                "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
+                lp.log_basis,
+                lp.outer_width(),
+                lp.b_key.row_len(),
+            );
 
-                let d_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_inf())
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
-                                lp.log_basis,
-                                lp.d_key.collision_inf(),
-                            )
-                        });
-                let d_rank = min_secure_rank(
-                    Cfg::sis_modulus_family(),
-                    d,
-                    d_collision,
-                    u64::try_from(lp.d_matrix_width())
-                        .expect("d-matrix width should fit in u64"),
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                        lp.log_basis,
-                        lp.d_matrix_width()
-                    )
-                });
-                assert!(
-                    d_rank <= lp.d_key.row_len(),
-                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
+            let d_collision = lp.d_key.collision_l2_sq();
+            let d_rank = min_secure_rank(
+                family,
+                d,
+                d_collision,
+                u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
                     lp.log_basis,
-                    lp.d_matrix_width(),
-                    lp.d_key.row_len(),
-                );
+                    lp.d_matrix_width()
+                )
+            });
+            assert!(
+                d_rank <= lp.d_key.row_len(),
+                "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
+                lp.log_basis,
+                lp.d_matrix_width(),
+                lp.d_key.row_len(),
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "zk"))]
+mod zk_generated_family_sis_audit {
+    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
+    use super::*;
+
+    const GENERATED_FAMILY_NV_SAMPLES: &[usize] = &[8, 16, 28, 30];
+
+    fn audit_generated_family_sparse(
+        family: &generated_families::GeneratedFamily,
+        nv_samples: &[usize],
+    ) {
+        for key in generated_families::family_keys(family).expect("family keys") {
+            if !nv_samples.contains(&key.num_vars) {
+                continue;
             }
+            let schedule = (family.table_backed)(key).expect("runtime schedule");
+            assert_schedule_stays_within_audited_sis_widths(&schedule, key.num_vars);
         }
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
+    fn generated_families_stay_within_audited_sis_widths() {
+        for family in generated_families::ALL_GENERATED_FAMILIES {
+            audit_generated_family_sparse(family, GENERATED_FAMILY_NV_SAMPLES);
+        }
+    }
+}
+
+#[cfg(all(test, not(feature = "zk")))]
+mod fp128_policy_tests {
+    use super::proof_optimized::fp128;
+    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
+    use super::*;
+
+    fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
+        min_num_vars: usize,
+        max_num_vars: usize,
+    ) {
+        for num_vars in min_num_vars..=max_num_vars {
+            let schedule =
+                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
+            assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
+        }
+    }
+
+    #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
     }
 
     #[test]
@@ -637,7 +646,7 @@ mod fp128_policy_tests {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_inf() >= root.params.b_key.collision_inf() * 2,
+            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
             "A-role collision should include the psi norm bound"
         );
     }
