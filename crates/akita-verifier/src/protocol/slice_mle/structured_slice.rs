@@ -384,8 +384,6 @@ mod tests {
         LevelParams, MRowLayout, RingOpeningPoint, SisModulusFamily,
     };
 
-    use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
-
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
 
@@ -548,7 +546,7 @@ mod tests {
         let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let point_idx = p.claim_to_point[claim_idx];
-                let mut summary = summarize_pow2_block_carries_base::<F, F>(
+                let mut summary = summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
                     &fx.opening_points[point_idx].b,
@@ -665,11 +663,7 @@ mod tests {
             .opening_points
             .iter()
             .map(|point| {
-                summarize_pow2_block_carries_base::<F, F>(
-                    &z_block_low_eq,
-                    z_offset_low,
-                    &point.a[..p.block_len],
-                )
+                summarize_pow2_block_carries(&z_block_low_eq, z_offset_low, &point.a[..p.block_len])
             })
             .collect::<Result<_, _>>()
             .unwrap();

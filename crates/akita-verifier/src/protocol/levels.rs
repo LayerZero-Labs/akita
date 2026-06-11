@@ -719,7 +719,6 @@ where
         relation_claim_mask,
         setup_sumcheck_proof: stage3_sumcheck_proof,
         next_fold_level_params,
-        opening_points: &ring_opening_points,
         ring_multiplier_points: &ring_multiplier_points,
         v: v_typed,
         u: commitment_rows,

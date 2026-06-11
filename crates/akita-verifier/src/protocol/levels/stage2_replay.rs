@@ -16,7 +16,7 @@ use akita_transcript::labels::{ABSORB_STAGE2_NEXT_W_EVAL, CHALLENGE_SUMCHECK_ROU
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     AkitaVerifierSetup, CleartextWitnessProof, LevelParams, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding, SetupContributionMode, SetupSumcheckProof,
+    RingSubfieldEncoding, SetupContributionMode, SetupSumcheckProof,
 };
 
 pub(super) enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
@@ -47,7 +47,6 @@ pub(super) struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usi
     pub(super) relation_claim_mask: ZkR1csLinearCombination<E>,
     pub(super) setup_sumcheck_proof: Option<&'a SetupSumcheckProof<E>>,
     pub(super) next_fold_level_params: &'a LevelParams,
-    pub(super) opening_points: &'a [RingOpeningPoint<F>],
     pub(super) ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     pub(super) v: &'a [CyclotomicRing<F, D>],
     pub(super) u: &'a [CyclotomicRing<F, D>],
@@ -91,7 +90,6 @@ where
         relation_claim_mask,
         setup_sumcheck_proof,
         next_fold_level_params,
-        opening_points,
         ring_multiplier_points,
         v,
         u,
@@ -141,7 +139,6 @@ where
         rs.alpha_evals_y,
         row_eval_source,
         &setup.expanded,
-        opening_points,
         ring_multiplier_points,
         &rs.tau1,
         v,

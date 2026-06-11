@@ -11,7 +11,7 @@ use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, CleartextWitnessProof, PackedDigits,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 
@@ -197,7 +197,6 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     alpha_evals_y: Vec<E>,
     row_eval_source: Stage2RowEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
-    opening_points: &'a [RingOpeningPoint<F>],
     ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     alpha: E,
     col_bits: usize,
@@ -225,7 +224,6 @@ where
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
         ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
@@ -275,7 +273,6 @@ where
             alpha_evals_y,
             row_eval_source,
             setup,
-            opening_points,
             ring_multiplier_points,
             alpha,
             col_bits,
@@ -305,7 +302,6 @@ where
         self.row_eval_source.prepared.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
-            self.opening_points,
             self.ring_multiplier_points,
             self.alpha,
             self.row_eval_source.setup_claim,

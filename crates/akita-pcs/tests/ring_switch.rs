@@ -701,7 +701,6 @@ mod tests {
             .eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
-                std::slice::from_ref(&ring_opening_point),
                 std::slice::from_ref(&ring_multiplier_point),
                 alpha,
                 None,

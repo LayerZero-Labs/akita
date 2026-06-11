@@ -15,8 +15,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBa
 use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlanInputs,
+    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingRelationSegmentLayout,
+    RingSubfieldEncoding, SetupContributionPlanInputs,
 };
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -180,7 +180,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         &self,
         x_challenges: &[E],
         setup: &AkitaExpandedSetup<F>,
-        opening_points: &[RingOpeningPoint<F>],
         ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
         alpha: E,
         setup_claim: Option<E>,
@@ -190,20 +189,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
-        if ring_multiplier_points.len() != opening_points.len() {
-            return Err(AkitaError::InvalidProof);
-        }
         let context = self.prepare_point_context::<F, D>(x_challenges, alpha)?;
-        if opening_points.len() != self.num_points {
+        if ring_multiplier_points.len() != self.num_points {
             return Err(AkitaError::InvalidSize {
                 expected: self.num_points,
-                actual: opening_points.len(),
+                actual: ring_multiplier_points.len(),
             });
-        }
-        for opening_point in opening_points {
-            if opening_point.b.len() != self.num_blocks || opening_point.a.len() < self.block_len {
-                return Err(AkitaError::InvalidProof);
-            }
         }
         for point in ring_multiplier_points {
             if point.b_len() != self.num_blocks || point.a_len() < self.block_len {
@@ -544,52 +535,6 @@ where
         );
         let low_idx = sum & inner_mask;
         out[carry] += eq_low[low_idx] * eval_at(u)?;
-    }
-
-    Ok(out)
-}
-
-#[cfg(test)]
-#[inline]
-pub(crate) fn summarize_pow2_block_carries_base<F, E>(
-    eq_low: &[E],
-    offset_low: usize,
-    values: &[F],
-) -> Result<[E; 2], AkitaError>
-where
-    F: FieldCore,
-    E: akita_field::ExtField<F>,
-{
-    if !values.len().is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "peeled inner block length must be a power of two".to_string(),
-        ));
-    }
-    if eq_low.len() != values.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: values.len(),
-            actual: eq_low.len(),
-        });
-    }
-    if offset_low >= values.len() {
-        return Err(AkitaError::InvalidInput(
-            "low offset must lie inside the peeled block".to_string(),
-        ));
-    }
-
-    let inner_bits = values.len().trailing_zeros() as usize;
-    let inner_mask = values.len() - 1;
-    let mut out = [E::zero(), E::zero()];
-
-    for (u, &value) in values.iter().enumerate() {
-        let sum = offset_low + u;
-        let carry = sum >> inner_bits;
-        debug_assert!(
-            carry < 2,
-            "sum of two peeled indices must carry at most one bit"
-        );
-        let low_idx = sum & inner_mask;
-        out[carry] += eq_low[low_idx].mul_base(value);
     }
 
     Ok(out)

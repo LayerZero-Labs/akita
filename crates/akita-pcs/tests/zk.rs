@@ -1208,7 +1208,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
-                instance.opening_points(),
                 instance.ring_multiplier_points(),
                 alpha,
                 None,

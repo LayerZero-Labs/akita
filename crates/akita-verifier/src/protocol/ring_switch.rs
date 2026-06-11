@@ -19,8 +19,6 @@ use super::validate_ring_dispatch;
 use akita_challenges::Challenges;
 use row_eval::prepare_ring_switch_row_eval_inner;
 #[cfg(test)]
-pub(crate) use row_eval::summarize_pow2_block_carries_base;
-#[cfg(test)]
 use row_eval::summarize_pow2_multiplier_block_carries;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
@@ -98,7 +96,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// Stores only data that cannot be derived from context at evaluation time:
 /// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
 /// Everything else is passed by reference at evaluation time to avoid
-/// duplicating setup matrix views, opening points, and gadget vectors.
+/// duplicating setup matrix views and gadget vectors.
 #[derive(Clone)]
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
@@ -297,6 +295,13 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
+    let claim_to_point = relation.claim_to_point();
+    validate_opening_points_for_claims(
+        relation.opening_points(),
+        claim_to_point,
+        lp,
+        claim_to_point.len(),
+    )?;
     let witness_segment_layout = relation.segment_layout(lp)?;
     let routing = relation.commitment_routing();
     prepare_ring_switch_row_eval_inner::<F, E, D>(
@@ -312,7 +317,7 @@ where
         relation.m_row_layout(),
         relation.opening_points().len(),
         relation.ring_multiplier_points(),
-        relation.claim_to_point(),
+        claim_to_point,
         witness_segment_layout,
     )
 }
