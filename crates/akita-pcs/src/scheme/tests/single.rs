@@ -4,7 +4,7 @@ use akita_prover::protocol::flow::{RecursiveCarriedOpening, RecursiveCarriedSour
 use akita_prover::AkitaProverSetup;
 use akita_prover::{
     build_folded_batched_proof_with_suffix, commit_next_w, prepare_batched_prove_inputs,
-    prove_recursive_suffix, prove_root_fold_with_params, RecursiveWitnessFlat,
+    prove_root_fold_with_params, prove_suffix, RecursiveWitnessFlat,
 };
 use akita_types::{
     schedule_num_fold_levels, schedule_root_fold_step, AjtaiKeyParams, AkitaScheduleLookupKey,
@@ -160,7 +160,7 @@ fn prove_witness_plus_dummy_carried_batch(
     let root_step = schedule_root_fold_step(&schedule).unwrap().clone();
     let root_next_params = scheduled_next_level_params(&schedule, 1).unwrap();
 
-    let mut raw = prove_root_fold_with_params::<F, F, F, _, _, _, Cfg, D>(
+    let mut root = prove_root_fold_with_params::<F, F, F, _, _, _, Cfg, D>(
         &setup.expanded,
         &setup.prefix_slots,
         &CpuBackend,
@@ -180,7 +180,7 @@ fn prove_witness_plus_dummy_carried_batch(
     .unwrap();
 
     // Inject a dummy second carried source into the level-1 batch.
-    let carried_claim = raw.next_state.carried_openings[0].clone();
+    let carried_claim = root.next_state.carried_openings[0].clone();
     let point = carried_claim.opening_point.clone();
     let dummy_logical_w = RecursiveWitnessFlat::from_i8_digits(vec![0; carried_claim.natural_len]);
     let dummy_next = commit_next_w::<Cfg, _, D>(
@@ -192,17 +192,17 @@ fn prove_witness_plus_dummy_carried_batch(
     )
     .unwrap();
     let dummy_commitment = dummy_next.commitment;
-    assert_ne!(dummy_commitment, raw.next_state.commitment);
+    assert_ne!(dummy_commitment, root.next_state.commitment);
     let (dummy_w, dummy_logical_w) = match dummy_next.witness {
         Some(committed_w) => (committed_w, Some(dummy_logical_w)),
         None => (dummy_logical_w, None),
     };
     // A genuine all-zero witness opens to zero at every point.
     let dummy_value = F::zero();
-    raw.extra_carried_sources.push(CarriedOpeningSourceProof {
+    root.extra_carried_sources.push(CarriedOpeningSourceProof {
         commitment: dummy_commitment.clone(),
     });
-    raw.extra_carried_openings.push(CarriedOpeningProof {
+    root.extra_carried_openings.push(CarriedOpeningProof {
         source_idx: 1,
         point: point.clone(),
         value: dummy_value,
@@ -211,7 +211,7 @@ fn prove_witness_plus_dummy_carried_batch(
         padded_len: carried_claim.padded_len,
         kind: CarriedOpeningKind::SetupPrefix,
     });
-    raw.next_state
+    root.next_state
         .extra_carried_sources
         .push(RecursiveCarriedSource {
             w: dummy_w.clone(),
@@ -219,7 +219,7 @@ fn prove_witness_plus_dummy_carried_batch(
             commitment: dummy_commitment,
             hint: dummy_next.hint,
         });
-    raw.next_state
+    root.next_state
         .carried_openings
         .push(RecursiveCarriedOpening {
             source_idx: 1,
@@ -232,8 +232,8 @@ fn prove_witness_plus_dummy_carried_batch(
         });
 
     let (proof, _levels) =
-        build_folded_batched_proof_with_suffix::<F, F, D, _>(raw, |next_state| {
-            prove_recursive_suffix::<Cfg, _, _, D>(
+        build_folded_batched_proof_with_suffix::<F, F, D, _>(root, |next_state| {
+            prove_suffix::<Cfg, _, _, D>(
                 &setup.expanded,
                 &setup.prefix_slots,
                 &CpuBackend,

@@ -160,36 +160,39 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
         )],
         extra_carried_sources: Vec::new(),
     };
-    let raw = RootLevelRawOutput::<F, F, 1> {
-        y_rings: vec![CyclotomicRing::<F, 1>::zero()],
-        extension_opening_reduction: None,
-        v: Vec::new(),
-        stage1: AkitaStage1Proof {
-            stages: Vec::new(),
-            s_claim: F::zero(),
+    let root = RootLevelProverOutput::<F, F, 1> {
+        raw: RootLevelRawOutput::<F, F, 1> {
+            y_rings: vec![CyclotomicRing::<F, 1>::zero()],
+            extension_opening_reduction: None,
+            v: Vec::new(),
+            stage1: AkitaStage1Proof {
+                stages: Vec::new(),
+                s_claim: F::zero(),
+            },
+            stage2_sumcheck_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            stage3_sumcheck_proof: None,
+            w_commitment_proof: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
+            w_eval: F::from_u64(4),
         },
-        stage2_sumcheck_proof: SumcheckProof {
-            round_polys: Vec::new(),
-        },
-        stage3_sumcheck_proof: None,
-        w_commitment_proof: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
-        w_eval: F::from_u64(4),
         extra_carried_sources: vec![source.clone()],
         extra_carried_openings: vec![extra.clone()],
         next_state,
     };
 
-    let (proof, num_levels) = build_folded_batched_proof_with_suffix(raw, |_next_state| {
+    let (proof, num_levels) = build_folded_batched_proof_with_suffix(root, |_next_state| {
         Ok(RecursiveSuffixOutcome {
-            intermediate_levels: Vec::new(),
-            terminal: TerminalLevelProof::new_with_extension_opening_reduction::<1>(
-                vec![CyclotomicRing::<F, 1>::zero()],
-                None,
-                SumcheckProof {
-                    round_polys: Vec::new(),
-                },
-                CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![F::zero()])),
-            ),
+            steps: vec![AkitaProofStep::Terminal(
+                TerminalLevelProof::new_with_extension_opening_reduction::<1>(
+                    vec![CyclotomicRing::<F, 1>::zero()],
+                    None,
+                    SumcheckProof {
+                        round_polys: Vec::new(),
+                    },
+                    CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![F::zero()])),
+                ),
+            )],
             num_levels: 1,
         })
     })

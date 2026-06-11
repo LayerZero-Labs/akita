@@ -52,8 +52,8 @@ pub use incidence::{
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CarriedOpeningProof,
-    CarriedOpeningSourceProof, ExtensionOpeningReductionProof, SetupSumcheckProof,
-    TerminalLevelProof,
+    CarriedOpeningSourceProof, ExtensionOpeningReductionProof, RootLevelRawOutput,
+    SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

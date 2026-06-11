@@ -6,9 +6,7 @@ use crate::protocol::extension_opening_reduction::{
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
-    ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
-    NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
@@ -37,7 +35,8 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -64,8 +63,9 @@ use akita_types::{
     CarriedOpeningSourceProof, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
     CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
     IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding,
+    RootLevelRawOutput, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
+    SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -86,7 +86,7 @@ pub use inputs::{
     build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof,
     prepare_batched_prove_inputs, prove_batched, prove_folded_batched, prove_root_direct,
 };
-pub use recursive::prove_recursive_suffix;
+pub use recursive::prove_suffix;
 #[cfg(test)]
 pub(in crate::protocol::flow) use recursive::{
     prove_extension_opening_reduction, recursive_witness_base_evals,
@@ -396,35 +396,16 @@ pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     pub next_state: RecursiveProverState<F, L>,
 }
 
-/// Raw pieces produced by the unified root-level prover.
+/// Output produced by the unified root-level prover.
 ///
 /// Callers assemble either a singleton or batched root proof from these
-/// components while sharing the same inner prover flow.
-pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
+/// components while sharing the same inner prover flow and suffix state.
+pub struct RootLevelProverOutput<F: FieldCore, L: FieldCore, const D: usize> {
     /// Proof-level ZK hiding commitment fixed before root challenges.
     #[cfg(feature = "zk")]
     pub zk_hiding_commitment: ZkHidingCommitment<F>,
-    /// Gamma-combined public y-rings, one per opening point.
-    pub y_rings: Vec<CyclotomicRing<F, D>>,
-    /// Optional extension-opening reduction payload for folded root openings.
-    /// `None` when the root proof uses ordinary degree-one openings.
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Public v rows for the root relation.
-    pub v: Vec<CyclotomicRing<F, D>>,
-    /// Stage-1 sumcheck proof.
-    pub stage1: AkitaStage1Proof<L>,
-    /// Stage-2 sumcheck proof.
-    #[cfg(not(feature = "zk"))]
-    pub stage2_sumcheck_proof: SumcheckProof<L>,
-    /// ZK plain-opening round masks for the stage-2 sumcheck.
-    #[cfg(feature = "zk")]
-    pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-    /// Stage-3 setup product-sumcheck proof for recursive setup-contribution replay.
-    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
-    /// Recursive witness commitment carried in the proof.
-    pub w_commitment_proof: FlatRingVec<F>,
-    /// Claimed terminal evaluation of the recursive witness at this level.
-    pub w_eval: L,
+    /// Wire proof payload for the root level.
+    pub raw: RootLevelRawOutput<F, L, D>,
     /// Extra proof-visible carried sources appended after the witness claim.
     pub extra_carried_sources: Vec<CarriedOpeningSourceProof<F>>,
     /// Extra proof-visible carried openings appended after the witness claim.
@@ -435,11 +416,8 @@ pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
 
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
-    /// Per-level intermediate fold proofs, in order. Does not include the
-    /// root proof or the terminal-level proof.
-    pub intermediate_levels: Vec<AkitaLevelProof<F, L>>,
-    /// Terminal fold proof shipping `final_witness` in cleartext.
-    pub terminal: TerminalLevelProof<F, L>,
+    /// Recursive suffix proof steps: intermediate folds followed by terminal.
+    pub steps: Vec<AkitaProofStep<F, L>>,
     /// Proof-level ZK hiding witness state after all suffix masks are consumed.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -571,28 +549,6 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     pub group_polys: Vec<&'a P>,
     /// Commitment hints flattened in claim-group order.
     pub flat_hints: Vec<AkitaCommitmentHint<F, D>>,
-}
-
-/// Assemble intermediate fold-level proofs followed by the terminal-level
-/// proof.
-///
-/// The terminal proof already carries the cleartext `final_witness` (in
-/// place of the prior `next_w_commitment`), so the recursive suffix is
-/// `Intermediate(...) × N + Terminal(...)`.
-pub fn build_final_proof_steps<F, L>(
-    intermediate_levels: Vec<AkitaLevelProof<F, L>>,
-    terminal: TerminalLevelProof<F, L>,
-) -> Vec<AkitaProofStep<F, L>>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    let mut steps = intermediate_levels
-        .into_iter()
-        .map(AkitaProofStep::Intermediate)
-        .collect::<Vec<_>>();
-    steps.push(AkitaProofStep::Terminal(terminal));
-    steps
 }
 
 #[cfg(feature = "zk")]

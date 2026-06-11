@@ -1,4 +1,5 @@
 use super::*;
+use cfg_if::cfg_if;
 
 fn evaluate_root_claims_at_prepared_points<F, P, const D: usize>(
     polys: &[&P],
@@ -96,7 +97,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -184,7 +185,7 @@ where
         row_coefficients,
         setup_contribution_mode,
     )?;
-    raw.extension_opening_reduction = extension_opening_reduction;
+    raw.raw.extension_opening_reduction = extension_opening_reduction;
     Ok(raw)
 }
 
@@ -220,7 +221,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
@@ -575,7 +576,7 @@ where
 /// optional extension-opening reduction, and ring-relation setup, then
 /// emits a [`TerminalLevelProof`] via
 /// [`prove_terminal_root_fold_from_ring_relation`] instead of a
-/// [`RootLevelRawOutput`].
+/// [`RootLevelProverOutput`].
 ///
 /// # Errors
 ///
@@ -1080,7 +1081,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -1119,14 +1120,14 @@ where
 
     let rs = {
         let _span = tracing::info_span!("root_ring_switch_finalize").entered();
-        ring_switch_finalize_with_gamma::<F, C, T, D>(
+        transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &w_commitment_proof);
+        ring_switch_finalize::<F, C, T, D>(
             &instance,
             expanded.as_ref(),
             transcript,
             &logical_w,
-            &w_commitment_proof,
             lp,
-            &row_coefficients,
+            Some(&row_coefficients),
             MRowLayout::WithDBlock,
         )?
     };
@@ -1138,14 +1139,17 @@ where
         commitment_rows,
         &y_rings,
     )?;
-    #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &instance.v,
-        commitment_rows,
-        &y_rings_masked,
-    )?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
+                &rs.tau1,
+                rs.alpha,
+                &instance.v,
+                commitment_rows,
+                &y_rings_masked,
+            )?;
+        }
+    }
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -1159,9 +1163,12 @@ where
         alpha,
     } = rs;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
-    #[cfg(feature = "zk")]
-    let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
-        zk_hiding.take_current_level_pads::<C>(col_bits + ring_bits, b)?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
+                zk_hiding.take_current_level_pads::<C>(col_bits + ring_bits, b)?;
+        }
+    }
     let (stage1_proof, stage1_point, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
@@ -1172,59 +1179,19 @@ where
             col_bits,
             ring_bits,
         )?;
-        #[cfg(feature = "zk")]
-        {
-            stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
-            let s_claim = stage1_proof.s_claim;
-            (stage1_proof, stage1_point, s_claim)
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
+            } else {
+                let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
+                let s_claim = stage1_proof.s_claim;
+                (stage1_proof, stage1_point, s_claim)
+            }
         }
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
     let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-    #[cfg(feature = "zk")]
-    let (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval, w_eval_masked) = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let stage2_prover_result = AkitaStage2Prover::new(
-            batching_coeff,
-            w_evals_compact,
-            &stage1_point,
-            s_claim,
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            relation_claim,
-        );
-        let mut stage2_prover = stage2_prover_result?;
-        let stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
-        let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-            .prove_zk::<F, T, _>(
-                stage2_public_input,
-                transcript,
-                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                stage2_round_pads,
-            )?;
-
-        let w_eval = {
-            let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
-            stage2_prover.final_w_eval()
-        };
-        let w_eval_masked = w_eval + zk_hiding.take_next_w_eval_mask::<C>()?;
-        (
-            stage2_sumcheck_proof_masked,
-            sumcheck_challenges,
-            w_eval,
-            w_eval_masked,
-        )
-    };
-    #[cfg(not(feature = "zk"))]
     let (stage2_sumcheck_proof, sumcheck_challenges, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -1240,27 +1207,39 @@ where
             ring_bits,
             relation_claim,
         )?;
-        let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
-            .prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let stage2_public_input =
+                    batching_coeff * stage1_proof.s_claim + relation_claim_public;
+                let (stage2_sumcheck_proof, sumcheck_challenges) = stage2_prover
+                    .prove_zk::<F, T, _>(
+                        stage2_public_input,
+                        transcript,
+                        |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                        stage2_round_pads,
+                    )?;
+            } else {
+                let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+                    .prove::<F, T, _>(transcript, |tr| {
+                        sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                    })?;
+            }
+        }
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
             stage2_prover.final_w_eval()
         };
         (stage2_sumcheck_proof, sumcheck_challenges, w_eval)
     };
+    #[cfg(feature = "zk")]
+    let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<C>()?;
+    #[cfg(not(feature = "zk"))]
+    let proof_w_eval = w_eval;
     let (committed_witness, logical_w) = match packed_witness {
         Some(packed_witness) => (packed_witness, Some(logical_w)),
         None => (logical_w, None),
     };
     let next_w_len = logical_w.as_ref().unwrap_or(&committed_witness).len();
-
-    #[cfg(not(feature = "zk"))]
-    let proof_w_eval = w_eval;
-    #[cfg(feature = "zk")]
-    let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
@@ -1284,23 +1263,26 @@ where
         SetupContributionMode::Direct => None,
     };
 
-    Ok(RootLevelRawOutput {
+    #[cfg(feature = "zk")]
+    let proof_y_rings = y_rings_masked;
+    #[cfg(not(feature = "zk"))]
+    let proof_y_rings = y_rings;
+    let raw = RootLevelProverOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        #[cfg(feature = "zk")]
-        y_rings: y_rings_masked,
-        #[cfg(not(feature = "zk"))]
-        y_rings,
-        extension_opening_reduction: None,
-        v: instance.v,
-        stage1: stage1_proof,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval: proof_w_eval,
+        raw: RootLevelRawOutput {
+            y_rings: proof_y_rings,
+            extension_opening_reduction: None,
+            v: instance.v,
+            stage1: stage1_proof,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck_proof,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_proof_masked: stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            w_commitment_proof,
+            w_eval: proof_w_eval,
+        },
         extra_carried_sources: Vec::new(),
         extra_carried_openings: Vec::new(),
         next_state: RecursiveProverState {
@@ -1312,22 +1294,26 @@ where
             sumcheck_challenges: sumcheck_challenges.clone(),
             opening: w_eval,
             carried_openings: {
-                let mut claim = RecursiveCarriedOpening::recursive_witness(
-                    sumcheck_challenges,
-                    w_eval,
-                    next_w_len,
-                );
-                #[cfg(feature = "zk")]
-                {
-                    claim.proof_opening = proof_w_eval;
-                }
+                let claim = {
+                    let mut claim = RecursiveCarriedOpening::recursive_witness(
+                        sumcheck_challenges,
+                        w_eval,
+                        next_w_len,
+                    );
+                    #[cfg(feature = "zk")]
+                    {
+                        claim.proof_opening = proof_w_eval;
+                    }
+                    claim
+                };
                 vec![claim]
             },
             extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
         },
-    })
+    };
+    Ok(raw)
 }
 
 /// Terminal-root analogue of [`prove_root_fold_from_ring_relation`] used when the
@@ -1388,15 +1374,21 @@ where
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
 
-    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    let rs = ring_switch_finalize::<F, C, T, D>(
         &instance,
         expanded,
         transcript,
         &logical_w,
-        &final_witness,
-        terminal_layout,
         lp,
-        &row_coefficients,
+        Some(&row_coefficients),
+        MRowLayout::WithoutDBlock,
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
@@ -1409,14 +1401,17 @@ where
         commitment_rows,
         &y_rings,
     )?;
-    #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &[],
-        commitment_rows,
-        &y_rings_masked,
-    )?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
+                &rs.tau1,
+                rs.alpha,
+                &[],
+                commitment_rows,
+                &y_rings_masked,
+            )?;
+        }
+    }
 
     let RingSwitchOutput {
         w_evals_compact,
@@ -1434,8 +1429,7 @@ where
     let stage1_point = vec![C::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
-    #[cfg(feature = "zk")]
-    let stage2_sumcheck_proof_masked = {
+    let stage2_sumcheck_proof = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             C::zero(),
@@ -1450,49 +1444,34 @@ where
             ring_bits,
             relation_claim,
         )?;
-        let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
-            .prove_zk::<F, T, _>(
-                relation_claim_public,
-                transcript,
-                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                stage2_round_pads,
-            )?;
-        stage2_sumcheck_proof_masked
-    };
-    #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
-        let mut stage2_prover = AkitaStage2Prover::new(
-            C::zero(),
-            w_evals_compact,
-            &stage1_point,
-            C::zero(),
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            relation_claim,
-        )?;
-        let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
-            .prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        stage2_sumcheck
+        cfg_if! {
+            if #[cfg(feature = "zk")] {
+                let (stage2_sumcheck_proof, _sumcheck_challenges) = stage2_prover
+                    .prove_zk::<F, T, _>(
+                        relation_claim_public,
+                        transcript,
+                        |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                        stage2_round_pads,
+                    )?;
+            } else {
+                let (stage2_sumcheck_proof, _sumcheck_challenges, _stage2_final_claim) =
+                    stage2_prover.prove::<F, T, _>(transcript, |tr| {
+                        sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                    })?;
+            }
+        }
+        stage2_sumcheck_proof
     };
 
+    #[cfg(feature = "zk")]
+    let proof_y_rings = y_rings_masked;
+    #[cfg(not(feature = "zk"))]
+    let proof_y_rings = y_rings;
     Ok(
         TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-            #[cfg(not(feature = "zk"))]
-            y_rings,
-            #[cfg(feature = "zk")]
-            y_rings_masked,
+            proof_y_rings,
             None,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
+            stage2_sumcheck_proof,
             final_witness,
         ),
     )

@@ -41,13 +41,13 @@ pub use compute::{
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    build_final_proof_steps, build_folded_batched_proof_with_suffix,
-    build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs, prove_batched,
-    prove_folded_batched, prove_recursive_suffix, prove_root_direct,
-    prove_root_fold_from_ring_relation, prove_root_fold_with_params,
-    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
-    RingSwitchOutput, RootLevelRawOutput,
+    build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof, commit_next_w,
+    prepare_batched_prove_inputs, prove_batched,
+    prove_folded_batched, prove_root_direct, prove_root_fold_from_ring_relation,
+    prove_root_fold_with_params, prove_suffix, prove_terminal_root_fold_from_ring_relation,
+    prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
+    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput, RootLevelProverOutput,
+    RootLevelRawOutput,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 /// One commitment plus the polynomials it bundles, opened at one point.
