@@ -21,13 +21,13 @@ use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(not(feature = "zk"))]
+use akita_types::eval_poly;
 use akita_types::{
     combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
     stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
     AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
 };
-#[cfg(not(feature = "zk"))]
-use akita_types::{eval_poly, range_check_eval_from_s};
 
 #[cfg(feature = "zk")]
 type Stage1VerifyOutput<E> = (Vec<E>, ZkR1csLinearCombination<E>);
@@ -111,86 +111,6 @@ fn zk_record_polynomial_eval<E: FieldCore>(
         acc = next;
     }
     Ok(acc)
-}
-
-struct SingleStageVerifier<F: FieldCore> {
-    tau0: Vec<F>,
-    s_claim: F,
-    b: usize,
-}
-
-impl<F: FieldCore> SingleStageVerifier<F> {
-    fn new(tau0: Vec<F>, s_claim: F, b: usize) -> Self {
-        Self { tau0, s_claim, b }
-    }
-}
-
-impl<F: FieldCore + FromPrimitiveInt> EqFactoredSumcheckInstanceVerifier<F>
-    for SingleStageVerifier<F>
-{
-    type RoundState = GruenSplitEq<F>;
-
-    fn num_rounds(&self) -> usize {
-        self.tau0.len()
-    }
-
-    fn degree_bound(&self) -> usize {
-        self.b / 2
-    }
-
-    fn input_claim(&self) -> F {
-        F::zero()
-    }
-
-    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
-        GruenSplitEq::new(&self.tau0)
-    }
-
-    fn expected_output_claim(
-        &self,
-        round_state: &Self::RoundState,
-        _challenges: &[F],
-    ) -> Result<F, AkitaError> {
-        #[cfg(feature = "zk")]
-        {
-            let _ = round_state;
-            Ok(F::zero())
-        }
-        #[cfg(not(feature = "zk"))]
-        Ok(round_state.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F: FieldCore + FromPrimitiveInt> ZkEqFactoredFinalRelation<F> for SingleStageVerifier<F> {
-    fn record_final_relation(
-        &self,
-        round_state: &Self::RoundState,
-        _challenges: &[F],
-        scaled_claim: ZkR1csLinearCombination<F>,
-        claim_scale: F,
-        handoff_mask: ZkR1csLinearCombination<F>,
-        relations: &mut ZkRelationAccumulator<F>,
-    ) -> Result<(), AkitaError> {
-        let coeffs = stage1_leaf_coeffs::<F>(self.b)
-            .into_iter()
-            .next()
-            .ok_or(AkitaError::InvalidProof)?;
-        let s_claim = ZkRelationAccumulator::unmask_lc(self.s_claim, &handoff_mask);
-        let range_eval = zk_record_polynomial_eval(
-            "stage-1 range polynomial evaluation",
-            &coeffs,
-            s_claim,
-            relations,
-        )?;
-        relations.push_r1cs(
-            "stage-1 final oracle",
-            range_eval,
-            ZkR1csLinearCombination::constant(claim_scale * round_state.current_scalar()),
-            scaled_claim,
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(feature = "zk")]
@@ -521,7 +441,17 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
             if !proof.stages[0].child_claims.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            let leaf_verifier = SingleStageVerifier::new(self.tau0.clone(), proof.s_claim, self.b);
+            let leaf_verifier = PolynomialStageVerifier::new(
+                self.tau0.clone(),
+                E::zero(),
+                #[cfg(feature = "zk")]
+                ZkR1csLinearCombination::zero(),
+                leaf_coeffs
+                    .into_iter()
+                    .next()
+                    .ok_or(AkitaError::InvalidProof)?,
+                proof.s_claim,
+            );
             #[cfg(feature = "zk")]
             return leaf_verifier.verify_zk::<F, T, _>(
                 &proof.stages[0].sumcheck_proof_masked,
