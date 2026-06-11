@@ -14,7 +14,8 @@
 //! After writing the per-family table modules, the emitter also refreshes
 //! the `// @generated schedule module wiring` block in `mod.rs` and the
 //! matching import list in `resolve.rs`, sorted the same way `rustfmt`
-//! orders module declarations. It then runs `cargo fmt -p akita-planner`.
+//! orders module declarations. It then runs `cargo fmt` on `akita-planner`
+//! and `akita-config` so emitted artifacts and this emitter stay fmt-clean.
 
 use std::env;
 use std::fmt::Write as _;
@@ -224,18 +225,20 @@ fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
 }
 
 fn emit_tiered_table_accessor() -> String {
-    "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n\
-     /// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n\
-     /// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n\
-     /// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n\
-     #[cfg(not(feature = \"zk\"))]\n\
-     pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n\
-         GeneratedScheduleTable {\n\
-             sis_family: SisModulusFamily::Q128,\n\
-             entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n\
-         }\n\
-     }\n"
-        .to_string()
+    concat!(
+        "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
+        "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
+        "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
+        "/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n",
+        "#[cfg(not(feature = \"zk\"))]\n",
+        "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
+        "    GeneratedScheduleTable {\n",
+        "        sis_family: SisModulusFamily::Q128,\n",
+        "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
+        "    }\n",
+        "}\n",
+    )
+    .to_string()
 }
 
 fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, String> {
@@ -310,11 +313,8 @@ fn emit_resolve_cfg_imports(families: &[&GeneratedFamily]) -> Result<String, Str
     }
     if !tiered_wired {
         writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
-        writeln!(
-            out,
-            "use crate::generated::fp128_d64_onehot_tiered_table;"
-        )
-        .map_err(|e| e.to_string())?;
+        writeln!(out, "use crate::generated::fp128_d64_onehot_tiered_table;")
+            .map_err(|e| e.to_string())?;
     }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
@@ -395,16 +395,17 @@ fn refresh_generated_wiring(base_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_planner_fmt() -> Result<(), String> {
-    let status = Command::new("cargo")
-        .args(["fmt", "-p", "akita-planner"])
-        .status()
-        .map_err(|e| format!("spawn cargo fmt: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("cargo fmt -p akita-planner failed with {status}"))
+fn run_regen_fmt() -> Result<(), String> {
+    for package in ["akita-planner", "akita-config"] {
+        let status = Command::new("cargo")
+            .args(["fmt", "-p", package])
+            .status()
+            .map_err(|e| format!("spawn cargo fmt: {e}"))?;
+        if !status.success() {
+            return Err(format!("cargo fmt -p {package} failed with {status}"));
+        }
     }
+    Ok(())
 }
 
 fn main() -> Result<(), String> {
@@ -438,6 +439,6 @@ fn main() -> Result<(), String> {
     }
 
     refresh_generated_wiring(&base_dir)?;
-    run_planner_fmt()?;
+    run_regen_fmt()?;
     Ok(())
 }
