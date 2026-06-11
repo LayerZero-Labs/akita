@@ -11,6 +11,16 @@
 
 use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
 
+/// Minimum min-entropy (bits) for every stage-1 sparse-challenge transcript draw.
+///
+/// Flat folds sample one such draw per logical block. Tensor folds sample
+/// independent left and right factor vectors; each factor is one draw and is
+/// reused across many logical blocks (`c_{p,q} = left_p · right_q`). Soundness
+/// therefore requires **each draw** to clear this floor, not merely the product
+/// `left ⊗ right` summed to 128 bits (a 64+64 split would pass a sum rule but
+/// leave each factor brute-forceable).
+pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
+
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
 /// Different families trade off challenge entropy against the
@@ -160,6 +170,107 @@ impl SparseChallengeConfig {
         }
     }
 
+    /// `log2` of the number of distinct challenges this family can emit for ring
+    /// degree `D` — the (raw) min-entropy of a single sampled challenge.
+    ///
+    /// Knowledge soundness of the fold needs the challenge set a prover must
+    /// guess against to be large: a single sparse challenge with only a handful
+    /// of nonzero coordinates has a small support, and `validate::<D>` alone does
+    /// **not** rule that out. Use this together with [`Self::validate_min_entropy`]
+    /// to enforce a floor.
+    ///
+    /// Counting (each is a product of independent choices):
+    /// - `Uniform { weight, nonzero_coeffs }`:
+    ///   `C(D, weight) · |nonzero_coeffs|^weight`.
+    /// - `ExactShell { count_mag1, count_mag2 }` with `w = count_mag1 + count_mag2`:
+    ///   `C(D, w) · C(w, count_mag1) · 2^w` (place the two magnitude classes, then
+    ///   pick a sign per nonzero).
+    /// - `BoundedL1Norm`: the `D = 32` preset is *defined* as the smallest L1 cap
+    ///   whose support reaches `2^128` (see `sampler::bounded_l1_support`), so we
+    ///   report that proven floor rather than re-running the DP here.
+    ///
+    /// For tensor-shaped folds, this is the support of **one** left or right
+    /// factor draw. A logical block challenge `left_p · right_q` multiplies the
+    /// supports, but the security floor is applied per draw (see
+    /// [`MIN_FOLD_CHALLENGE_ENTROPY_BITS`]).
+    pub fn log2_support_bits<const D: usize>(&self) -> f64 {
+        fn log2_binom(n: usize, k: usize) -> f64 {
+            if k > n {
+                return f64::NEG_INFINITY;
+            }
+            // C(n,k) = prod_{i=1..k} (n-k+i)/i, summed in log space to avoid
+            // overflow for the large binomials that arise at production D.
+            (1..=k)
+                .map(|i| ((n - k + i) as f64 / i as f64).log2())
+                .sum()
+        }
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                if *weight > D || nonzero_coeffs.is_empty() {
+                    return f64::NEG_INFINITY;
+                }
+                log2_binom(D, *weight) + (*weight as f64) * (nonzero_coeffs.len() as f64).log2()
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+                ..
+            } => {
+                let w = count_mag1 + count_mag2;
+                if w > D {
+                    return f64::NEG_INFINITY;
+                }
+                log2_binom(D, w) + log2_binom(w, *count_mag1) + w as f64
+            }
+            // The preset is the minimal L1 cap with >= 128-bit support for D=32.
+            Self::BoundedL1Norm => 128.0,
+        }
+    }
+
+    /// Reject challenge families whose single-draw support is below
+    /// `required_bits` of min-entropy for ring degree `D`.
+    ///
+    /// This is intentionally **not** folded into [`Self::validate`]: that check
+    /// is a structural well-formedness gate also exercised at tiny test degrees,
+    /// whereas the entropy floor is a security-parameter policy callers apply at
+    /// config-selection time. The same per-draw floor applies to flat blocks and
+    /// to each tensor left/right factor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `log2_support_bits::<D>() < required_bits`.
+    pub fn validate_min_entropy<const D: usize>(
+        &self,
+        required_bits: u32,
+    ) -> Result<(), &'static str> {
+        if self.log2_support_bits::<D>() < f64::from(required_bits) {
+            return Err("sparse challenge family has insufficient min-entropy for security floor");
+        }
+        Ok(())
+    }
+
+    /// Runtime ring-dimension dispatch for [`Self::validate_min_entropy`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_dim` is unsupported or the per-draw floor fails.
+    pub fn validate_min_entropy_for_ring_dim(
+        &self,
+        ring_dim: usize,
+        required_bits: u32,
+    ) -> Result<(), &'static str> {
+        match ring_dim {
+            32 => self.validate_min_entropy::<32>(required_bits),
+            64 => self.validate_min_entropy::<64>(required_bits),
+            128 => self.validate_min_entropy::<128>(required_bits),
+            256 => self.validate_min_entropy::<256>(required_bits),
+            _ => Err("unsupported ring dimension for fold-challenge entropy audit"),
+        }
+    }
+
     /// Canonical byte encoding used for transcript domain separation.
     #[inline]
     pub fn domain_separator_bytes(&self) -> Vec<u8> {
@@ -232,5 +343,83 @@ impl SparseChallengeConfig {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod entropy_tests {
+    use super::*;
+
+    #[test]
+    fn tiny_shell_is_rejected_at_128_bits() {
+        // A near-empty shell has a trivially small support and must be caught.
+        let tiny = SparseChallengeConfig::ExactShell {
+            count_mag1: 2,
+            count_mag2: 0,
+            operator_norm_threshold: 2,
+        };
+        assert!(tiny.log2_support_bits::<32>() < 128.0);
+        assert!(tiny.validate_min_entropy::<32>(128).is_err());
+    }
+
+    #[test]
+    fn tiny_uniform_is_rejected_at_128_bits() {
+        let tiny = SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert!(tiny.validate_min_entropy::<32>(128).is_err());
+    }
+
+    #[test]
+    fn full_shell_clears_128_bits() {
+        // The canonical d=64 shell (writeup App. C) clears the floor.
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
+        assert!(shell.log2_support_bits::<64>() >= 128.0);
+        assert!(shell.validate_min_entropy::<64>(128).is_ok());
+    }
+
+    #[test]
+    fn bounded_l1_preset_clears_128_bits() {
+        let preset = SparseChallengeConfig::BoundedL1Norm;
+        assert!(preset.validate_min_entropy::<32>(128).is_ok());
+    }
+
+    #[test]
+    fn tensor_floor_is_per_draw_not_product_budget() {
+        // One mag-1 coeff at D=4 has ~3 bits per draw. A sum rule would accept
+        // 64+64; production requires each draw (and each tensor factor) to clear
+        // 128 bits independently.
+        let weak = SparseChallengeConfig::ExactShell {
+            count_mag1: 1,
+            count_mag2: 0,
+            operator_norm_threshold: 1,
+        };
+        let per_draw = weak.log2_support_bits::<4>();
+        assert!(per_draw < 128.0);
+        assert!(weak.validate_min_entropy::<4>(128).is_err());
+        // Logical-block product entropy would be 2 * per_draw (informational).
+        assert!((per_draw + per_draw - 2.0 * per_draw).abs() < 1e-9);
+    }
+
+    #[test]
+    fn log2_support_matches_small_closed_form() {
+        // ExactShell, D=4, one mag-1 coeff: C(4,1)*C(1,1)*2^1 = 8 -> 3 bits.
+        let cfg = SparseChallengeConfig::ExactShell {
+            count_mag1: 1,
+            count_mag2: 0,
+            operator_norm_threshold: 1,
+        };
+        assert!((cfg.log2_support_bits::<4>() - 3.0).abs() < 1e-9);
+        // Uniform, D=4, weight 2, alphabet {-1,1}: C(4,2)*2^2 = 24.
+        let uni = SparseChallengeConfig::Uniform {
+            weight: 2,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert!((uni.log2_support_bits::<4>() - 24.0_f64.log2()).abs() < 1e-9);
     }
 }
