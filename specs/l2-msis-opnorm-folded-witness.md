@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
 | Status      | proposed, draft for iteration |
-| PR          | https://github.com/LayerZero-Labs/akita/pull/148 |
+| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (`quang/s3-s5-sis-estimator-spec`) |
 
 ## Summary
 
@@ -44,10 +44,12 @@ The primary protocol surfaces are:
 - `akita-types::sis`: L2 MSIS security buckets, secure-rank lookup, folded
   witness L2 bound derivation, and digit/certificate sizing.
 - `akita-types::proof`: proof shape changes for the folded-witness L2
-  certificate and any four-square slack witness.
+  certificate (`B_l2`, trailing `ell_hat` / `carry_hat`, masked `V`, carry
+  linear claim).
 - `akita-prover`: computation of realized folded-witness square sums from
-  `DecomposeFoldWitness.centered_coeffs`, construction of the slack
-  certificate, and integration into the fused stage-2 proof flow.
+  `DecomposeFoldWitness.centered_coeffs` / committed `z_hat` digit planes,
+  four-square slack and carry-limb construction, and integration into the fused
+  stage-2 proof flow.
 - `akita-verifier`: replay of the L2 certificate, no-panic validation of all
   certificate shapes, and consistency with the committed next witness.
 - `akita-config` / `akita-planner`: schedule search, shipped-table selection,
@@ -67,20 +69,22 @@ The primary protocol surfaces are:
   conversion and the folded-witness `||z||_inf` bound that still sizes the digit
   count of the next recursive witness (`num_digits_fold`); neither prices the
   A-role binding rank.
-- **Exact integer certificate, gated on field capacity.** The verifier accepts
-  the realized folded-witness L2 certificate only when the field equality is
-  known to be an exact integer equality.
-  The implementation must prove, by validated bounds, that the structural
-  worst-case square sum admitted by the digit range check (about
-  `coeffs · beta_linf^2`) and the slack squares fit the working field (base or
-  chosen extension) without wrapping, not merely that the realized value fits.
-  When the bound cannot fit the field (notably fp32 at the dense recursive
-  levels, where the realized square sum already exceeds `q`), the level emits no
-  realized certificate and prices the A-role at the deterministic worst-case L2
-  bound instead.
+- **Exact integer certificate via no-wrap limbs.** The verifier accepts the
+  realized folded-witness L2 certificate only when every field equality it relies
+  on is known to be an exact integer equality.
+  Two structural realizations, selected by a public field-capacity gate, deliver
+  this. The field-fitting realization, used when the worst-case square sum and
+  slack fit the field, checks `Σ_x z_aug(x)^2 = B_l2` in one sumcheck. The
+  grouped-carry realization, used otherwise (notably fp32 dense recursive levels,
+  where the square sum exceeds `q`), groups the committed digits into no-wrap
+  limbs and reconciles the wide integer with a carry chain.
+  Both are gated by validated structural bounds, never by the realized value
+  alone. Only when even single-digit grouping (`g = 1`) fails the gate does the
+  level emit no certificate and price the A-role at the deterministic worst-case
+  L2 bound.
   The deterministic bound is still Euclidean and still far tighter than the old
-  `L∞` envelope; the certificate is a field-capacity-gated tightening, not a
-  separate security model.
+  `L∞` envelope; the certificate is a no-wrap-gated tightening, not a separate
+  security model.
 - **Folded witness is the certified object.** The certified vector is the
   centered integer folded witness represented by
   `DecomposeFoldWitness.centered_coeffs`, not an unrelated evaluation table or
@@ -113,10 +117,14 @@ The primary protocol surfaces are:
   schedules use the same L2 bound formulas and security tables.
   Table-hit and table-miss schedule resolution must agree on every value that
   affects transcript, proof shape, and setup dimensions.
-- **ZK parity.** If ZK builds are active, the L2 certificate and stage-2
-  batching must have masked-proof relations analogous to the transparent path.
-  The mask accounting must remain linear except for the explicitly recorded
-  quadratic relations.
+- **Single certificate for transparent and ZK.** The realized certificate is the
+  same protocol in transparent and ZK builds: it never sends folded-witness inner
+  products, and its only public scalar is `B_l2`.
+  ZK builds toggle on the existing masking of the sumcheck messages, the claimed
+  sum `V`, and the committed `ell_hat` / `carry_hat`; transparent builds run the
+  identical claim structure without hiding witness.
+  The mask accounting stays linear except for the single explicitly recorded
+  quadratic relation (the squared-sum sumcheck).
 - **Standalone code documentation.** Comments, docstrings, and implementations
   must make sense on their own, without the reader opening this spec.
   Do not tag source with slice identifiers (`S1`, `S8`, ...), do not cite "the
@@ -144,54 +152,74 @@ The primary protocol surfaces are:
 
 ### Acceptance Criteria
 
-- [ ] The public repo specs and security docs use the same Euclidean Module-SIS
-      norm, operator-norm challenge distribution, and folded-witness bound that
-      the Rust planner and verifier enforce.
-- [ ] `akita_types::sis` exposes one committed-fold A-role L2 collision or
-      witness-bound API, and the old committed-fold `collision_inf` API is
-      removed from all production call sites.
-- [ ] D=64 operator-norm accepted exact-shell challenges are implemented with
-      transcript-deterministic rejection sampling and pinned domain bytes.
+- [x] *(#155 partial)* Specs and `norm_bound.rs` agree on Euclidean MSIS lookup,
+      Lemma 7 on fold response `z` (`8·ω·β_inf·ν` → `collision_l2_sq_for_linf_envelope`),
+      and `β_inf = fold_witness_beta`. Full public security-doc cutover completes with
+      S6+ certificate wording.
+- [x] *(#155, S5b)* `akita_types::sis` exposes `committed_fold_collision_l2_sq` /
+      `rounded_up_collision_norm_s`, derived `d·B²` table keys (`COEFF_LINF_BUCKETS`,
+      `collision_l2_sq_for_linf_envelope`), and pow2-ladder fallback; `collision_inf` is
+      removed from production call sites (`collision_l2_sq` on `AjtaiKeyParams`).
+- [x] *(#155, S3 infra)* Exact-shell operator-norm rejection sampling,
+      `operator_norm_cap`, and descriptor binding are implemented. Production
+      D=64 keeps `(30, 12)` with `T = 54` (no rejection) until S2 certifies
+      `(31, 11), T = 16`.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
-- [ ] The prover computes `sum centered_coeff^2` from the actual
+- [ ] The prover derives the grouped `z_hat` limbs from the actual
       `DecomposeFoldWitness.centered_coeffs` used for ring-switch witness
-      construction.
-- [ ] The proof carries a four-square or equivalent certificate for
-      `B_l2 - sum centered_coeff^2`, with each slack witness bounded by `< 2^32`
-      and the four slack witnesses together occupying at most one ring element.
-- [ ] The verifier checks the L2 equality, all certificate digit bounds, and all
-      no-overflow preconditions before accepting the proof.
-- [ ] The realized certificate is emitted only when the structural no-wrap gate
-      `coeffs·balanced_digit_max(lb, num_digits_fold)^2 + 4·B_l2 < q_eff` holds;
-      fp64 and fp128 emit it, fp32 dense recursive levels fall back to the
-      deterministic `L2_BOUND_SQUARED`, and a test pins which levels take which
-      tier.
-- [ ] The certified squared-sum statement is over the recomposed `z` and `ell_j`,
-      and a test ties it to the committed decompositions `z_hat` and `ell_hat_j`
-      via gadget recomposition (a tampered `z_hat` or `ell_hat_j` fails the check).
-- [ ] B-role and D-role collisions are converted into the unified L2 table by
-      `||v||_2 <= sqrt(d)·||v||_inf`, and a test pins the conversion against the
-      generated tables.
-- [ ] Sumcheck 1 (`sum_x z_aug(x)^2 = B_l2`) runs in the stage-1 phase and
-      sumcheck 2 (`z_aug = G' · w_next`) in the stage-2 phase, with sumcheck 2's
-      `w_next(rho')` output joining the recursive-witness opening (batched or
-      explicitly justified adjacent), without duplicating witness scans more than
-      necessary.
-- [ ] On certifying levels the stage-1 message drops the eq-factored linear-term
-      omission (about one extra field element per round); non-certifying levels
-      keep the eq-factored message. A test pins the per-level stage-1 message
-      shape, and the descriptor binds it.
-- [ ] `ell_hat` is committed and transcript-bound before the sumcheck-1 challenges
-      are squeezed (wire-before-squeeze), and a logging-transcript test enforces
-      the ordering.
+      construction, and its reconstructed `Z_SQUARED` matches a direct integer
+      reference in tests.
+- [ ] The realized certificate adds four-square slack `ell_0..ell_3` so the bound
+      becomes the equality `Σ_i z[i]^2 + Σ_h ell_h^2 = B_l2`, and commits
+      `ell_hat` (and, in the grouped-carry realization, `carry_hat`) as trailing
+      segments of `w_next`. No folded-witness inner product is ever sent.
+- [ ] The field-fitting realization proves `Σ_x z_aug(x)^2 = B_l2` in one degree-2
+      sumcheck, with `z_aug = z || ell_0..ell_3` recomposed from the committed
+      digits.
+- [ ] The grouped-carry realization squeezes one challenge `alpha`, proves the
+      single sumcheck `Σ_x Z_alpha(x)^2 = V` for the `alpha`-weighted limb
+      recomposition `Z_alpha`, and reconciles
+      `V = Σ_e alpha^e T_e + Σ_e alpha^e (B·h_{e+1} - h_e)` against the public
+      bound digits `T_e` and the committed carries via one short linear claim.
+- [ ] The verifier accepts a realized level only when the public no-wrap gate
+      holds for every convolution exponent
+      (`D_e + H'_e + (B-1) + B·H'_{e+1} < q`, with `H'_e` the committed carry
+      cell run's realizable budget), so each carry residual that is zero modulo
+      `q` is zero as an integer. A test pins which levels choose field-fitting,
+      grouped-carry, or deterministic-fallback tiers.
+- [ ] The certified statement is over the committed `z_hat` / `ell_hat` /
+      `carry_hat` digit planes, and a test ties every limb, slack, and carry
+      evaluation to the committed `w_next` segment via gadget recomposition (a
+      tampered `z_hat`, `ell_hat`, or `carry_hat` fails the check).
+- [x] *(#155, S5b)* B-role and D-role collisions use `collision_l2_sq_for_linf_envelope`
+      on `2^lb − 1` (`rounded_up_collision_norm_t/w`). Dedicated table-conversion test
+      remains a follow-up; pricing path is wired.
+- [ ] The squared-sum sumcheck reduces to limb evaluations `a^{<j>}(rho)`
+      (equivalently the single `Z_alpha(rho)`), and a linear virtualization step
+      ties those plus the carry evaluation `carry_hat(rho_c)` to the existing
+      `w_next` opening (batched or explicitly justified adjacent), without
+      duplicating witness scans more than necessary.
+- [ ] On certifying levels the proof shape accounts for the masked claimed sum
+      `V`, the carry linear-claim transcript, and any stage-message changes (no
+      partial-sum payload exists). A test pins the per-level message shape, and
+      the descriptor binds it.
+- [ ] The committed `z_hat` / `ell_hat` / `carry_hat` segments and `B_l2` are
+      transcript-bound before `alpha` or any squared-sum / carry challenge is
+      squeezed (wire-before-squeeze), and a logging-transcript test enforces the
+      ordering.
 - [ ] Proof shape, proof-size formula, shape deserialization, and compressed
-      proof validation account for the new certificate payload (canonical byte
-      layout of `ell_hat_j` pinned by a serialization test).
-- [ ] Runtime planner fallback, generated table expansion, and shipped generated
-      tables all size ranks and folded-witness digits under the L2 model.
+      proof validation account for the certificate payload (`B_l2`, the
+      `ell_hat` / `carry_hat` witness growth, the masked `V`, and the carry
+      linear-claim layout, pinned by a serialization test).
+- [x] *(#155, S5b)* Runtime DP, `expand_to_level_params`, and shipped generated
+      schedule tables size A-role ranks from `collision_l2_sq`; `num_digits_fold`
+      still uses `β_inf`. Certificate-tier `B_l2` sizing waits for S6.
+- [x] *(#155, S5b)* ZK and non-ZK shipped schedule tables are separate DP optima under
+      different proof-byte accounting; drift guards run per feature set (see
+      [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) ZK vs non-ZK section).
 - [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
-      and `cargo test` pass on the cutover branch.
+      and `cargo test` pass on the cutover branch *(CI gate for merge)*.
 - [ ] End-to-end prover/verifier tests fail if any one of the committed folded
       witness, L2 certificate, next-witness commitment, or ring-relation rows is
       tampered independently.
@@ -211,8 +239,9 @@ Unit tests:
 - Folded-witness tests that compare `centered_coeffs` square sums with a direct
   negacyclic integer reference for dense, one-hot, recursive, and tensor-shaped
   folds.
-- Four-square certificate tests covering zero slack, maximal allowed slack,
-  malformed digit encodings, and field-wrap rejection.
+- Grouped-carry tests covering field-fitting selection, single-digit grouping,
+  last short groups, negative `C_e` / carries, the integer carry recurrence
+  against a direct `Σ z[i]^2` reference, and no-wrap-gate fallback.
 
 Protocol tests:
 
@@ -240,9 +269,10 @@ Expected direction:
 
 - SIS A-rank should drop relative to the corrected L∞ committed-fold reprice
   when the L2 bound is substantially below the coordinate worst case.
-- The L2 certificate payload is at most one ring element per certified level
-  (four slack witnesses, each `< 2^32`, balanced-digit decomposed), so the local
-  proof-size growth is small and bounded.
+- The L2 certificate payload is `B_l2`, the masked `V`, the squared-sum and carry
+  sumcheck transcripts, and the `ell_hat` / `carry_hat` witness growth (no
+  partial sums are sent). The carry payload shrinks as the group size `g` grows
+  and `R` shrinks; it is empty in the field-fitting realization.
 - Net proof size should improve only if the rank and recursive schedule savings
   exceed the certificate overhead.
 - fp32 dense recursive levels keep the deterministic `L2_BOUND_SQUARED` (no
@@ -289,7 +319,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Backsolved source second moment (calibration only):
   `mu2_implied = z_rms^2 / (rho2 * B)`.
   This is not a direct measurement of `sum_i ||s_i||_2^2`.
-- Deterministic triangle reference:
+- Exploratory triangle reference (calibration only, **not** production sizing):
   `det_rms = Gamma * B * sqrt(mu2_implied)`.
 - Honest second-moment reference (fitted from the same sample):
   `honest_rms = sqrt(rho2 * B * mu2_implied)`.
@@ -398,13 +428,15 @@ the corresponding `fp32` dense band at similar recursive depths.
 
 Two candidate models were checked against the same logs.
 
-**Deterministic triangle bound**
+**Exploratory triangle bound (calibration only, not production sizing)**
 
 ```text
 ||z||_2 <= Gamma * sum_i ||s_i||_2
 ```
 
-With `mu2_implied` backsolved from each sample, the fitted deterministic RMS is
+This decoupled `Gamma · B · ‖s‖_2` envelope is **not** Lemma 7 and must not
+appear in planner or MSIS table code. With `mu2_implied` backsolved from each
+sample, the fitted exploratory RMS is
 `det_rms = Gamma * B * sqrt(mu2_implied)`.
 The observed ratio `z_rms / det_rms` depends primarily on `B`:
 
@@ -494,362 +526,420 @@ do not by themselves justify adding D32 back to production schedules.
 
 ## Design
 
-### Current Model
+### Notation
 
-Today the folded witness bound is:
+| Symbol | Meaning |
+|--------|---------|
+| `s` | Committed witness (A-role, Ajtai) |
+| `z` | Fold response / folded witness: `z = Σ_i c_i · s_i` |
+| `ẑ` | Decomposed digits of `z` at the next level |
+| `z^{<j>}` | Grouped folded-witness limb assembled from a contiguous group of `ẑ` digit planes |
+| `β_inf` | Deterministic `‖z‖_inf` envelope ([`fold_witness_beta`]) |
+| `ν` | `ring_subfield_norm_bound` |
+| `b` | Original gadget basis `2^lb` |
+| `B` (`b_grp`) | Grouped basis `b^g`, where `g` is the number of original `ẑ` digits per grouped limb |
+| `R` | Grouped-limb count `ceil(K / g)`, `K = num_digits_fold` |
+| `ell_h` | Lagrange four-square slack integers, `Σ_h ell_h^2 = B_l2 − Z_SQUARED`; committed as `ell_hat` |
+| `a^{<j>}` | Augmented limb family over the size-`(N+4)` domain (folded witness for `x < N`, slack at the tail) |
+| `C_e` | Un-reduced base-`B` coefficient of the squared norm, `Σ_{r+s=e} <a^{<r>}, a^{<s>}>` |
+| `T_e` | Public base-`B` digit of the bound, `B_l2 = Σ_e B^e T_e` |
+| `h_e` | Signed carry, `C_e + h_e − T_e − B·h_{e+1} = 0`, `h_0 = h_E = 0`; committed as `carry_hat` |
+| `δ_carry(e)` | Balanced digit cells committed for `h_e` (base-2 weights); realizable budget `H'_e = (b/2)(2^{δ_carry}−1) ≥ H_e` |
+| `α` | Challenge-field randomizer folding the limbs and carries into one sumcheck |
+| `Z_α` | `α`-weighted recomposition `Σ_j α^j a^{<j>}`, the squared-sum sumcheck's polynomial |
 
-```text
-beta_inf =
-  num_claims · 2^r_vars ·
-  min(||c||_inf · ||s||_1, ||c||_1 · ||s||_inf).
-```
+Do not confuse `z` with `ŵ` (D-role opening witness).
 
-The committed A-role collision is then priced as:
+### Security object (Lemma 7, L2 instantiation)
 
-```text
-collision_A_inf = 8 · ||c||_1 · beta_inf · nu.
-```
-
-That model is implemented in `crates/akita-types/src/sis/norm_bound.rs`,
-threaded through `LevelParams::num_digits_fold`, and checked on the prover side
-by `validate_decompose_fold` against
-`DecomposeFoldWitness.centered_inf_norm`.
-
-The L2 cutover replaces this coordinate envelope with a certified Euclidean
-bound on the actual folded response.
-
-### L2 Bound Model
-
-Let a level fold `B = num_claims · 2^r_vars` block responses.
-For each accepted challenge `c_i`, let `gamma(c_i)` be the negacyclic
-convolution operator norm.
-If every accepted challenge satisfies `gamma(c_i) <= Gamma`, then:
+Weak binding prices the **fold response** `z`, not committed `s`:
 
 ```text
-||sum_i c_i * s_i||_2
-  <= sum_i ||c_i * s_i||_2
-  <= Gamma · sum_i ||s_i||_2.
+‖z_A‖_2  ≤  8 · op_norm(c) · ‖z‖_2 · ν
 ```
 
-A deterministic per-level bound is therefore:
+with `op_norm(c)` realized as `ω = ‖c‖_1` for sizing today.
+
+### Layer 1 — L2 MSIS table lookup (shipped)
+
+Convert the Lemma-7 collision into the Euclidean SIS floor per ring row:
 
 ```text
-beta_l2 = Gamma · B · s_l2_max.
+collision_A_inf = 8 · ω · β_inf · ν,
+collision_l2_sq   = lookup_L2(d, collision_A_inf).
 ```
 
-Here `s_l2_max` is the per-block committed-witness Euclidean bound, the L2
-analogue of the existing `FoldWitnessNorms` (`||s||_inf`, `||s||_1`):
+`lookup_L2` is `collision_l2_sq_for_linf_envelope` in `ajtai_key.rs`: prefer the
+tabulated derived key `K = d · B²` with `B = ceil_coeff_linf_bucket(linf)` (same
+coefficient-`L∞` ladder as pre-cutover main), else round `d · linf²` up to the next
+generated power-of-two bucket.
+
+`committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` in
+`crates/akita-types/src/sis/norm_bound.rs` call this path.
+B/D roles pass digit collisions `2^lb − 1` through the same helper.
+
+### Layer 2 — Deterministic `‖z‖_2` envelope (shipped, pre-certificate)
+
+No realized `‖z‖_2` certificate in production yet. The planner bounds
+`‖z‖_inf` by `β_inf` and converts to L2 for the estimator:
 
 ```text
-s_l2_max = sqrt(D) · (b/2)   dense balanced digits (||s||_inf = b/2),
-s_l2_max = 1                 a one-hot block (a single unit coefficient).
+β_inf = fold_witness_beta(...)
+      = num_claims · 2^r_vars ·
+        min(||c||_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf),
+
+‖z‖_inf  ≤  β_inf,
+‖z‖_2   ≤  √d · β_inf   (hence collision_l2_sq = lookup_L2(d, 8ωβ_inf ν)).
 ```
 
-It should be derived once and shared by the planner and the prover abort, the
-way `fold_witness_beta` and the prover's `beta_linf_fold_bound` share
-`ring_product_infinity_norm_bound` today.
+`β_inf` is shared with `num_digits_fold` and prover
+`validate_decompose_fold` (`DecomposeFoldWitness.centered_inf_norm`).
 
-For a vector of `W` folded ring rows, the conservative square bound is:
+Operator-norm rejection (`gamma(c) <= Gamma`) is a separate challenge-family
+contract. No Lemma-7 factor (`8`, `ν`, fold arity, or `β_inf`) may be dropped
+or replaced by a decoupled `Gamma · B · ‖s‖_2` triangle bound.
+
+B-role and D-role collisions stay at `2^lb − 1` with the same
+`‖v‖_2^2 ≤ d · ‖v‖_inf^2` conversion.
+
+### Realized-certificate tier (default, transparent and ZK)
+
+The certificate certifies the **fold response** `z`, not committed `s`.
+It proves the integer inequality
 
 ```text
-L2_BOUND_SQUARED = W · beta_l2^2.
+Z_SQUARED = sum_{row, coeff} z[row][coeff]^2 <= B_l2
 ```
 
-This deterministic bound is safe but loose (the calibration below puts the
-triangle bound roughly 13x to 100x above the realized square sum).
-It is the bound used directly when no realized certificate is emitted (the
-field-capacity fallback in the Invariants).
-
-When a certificate is emitted, the prover instead commits to a tighter chosen
-bucket `B_l2` from the L2 MSIS ladder with
+without revealing `Z_SQUARED` or any folded-witness inner product, in both
+transparent and ZK builds.
+When a certificate is emitted, the prover chooses a bucket `B_l2` from the L2
+MSIS ladder with `Z_SQUARED <= B_l2`. The deterministic ceiling (no-wrap gate
+fallback when no certificate is emitted) is
 
 ```text
-Z_SQUARED <= B_l2 <= L2_BOUND_SQUARED,
-Z_SQUARED = sum_{row, coeff} z[row][coeff]^2,
+Z_SQUARED <= L2_BOUND_SQUARED
 ```
 
-and proves `Z_SQUARED <= B_l2`, so the A-role is sized against `B_l2` rather than
-the loose deterministic `L2_BOUND_SQUARED`.
-The two tiers are the same security model: deterministic `L2_BOUND_SQUARED` is
-always sound from the operator-norm contract plus the digit-range check, and
-`B_l2` is the certificate-tightened version used only where the field can hold
-it.
-
-For exact-shell D=64 `(31, 11)`, each challenge also has fixed coefficient
-energy:
+derived from the same `β_inf` / digit-range contract as `num_digits_fold`:
+each coefficient of `z` is bounded by `balanced_digit_max(lb, num_digits_fold)`,
+so
 
 ```text
-||c||_2^2 = 31 + 4 · 11 = 75.
+L2_BOUND_SQUARED = coeffs · balanced_digit_max(lb, num_digits_fold)^2
 ```
 
-For one-hot or monomial witness blocks, multiplication by the selected monomial
-turns the row into a signed shift of `c`, so the sharper per-product fact is:
+This bounds **`z`**, never `‖s‖_2` or any per-block `s_l2_max` surrogate.
+
+Until this path ships, A-role table lookup uses only Lemma 7 plus
+`collision_l2_sq_for_linf_envelope` on `8 · ω · β_inf · ν` (Layer 1–2 above). No
+`Gamma · B · ‖s‖_2` triangle bound is used for security sizing.
+
+### Grouped-Carry L2 Certificate
+
+The realized certificate proves `Z_SQUARED <= B_l2` directly from the committed
+digit planes of `z`, without forming a single wrapped field sum and without
+revealing any inner product.
+It is the default on every certifying level in both transparent and ZK builds.
+
+First convert the inequality to an equality with Lagrange four-square slack:
 
 ```text
-||c * s||_2^2 = 75.
+sum_i z[i]^2 + sum_{h=0}^{3} ell_h^2 = B_l2.
 ```
 
-The planner may use this sharper one-hot bound only when the protocol actually
-certifies the corresponding one-hot witness contract at that level.
-Dense balanced digit levels should start with the operator-norm bound above.
+The slack integers `ell_0..ell_3` are committed as balanced base-`b` digit planes
+`ell_hat` inside `w_next`, exactly like `z_hat`.
+Because `ell_h^2 >= 0`, the equality implies `sum_i z[i]^2 <= B_l2`.
 
-### Four-Square Slack Certificate
-
-Sumcheck proves equalities, while the target is a bound.
-Use Lagrange's four-square theorem to convert the inequality into an equality:
+Let `K = num_digits_fold`, `b = 2^lb`, and write the committed fold digits as
 
 ```text
-Z_SQUARED + ell_0^2 + ell_1^2 + ell_2^2 + ell_3^2 = B_l2.
+z[i] = sum_{d=0}^{K-1} b^d · z_hat_d[i],
 ```
 
-The proof carries decomposed integer witnesses for `ell_0, ell_1, ell_2, ell_3`.
-The verifier checks:
-
-1. each `ell_j` is represented by valid bounded digits,
-2. each square is computed over a range that cannot wrap the field,
-3. the equality above holds in the field,
-4. the global no-wrap precondition proves the field equality is the same as the
-   integer equality.
-
-**Slack witness size.**
-Each `ell_j` is bounded by `sqrt(B_l2)`.
-With the realized square sums logged in the calibration (`Z_SQUARED` around
-`2^32` even at the densest levels), `ell_j` is about 16 bits in practice; the
-implementation pins a generous ceiling of `ell_j < 2^32`.
-Decomposed into balanced base-`2^lb` digits, each `ell_j` needs
-`delta_ell = num_digits_for_bound(32, field_bits, lb)` digits, and the four are
-packed contiguously (slack-major) into the `ell_hat` segment, `4·delta_ell`
-field coefficients total. That is at most one ring element: `4·delta_ell <= D`
-for `D = 64` at any `lb`, and for `D = 32` once `lb >= 4` (at most two
-otherwise). `ell_hat` is appended to `w_next` and the next-level hypercube is
-rounded up to a power of two on the *augmented* witness, so the certificate's
-committed payload is at most one extra ring element per certified level and is
-partly (often fully) absorbed by the existing power-of-two round-up.
-
-**Field-capacity gate.**
-Soundness needs the *structural* worst-case square sum to fit the field, not just
-the realized value: the sumcheck only proves `<z, z> ≡ Z_SQUARED (mod q)`, so the
-verifier must rule out wrap using only what it can prove about `z`.
-The verifier never sees `z`; it sees that each committed digit plane of `z_hat`
-passes the stage-1 range check, so the strongest per-coefficient bound it can
-assert is `|z[i]| <= balanced_digit_max(lb, num_digits_fold)`.
-That bound is `≈ beta_linf` but rounded up to the next whole digit (the digit
-count is sized to cover `[-beta_linf, beta_linf]` plus one bit; see
-`decomposition_digits.rs::num_digits_fold`), so it can exceed `beta_linf` by up to
-a factor `2^lb`. A level emits the realized certificate only when
+each `z_hat_d[i]` a balanced digit already range-checked by stage 1.
+Choose a deterministic group size `g >= 1`, set the grouped basis `B = b^g`,
+`R = ceil(K / g)`, and `g_j = min(g, K - jg)` for the last short group.
+The grouped limb is a fixed linear view of the committed digits:
 
 ```text
-coeffs · balanced_digit_max(lb, num_digits_fold)^2  +  4 · B_l2  <  q_eff,
+z^{<j>}[i] = sum_{t=0}^{g_j-1} b^t · z_hat_{jg+t}[i],   so   z[i] = sum_{j=0}^{R-1} B^j · z^{<j>}[i].
 ```
 
-over the `coeffs = W · D` certified coefficients, where `q_eff` is the modulus of
-the field the square sum is accumulated in, the first term dominates, and
-`4 · B_l2` covers the four range-checked slack squares (each `ell_j^2 <= B_l2`).
-Below we write the first term as `coeffs · beta_linf^2` for the crossover
-estimates; the true gate is larger by the digit-rounding factor above.
-
-Production moduli are `q_fp32 = 2^32 − 99 ≈ 2^32`, `q_fp64 = 2^64 − 59 ≈ 2^64`,
-`q_fp128 ≈ 2^128`.
-Dropping the sub-dominant slack term, a level fits iff
+Apply the same grouping to each slack integer `ell_h`, and append the four slack
+values as four extra coordinates at the tail of the certified domain (length
+`N + 4`, `N = coeffs`), so one augmented limb family covers witness and slack:
 
 ```text
-beta_linf  <  sqrt(q_eff) / sqrt(coeffs)   (coeffs = W · D).
+a^{<j>}(x)     = z^{<j>}[x]      for x < N,
+a^{<j>}(N + h) = ell_h^{<j>}     for 0 <= h < 4.
 ```
 
-Calibration crossovers (D=64):
+This notation is intentionally tied to `z`.
+Do not call the grouped limb `u` in the paper or code, because `u` is too easy to
+confuse with outer commitment notation.
+Suggested code names are `FoldNormGrouping`, `group_digits`, `group_log_basis`,
+`grouped_fold_limb`, and `carry_limbs`.
 
-- fp32 (`sqrt(q) ≈ 2^16`): a one-hot root at `nv = 16` (`coeffs ≈ 2^14`,
-  `beta_linf = 216`) gives `coeffs·beta_linf^2 ≈ 2^29.5 < 2^32`, so it *fits*;
-  the `nv = 20` one-hot root (`beta_linf = 864`) is `≈ 2^35.5` and a dense level
-  (`beta_linf = 6912`) is `≈ 2^41.3`, both well over `2^32`. So fp32 emits the
-  certificate only at small one-hot roots and falls back everywhere else.
-- fp64 (`sqrt(q) ≈ 2^32`): every profiled D=64 level is `≤ 2^43`, leaving about
-  20 bits of headroom. fp64 overflows only when `coeffs·beta_linf^2 ≥ 2^64`, i.e.
-  `beta_linf ≳ 2^32 / sqrt(coeffs)` (about `4·10^6` at `coeffs ≈ 10^6`). That
-  happens only at deep recursive levels with a large gadget basis and/or large
-  fold arity, so fp64 effectively always certifies at the sizes we run; the
-  per-level gate guards the rare large-level case.
-- fp128: never binds in practice.
-
-A level skips the certificate and prices at the deterministic `L2_BOUND_SQUARED`
-(see Invariants) exactly when the gate fails; the decision is per (field, level)
-on the computed structural sum, not per field globally.
-
-**Is the gate conservative?**
-Yes relative to *realized* norms, and no relative to *what the verifier can
-prove*. The realized `sum z[i]^2` is far below the gate: the calibration logs a
-realized `Z_SQUARED ≈ 2^32` even at the densest levels, while the structural gate
-for that same dense D=64 level is `≈ 2^41` (and larger once the digit-rounding
-factor is included). `beta_linf` is a worst-case `L∞` fold bound and honest
-coefficients sit well under it. But the verifier cannot use the realized value,
-because the whole point of the certificate is that it does not trust the prover's
-`z` to be small. An adversarial, range-check-passing prover may
-drive `<z, z>` up to the structural bound, so that bound is exactly the no-wrap
-floor, not an engineering margin. The gate is therefore not expected to match
-experimental data; it bounds the worst case while `B_l2` prices the realized
-(tight) value. The gate and the bucket are independent: passing the gate only
-decides whether the equality is exact, and `B_l2` decides how tight the A-role
-pricing is.
-
-This also means there is a real tightening lever, separate from changing fields:
-
-- Extension fields do **not** help. `F_{q^k}` has characteristic `q`, so a sum of
-  base-field-embedded squares still reduces mod `q` coordinate-wise and wraps at
-  the same point. A genuinely larger base prime raises the no-wrap ceiling; see
-  follow-up below for staying on 31/32-bit fields.
-- A tighter verifier-enforced per-coefficient bound shrinks the gate directly.
-  Constraining the top fold digit so the asserted bound is `beta_linf` rather than
-  `balanced_digit_max ≈ 2^lb · beta_linf` recovers up to a factor `2^{2·lb}` in
-  the gate (`lb` is typically 5–11, i.e. 10–22 bits), which would let more fp32
-  levels certify instead of falling back. This is an optional optimization, not
-  required for soundness.
-
-Absent those, fp32 falls back at all but the smallest one-hot roots, and
-fp64/fp128 effectively always certify.
-
-**Follow-up (deferred): realized certificates on 31/32-bit fields.**
-
-The initial cutover does not implement this. When the structural gate above
-fails, levels on `q ≈ 2^31` or `2^32` price the A-role at the deterministic
-`L2_BOUND_SQUARED` instead of a tighter realized `B_l2`. A later slice may allow
-the same base field to support the realized certificate on dense recursive levels
-by accumulating the squared norm without forming a single wrapped field sum over
-recomposed coordinates (for example, wide accumulation from the committed digit
-planes already bound by stage 1). Whether that can be made sound and cheap enough
-for production is open; it is listed here only so the fallback tier is not read
-as a permanent limitation of small fields.
-
-### Recomposed Witness vs Committed Decomposition (two linked sumchecks)
-
-The L2 statement is about the *recomposed* integer folded witness, but the object
-the protocol commits to at the next level is its *decomposition*.
-Notation:
-
-- `z`: the centered integer folded witness `z = sum_i c_i · s_i`, exactly
-  `DecomposeFoldWitness.centered_coeffs`. The object whose Euclidean norm we
-  certify.
-- `z_hat`: the balanced base-`2^lb` digit planes of `z`, emitted by
-  `emit_z_folded_block_inner` (`ring_switch/coeffs.rs`) into the committed
-  recursive witness, with `z[coeff] = sum_d 2^{lb·d} · z_hat^{(d)}[coeff]`.
-- `ell_0..ell_3`: the four Lagrange slack integers; `ell_hat_j` their balanced-digit
-  planes, with `ell_j = sum_d 2^{lb·d} · ell_hat_j^{(d)}`.
-- `z_aug`: the augmented vector `z || ell` (the four slack entries appended last,
-  padded to a power of two), so `<z_aug, z_aug> = sum_i z[i]^2 + sum_j ell_j^2`.
-- `w_next`: the full committed recursive witness, in the existing adaptive
-  segment order (`build_w_coeffs`, keyed by `ring_column_z_first(lp)`):
-  - `m_vars >= r_vars`: `z_hat | w_hat | t_hat | (zk) | r_hat | ell_hat`,
-  - else: `w_hat | t_hat | (zk) | z_hat | r_hat | ell_hat`,
-  where `ell_hat = ell_hat_0 || … || ell_hat_3` is the new certificate segment appended
-  after `r_hat`, packed slack-major (`4·delta_ell` coefficients), with the
-  next-level power-of-two hypercube round-up computed on the augmented `w_next`.
-
-The certificate is two sumchecks, the second discharging the first's output into
-the witness opening the protocol already sends.
-
-**Sumcheck 1 (norm certification over `z_aug`).**
-Prove the sum-of-squares equality
+The squared norm is then a polynomial in the grouped basis `B`:
 
 ```text
-sum_x z_aug(x)^2 = B_l2
+sum_i z[i]^2 + sum_h ell_h^2 = sum_e B^e · C_e,
+    C_e = sum_{r+s=e} <a^{<r>}, a^{<s>}>   (ordered pairs, so cross terms count twice).
 ```
 
-with `z_aug` the virtual multilinear extension over `n_aug = ceil(log2(coeffs + 4))`
-variables; the four-square identity makes it exact.
-Each round is degree 2, and the sumcheck reduces to one evaluation claim
+The `C_e` are the un-reduced base-`B` coefficients of the wide squared norm.
+Each is a small signed integer (bounded by `D_e`; see the gate below) and **none
+is ever revealed**.
+
+**One squared-sum sumcheck.**
+Squeeze one challenge `alpha` from the challenge (extension) field after `z_hat`,
+`ell_hat`, `carry_hat`, and `B_l2` are transcript-bound.
+Define the `alpha`-weighted recomposition, a single polynomial that is a public
+linear view of the committed digits:
 
 ```text
-z_aug(rho) = v.
+Z_alpha(x) = sum_{j=0}^{R-1} alpha^j · a^{<j>}(x).
 ```
 
-(The verifier first checks the structural no-wrap gate so this is an integer
-identity, not just a mod-`q` identity.)
-
-**Sumcheck 2 (virtualization onto the committed witness).**
-`z_aug` is not committed; only `w_next` is.
-They are related by a fixed, public, structured linear map
+Since `sum_x Z_alpha(x)^2 = sum_{r,s} alpha^{r+s} <a^{<r>}, a^{<s>}> = sum_e alpha^e C_e`,
+the only quadratic obligation is the single sumcheck
 
 ```text
-z_aug = G' · w_next,
+sum_x Z_alpha(x)^2 = V.
 ```
 
-where `G'`:
+This one degree-2 instance forms the full ordered-pair convolution implicitly, so
+no pairwise inner product is ever materialized or sent: the proof carries the
+masked `V` and round polynomials, not `O(R^2)` (or upper-triangular `O(R^2/2)`)
+pair claims. The prover forms each honest `C_e` from the upper triangle (`r <= s`,
+cross terms doubled) as a constant-factor speedup with no proof impact.
 
-- on the `z_hat` block, applies the per-coefficient gadget recomposition
-  `z[coeff] = sum_d 2^{lb·d} z_hat^{(d)}[coeff]`, using the same `fold_gadget =
-  gadget_row_scalars(depth_fold, log_basis)` weights and the same
-  `(dc, df, point, block)` index map the relation check already uses for the
-  `A · ẑ` term in `compute_setup_contribution`;
-- on the `ell_hat` block, applies the scalar gadget `ell_j = sum_d 2^{lb·d} ell_hat_j^{(d)}`;
-- is zero on `w_hat`, `t_hat`, `r_hat`, the zk blinding segments, and padding.
+This has the same shape as the field-fitting sumcheck `sum_x z_aug(x)^2 = B_l2`;
+the differences are the digit weights (`alpha^j · b^t` instead of `b^d`) and that
+the claimed sum `V` is private and tied to the carries below instead of equal to
+the public `B_l2`.
 
-Writing `M(rho, y) = sum_x eq(rho, x) G'(x, y)`,
+**Carry reconciliation, folded by the same `alpha`.**
+Let `T_e` be the public base-`B` digits of the bound (`B_l2 = sum_e B^e T_e`) and
+let `h_e` be signed carries with `h_0 = 0`, `h_E = 0`, satisfying
 
 ```text
-z_aug(rho) = (G' · w_next)(rho) = sum_y M(rho, y) · w_next(y),
+C_e + h_e - T_e - B · h_{e+1} = 0   for every e,
 ```
 
-so sumcheck 2 is a product sumcheck over `y` that reduces to a single
+whose telescoping gives `sum_e B^e C_e = B_l2`.
+The carries are committed as balanced base-`b` digit planes `carry_hat` inside
+`w_next`.
+Folding all carry equations by the same `alpha` reuses the sumcheck's claimed sum:
 
 ```text
-w_next(rho') = v',
+V = sum_e alpha^e C_e = sum_e alpha^e T_e + sum_e alpha^e (B · h_{e+1} - h_e).
 ```
 
-which is exactly the evaluation claim the protocol already sends for the next
-recursive witness; it merges into that opening with no new commitment.
-The verifier evaluates `M(rho, rho')` succinctly because `G'` is the same
-structured family as the setup/relation matrix: a tensor of `eq` factors over the
-block/point/digit indices times the geometric-series gadget weights
-`sum_d 2^{lb·d}(…)`, computed by the same machinery as `compute_setup_contribution`
-(`fold_gadget`, `eq_eval_at_index`, segment offsets `offset_z`, plus a new
-`offset_ell` and the scalar gadget for `ell_hat`).
-This is the existing relation-matrix sumcheck shape (`relation_claim =
-sum_i eq(tau1, i) y_alpha[i]` reducing to `w(r) · structured(r)`), with sumcheck 1
-producing the `z_aug(rho)` claim that sumcheck 2 discharges.
+The first right-hand term is a public scalar; the second is a fixed public-linear
+view of the committed carries, discharged by one short `ceil(log2 E)`-round linear
+claim that reduces to `carry_hat(rho_c)` (batchable into the stage-2 opening).
+The individual `C_e` and `h_e` are never sent; only the masked `V` and the masked
+limb / carry evaluations appear, so the certificate's sole public scalar is
+`B_l2`.
 
-**Why this satisfies stage-2 consistency.**
-The certified `z_aug` reduces to `w_next(rho')`, the *same* committed witness that
-carries `z_hat` (and now `ell_hat_j`).
-A prover cannot certify one `z` and commit a different `w`, because both flow
-through the single `w_next(rho')` opening.
+**Field-fitting realization.**
+When the whole squared sum and the bound fit the field,
 
-The remaining choice is placement only: whether sumcheck 2's `w_next(rho')` claim
-is batched into the existing stage-2 point (one combined opening) or kept as an
-adjacent claim at the same transcript point.
-The certified relation is identical either way.
+```text
+coeffs · balanced_digit_max(lb, K)^2 + 4 · B_l2 < q,
+```
+
+no grouping or carries are needed: the prover proves `sum_x z_aug(x)^2 = B_l2`
+directly with `z_aug = z || ell_0..ell_3` and the public claimed sum `B_l2`.
+This is the degenerate single-coefficient instance of the certificate and shares
+its machinery (one degree-2 sumcheck plus the `ell_hat` virtualization); the
+grouped-carry realization adds only `alpha`, `carry_hat`, and the folded carry
+claim.
+
+### Group Selection And No-Wrap Gate
+
+Soundness requires every coefficient `C_e` and every carry `h_e` to be exactly
+recoverable as integers, so that each field carry equation is an integer
+equation.
+
+Structural coefficient bounds (every balanced digit lies in `[-b/2, b/2 - 1]`,
+the same per-coefficient bound `‖s‖_inf = b/2` the scheme already relies on for
+committed digits):
+
+```text
+A_j     = (b/2) · (b^{g_j} - 1) / (b - 1)        (folded-witness limb j)
+A^ell_j = the same bound for the slack limbs
+D_e     = sum_{r+s=e} [ N · A_r · A_s + 4 · A^ell_r · A^ell_s ]   (ordered pairs)
+```
+
+The honest carry recurrence `h_0 = 0`, `h_{e+1} = (C_e + h_e - T_e) / B` gives the
+smallest sound magnitude budget `H_0 = 0`,
+`H_{e+1} = ceil( (D_e + H_e + (B - 1)) / B )`.
+`H_e` is in general **not** a power of `B` (it is a ceiling of a ratio), so the
+carry is never range-checked against `H_e` directly.
+Each carry is committed as a balanced-digit cell run inside `carry_hat` with public
+base-2 recomposition weights, `h_e = sum_k 2^k · carry_hat[e][k]`, where every cell
+is an ordinary balanced digit (`|cell| <= b/2`).
+The realizable, power-of-two-granular budget is then
+
+```text
+H'_e = (b/2) · (2^{delta_carry(e)} - 1),
+```
+
+and `delta_carry(e)` is the smallest cell count with `H'_e >= H_e` (completeness).
+Because the cells are ordinary balanced digits, their per-cell bound is exactly the
+one the scheme already enforces on `z_hat`; the carry segment adds no new range
+obligation, only a different public weight vector in the carry virtualization.
+
+Then `|C_e| <= D_e` and `|h_e| <= H'_e`, so the carry residual
+`res_e = C_e + h_e - T_e - B · h_{e+1}` obeys
+`|res_e| <= D_e + H'_e + (B - 1) + B · H'_{e+1}`.
+The level accepts the grouped-carry certificate only if, for every exponent `e`,
+
+```text
+D_e + H'_e + (B - 1) + B · H'_{e+1} < q,
+```
+
+where `q` is the characteristic of the accumulation field.
+Under this gate the `alpha`-folded carry claim, which forces `res_e ≡ 0 (mod q)`,
+forces `res_e = 0` as an integer, because the only multiple of `q` with absolute
+value below `q` is `0`.
+
+Base-2 carry weights keep `H'_e` within a factor 2 of the tight `H_e`.
+Reusing the gadget weights `b^k` for carries would round each budget up to a
+base-`b` boundary (up to a factor `b`), inflating the dominant `B · H'_{e+1}` term
+by roughly `b` and costing about `lb` bits of certifying headroom.
+The carry segment is tiny (about `2R - 1` carries, each `delta_carry` cells, versus
+`N >= 10^6` witness cells), so the finer base-2 weighting is essentially free in
+witness size.
+
+The gate is structural and public.
+It is checked from level parameters before any carry value is trusted as an
+integer; it is not enough that the honest realized values happen to be small.
+
+The level selects its realization deterministically from public parameters:
+
+```text
+if coeffs · balanced_digit_max(lb, K)^2 + 4 · B_l2 < q:
+    field-fitting realization (no grouping, no carries)
+else:
+    choose the largest g in 1..K-1 such that the per-exponent gate holds for all e;
+    if some g works: grouped-carry realization with that g
+    else:            no certificate; price A-role at L2_BOUND_SQUARED
+```
+
+The largest valid `g` minimizes `R`, hence the carry count `E` and the carry
+witness `carry_hat`.
+The gate's binding terms are `D_e` and `B·H'_{e+1}`, both of order
+`R · N · (b/2)^2` at the middle exponent, so single-digit grouping (`g = 1`)
+certifies up to roughly `N ~ q / (R · b^2)` coefficients.
+With proof-optimized `lb = 3`, `q ≈ 2^31`, `D = 64`, that is on the order of
+`10^4`–`10^5` D64 rings per level (decreasing as `R = num_digits_fold` grows), so
+typical fp31 / fp32 dense recursive levels certify rather than fall back; only the
+largest levels hit the fallback.
+
+Extension fields do **not** widen the gate.
+`F_{q^k}` has characteristic `q`, so every base-embedded coefficient still reduces
+modulo `q`. A larger base prime widens the gate; an extension over the same base
+prime does not.
+
+### Sumcheck And Virtualization
+
+The certified statement is about the recomposed integer folded witness, but the
+committed object is `w_next`, whose `z_hat`, `ell_hat`, and `carry_hat` segments
+hold the base-`b` digit planes.
+The certificate has three algebraic parts, all tied back to that one commitment:
+
+1. the single degree-2 squared-sum sumcheck `sum_x Z_alpha(x)^2 = V`;
+2. the folded carry claim
+   `V = sum_e alpha^e T_e + sum_e alpha^e (B·h_{e+1} - h_e)`; and
+3. a linear virtualization tying every evaluation the first two produce to the
+   committed digit planes of `w_next`.
+
+The squared-sum sumcheck reduces to the single evaluation `Z_alpha(rho)`.
+This is a public linear view of `z_hat` and `ell_hat`: with the digit-major
+layout and segment offsets used by `emit_z_folded_block_inner` and the
+`fold_gadget = gadget_row_scalars(depth_fold, log_basis)` family, fold digit
+`df = jg + t` inside group `j` carries the public weight `alpha^j · b^t`, and the
+slack digits carry the analogous scalar gadget weights, with zero outside the
+`z_hat` / `ell_hat` segments.
+
+The carry claim reduces (via one short `ceil(log2 E)`-round linear sumcheck, or by
+batching into the stage-2 point) to `carry_hat(rho_c)`, a public linear view of
+the `carry_hat` segment: reindexing `sum_e alpha^e (B·h_{e+1} - h_e)` puts weight
+`B · alpha^{e-1} - alpha^e` on carry `h_e`, and each carry expands as
+`h_e = sum_k 2^k · carry_hat[e][k]`, so cell `(e, k)` carries the public weight
+`(B · alpha^{e-1} - alpha^e) · 2^k`.
+
+Both `Z_alpha(rho)` and `carry_hat(rho_c)` are discharged onto the existing
+`w_next` opening.
+They may be merged into the stage-2 opening point when the final `w_next(rho')`
+claim can be shared, or kept as adjacent structured linear claims at separately
+derived points; the proof shape and descriptor bind the choice.
+Either way the certified object is the same committed `w_next`, so a prover cannot
+certify one set of digit planes and commit a different recursive witness.
 
 ### Stage Placement And Batching
 
-The two certificate sumchecks map onto the existing two stages by their algebraic
-shape, not by convenience:
+The certificate's only nonlinear part is the one squared-sum sumcheck; everything
+else is linear in `w_next`.
+Certifying levels therefore add, relative to a deterministic level:
 
-- **Stage 1** runs the norm sumcheck `0 = sum_z eq(tau0, z) · Q(w(z)(w(z)+1))`
-  (`akita_stage1`) over the eq-factored (`GruenSplitEq`) path. Sumcheck 1
-  (`sum_x z_aug(x)^2 = B_l2`) is the same kind of nonlinear check on committed
-  digit values, so it batches here.
-- **Stage 2** fuses the carried `s_claim` with `relation_claim`, the ring-switch
-  relation (a matrix-row check reducing to a `w` opening). Sumcheck 2
-  (`z_aug = G' · w_next`) is exactly that shape, so it batches here, and its
-  `w_next(rho')` output joins the recursive-witness opening.
+- `ell_hat` and (grouped-carry only) `carry_hat` trailing segments of `w_next`,
+- the masked claimed sum `V` (the field-fitting realization uses the public
+  `B_l2` instead),
+- the squared-sum sumcheck transcript fused into stage 1, and
+- the carry linear claim plus limb / carry virtualization, batched into stage 2.
 
-**Eq-factored cost in stage 1.**
-The stage-1 eq-factored path sends each round's `q` with its linear coefficient
-omitted, recovered from the single global `eq(tau0,·)` factor.
-The `z_aug^2` summand has no `eq` factor, so batching it forecloses that omission:
-certifying rounds revert to the plain batched-sumcheck message, about one extra
-field element per round.
-This is paid only on levels that emit a certificate; fallback or no-cert levels
-keep the eq-factored stage-1 message unchanged.
-The descriptor and proof shape must gate the stage-1 message format (and the
-per-stage batching vectors) on whether the level certifies.
+No grouped partial-sum payload is sent.
+Each stage derives an unambiguous batching vector from its transcript point.
+The descriptor binds the realization (field-fitting, grouped-carry, or
+deterministic), the group size `g`, `R`, the carry exponent count `E`, the bound
+digits `T_e` layout, and whether the carry / virtualization claims are merged into
+the stage-2 point or carried adjacent.
+The existing single `CHALLENGE_SUMCHECK_BATCH` scalar is kept only where the
+transcript derives a full coefficient vector for every active claim at that stage;
+the grouped-carry realization additionally squeezes `alpha` before the squared-sum
+sumcheck.
 
-**Batching.**
-Each stage derives an unambiguous batching vector from its transcript point:
-stage 1 over `{norm_claim, l2_claim}`, stage 2 over
-`{s_claim, relation_claim, virtualization_claim}`.
-The existing single `CHALLENGE_SUMCHECK_BATCH` scalar is kept only if the
-transcript derives a full coefficient vector for all active claims at that stage.
-The descriptor must bind the number and order of claims at each stage, and must
-not hide a separate proof system behind stage naming.
+### Footguns For Implementation
+
+- Wire before squeeze.
+  `ell_hat` and `carry_hat` are committed through `next_w_commitment`, and `B_l2`
+  is transcript-bound, before `alpha` or any squared-sum / carry challenge is
+  squeezed.
+- The no-wrap gate is on the carry residual, not the realized values.
+  Check `D_e + H'_e + (B-1) + B·H'_{e+1} < q` for every `e` from public parameters
+  (with the realizable carry budget `H'_e`) before trusting any carry equation as
+  an integer equation.
+- Carries are signed, and bounded by the committed cell run, not by `H_e`.
+  `C_e` can be negative, so `carry_hat` is a balanced decomposition with public
+  base-2 recomposition weights. Size `delta_carry(e)` as the smallest cell count
+  with `H'_e = (b/2)(2^{delta_carry} - 1) >= H_e`, and evaluate the no-wrap gate
+  with `H'_e` (never with `H_e`). The cells are ordinary balanced digits, so they
+  need no range machinery beyond the existing `z_hat` digit bound; do not reuse the
+  `b^k` gadget weights for carries (that wastes ~`lb` bits of headroom).
+- Boundary carries are fixed.
+  Enforce `h_0 = 0` and `h_E = 0`; the closing `h_E = 0` is what forces the total
+  to match `B_l2`.
+- Slack can exceed `u64`.
+  On small fields `B_l2 - Z_SQUARED` can exceed `2^64`, so the four-square solver
+  needs a `u128` target path; the verifier must reject (not assume) any slack that
+  does not fit the encoded budget.
+- No inner products are sent.
+  The certificate never serializes `P_{r,s}` or `Z_SQUARED`; only `B_l2`, the
+  committed digit growth, the masked `V`, and the sumcheck / carry transcripts
+  appear. Do not reintroduce a public-partial-sum path for transparent builds.
+- Reuse the committed `z_hat` layout.
+  Limbs, slack, and carries must read the same `num_digits_fold` and physical
+  segment layout as `build_w_coeffs`; a second decomposition is allowed only if
+  the protocol also proves it recomposes to the committed planes.
+- Terminal levels need an explicit policy.
+  They may use the same certificate if `z_hat` is committed in `w_next`, or must
+  fall back to deterministic pricing.
 
 ### Operator-Norm Rejection Sampling
 
@@ -971,6 +1061,138 @@ Rejected candidates are not allowed to create prover/verifier divergence.
 The challenge domain separator must include the exact shell parameters and
 operator-norm threshold.
 
+### Folded-Witness ∞-Norm Rejection (digit-count tightening)
+
+This is a stacked follow-on to #155, not part of the L2 rank pricing.
+Operator-norm rejection (above) and the L2 certificate price the **A-role rank**;
+this section instead tightens the **digit count** `num_digits_fold` of the next
+recursive witness `z_hat`, which is sized by the `‖z‖_inf` envelope `β_inf` and is
+orthogonal to the A-role collision bound.
+The analysis is specific to the D=64 exact-shell family.
+
+**What sizes the digit count today.**
+`z` enters the next level only through its balanced base-`b` digit planes `z_hat`,
+and the plane count `K = num_digits_fold` is what stage 1 turns into the structural
+per-coordinate bound `balanced_digit_max(lb, K) = (b/2)·(b^K − 1)/(b − 1)`
+([`decomposition_digits.rs::num_digits_fold`]). `K` is chosen so
+
+```text
+balanced_digit_max(lb, K) >= β_inf
+      = fold_witness_beta(...)
+      = num_claims · 2^r_vars · min(‖c‖_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf)
+```
+
+i.e. `β_inf = T_p · ω · σ_inf` in the worst case (`T_p = num_claims · 2^r_vars`,
+`ω = ‖c‖_1`, `σ_inf = ‖s‖_inf`). This worst case assumes all `T_p · ω`
+challenge-coefficient products align in sign at one output coordinate, which the
+honest fold never attains. The prover already aborts when the realized
+`‖z‖_inf` exceeds `β_inf` ([`ring_relation.rs::validate_decompose_fold`]).
+
+**Rejection-sampled tightening.**
+Replace the abort with a transcript-bound grind: re-derive the fold challenge from
+an incremented nonce, re-fold, and accept the first `z` with `‖z‖_inf <= t` for a
+threshold `t < β_inf`. A level then commits the smallest `K` with
+`balanced_digit_max(lb, K) >= t`, which crosses a base-`b` digit boundary wherever
+`t` and `β_inf` straddle a power of `b`.
+
+**Why it terminates in poly time (D=64).**
+The D=64 exact shell `(count_mag1, count_mag2)` places `count_mag1` coordinates of
+magnitude 1 and `count_mag2` of magnitude 2 on a uniform support, each nonzero
+coordinate carrying an *independent uniform sign* (`sample_exact_shell_challenge`,
+`XofCursor::next_sign`). For production `(30, 12)`, `ω = ‖c‖_1 = 54` and the
+energy `rho2 = ‖c‖_2^2 = 30 + 4·12 = 78` are fixed (every member meets
+`rho2 <= ‖c‖_inf · ‖c‖_1 = 108`).
+
+Fix an output coordinate `r` of `z = sum_{(l,i)} c_{l,i} * s_{l,i}` (the fold of
+`T_p` blocks). Expanding the negacyclic products,
+
+```text
+z_r = sum_{(l,i)} sum_{a in supp(c_{l,i})} eps_{l,i,a} · m_{l,i,a} · (± s_{l,i, r⊖a}),
+```
+
+a signed sum of the independent signs `eps_{l,i,a}` with weights of magnitude
+`m_{l,i,a} · |s| <= m_{l,i,a} · σ_inf` (`m = |c| in {1, 2}`). Conditioned on every
+support and magnitude pattern, `z_r` is a zero-mean Rademacher sum with variance
+proxy
+
+```text
+V_r = sum_{(l,i)} sum_a m_{l,i,a}^2 · s_{l,i, r⊖a}^2
+    <= σ_inf^2 · sum_{(l,i)} ‖c_{l,i}‖_2^2
+    <= T_p · rho2 · σ_inf^2 =: V.
+```
+
+Hoeffding for Rademacher sums gives `Pr[|z_r| > t | support, magnitudes] <=
+2·exp(−t^2 / 2V)` for every conditioning, hence unconditionally, and a union bound
+over the `N = coeffs` coordinates yields the tail
+
+```text
+Pr[‖z‖_inf > t] <= 2·N·exp(−t^2 / 2V).        (T)
+```
+
+Let `p = Pr[gamma(c) <= Gamma]` be the operator-norm acceptance probability
+(`p = 1` when the cap does not bind; the production `(30, 12)` ships with no
+threshold, so `p = 1`). For challenges from the accepted distribution, Bayes
+against (T) on the unconditioned event gives
+
+```text
+Pr[‖z‖_inf > t | all T_p blocks accepted] <= Pr[‖z‖_inf > t] / p^{T_p}
+                                          <= (2N / p^{T_p}) · exp(−t^2 / 2V),
+```
+
+so taking
+
+```text
+t >= t* = sqrt( 2V · ln(4N / p^{T_p}) )
+        = sqrt( 2 · T_p · rho2 · σ_inf^2 · (ln 4N + T_p · ln(1/p)) )
+```
+
+makes the conditional miss probability at most 1/2. Each accepted challenge then
+yields `‖z‖_inf <= t*` with probability at least 1/2, so the grind re-folds at
+most twice in expectation (poly time). At `p = 1` this is just
+`t* = sqrt(2V · ln 4N)`; a binding cap adds the loose `T_p · ln(1/p)` term (the
+price of the Bayes step), which keeps termination in `O(1)` expected re-folds for
+any constant `p`.
+
+**Soundness is unchanged.**
+The verifier never reads the accepting nonce as evidence that `‖z‖_inf <= t*`. It
+reads the bound off the committed digits: the stage-1 range check already forces
+`|z_r| <= balanced_digit_max(lb, K)`, and the level published `K` before the fold.
+The CWSS extractor inspects only accepting transcripts and never how `c` was
+sampled, so narrowing the challenge support by the two rejection layers changes
+nothing it recovers; the grind's bias on the challenge distribution is absorbed
+into the standard Fiat-Shamir knowledge error `(Q+1)·κ` for the `Q` random-oracle
+queries an adversary makes, the only contract being that the accepted support
+retains `λ + log2 Q` bits (Accepted-challenge entropy invariant). Lowering `K`
+tightens the `‖z‖_inf` the verifier structurally enforces without touching
+binding.
+
+**How much is gained (D=64), and the gap to honest folds.**
+At `p = 1`,
+
+```text
+t* / β_inf = sqrt(2 · rho2 · ln 4N) / (ω · sqrt(T_p)),
+```
+
+independent of `σ_inf` and growing only as `sqrt(ln N)`. For `(rho2, ω) =
+(78, 54)` and `N ≈ 2^16`, this is `≈ 0.41, 0.29, 0.20, 0.14` at fold widths
+`T_p = 4, 8, 16, 32`, so the rigorous threshold sits inside one base-`b` digit of
+the worst case at the wider folds. It is loose against the measured folds in the
+calibration tables above by roughly another order of magnitude, because `V` charges
+every source coordinate at the worst case `σ_inf` while honest source blocks are
+far smaller in mean square (`mu2_implied`). Production thresholds are calibrated
+against the realized response (the `z_rms` / `mu2_implied` tables) and are
+correspondingly tighter; (T) is only what guarantees termination.
+
+**Transcript and planner consequences (later slices).**
+- The grind nonce is bound before the challenge is squeezed (wire-before-squeeze),
+  exactly like the op-norm rejection stream, so the verifier replays it
+  deterministically and re-derives the same challenge.
+- The threshold policy `t(level, family)` feeds `β_inf` / `num_digits_fold`, must
+  be planner-visible (it changes the schedule DP where a lowered `K` crosses a
+  `2^lb` boundary), and is bound in the instance descriptor.
+- `validate_decompose_fold` becomes the grind loop with a capped attempt count;
+  exceeding the cap is a prover-only error (not verifier-reachable).
+
 ### SIS Tables And Planner
 
 The current SIS tables are keyed by a rounded coefficient `L∞` collision bucket.
@@ -1004,13 +1226,13 @@ At minimum:
   `||z||_inf <= eta` with the Euclidean norm used by the implementation.
 - State the accepted challenge distribution and its min-entropy after rejection.
 - Define `gamma(c)` as the negacyclic convolution operator norm.
-- Prove the folded response L2 bound from `gamma(c)` and the committed witness
-  norm.
-- State the four-square slack certificate and why the finite-field equality is
-  exact over the integers.
-- Re-derive the weak-binding theorem with L2 parameters and no hidden
-  coefficient-`L∞` bucket.
-- Explain the full cutover and remove superseded L∞ schedule/pricing language.
+- State that A-role sizing uses the existing Lemma 7 bound converted by
+  `||v||_2^2 <= d · ||v||_inf^2` (no alternate weak-binding derivation).
+- State the grouped-carry folded-witness certificate, the per-exponent no-wrap
+  gate, and why each carry residual that is zero modulo `q` is an exact integer
+  zero (certificate tier).
+- Explain the full cutover and remove superseded L∞ **estimator** language while
+  keeping the Lemma 7 collision formula.
 
 ## Architecture
 
@@ -1022,14 +1244,20 @@ sample accepted c_i with gamma(c_i) <= Gamma
         v
 decompose_fold: centered_coeffs for z = sum_i c_i * s_i
         |
-        +--> Z_SQUARED = sum z^2 ; four-square slack ell_0..ell_3 ; z_aug = z || ell
+        +--> z_hat digit planes
         |        |
-        |        +--> sumcheck 1: sum_x z_aug(x)^2 = B_l2  -->  z_aug(rho) = v
+        |        +--> select realization + FoldNormGrouping from public params
+        |        |
+        |        +--> four-square slack ell -> ell_hat ; carries h -> carry_hat
+        |        |
+        |        +--> squeeze alpha ; squared-sum sumcheck sum_x Z_alpha(x)^2 = V
+        |        |
+        |        +--> carry claim V = sum_e alpha^e T_e + <c(alpha), carry_hat>
         |                 |
         |                 v
-        |        sumcheck 2: z_aug(rho) = (G' * w_next)(rho)  -->  w_next(rho') = v'
+        |        virtualization onto committed z_hat/ell_hat/carry_hat in w_next
         |
-        +--> z_folded_rings (z_hat), w_hat, t_hat, r_hat, ell_hat = ell_hat_j
+        +--> z_folded_rings (z_hat), w_hat, t_hat, r_hat, ell_hat, carry_hat
                  |
                  v
 build_w_coeffs (w_next) -> commit next w -> stage 1 -> stage 2 (+ L2 sumchecks)
@@ -1043,7 +1271,7 @@ Likely primary files:
 - `crates/akita-challenges/src/sampler/`
 - `crates/akita-types/src/sis/norm_bound.rs`
 - `crates/akita-types/src/sis/ajtai_key.rs`
-- `crates/akita-types/src/sis/generated_sis_table.rs`
+- `crates/akita-types/src/sis/generated_sis_table/`
 - `crates/akita-types/src/sis/decomposition_digits.rs`
 - `crates/akita-types/src/layout/params.rs`
 - `crates/akita-types/src/proof/levels.rs`
@@ -1053,11 +1281,10 @@ Likely primary files:
 - `crates/akita-config/src/proof_optimized.rs`
 - `crates/akita-prover/src/lib.rs`
 - `crates/akita-prover/src/protocol/ring_relation.rs`
-- `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`build_w_coeffs`:
-  append the `ell_hat = ell_hat_j` segment; `emit_z_folded_block_inner` is the `z_hat`
-  recomposition source)
+- `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`emit_z_folded_block_inner`
+  is the `z_hat` digit-plane source for grouped limbs)
 - `crates/akita-types/src/proof/ring_relation.rs` (`ring_column_z_first`, segment
-  layout: add `offset_ell`)
+  layout: expose the committed `z_hat` offset for grouped virtualization)
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage2/`
 - `crates/akita-verifier/src/protocol/slice_mle/setup_contribution.rs`
   (`compute_setup_contribution` / `fold_gadget`: the structured-matrix evaluation
@@ -1097,6 +1324,17 @@ This repo makes no backward-compatibility guarantee, and dual schedule tables
 would invite drift between the security model, planner, prover, and verifier.
 The cutover should replace the old path.
 
+### Publish Grouped Partial Sums In The Clear (transparent-only)
+
+Rejected as the default.
+Publishing the `P_{r,s}` partial sums avoids slack and carries, but it leaks the
+full digit-group Gram matrix of the folded witness, so it cannot be the ZK path
+and would force two certificate protocols.
+The grouped-carry certificate sends no inner products, costs only `ell_hat` /
+`carry_hat` plus one short linear claim more than the field-fitting case, and is a
+single design for transparent and ZK builds, so it is preferred even though the
+public-partial-sum variant is marginally simpler on large fields.
+
 ## Execution
 
 The work decomposes into 13 slices across six tracks (challenge family, L2 SIS,
@@ -1107,8 +1345,19 @@ the L2 norm/table API (S4, S5) and the proof-shape change (S6).
 Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
 (`crates/akita-types/src/sis/four_square.rs`), and the S4 L2 norm primitives
 (`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
-pure, not-yet-wired building blocks. The remaining protocol and test cutover
-(S3, S5, S6, S8–S13) is follow-up work.
+pure, not-yet-wired building blocks on `main`.
+
+Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later slices:
+
+- **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
+  lattice-estimator reliability fixes, vendored LE PR branch submodule, hardened
+  `scripts/gen_sis_table.py`, and Akita golden. *(Done in #155.)*
+- **S5b** (same #155): L2 table regen + stitch (pow2 ladder + derived `d·B²` keys),
+  `collision_l2_sq` rename, wire A/B/D pricing through `collision_l2_sq_for_linf_envelope`.
+  *(Done in #155.)*
+- **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
+  production D=64 shell/threshold; see below).
+- **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
 
 ### Decisions To Lock (gating)
 
@@ -1119,31 +1368,34 @@ Each gates specific slices, noted in parentheses.
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
 - D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
-- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3)
-- L2 bound policy for dense, one-hot, tensor, and terminal levels (the
-  `s_l2_max` source per level). (S4)
-- Certificate placement: whether sumcheck 2's `w_next(rho')` claim is batched
-  into the stage-2 point or kept adjacent at the same point (the certified
-  relation is identical either way). (S9)
-- The structural field-capacity gate
-  `coeffs · balanced_digit_max(lb, num_digits_fold)^2 + 4·B_l2 < q_eff` and the
-  per-(field, level) fallback to the deterministic bound (binds often on fp32,
-  rarely on fp64, never on fp128). (S8, S10)
-- The canonical Euclidean MSIS estimator and table-generation command
-  (Open Question 1). (S5)
+- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3).
+  **Frozen on `main` until S2 certifies:** keep `ExactShell { count_mag1: 30, count_mag2: 12 }`
+  with no `operator_norm_threshold` field. Do not land `(31, 11), T = 16` in
+  `proof_optimized` presets until the S2 accepted-support lower bound is a checked artifact.
+- Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
+  level (not `‖s‖_2` surrogates). (S4, S8)
+- Certificate placement: whether the limb / carry virtualization claims are
+  merged into the stage-2 point or kept adjacent at a separately derived point. (S9)
+- The per-exponent no-wrap gate `D_e + H'_e + (B-1) + B·H'_{e+1} < q` for every
+  convolution exponent (`H'_e` from the committed carry cell run), the realization
+  selection (field-fitting vs grouped-carry), and the per-level fallback to the
+  deterministic bound when no group size satisfies the gate. (S8, S10)
+- The canonical Euclidean MSIS estimator and table-generation command: see
+  [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) (S5a). (S5b consumes its output.)
 
 ### Slice Dependency Graph
 
 ```text
 WAVE 0  (independent, start now, parallel)
   S1  op-norm predicate gamma_D(c) <= T     [akita-challenges, pure]   DONE
-  S7  four-square decomposition helper      [pure algorithm]           DONE
-  S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]   DONE
+  S7  four-square slack helper (default path)  [pure algorithm]       DONE
+  S4  L2 norm primitives (Lemma 7 + l2_sq_from_linf)  [akita-types::sis]  DONE
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
 
 WAVE 1
-  S3  threshold + transcript rejection       (S1)
-  S5  L2 SIS tables + collision_inf rename   (S4)
+  S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)  DONE
+  S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)                         #155
+  S3  threshold + transcript rejection       (S1, S2 for production policy)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
 
 WAVE 2
@@ -1152,7 +1404,7 @@ WAVE 2
   S12 transcript instance-descriptor bind    (S3, S5, S6)
 
 WAVE 3
-  S9  two sumchecks (z_aug^2 = B_l2 ; G'·w)  (S6, S8)
+  S9  squared-sum sumcheck + carry claim + virtualization  (S6, S8)
   S10 verifier replay + no-panic             (S6, S9)
 
 WAVE 4
@@ -1185,60 +1437,73 @@ Gates the production policy in S3.
 
 **S4 — L2 norm primitives.** *(independent, DONE)*
 `crates/akita-types/src/sis/norm_bound.rs`.
-Adds the squared-domain `s_l2_max_squared` (`D·(b/2)^2` dense, `1` one-hot),
-`beta_l2_squared = (Gamma·B·s_l2_max)^2`, `l2_bound_squared = W·beta_l2^2`, and
-the B/D `l2_sq_from_linf` (`||v||_2^2 <= d·||v||_inf^2`) conversion. Squared
+Adds `committed_fold_collision_l2_sq` / `rounded_up_collision_norm_s` (Lemma 7 on
+fold response `z` via `β_inf = fold_witness_beta`, then `collision_l2_sq_for_linf_envelope`),
+and the B/D `collision_l2_sq_for_linf_envelope` on `2^lb − 1`
+(`||v||_2^2 <= d·||v||_inf^2`). Squared
 domain keeps every value an exact `u128` integer (`sqrt(D)` is irrational for
 `D ∈ {32, 128}`); the real square root is taken only at bucket/slack selection
-(S8). These are pure and not yet wired into rank pricing (first consumers: S5,
-S8, S11).
-Retain `fold_witness_beta` for digit sizing (`num_digits_fold`); it no longer
-prices the A-role rank.
+(S8). `fold_witness_beta` prices both `num_digits_fold` and the A-role collision
+through `β_inf`. Realized `Z_SQUARED` certificates are implemented in S8, not
+here.
 
-**S7 — Four-square decomposition helper.** *(independent, DONE)*
+**S7 — Four-square slack helper.** *(independent, DONE; on the default path)*
 `crates/akita-types/src/sis/four_square.rs`.
-Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`, each
-`ell_j < 2^32`. A Rabin–Shallit-style prime hunt is the fast path; a
-theorem-backed finite two-squares-residual fallback makes the solver total for
-every `u64` target. Integer-only decision path (no floating point).
-No protocol dependency; consumes only the target integer (first consumer: S8).
+Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`. A
+Rabin–Shallit-style prime hunt is the fast path; a theorem-backed finite
+two-squares-residual fallback makes the solver total. Integer-only decision path
+(no floating point).
+The four-square slack is committed as `ell_hat` on every realized level (not just
+ZK), so the certificate proves an equality; small-field levels need a `u128`
+target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
 
-**S3 — Threshold + transcript-stable rejection sampling.** *(S1)*
+**S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell after S2)*
 `crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`.
 Add `operator_norm_threshold` to `ExactShell`, reject-and-resample with stable
 XOF consumption (no prover/verifier divergence) calling the S1 predicate, and
 bind shell parameters + threshold into `domain_separator_bytes`.
-Update the proof-optimized D=64 policy after S2.
+Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
+**Do not** change `proof_optimized` D=64 production presets until S2 certifies the
+accepted-support lower bound.
 
-**S5 — L2 SIS tables + key rename.** *(S4)*
-`crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`,
-`scripts/gen_sis_table.py`.
-Generate L2 bucket ladders + secure-rank floors keyed by the Euclidean bound;
-rename `collision_inf` to the L2 bound name across `AjtaiKeyParams`,
-`min_secure_rank`, `ceil_supported_collision`, and descriptor bytes.
-Remove the old committed-fold L∞ rank-pricing paths.
+**S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*
+[`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).
+Vendor the open lattice-estimator reliability PR branch as `third_party/lattice-estimator`,
+harden `scripts/gen_sis_table.py`, and check in Akita-local golden CSV under
+`scripts/sis_golden/`. Repoint to `malb/lattice-estimator` after upstream merge. No Rust
+estimator crate.
+
+**S5b — L2 SIS tables + key rename.** *(S4, S5a; done in #155)*
+`crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.
+Regenerate and stitch two key families: power-of-two buckets
+(`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) plus derived `K = d · B²` for
+`COEFF_LINF_BUCKETS`; rename `collision_inf` to `collision_l2_sq` (`u128`) across
+`AjtaiKeyParams`, `min_secure_rank`, `ceil_supported_collision`, and descriptor bytes;
+route A/B/D norm-bound pricing through `collision_l2_sq_for_linf_envelope` (derived key
+default, pow2 fallback). Remove the old committed-fold L∞ rank-pricing paths. Regen remains
+Sage + `scripts/{gen_sis_table,stitch_generated_sis_table}.py` against the pinned submodule.
 
 **S6 — Proof shape, serialization, proof size.** *(parameterizable early)*
 `crates/akita-types/src/proof/{levels,shapes}.rs`, `proof_size.rs`,
 `proof/ring_relation.rs`.
-Add the `ell_hat = ell_hat_j` segment and `offset_ell` to the segment layout
-(`ring_column_z_first`), the certificate payload fields and chosen `B_l2` /
-gate-tier marker, shape validation, the canonical `ell_hat_j` byte-layout test,
-and the proof-size formula.
+Add the realization marker (field-fitting / grouped-carry / deterministic), the
+`FoldNormGrouping` descriptor (`group_digits`, `group_count`, last-group width,
+carry exponent count `E`, per-exponent carry cell counts `delta_carry`), the
+`B_l2` scalar, trailing `ell_hat` / `carry_hat` offsets, the masked `V` claim,
+shape validation, serialization tests, and the proof-size formula. No partial-sum
+payload.
 Parameterized on `B_l2`'s type, so it does not wait on S5's values.
 
 **S8 — Prover certificate assembly.** *(S4, S6, S7)*
 `crates/akita-prover/src/protocol/ring_relation.rs`, `ring_switch/coeffs.rs`.
-Compute `Z_SQUARED` from `DecomposeFoldWitness.centered_coeffs`, assemble
-`z_aug = z || ell`, decompose `ell_hat_j` slack-major, append `ell_hat` as the
-last segment in `build_w_coeffs` (so the next-level power-of-two hypercube is
-sized on the augmented witness), and apply the field-capacity gate
-`coeffs · balanced_digit_max(lb, num_digits_fold)^2 + 4·B_l2 < q_eff` with the
-per-(field, level) deterministic-bound fallback.
-The four-square solver runs before sumcheck 1, and `ell_hat` is committed and
-transcript-bound before the sumcheck-1 challenges are squeezed
-(wire-before-squeeze); `z_aug` entries embed as base-field elements, exact only
-under the no-wrap gate (all entries `< sqrt(q)`).
+From `DecomposeFoldWitness.centered_coeffs`, compute `Z_SQUARED`, the four-square
+slack `ell` (and `ell_hat`), select the realization and the largest group size
+`g` satisfying the per-exponent no-wrap gate (evaluated with the realizable carry
+budget `H'_e`), derive the carries `h` and decompose each into `delta_carry(e)`
+balanced cells with base-2 recomposition weights (`carry_hat`), and fall back to
+deterministic `L2_BOUND_SQUARED` when no `g` passes. Append `ell_hat` /
+`carry_hat` to `w_next` and transcript-bind them and `B_l2` before squeezing
+`alpha` (wire-before-squeeze).
 
 **S11 — Planner + generated tables + drift guards.** *(S4, S5, S6)*
 `crates/akita-planner`, `crates/akita-config`.
@@ -1254,59 +1519,66 @@ schedule.
 Pin the descriptor bytes with a test; a proof under L2 must not verify under old
 L∞ parameters.
 
-**S9 — Two sumchecks.** *(S6, S8)*
+**S9 — Squared-sum sumcheck + carry claim + virtualization.** *(S6, S8)*
 `crates/akita-prover/src/protocol/sumcheck/akita_stage2/`, verifier
 `slice_mle/setup_contribution.rs`.
-Sumcheck 1 (`sum_x z_aug(x)^2 = B_l2`) in the stage-1 phase; sumcheck 2
-(`z_aug = G' · w_next`) in the stage-2 phase, reusing `fold_gadget` /
-`compute_setup_contribution` for the succinct `G'` evaluation and landing
-`w_next(rho')` in the existing stage-2 opening.
-Certifying levels lose the eq-factored linear-term omission (about one extra
-field element per round); non-certifying levels keep the current eq-factored
-message.
+Run the single degree-2 sumcheck `sum_x Z_alpha(x)^2 = V`, the folded carry claim
+`V = sum_e alpha^e T_e + <c(alpha), carry_hat>` (a short linear sumcheck), then
+discharge `Z_alpha(rho)` and `carry_hat(rho_c)` through linear virtualization onto
+the committed `w_next` opening. Reuse `fold_gadget` / `compute_setup_contribution`
+structured evaluation for the `z_hat` / `ell_hat` / `carry_hat` segments.
+Certifying levels bind the active claim vector and whether the claims are merged
+into stage 2 or carried adjacent.
 
 **S10 — Verifier replay + no-panic.** *(S6, S9)*
 `crates/akita-verifier/src/stages/stage2.rs`, `protocol/levels.rs`.
-Replay the L2 equality, check all certificate digit bounds, verify the structural
-no-wrap gate before treating the field equality as an integer equality, and
-reject every malformed challenge/certificate/shape with `AkitaError` /
-`SerializationError`.
+Recompute the realization and no-wrap gate from public params, replay the
+squared-sum sumcheck and carry claim, check `h_0 = h_E = 0`, validate `B_l2`,
+`ell_hat`, and `carry_hat` lengths / digit bounds / offsets, confirm every
+evaluation is anchored to the committed `w_next`, and reject every malformed
+challenge / certificate / shape with `AkitaError` / `SerializationError`.
 
 **S13 — End-to-end + ZK parity.** *(all)*
 End-to-end prover/verifier tests that fail under independent tampering of the
-committed folded witness, the L2 certificate, the next-witness commitment, and
-the ring-relation rows; ZK-path parity if the feature stays enabled.
+committed folded witness, `ell_hat`, `carry_hat`, `B_l2`, the next-witness
+commitment, and the ring-relation rows. Because the certificate is one design for
+both builds, the ZK path runs the same claims with masking on; a test asserts no
+inner-product payload is serialized under `feature = "zk"`.
 
 ## Open Questions
 
-1. What exact Euclidean MSIS estimator and table-generation command should be
-   canonical for the repo?
+1. Resolved: [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md) defines the
+   canonical offline regen path: general fixes in `malb/lattice-estimator`, pinned submodule,
+   `scripts/gen_sis_table.py`, and Akita-local golden checks (no in-repo Rust estimator).
 2. Should the certified bucket `B_l2` be a fixed worst-case-per-level value, or
    may the prover abort against a tighter `B_l2` with a separately proved
    acceptance probability?
-3. Resolved (magnitude and placement): the four slack witnesses `ell_0..ell_3` are
-   bounded (about 16 bits realized, `< 2^32` pinned) and decompose into at most
-   one ring element total, and `ell_hat_j` is committed as the `ell_hat` segment
-   appended last in `build_w_coeffs`. What remains is the canonical byte layout
-   test for that segment (see Acceptance Criteria).
-4. Resolved (virtualization worked out in "Recomposed Witness vs Committed
-   Decomposition"): two linked sumchecks. Sumcheck 1 certifies
-   `sum_x z_aug(x)^2 = B_l2` over `z_aug = z || ell`, sumcheck 2 discharges
-   `z_aug(rho) = (G' · w_next)(rho)` onto the committed `w_next` via the gadget
-   recomposition `G'`, reusing `compute_setup_contribution`/`fold_gadget` for the
-   succinct `G'` evaluation. The only residual choice is whether sumcheck 2's
-   `w_next(rho')` claim is batched into the stage-2 point or kept adjacent at the
-   same point (the certified relation is identical either way).
+3. Resolved: the default realized certificate is the grouped-carry design.
+   It commits `ell_hat` (four-square slack) and `carry_hat` (carry limbs) in
+   `w_next`, proves one squared-sum sumcheck `sum_x Z_alpha(x)^2 = V`, and folds
+   the carry chain into one linear claim. It sends no inner products, so it is the
+   single design for transparent and ZK builds.
+4. Resolved (virtualization worked out in "Sumcheck And Virtualization"): the
+   squared-sum sumcheck reduces to `Z_alpha(rho)` and the carry claim to
+   `carry_hat(rho_c)`, both discharged onto the committed `w_next` via the
+   existing `z_hat` / `ell_hat` / `carry_hat` digit layout and `fold_gadget`
+   weights.
+   The residual implementation choice is whether those linear claims are merged
+   into the existing stage-2 point or kept adjacent at a separately derived point.
 5. For tensor challenges, should `Gamma` be derived from factor operator norms,
    the expanded product challenge, or a separate accepted tensor-product policy?
 6. Resolved: the B/D roles keep their coefficient `L∞` digit-collision bound
    `2^lb - 1` and convert into the unified L2 table via
    `||v||_2 <= sqrt(d)·||v||_inf` (see Invariants and SIS Tables And Planner).
-7. Deferred: small-field (31/32-bit) realized L2 certificates without widening
-   the base prime; see "Follow-up (deferred)" under the field-capacity gate.
+7. Resolved: small-field (31/32-bit) realized L2 certificates use the
+   grouped-carry realization with the per-exponent no-wrap gate
+   `D_e + H'_e + (B-1) + B·H'_{e+1} < q` (`H'_e` the committed carry cell run's
+   realizable budget, base-2 weights), certifying rather than falling back on
+   typical fp31 / fp32 dense recursive levels.
 
 ## References
 
+- `specs/sis-euclidean-estimator.md` (S5a: offline estimator + table regen)
 - `specs/weak-binding-norm-fix.md`
 - `specs/bounded-l1-sparse-challenge.md`
 - `specs/tensor-structured-folding-challenges.md`
