@@ -1,4 +1,4 @@
-use crate::backend::onehot::{column_sweep_ajtai_multi_chunk, column_sweep_ajtai_single_chunk};
+use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::column_sweep_sparse;
 use crate::compute::backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
@@ -295,20 +295,24 @@ where
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
-            OneHotCommitBlocks::SingleChunk(blocks) => column_sweep_ajtai_single_chunk::<F, D>(
-                &a_view,
-                &blocks.block_slices()?,
-                plan.n_a,
-                active_a_cols,
-                plan.num_digits_commit,
-            ),
-            OneHotCommitBlocks::MultiChunk(blocks) => column_sweep_ajtai_multi_chunk::<F, D>(
-                &a_view,
-                &blocks.block_slices()?,
-                plan.n_a,
-                active_a_cols,
-                plan.num_digits_commit,
-            ),
+            OneHotCommitBlocks::SingleChunk(blocks) => {
+                column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+                    &a_view,
+                    &blocks.block_slices()?,
+                    plan.n_a,
+                    active_a_cols,
+                    plan.num_digits_commit,
+                )
+            }
+            OneHotCommitBlocks::MultiChunk(blocks) => {
+                column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
+                    &a_view,
+                    &blocks.block_slices()?,
+                    plan.n_a,
+                    active_a_cols,
+                    plan.num_digits_commit,
+                )
+            }
         })
     }
 
