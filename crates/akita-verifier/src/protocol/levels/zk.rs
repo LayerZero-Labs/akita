@@ -1,4 +1,4 @@
-use crate::protocol::batched::{
+use crate::protocol::root_direct::{
     append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
     mat_vec_mul_i8_plain, zk_b_blinding_rows,
 };
