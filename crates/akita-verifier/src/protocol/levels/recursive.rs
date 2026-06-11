@@ -412,11 +412,13 @@ where
         RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
-        stage1_proof,
-        &rs.tau0,
-        rs.col_bits,
-        rs.ring_bits,
-        rs.b,
+        Stage1ReplayInput {
+            proof: stage1_proof,
+            tau0: &rs.tau0,
+            col_bits: rs.col_bits,
+            ring_bits: rs.ring_bits,
+            b: rs.b,
+        },
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,

@@ -137,12 +137,16 @@ pub(super) struct Stage1Replay<E: FieldCore> {
     pub(super) s_claim_mask: ZkR1csLinearCombination<E>,
 }
 
+pub(super) struct Stage1ReplayInput<'a, E: FieldCore> {
+    pub(super) proof: Option<&'a AkitaStage1Proof<E>>,
+    pub(super) tau0: &'a [E],
+    pub(super) col_bits: usize,
+    pub(super) ring_bits: usize,
+    pub(super) b: usize,
+}
+
 pub(super) fn verify_stage1_or_terminal<F, E, T>(
-    stage1: Option<&AkitaStage1Proof<E>>,
-    tau0: &[E],
-    col_bits: usize,
-    ring_bits: usize,
-    b: usize,
+    input: Stage1ReplayInput<'_, E>,
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
@@ -152,10 +156,17 @@ where
     E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let Stage1ReplayInput {
+        proof,
+        tau0,
+        col_bits,
+        ring_bits,
+        b,
+    } = input;
     let num_rounds = col_bits
         .checked_add(ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    if let Some(stage1_proof) = stage1 {
+    if let Some(stage1_proof) = proof {
         let tau0_reordered = reorder_stage1_coords(tau0, col_bits, ring_bits);
         let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, b);
         #[cfg(not(feature = "zk"))]
@@ -560,11 +571,13 @@ where
         RootLevelProofView::Terminal { .. } => None,
     };
     let stage1_replay = verify_stage1_or_terminal::<F, C, T>(
-        stage1_proof,
-        &rs.tau0,
-        rs.col_bits,
-        rs.ring_bits,
-        rs.b,
+        Stage1ReplayInput {
+            proof: stage1_proof,
+            tau0: &rs.tau0,
+            col_bits: rs.col_bits,
+            ring_bits: rs.ring_bits,
+            b: rs.b,
+        },
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
