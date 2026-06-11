@@ -465,13 +465,7 @@ where
         FoldProofView::Intermediate(level_proof) => Some(&level_proof.stage1),
         FoldProofView::Terminal(_) => None,
     };
-    let Stage1Replay {
-        batching_coeff,
-        s_claim,
-        stage1_point,
-        #[cfg(feature = "zk")]
-        s_claim_mask,
-    } = verify_stage1_or_terminal::<F, L, T>(
+    let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
         stage1_proof,
         &rs.tau0,
         rs.col_bits,
@@ -483,7 +477,6 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let stage3_sumcheck_proof = match &proof {
         FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
             setup_contribution_mode,
@@ -491,107 +484,44 @@ where
         )?,
         FoldProofView::Terminal(_) => None,
     };
-    let setup_prepared_row_eval = stage3_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
-    let row_eval_source = if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
-        Stage2RowEvalSource::new_with_setup_claim(rs.prepared_row_eval, stage3_sumcheck_proof.claim)
-    } else {
-        Stage2RowEvalSource::new(rs.prepared_row_eval)
-    };
-    #[cfg(feature = "zk")]
-    let stage2_next_w_eval_mask_cursor =
-        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
-    let witness_oracle = match &proof {
-        FoldProofView::Terminal(terminal_proof) => Stage2WitnessOracle::Cleartext {
-            witness: &terminal_proof.final_witness,
-            physical_w_len: w_len,
-        },
-        FoldProofView::Intermediate(level_proof) => Stage2WitnessOracle::ClaimedEval {
-            eval: level_proof.stage2.next_w_eval(),
+    let stage2_replay = match &proof {
+        FoldProofView::Intermediate(level_proof) => Stage2ProofReplay::Intermediate {
+            next_w_eval: level_proof.stage2.next_w_eval(),
+            #[cfg(not(feature = "zk"))]
+            sumcheck: &level_proof.stage2.sumcheck_proof,
             #[cfg(feature = "zk")]
-            mask: zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
+            sumcheck_masked: &level_proof.stage2.sumcheck_proof_masked,
+        },
+        FoldProofView::Terminal(terminal_proof) => Stage2ProofReplay::Terminal {
+            final_witness: &terminal_proof.final_witness,
+            physical_w_len: w_len,
+            #[cfg(not(feature = "zk"))]
+            sumcheck: &terminal_proof.stage2_sumcheck,
+            #[cfg(feature = "zk")]
+            sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
         },
     };
-    let stage2_verifier = AkitaStage2Verifier::new(
-        batching_coeff,
-        s_claim,
-        #[cfg(feature = "zk")]
-        s_claim_mask,
+    verify_stage2_and_setup_replay::<F, L, T, D>(
+        setup,
+        transcript,
+        stage2_replay,
+        stage1_replay,
+        rs,
+        relation_claim,
         #[cfg(feature = "zk")]
         relation_claim_mask,
-        witness_oracle,
-        stage1_point,
-        rs.alpha_evals_y,
-        row_eval_source,
-        &setup.expanded,
+        stage3_sumcheck_proof,
+        next_fold_level_params,
         &ring_opening_points,
         &ring_multiplier_points,
-        &rs.tau1,
         v_typed,
         commitment_u,
         &y_rings,
-        Some(relation_claim),
-        rs.alpha,
-        rs.col_bits,
-        rs.ring_bits,
-    )?;
-    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck_ref = match &proof {
-        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof,
-        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck,
-    };
-    #[cfg(feature = "zk")]
-    let stage2_sumcheck_masked_ref = match &proof {
-        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof_masked,
-        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck_proof_masked,
-    };
-    let challenges = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        #[cfg(not(feature = "zk"))]
-        {
-            stage2_verifier.verify::<F, T, _>(stage2_sumcheck_ref, transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?
-        }
         #[cfg(feature = "zk")]
-        {
-            let challenges = stage2_verifier.verify_zk::<F, T, _>(
-                stage2_sumcheck_masked_ref,
-                transcript,
-                zk_relations,
-                zk_hiding_cursor,
-                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-            )?;
-            if matches!(proof, FoldProofView::Intermediate(_)) {
-                *zk_hiding_cursor += <L as ExtField<F>>::EXT_DEGREE;
-            }
-            challenges
-        }
-    };
-    if let FoldProofView::Intermediate(level_proof) = &proof {
-        let next_w_eval = level_proof.stage2.next_w_eval();
-        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
-    }
-    if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
-        let setup_prepared_row_eval = setup_prepared_row_eval
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
-        let verifier = SetupSumcheckVerifier::new::<F, D>(
-            setup_prepared_row_eval,
-            &challenges[rs.ring_bits..],
-            rs.alpha,
-        )?;
-        verifier.verify::<F, T, D>(
-            setup,
-            next_fold_level_params,
-            stage3_sumcheck_proof,
-            transcript,
-        )?;
-    }
-    Ok(challenges)
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
+    )
 }
 
 fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
