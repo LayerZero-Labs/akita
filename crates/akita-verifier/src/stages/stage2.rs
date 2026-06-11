@@ -2,7 +2,6 @@
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
@@ -10,8 +9,8 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    relation_claim_from_rows_extension, AkitaExpandedSetup, CleartextWitnessProof, PackedDigits,
-    RingMultiplierOpeningPoint, RingSubfieldEncoding,
+    AkitaExpandedSetup, CleartextWitnessProof, PackedDigits, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 
@@ -163,22 +162,10 @@ pub(crate) struct Stage2RowEvalSource<F: FieldCore> {
 }
 
 impl<F: FieldCore> Stage2RowEvalSource<F> {
-    /// Construct a source from prepared ring-switch row-eval state.
-    pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
+    pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>, setup_claim: Option<F>) -> Self {
         Self {
             prepared,
-            setup_claim: None,
-        }
-    }
-
-    /// Construct a source that uses a separately proved setup contribution.
-    pub(crate) fn new_with_setup_claim(
-        prepared: RingSwitchDeferredRowEval<F>,
-        setup_claim: F,
-    ) -> Self {
-        Self {
-            prepared,
-            setup_claim: Some(setup_claim),
+            setup_claim,
         }
     }
 }
@@ -225,11 +212,7 @@ where
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
+        relation_claim: E,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -257,10 +240,6 @@ where
                 actual: alpha_evals_y.len(),
             });
         }
-        let relation_claim = match relation_claim_override {
-            Some(claim) => claim,
-            None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)?,
-        };
         Ok(Self {
             batching_coeff,
             s_claim,

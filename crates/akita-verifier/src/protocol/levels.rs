@@ -619,9 +619,6 @@ where
         setup_sumcheck_proof: stage3_sumcheck_proof,
         next_fold_level_params,
         ring_multiplier_points: &ring_multiplier_points,
-        v: v_typed,
-        u: commitment_rows,
-        y_rings,
     };
     verify_stage2_and_setup_replay::<F, C, T, D>(
         transcript,

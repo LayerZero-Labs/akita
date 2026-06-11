@@ -2,12 +2,10 @@ use super::Stage1Replay;
 use crate::protocol::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
-use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{zk_ext_mask_lc_at, ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::SumcheckInstanceVerifier;
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
@@ -48,9 +46,6 @@ pub(super) struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usi
     pub(super) setup_sumcheck_proof: Option<&'a SetupSumcheckProof<E>>,
     pub(super) next_fold_level_params: &'a LevelParams,
     pub(super) ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-    pub(super) v: &'a [CyclotomicRing<F, D>],
-    pub(super) u: &'a [CyclotomicRing<F, D>],
-    pub(super) y_rings: &'a [CyclotomicRing<F, D>],
 }
 
 pub(super) fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
@@ -91,9 +86,6 @@ where
         setup_sumcheck_proof,
         next_fold_level_params,
         ring_multiplier_points,
-        v,
-        u,
-        y_rings,
     } = input;
     let Stage1Replay {
         batching_coeff,
@@ -102,13 +94,11 @@ where
         #[cfg(feature = "zk")]
         s_claim_mask,
     } = stage1;
-    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let setup_prepared_row_eval = setup_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
-    let row_eval_source = if let Some(stage3_sumcheck_proof) = setup_sumcheck_proof {
-        Stage2RowEvalSource::new_with_setup_claim(rs.prepared_row_eval, stage3_sumcheck_proof.claim)
-    } else {
-        Stage2RowEvalSource::new(rs.prepared_row_eval)
-    };
+    let row_eval_source = Stage2RowEvalSource::new(
+        rs.prepared_row_eval,
+        setup_sumcheck_proof.map(|proof| proof.claim),
+    );
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
@@ -140,18 +130,11 @@ where
         row_eval_source,
         &setup.expanded,
         ring_multiplier_points,
-        &rs.tau1,
-        v,
-        u,
-        y_rings,
-        Some(relation_claim),
+        relation_claim,
         rs.alpha,
         rs.col_bits,
         rs.ring_bits,
     )?;
-    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-        return Err(AkitaError::InvalidProof);
-    }
 
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
