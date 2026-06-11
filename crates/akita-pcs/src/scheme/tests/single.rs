@@ -12,14 +12,39 @@ use akita_types::{
     SetupContributionMode, SetupMatrixEnvelope,
 };
 
-/// `num_vars` for the carried-batch exit test. nv=15 is too small after the
-/// committed-fold A-role SIS pricing on main; nv=30 is the first planner hit.
-const CARRIED_SUFFIX_TEST_NUM_VARS: usize = 30;
+/// Minimum `num_vars` where `find_recursive_carried_suffix_schedule` succeeds for
+/// `fp128::D64Full` under committed-fold A-role SIS pricing (nv=29 and below
+/// have no shrink-valid carried suffix today).
+const CARRIED_SUFFIX_MIN_NUM_VARS: usize = 30;
 
-fn carried_suffix_test_num_vars() -> usize {
-    carried_suffix_schedule(CARRIED_SUFFIX_TEST_NUM_VARS)
-        .expect("carried suffix schedule for test num_vars");
-    CARRIED_SUFFIX_TEST_NUM_VARS
+#[test]
+fn carried_suffix_schedule_requires_nv30_under_d64_full() {
+    for nv in 28..=CARRIED_SUFFIX_MIN_NUM_VARS {
+        let result = carried_suffix_schedule(nv);
+        if nv < CARRIED_SUFFIX_MIN_NUM_VARS {
+            assert!(
+                result.is_err(),
+                "nv={nv} unexpectedly found a carried suffix schedule"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "nv={nv} should admit a carried suffix schedule: {:?}",
+                result.err()
+            );
+        }
+    }
+}
+
+/// Full prove round-trip at the planner minimum. Dense `make_dense_poly` needs
+/// 2^nv field evals (~16GiB at nv=30), so this stays `#[ignore]` for CI; run
+/// locally with adequate RAM: `cargo test -p akita-pcs -- --ignored recursive_suffix`.
+const CARRIED_SUFFIX_PROVE_NUM_VARS: usize = CARRIED_SUFFIX_MIN_NUM_VARS;
+
+fn carried_suffix_prove_num_vars() -> usize {
+    carried_suffix_schedule(CARRIED_SUFFIX_PROVE_NUM_VARS)
+        .expect("carried suffix schedule for prove num_vars");
+    CARRIED_SUFFIX_PROVE_NUM_VARS
 }
 
 /// Build a `[root fold, carried fold, direct]` schedule whose single recursive
@@ -268,9 +293,10 @@ fn prove_witness_plus_dummy_carried_batch(
 }
 
 #[test]
+#[ignore = "nv=30 dense prove needs ~16GiB eval table; run with: cargo test -p akita-pcs -- --ignored recursive_suffix"]
 fn recursive_suffix_verifies_witness_plus_dummy_carried_batch() {
     let (proof, schedule, verifier_setup, commitment, opening_point, opening) =
-        prove_witness_plus_dummy_carried_batch(carried_suffix_test_num_vars());
+        prove_witness_plus_dummy_carried_batch(carried_suffix_prove_num_vars());
 
     let root = proof
         .root
@@ -302,9 +328,10 @@ fn recursive_suffix_verifies_witness_plus_dummy_carried_batch() {
 }
 
 #[test]
+#[ignore = "nv=30 dense prove needs ~16GiB eval table; run with: cargo test -p akita-pcs -- --ignored recursive_suffix"]
 fn recursive_suffix_rejects_inconsistent_dummy_carried_opening() {
     let (mut proof, schedule, verifier_setup, commitment, opening_point, opening) =
-        prove_witness_plus_dummy_carried_batch(carried_suffix_test_num_vars());
+        prove_witness_plus_dummy_carried_batch(carried_suffix_prove_num_vars());
 
     // Tamper the carried claim's bound opening value: the verifier replays the
     // fold relation against the proof-visible value and must reject without
