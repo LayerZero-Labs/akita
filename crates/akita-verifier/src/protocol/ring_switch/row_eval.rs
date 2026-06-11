@@ -5,15 +5,18 @@ use super::super::slice_mle::{
     SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
-use super::super::{validate_log_basis, validate_ring_dispatch};
-use super::{RingSwitchDeferredRowEval, RingSwitchSegmentLayout};
+use super::super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
+use super::{PreparedChallengeEvals, RingSwitchDeferredRowEval, RingSwitchSegmentLayout};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_challenges::Challenges;
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
+#[cfg(feature = "zk")]
+use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
-    SetupContributionPlanInputs,
+    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlanInputs,
 };
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -590,4 +593,246 @@ where
     }
 
     Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
+    challenges: &Challenges,
+    alpha: E,
+    lp: &LevelParams,
+    tau1: &[E],
+    num_polys_per_commitment_group: &[usize],
+    claim_to_commitment_group: &[usize],
+    claim_poly_in_commitment_group: &[usize],
+    gamma: &[E],
+    num_public_rows: usize,
+    m_row_layout: MRowLayout,
+    opening_points_len: usize,
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
+    claim_to_point: &[usize],
+    witness_segment_layout: RingRelationSegmentLayout,
+) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
+{
+    validate_level_dispatch::<D>(lp)?;
+    let alpha_pows = scalar_powers(alpha, D);
+    let num_claims = claim_to_point.len();
+    if claim_to_commitment_group.len() != num_claims
+        || claim_poly_in_commitment_group.len() != num_claims
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_points = num_polys_per_commitment_group.len();
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_commitment_group[claim_idx];
+        if group_idx >= num_points
+            || claim_poly_in_commitment_group[claim_idx]
+                >= num_polys_per_commitment_group[group_idx]
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+
+    if gamma.len() != num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: gamma.len(),
+        });
+    }
+
+    let log_basis = lp.log_basis;
+    validate_log_basis(log_basis)?;
+    let depth_commit = lp.num_digits_commit;
+    let depth_open = lp.num_digits_open;
+    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let num_blocks = lp.num_blocks;
+    if num_blocks == 0 || !num_blocks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "num_blocks must be a non-zero power of two".to_string(),
+        ));
+    }
+    if lp.block_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "block_len must be non-zero".to_string(),
+        ));
+    }
+    if depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "digit depths must be non-zero".to_string(),
+        ));
+    }
+    let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
+    let num_t_vectors = num_polys_per_commitment_group
+        .iter()
+        .try_fold(0usize, |acc, &count| acc.checked_add(count))
+        .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let d_blinding_segment_len = match m_row_layout {
+        MRowLayout::WithDBlock => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::WithoutDBlock => 0,
+    };
+    #[cfg(feature = "zk")]
+    let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+    #[cfg(feature = "zk")]
+    let b_blinding_segment_len = num_points
+        .checked_mul(b_blinding_digit_planes_per_point)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
+    // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
+    let total_blocks = num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
+    if challenges.logical_len() != total_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: total_blocks,
+            actual: challenges.logical_len(),
+        });
+    }
+    let block_len = lp.block_len;
+    let inner_width = block_len
+        .checked_mul(depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
+    if lp.a_key.col_len() < inner_width {
+        return Err(AkitaError::InvalidSetup(
+            "A-key column width is too small for verifier layout".to_string(),
+        ));
+    }
+    let _expected_d_width = depth_open
+        .checked_mul(num_blocks)
+        .and_then(|width| width.checked_mul(num_claims))
+        .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
+    // TODO: re-enable (or gate on schedule shape) once root-direct
+    // commit params no longer carry zero-width D-key placeholders.
+    // The planner emits `d_key.col_len = 0` for root-direct schedules
+    // since the relation fold (which is what consumes D) doesn't run.
+    // if lp.d_key.col_len() < expected_d_width {
+    //     return Err(AkitaError::InvalidSetup(
+    //         "D-key column width is too small for verifier layout".to_string(),
+    //     ));
+    // }
+    let max_point_poly_count = num_polys_per_commitment_group
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let expected_b_width = max_point_poly_count
+        .checked_mul(lp.a_key.row_len())
+        .and_then(|width| width.checked_mul(depth_open))
+        .and_then(|width| width.checked_mul(num_blocks))
+        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
+    // Tiered: the stored first-tier `B'` is the full B width divided by the
+    // reuse factor `tier_split`.
+    let expected_stored_b_width = if lp.f_key.is_some() {
+        expected_b_width.div_ceil(lp.tier_split.max(1))
+    } else {
+        expected_b_width
+    };
+    if lp.b_key.col_len() < expected_stored_b_width {
+        return Err(AkitaError::InvalidSetup(
+            "B-key column width is too small for verifier layout".to_string(),
+        ));
+    }
+    if opening_points_len != num_points {
+        return Err(AkitaError::InvalidProof);
+    }
+    if claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= num_points)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    if ring_multiplier_points.len() != opening_points_len
+        || ring_multiplier_points
+            .iter()
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    if eq_tau1.len() < rows {
+        return Err(AkitaError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+
+    let c_alphas: PreparedChallengeEvals<E> = match challenges {
+        Challenges::Sparse {
+            challenges: sparse, ..
+        } => PreparedChallengeEvals::Flat(
+            sparse
+                .iter()
+                .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
+                .collect::<Result<_, _>>()?,
+        ),
+        Challenges::Tensor { factored } => {
+            if D < 2 {
+                return Err(AkitaError::InvalidInput(
+                    "tensor challenge factored evaluation requires D >= 2".to_string(),
+                ));
+            }
+            factored.validate::<D>()?;
+            if factored.num_claims != num_claims {
+                return Err(AkitaError::InvalidSize {
+                    expected: num_claims,
+                    actual: factored.num_claims,
+                });
+            }
+            let blocks_per_claim = factored.blocks_per_claim()?;
+            if blocks_per_claim != lp.num_blocks {
+                return Err(AkitaError::InvalidSize {
+                    expected: lp.num_blocks,
+                    actual: blocks_per_claim,
+                });
+            }
+            PreparedChallengeEvals::Tensor {
+                challenges: factored.clone(),
+                alpha_pows: alpha_pows.clone(),
+            }
+        }
+    };
+
+    let claim_to_commitment_group_poly: Vec<(usize, usize)> = claim_to_commitment_group
+        .iter()
+        .zip(claim_poly_in_commitment_group.iter())
+        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
+        .collect();
+
+    Ok(RingSwitchDeferredRowEval {
+        c_alphas,
+        eq_tau1,
+        num_t_vectors,
+        num_blocks,
+        num_claims,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        #[cfg(feature = "zk")]
+        d_blinding_segment_len,
+        #[cfg(feature = "zk")]
+        b_blinding_digit_planes_per_point,
+        #[cfg(feature = "zk")]
+        b_blinding_segment_len,
+        block_len,
+        inner_width,
+        log_basis,
+        n_a: lp.a_key.row_len(),
+        n_d,
+        m_row_layout,
+        n_b,
+        tier_split: lp.tier_split,
+        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
+        num_points,
+        rows,
+        claim_to_commitment_group_poly,
+        num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
+        num_public_rows,
+        gamma: gamma.to_vec(),
+        claim_to_point: claim_to_point.to_vec(),
+        witness_segment_layout,
+    })
 }
