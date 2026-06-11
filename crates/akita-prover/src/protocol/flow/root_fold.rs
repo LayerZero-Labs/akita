@@ -1295,7 +1295,7 @@ where
             opening: w_eval,
             carried_openings: {
                 let claim = {
-                    let mut claim = RecursiveCarriedOpening::recursive_witness(
+                    let claim = RecursiveCarriedOpening::recursive_witness(
                         sumcheck_challenges,
                         w_eval,
                         next_w_len,
