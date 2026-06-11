@@ -12,6 +12,16 @@ use akita_types::{
     SetupContributionMode, SetupMatrixEnvelope,
 };
 
+/// `num_vars` for the carried-batch exit test. nv=15 is too small after the
+/// committed-fold A-role SIS pricing on main; nv=30 is the first planner hit.
+const CARRIED_SUFFIX_TEST_NUM_VARS: usize = 30;
+
+fn carried_suffix_test_num_vars() -> usize {
+    carried_suffix_schedule(CARRIED_SUFFIX_TEST_NUM_VARS)
+        .expect("carried suffix schedule for test num_vars");
+    CARRIED_SUFFIX_TEST_NUM_VARS
+}
+
 /// Build a `[root fold, carried fold, direct]` schedule whose single recursive
 /// fold consumes a two-claim carried batch (recursive witness + one extra
 /// source). The production planner never emits this shape on its own, so the
@@ -260,7 +270,7 @@ fn prove_witness_plus_dummy_carried_batch(
 #[test]
 fn recursive_suffix_verifies_witness_plus_dummy_carried_batch() {
     let (proof, schedule, verifier_setup, commitment, opening_point, opening) =
-        prove_witness_plus_dummy_carried_batch(15);
+        prove_witness_plus_dummy_carried_batch(carried_suffix_test_num_vars());
 
     let root = proof
         .root
@@ -294,7 +304,7 @@ fn recursive_suffix_verifies_witness_plus_dummy_carried_batch() {
 #[test]
 fn recursive_suffix_rejects_inconsistent_dummy_carried_opening() {
     let (mut proof, schedule, verifier_setup, commitment, opening_point, opening) =
-        prove_witness_plus_dummy_carried_batch(15);
+        prove_witness_plus_dummy_carried_batch(carried_suffix_test_num_vars());
 
     // Tamper the carried claim's bound opening value: the verifier replays the
     // fold relation against the proof-visible value and must reject without

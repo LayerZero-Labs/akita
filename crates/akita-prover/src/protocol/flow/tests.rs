@@ -85,6 +85,8 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
         vec![F::from_u64(3), F::from_u64(5)],
         F::one(),
         4,
+        #[cfg(feature = "zk")]
+        F::one(),
     );
     let ok_state = RecursiveProverState {
         w: witness.clone(),
@@ -157,6 +159,8 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
             vec![F::from_u64(1), F::from_u64(2)],
             F::from_u64(4),
             4,
+            #[cfg(feature = "zk")]
+            F::from_u64(4),
         )],
         extra_carried_sources: Vec::new(),
     };

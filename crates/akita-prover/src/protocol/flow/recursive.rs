@@ -504,18 +504,13 @@ where
         };
 
         let next_w_len = logical_w.as_ref().unwrap_or(&committed_witness).len();
-        let next_carried = {
-            let claim = RecursiveCarriedOpening::recursive_witness(
-                sumcheck_challenges.clone(),
-                w_eval,
-                next_w_len,
-            );
+        let next_carried = RecursiveCarriedOpening::recursive_witness(
+            sumcheck_challenges.clone(),
+            w_eval,
+            next_w_len,
             #[cfg(feature = "zk")]
-            {
-                claim.proof_opening = proof_w_eval;
-            }
-            claim
-        };
+            proof_w_eval,
+        );
         let mut out = ProveLevelOutput {
             level_proof,
             next_state: RecursiveProverState {

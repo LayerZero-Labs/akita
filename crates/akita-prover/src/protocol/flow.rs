@@ -35,9 +35,9 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -63,9 +63,8 @@ use akita_types::{
     CarriedOpeningSourceProof, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
     CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
     IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding,
-    RootLevelRawOutput, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, Step, TerminalLevelProof,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, RootLevelRawOutput, Schedule,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -126,13 +125,18 @@ pub struct RecursiveCarriedOpening<L: FieldCore> {
 
 impl<L: FieldCore> RecursiveCarriedOpening<L> {
     /// Build the ordinary size-one carried witness claim (claim 0).
-    pub fn recursive_witness(opening_point: Vec<L>, opening: L, w_len: usize) -> Self {
+    pub fn recursive_witness(
+        opening_point: Vec<L>,
+        opening: L,
+        w_len: usize,
+        #[cfg(feature = "zk")] proof_opening: L,
+    ) -> Self {
         Self {
             source_idx: 0,
             opening_point,
             opening,
             #[cfg(feature = "zk")]
-            proof_opening: opening,
+            proof_opening,
             basis: BasisMode::Lagrange,
             natural_len: w_len,
             padded_len: w_len.next_power_of_two(),

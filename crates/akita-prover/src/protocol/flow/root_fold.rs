@@ -1293,21 +1293,13 @@ where
             log_basis: next_level_params.log_basis,
             sumcheck_challenges: sumcheck_challenges.clone(),
             opening: w_eval,
-            carried_openings: {
-                let claim = {
-                    let claim = RecursiveCarriedOpening::recursive_witness(
-                        sumcheck_challenges,
-                        w_eval,
-                        next_w_len,
-                    );
-                    #[cfg(feature = "zk")]
-                    {
-                        claim.proof_opening = proof_w_eval;
-                    }
-                    claim
-                };
-                vec![claim]
-            },
+            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
+                sumcheck_challenges,
+                w_eval,
+                next_w_len,
+                #[cfg(feature = "zk")]
+                proof_w_eval,
+            )],
             extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
