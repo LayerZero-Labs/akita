@@ -53,7 +53,7 @@ pub fn prove_root_fold_with_params<'stack, F, E, C, T, P, B, Cfg, const D: usize
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore
         + CanonicalField

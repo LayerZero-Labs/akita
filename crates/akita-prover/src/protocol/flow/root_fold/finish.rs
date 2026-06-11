@@ -25,7 +25,7 @@ pub(super) fn finish_root_fold_with_prepared_openings<'stack, F, C, T, Q, B, Cfg
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -104,7 +104,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
+    let mut output = prove_root_fold_from_ring_relation::<F, C, T, B, Cfg, D>(
         expanded,
         prefix_slots,
         ring_switch.backend(),
@@ -126,8 +126,8 @@ where
         row_coefficients,
         setup_contribution_mode,
     )?;
-    raw.extension_opening_reduction = extension_opening_reduction;
-    Ok(raw)
+    output.raw.extension_opening_reduction = extension_opening_reduction;
+    Ok(output)
 }
 
 #[allow(clippy::too_many_arguments)]

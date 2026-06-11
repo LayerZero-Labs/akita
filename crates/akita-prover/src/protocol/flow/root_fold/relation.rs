@@ -34,7 +34,7 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
+) -> Result<RootLevelProverOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -73,14 +73,14 @@ where
 
     let rs = {
         let _span = tracing::info_span!("root_ring_switch_finalize").entered();
-        ring_switch_finalize_with_gamma::<F, C, T, D>(
+        transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &w_commitment_proof);
+        ring_switch_finalize::<F, C, T, D>(
             &instance,
-            expanded,
+            expanded.as_ref(),
             transcript,
             &logical_w,
-            &w_commitment_proof,
             lp,
-            &row_coefficients,
+            Some(&row_coefficients),
             MRowLayout::WithDBlock,
         )?
     };
@@ -237,23 +237,25 @@ where
         SetupContributionMode::Direct => None,
     };
 
-    Ok(RootLevelRawOutput {
+    Ok(RootLevelProverOutput {
         #[cfg(feature = "zk")]
         zk_hiding_commitment,
-        #[cfg(feature = "zk")]
-        y_rings: y_rings_masked,
-        #[cfg(not(feature = "zk"))]
-        y_rings,
-        extension_opening_reduction: None,
-        v: instance.v,
-        stage1: stage1_proof,
-        #[cfg(not(feature = "zk"))]
-        stage2_sumcheck_proof,
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof_masked,
-        stage3_sumcheck_proof,
-        w_commitment_proof,
-        w_eval: proof_w_eval,
+        raw: RootLevelRawOutput {
+            #[cfg(feature = "zk")]
+            y_rings: y_rings_masked,
+            #[cfg(not(feature = "zk"))]
+            y_rings,
+            extension_opening_reduction: None,
+            v: instance.v,
+            stage1: stage1_proof,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck_proof,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_proof_masked,
+            stage3_sumcheck_proof,
+            w_commitment_proof,
+            w_eval: proof_w_eval,
+        },
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
@@ -326,15 +328,21 @@ where
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
 
-    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    let rs = ring_switch_finalize::<F, C, T, D>(
         &instance,
         expanded,
         transcript,
         &logical_w,
-        &final_witness,
-        terminal_layout,
         lp,
-        &row_coefficients,
+        Some(&row_coefficients),
+        MRowLayout::WithoutDBlock,
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no

@@ -75,10 +75,11 @@ pub(crate) mod test_helpers;
 mod tests;
 
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
-pub(crate) use column_sweep::{column_sweep_ajtai_multi_chunk, column_sweep_ajtai_single_chunk};
+pub(crate) use column_sweep::column_sweep_ajtai_onehot;
+pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]
-use inner_ajtai::{inner_ajtai_wide_multi_chunk, inner_ajtai_wide_single_chunk_tiled};
+use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
 pub use ops::{
     OneHotCommitView, OneHotOpeningBatchView, OneHotOpeningView, OneHotTensorBatchView,
     OneHotTensorView,
