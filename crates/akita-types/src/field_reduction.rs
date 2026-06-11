@@ -606,12 +606,14 @@ where
     F: FieldCore + FromPrimitiveInt,
 {
     if K == 1 {
-        // trace_h for K = 1 is always a constant ring element with
-        // coefficient[0] = D * trace_input.coefficients()[0]; comparing it
-        // against `(D / 1) * embed_subfield(&[opening])` reduces to a single
-        // scalar equality.
-        let d_field = F::from_u64(D as u64);
-        return d_field * trace_input.coefficients()[0] == d_field * opening_coords[0];
+        // trace_h for K = 1 is a constant ring element with
+        // coefficient[0] = D * trace_input.coefficients()[0], compared against
+        // `(D / 1) * embed_subfield(&[opening]) = D * opening_coords[0]`. The
+        // common factor `D` cancels, so we compare the scalars directly. This
+        // also avoids a latent footgun: multiplying both sides by `D` would
+        // collapse to `0 == 0` (accepting any opening) for any modulus dividing
+        // `D` — not the case for the production primes, but free to rule out.
+        return trace_input.coefficients()[0] == opening_coords[0];
     }
 
     let lhs = trace_h(params, trace_input);
