@@ -1,79 +1,70 @@
-use super::accumulate::{
-    multi_chunk_onehot_accumulate, multi_chunk_onehot_accumulate_tensor,
-    single_chunk_onehot_accumulate, single_chunk_onehot_accumulate_tensor,
-};
+use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor};
 use super::*;
 
-impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
-    pub(super) fn decompose_fold_single_chunk_onehot(
-        &self,
-        single_chunk_blocks: &FlatBlocks<SingleChunkEntry>,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
-    where
-        F: CanonicalField,
-    {
-        let num_blocks = challenges.len().min(single_chunk_blocks.num_blocks());
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
-            .map(|i| single_chunk_blocks.block(i))
-            .collect();
-
-        let coeff_accum_digit0: Vec<[i32; D]> = {
-            let _span = tracing::info_span!("onehot_single_chunk_accumulate").entered();
-            single_chunk_onehot_accumulate::<D>(&block_views, challenges, num_blocks, block_len)
-        };
-
-        let coeff_accum = if num_digits == 1 {
-            coeff_accum_digit0
-        } else {
-            let _span = tracing::info_span!("onehot_single_chunk_expand").entered();
-            let mut expanded = Vec::with_capacity(block_len * num_digits);
-            for coeffs in coeff_accum_digit0 {
-                expanded.push(coeffs);
-                for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
-                }
-            }
-            expanded
-        };
-
-        let _span = tracing::info_span!("onehot_single_chunk_convert").entered();
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+fn expand_onehot_accum<const D: usize>(
+    compressed: Vec<[i32; D]>,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    if num_digits == 1 {
+        return compressed;
     }
 
-    pub(super) fn decompose_fold_multi_chunk_onehot(
+    let mut expanded = Vec::with_capacity(compressed.len().saturating_mul(num_digits));
+    for coeffs in compressed {
+        expanded.push(coeffs);
+        for _ in 1..num_digits {
+            expanded.push([0i32; D]);
+        }
+    }
+    expanded
+}
+
+fn finish_decompose_fold<F: CanonicalField, const D: usize>(
+    compressed_accum: Vec<[i32; D]>,
+    num_digits: usize,
+) -> DecomposeFoldWitness<F, D> {
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let coeff_accum = {
+        let _span = tracing::info_span!("onehot_expand_accum").entered();
+        expand_onehot_accum(compressed_accum, num_digits)
+    };
+    let _span = tracing::info_span!("onehot_convert").entered();
+    build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+}
+
+fn decompose_fold_from_views<E, F, const D: usize>(
+    block_views: &[&[E]],
+    challenges: &[SparseChallenge],
+    num_blocks: usize,
+    block_len: usize,
+    num_digits: usize,
+) -> DecomposeFoldWitness<F, D>
+where
+    E: OneHotEntry,
+    F: CanonicalField,
+{
+    let compressed_accum = {
+        let _span = tracing::info_span!("onehot_accumulate").entered();
+        onehot_accumulate::<E, D>(block_views, challenges, num_blocks, block_len)
+    };
+    finish_decompose_fold(compressed_accum, num_digits)
+}
+
+impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
+    pub(super) fn decompose_fold_onehot<E>(
         &self,
-        multi_chunk_blocks: &FlatBlocks<MultiChunkEntry>,
+        blocks: &FlatBlocks<E>,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
     ) -> DecomposeFoldWitness<F, D>
     where
+        E: OneHotEntry,
         F: CanonicalField,
     {
-        let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(multi_chunk_blocks.num_blocks());
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
-            .map(|i| multi_chunk_blocks.block(i))
-            .collect();
-
-        let coeff_accum = {
-            let _span = tracing::info_span!("onehot_multi_chunk_accumulate").entered();
-            multi_chunk_onehot_accumulate::<D>(
-                &block_views,
-                challenges,
-                num_blocks,
-                inner_width,
-                num_digits,
-            )
-        };
-
-        let _span = tracing::info_span!("onehot_multi_chunk_convert").entered();
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+        let num_blocks = challenges.len().min(blocks.num_blocks());
+        let block_views: Vec<&[E]> = (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+        decompose_fold_from_views(&block_views, challenges, num_blocks, block_len, num_digits)
     }
 
     pub(super) fn decompose_fold_batched_single_chunk_onehot(
@@ -88,8 +79,6 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let total_blocks = challenges.len();
         let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
         for poly in polys {
-            // `blocks_for` was already called by the public batched entry
-            // point; this just reads the cached layout.
             let (_, cached) = poly.block_cache.get()?;
             let OneHotBlocks::SingleChunk(blocks) = cached else {
                 return None;
@@ -102,29 +91,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-
-        let coeff_accum_digit0 = {
-            let _span = tracing::info_span!("onehot_single_chunk_accumulate_batched").entered();
-            single_chunk_onehot_accumulate::<D>(&flat_blocks, challenges, active_blocks, block_len)
-        };
-
-        let coeff_accum = if num_digits == 1 {
-            coeff_accum_digit0
-        } else {
-            let _span = tracing::info_span!("onehot_single_chunk_expand_batched").entered();
-            let mut expanded = Vec::with_capacity(block_len * num_digits);
-            for coeffs in coeff_accum_digit0 {
-                expanded.push(coeffs);
-                for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
-                }
-            }
-            expanded
-        };
-
-        let _span = tracing::info_span!("onehot_single_chunk_convert_batched").entered();
-        Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+        Some(decompose_fold_from_views(
+            &flat_blocks,
+            challenges,
+            active_blocks,
+            block_len,
+            num_digits,
+        ))
     }
 
     pub(super) fn decompose_fold_batched_multi_chunk_onehot(
@@ -151,22 +124,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        let inner_width = block_len * num_digits;
-
-        let coeff_accum = {
-            let _span = tracing::info_span!("onehot_multi_chunk_accumulate_batched").entered();
-            multi_chunk_onehot_accumulate::<D>(
-                &flat_blocks,
-                challenges,
-                active_blocks,
-                inner_width,
-                num_digits,
-            )
-        };
-
-        let _span = tracing::info_span!("onehot_multi_chunk_convert_batched").entered();
-        Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+        Some(decompose_fold_from_views(
+            &flat_blocks,
+            challenges,
+            active_blocks,
+            block_len,
+            num_digits,
+        ))
     }
 
     /// Tensor-shaped batched decompose-fold for one-hot polynomials.
@@ -217,29 +181,16 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                     });
                 }
                 let coeff_accum_i64 = {
-                    let _span =
-                        tracing::info_span!("onehot_single_chunk_accumulate_tensor").entered();
-                    single_chunk_onehot_accumulate_tensor::<D>(
+                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
+                    onehot_accumulate_tensor::<SingleChunkEntry, D>(
                         &flat_blocks,
                         tensor,
                         expected_blocks,
                         block_len,
                     )?
                 };
-                let coeff_accum_digit0 = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = if num_digits == 1 {
-                    coeff_accum_digit0
-                } else {
-                    let _span = tracing::info_span!("onehot_single_chunk_expand_tensor").entered();
-                    let mut expanded = Vec::with_capacity(block_len * num_digits);
-                    for coeffs in coeff_accum_digit0 {
-                        expanded.push(coeffs);
-                        for _ in 1..num_digits {
-                            expanded.push([0i32; D]);
-                        }
-                    }
-                    expanded
-                };
+                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
             OneHotBlocks::MultiChunk(_) => {
@@ -259,19 +210,17 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                         actual: flat_blocks.len(),
                     });
                 }
-                let inner_width = block_len * num_digits;
                 let coeff_accum_i64 = {
-                    let _span =
-                        tracing::info_span!("onehot_multi_chunk_accumulate_tensor").entered();
-                    multi_chunk_onehot_accumulate_tensor::<D>(
+                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
+                    onehot_accumulate_tensor::<MultiChunkEntry, D>(
                         &flat_blocks,
                         tensor,
                         expected_blocks,
-                        inner_width,
-                        num_digits,
+                        block_len,
                     )?
                 };
-                let coeff_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
         };
