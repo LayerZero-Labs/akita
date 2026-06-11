@@ -678,7 +678,7 @@ The same pattern applies to every `_with_policy` entry point. The full inventory
 |------------------|---------|-------|
 | `prove_batched_with_policy` (`akita-prover`) | `prove_batched::<F, Cfg, T, P, D>` | top-level prove API |
 | `prove_folded_batched_with_policy` (`akita-prover`) | `prove_folded_batched::<F, Cfg, T, P, D>` | called from `prove_batched` |
-| `prove_recursive_suffix_with_policy` (`akita-prover`) | `prove_recursive_suffix::<F, Cfg, T, D>` | recursive suffix driver |
+| `prove_suffix_with_policy` (`akita-prover`) | `prove_suffix::<F, Cfg, T, D>` | recursive suffix driver |
 | `prove_recursive_level_with_policy` (`akita-prover`) | `prove_recursive_level::<F, Cfg, T, D>` | per-intermediate-level |
 | `prove_terminal_recursive_level_with_policy` (`akita-prover`) | `prove_terminal_recursive_level::<F, Cfg, T, D>` | per-terminal-level |
 | `commit_with_policy` (`akita-prover`) | `commit::<F, Cfg, P, D>` | commitment API |
@@ -885,7 +885,7 @@ There is no backward-compatibility goal, so the recommended order optimizes for 
 
 Risks to resolve early:
 
-- **Result-returning verifier hooks ripple into `scheduled_next_level_params` callbacks.** Today's signature is `FnOnce(...) -> LevelParams`; we make it `FnOnce(...) -> Result<LevelParams, AkitaError>`. Any caller passing `Cfg::level_params_with_log_basis` directly (today: scheme dispatch helpers, `prove_recursive_suffix`) updates to propagate the error. This is straightforward but touches several files; do it in step 4 alongside the trait rename so the diff stays coherent.
+- **Result-returning verifier hooks ripple into `scheduled_next_level_params` callbacks.** Today's signature is `FnOnce(...) -> LevelParams`; we make it `FnOnce(...) -> Result<LevelParams, AkitaError>`. Any caller passing `Cfg::level_params_with_log_basis` directly (today: scheme dispatch helpers, `prove_suffix`) updates to propagate the error. This is straightforward but touches several files; do it in step 4 alongside the trait rename so the diff stays coherent.
 - **`fn(...)` pointer rigidity in `PlanPolicy`/`SearchOptions`.** `WCfg<D, C>::level_params_with_log_basis` etc. should still coerce to `fn(...) -> Result<...>` because there are no captures (everything routes through `C::`). Confirm this compiles before relying on it; if it does not, switch the relevant field to `Box<dyn Fn(...) -> _ + Send + Sync + 'static>`. This decision can be made at step 2 when `SearchOptions` lands.
 - **Logging-transcript event stream.** Removing the closure layer subtly changes call-stack shape but must not change transcript bytes. Run the logging-transcript golden test (under `logging-transcript` feature) after step 6 and confirm zero diff.
 - **Generated table byte-identity.** Re-run `gen_schedule_tables` after step 3 (planner moves but data stays in place) and confirm no diff except header comments referencing crate names. Add the cosmetic-header exclusion to the diff tool used in CI.

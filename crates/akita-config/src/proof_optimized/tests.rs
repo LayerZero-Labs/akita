@@ -752,6 +752,7 @@ fn challenge_support_bits(cfg: &SparseChallengeConfig, d: usize) -> f64 {
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
+            ..
         } => {
             let support = count_mag1 + count_mag2;
             log2_binomial(d, support) + log2_binomial(support, *count_mag1) + (support as f64)
@@ -776,6 +777,7 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
             SparseChallengeConfig::ExactShell {
                 count_mag1: 30,
                 count_mag2: 12,
+                operator_norm_threshold: 54,
             },
             (54, 2),
         ),
