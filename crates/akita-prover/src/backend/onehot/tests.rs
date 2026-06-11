@@ -182,6 +182,21 @@ fn flat_blocks_block_panics_on_out_of_range_index() {
     let _ = blocks.block(1);
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn onehot_accumulate_skips_empty_tail_partitions() {
+    const D: usize = 4;
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    let accum = pool
+        .install(|| super::accumulate::onehot_accumulate::<SingleChunkEntry, D>(&[], &[], 0, 5));
+
+    assert_eq!(accum, vec![[0i32; D]; 5]);
+}
+
 #[test]
 fn onehot_poly_rejects_non_divisible_k_d() {
     // K=3 and D=4: neither divides the other. `OneHotPoly::new` must
