@@ -339,9 +339,9 @@ The tensor algebra around EOR (column/row partials, eta row-batching, head/tail 
 How the in-flight features map onto the plan (forward design, not implemented here):
 
 - y-ring trace internalization.
-  The trace term is one extra `Term` (`gamma^2 * W * TraceWeight`) appended to the stage-2 instance's `Expr`, with `TraceWeight` a `Source::Public`.
+  The trace contribution is a third `SubClaim` with body `W * TraceWeight` (one monomial over `Source::Opening(W)` and `Source::Public(TraceWeight)`), weighted by the Fiat-Shamir scalar allocated for the trace term in the central `BatchingScheme` via `SubClaim::weight` (not a hardcoded gamma power in the term body).
   No new instance, no new rounds.
-  The gate `trace=true` selects the extended `Expr`; the gamma-power index for the trace term comes from the central `BatchingScheme`, not a hardcoded `gamma^2`.
+  The gate `trace=true` selects the extended summand (the virtual, relation, and trace sub-claims at intermediate levels).
 
 - L2 certificate sumchecks.
   An `l2_certificate` gate selects whether a level emits the folded-witness L2 certificate of `specs/l2-msis-opnorm-folded-witness.md`.
@@ -443,7 +443,7 @@ Migration order after the pilot (separate PRs): stage-1 (eq-factored, range tree
 Stacking with other work:
 
 - This spec is intended as the base of the stack: it is the shared abstraction the y-ring, L2, and setup-offloading work target, and they become declarative additions on top.
-- The final order (this strictly first vs y-ring landing first and rebasing) is still open, but the protocol plan is designed so y-ring can land either before or after by adding the trace term as an `Expr` addend gated by `trace=true`.
+- The final order (this strictly first vs y-ring landing first and rebasing) is still open, but the protocol plan is designed so y-ring can land either before or after by adding the trace sub-claim gated by `trace=true`.
 
 Risks to resolve first:
 
