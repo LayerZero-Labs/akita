@@ -31,9 +31,9 @@ pub use ajtai_key::{
     COEFF_LINF_BUCKETS,
 };
 pub use decomposition_digits::{
-    compute_num_digits, compute_num_digits_full_field, decomp_depths,
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_fold, num_digits_for_bound, num_digits_open, num_digits_s_commit,
+    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
+    num_digits_s_commit,
 };
 pub use four_square::four_squares;
 pub use norm_bound::{

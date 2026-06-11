@@ -554,7 +554,7 @@ impl LevelParams {
             .checked_mul(num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let d = self.ring_dimension;
-        Ok(Self {
+        let rebuilt = Self {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
@@ -593,7 +593,8 @@ impl LevelParams {
             // tiered level passed through here keeps its split/`f_key`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
-        })
+        };
+        Ok(rebuilt)
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
