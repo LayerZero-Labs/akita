@@ -16,7 +16,7 @@ the `fp32` / `fp64` / `fp128` preset families built on it.
 
 - `crates/akita-config/src/lib.rs:54-120`.
 - `crates/akita-config/src/proof_optimized/`.
-- `specs/planner-config-consolidation.md` (caveat: largely superseded — verify against code).
+- [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 
 ## Schedule and LevelParams
 
@@ -39,7 +39,8 @@ reject malformed input, never panic). The verifier-reachable proof-size formula.
 
 **Sources to fold in**
 
+- [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, generated tables, and supported features.
 - `crates/akita-planner/src/` (`resolve.rs`, `find_schedule`, `generated/`).
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - Paper §3.10 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
-- `AGENTS.md` (Profiling: D32/D64/D128 optimum), `specs/planner-incidence-generalization.md` (active tail).
+- `AGENTS.md` (Profiling: D32/D64/D128 optimum).
