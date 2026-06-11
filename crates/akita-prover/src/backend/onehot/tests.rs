@@ -94,12 +94,12 @@ fn map_onehot_k_gt_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 1);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].coeffs(), &[3]);
+    assert_eq!(block0[0].coeff_idx(), 3);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 1);
     assert_eq!(block1[0].pos_in_block(), 2);
-    assert_eq!(block1[0].coeffs(), &[2]);
+    assert_eq!(block1[0].coeff_idx(), 2);
 }
 
 #[test]
@@ -122,16 +122,16 @@ fn map_onehot_k_eq_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 2);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].coeffs(), &[0]);
+    assert_eq!(block0[0].coeff_idx(), 0);
     assert_eq!(block0[1].pos_in_block(), 1);
-    assert_eq!(block0[1].coeffs(), &[2]);
+    assert_eq!(block0[1].coeff_idx(), 2);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 2);
     assert_eq!(block1[0].pos_in_block(), 0);
-    assert_eq!(block1[0].coeffs(), &[3]);
+    assert_eq!(block1[0].coeff_idx(), 3);
     assert_eq!(block1[1].pos_in_block(), 1);
-    assert_eq!(block1[1].coeffs(), &[1]);
+    assert_eq!(block1[1].coeff_idx(), 1);
 }
 
 #[test]
@@ -163,16 +163,16 @@ fn map_onehot_k_lt_d() {
     let block0 = blocks.block(0);
     assert_eq!(block0.len(), 2);
     assert_eq!(block0[0].pos_in_block(), 0);
-    assert_eq!(block0[0].coeffs(), &[0, 6]);
+    assert_eq!(block0[0].nonzero_coeffs(), &[0, 6]);
     assert_eq!(block0[1].pos_in_block(), 1);
-    assert_eq!(block0[1].coeffs(), &[3, 5]);
+    assert_eq!(block0[1].nonzero_coeffs(), &[3, 5]);
 
     let block1 = blocks.block(1);
     assert_eq!(block1.len(), 2);
     assert_eq!(block1[0].pos_in_block(), 0);
-    assert_eq!(block1[0].coeffs(), &[0, 4]);
+    assert_eq!(block1[0].nonzero_coeffs(), &[0, 4]);
     assert_eq!(block1[1].pos_in_block(), 1);
-    assert_eq!(block1[1].coeffs(), &[3, 7]);
+    assert_eq!(block1[1].nonzero_coeffs(), &[3, 7]);
 }
 
 #[test]
