@@ -18,7 +18,7 @@
 
 use akita_field::AkitaError;
 use akita_sumcheck::descriptor::{ClaimSlot, InstanceKind, SumcheckInstanceDescriptor};
-use akita_types::{sumcheck_rounds, LevelParams};
+use akita_types::LevelParams;
 
 use crate::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
 use crate::stage2::stage2_descriptor;
@@ -221,10 +221,11 @@ pub fn plan_level<const D: usize>(
 
 /// Stage-2 round count for a level, matching prover/verifier sumcheck drivers.
 ///
-/// Delegates to [`sumcheck_rounds`]: `col_bits` is `log2` of the next power of
-/// two of `next_w_len / D`, and `ring_bits` is `log2(D)`. Validates `D` against
-/// `params.ring_dimension` so the plan's round count cannot diverge from the
-/// const ring dimension the rest of the call uses.
+/// `col_bits` is `log2` of the next power of two of `next_w_len / D`, and
+/// `ring_bits` is `log2(D)`, same formula as [`sumcheck_rounds`] but with
+/// overflow-checked column padding so verifier-reachable planning cannot panic.
+/// Validates `D` against `params.ring_dimension` so the plan's round count
+/// cannot diverge from the const ring dimension the rest of the call uses.
 fn stage2_num_rounds<const D: usize>(
     params: &LevelParams,
     next_w_len: usize,
@@ -245,7 +246,15 @@ fn stage2_num_rounds<const D: usize>(
                 .to_string(),
         ));
     }
-    Ok(sumcheck_rounds(D, next_w_len))
+    let ring_bits = D.trailing_zeros() as usize;
+    let num_ring_elems = next_w_len / D;
+    let col_bits = num_ring_elems
+        .checked_next_power_of_two()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("stage-2 plan column count overflow".to_string())
+        })?
+        .trailing_zeros() as usize;
+    Ok(col_bits + ring_bits)
 }
 
 #[cfg(test)]
@@ -253,7 +262,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_sumcheck::descriptor::Source;
-    use akita_types::SisModulusFamily;
+    use akita_types::{sumcheck_rounds, SisModulusFamily};
 
     // Dispatched ring dimension for the sample level (matches `sample_params`).
     const D: usize = 64;
