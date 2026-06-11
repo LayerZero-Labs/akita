@@ -1162,7 +1162,7 @@ where
         (stage2_sumcheck_proof, sumcheck_challenges, w_eval)
     };
     #[cfg(feature = "zk")]
-    let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<C>()?;
+    let proof_w_eval = w_eval_masked;
     #[cfg(not(feature = "zk"))]
     let proof_w_eval = w_eval;
     let (committed_witness, logical_w) = match packed_witness {
