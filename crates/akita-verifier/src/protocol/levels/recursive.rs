@@ -1,7 +1,18 @@
-use super::*;
 #[cfg(not(feature = "zk"))]
-use akita_types::recover_ring_subfield_inner_product;
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
+use super::extension_opening_reduction::ExtensionOpeningReductionVerifier;
+use super::*;
+#[cfg(feature = "zk")]
+use akita_algebra::EqPolynomial;
+#[cfg(feature = "zk")]
+use akita_r1cs::{zk_ext_mask_lc, zk_ext_mask_lc_at, zk_row_masks_from_column_masks};
+#[cfg(feature = "zk")]
+use akita_types::tensor_equality_factor_eval_at_point;
+#[cfg(not(feature = "zk"))]
+use akita_types::{check_tensor_extension_opening_claim, recover_ring_subfield_inner_product};
+use akita_types::{
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, ClaimIncidenceSummary,
+    CommitmentRouting, RingRelationInstance,
+};
 
 /// Verify one intermediate recursive fold level.
 ///
