@@ -60,3 +60,11 @@ Structured review uses the detailed scoring rubric in [`specs/SPEC_REVIEW.md`](s
 Reviewers compute an ambiguity score from those dimensions. A spec can be approved when ambiguity is at most 20% and all hard gates in the review rubric pass.
 
 If the answers are unclear, keep the PR in `spec-review-request` and ask questions before implementation begins.
+
+## Offline SIS table regen
+
+Regenerating `generated_sis_table/` is a manual Sage workflow, not part of Rust CI.
+See [`scripts/sis_golden/README.md`](scripts/sis_golden/README.md) for submodule init,
+golden refresh (`refresh_golden.py`), replay check (`check.py`), per-family regen
+(`gen_sis_table.py --jobs`), and full table stitch
+(`stitch_generated_sis_table.py --jobs 6 --max-rank 20`).

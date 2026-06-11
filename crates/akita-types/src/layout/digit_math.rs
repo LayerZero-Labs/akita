@@ -9,7 +9,7 @@
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    committed_fold_collision_s, min_secure_rank, num_digits_fold, num_digits_for_bound,
+    committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
     FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
 };
 
@@ -44,7 +44,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
 /// `inner_width(r) = block_len(r) · δ_commit` (via [`min_secure_rank`]). The
 /// A collision is itself recomputed per `r` via
-/// [`crate::sis::committed_fold_collision_s`], because the committed-level
+/// [`crate::sis::committed_fold_collision_l2_sq`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
 /// every split against a single bucket would rank the larger-`r` splits wrong.
 ///
@@ -114,7 +114,7 @@ pub fn optimal_m_r_split(
         // The committed-level A collision is fold-priced, so it grows with `r`
         // (and `num_claims`); recompute its bucket per split rather than reusing
         // one fixed bucket.
-        let Some(a_collision) = committed_fold_collision_s(
+        let Some(a_collision) = committed_fold_collision_l2_sq(
             sis_family,
             d,
             fold_challenge,
