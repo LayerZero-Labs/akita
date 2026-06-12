@@ -304,7 +304,7 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (y_ring, e_folded) = poly.evaluate_and_fold_ring(
+        let (_, e_folded) = poly.evaluate_and_fold_ring(
             ring_multiplier_point
                 .b_rings()
                 .expect("nonconstant test point has ring b weights"),
@@ -319,7 +319,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
@@ -438,7 +437,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) =
+        let (_, e_folded) =
             poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
@@ -446,7 +445,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
@@ -600,7 +598,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) = poly.evaluate_and_fold(
+        let (_, e_folded) = poly.evaluate_and_fold(
             &ring_opening_point.b,
             &ring_opening_point.a,
             level_params.block_len,
@@ -611,7 +609,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(

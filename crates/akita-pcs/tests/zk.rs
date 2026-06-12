@@ -92,7 +92,7 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (y_ring, e_folded) = poly.evaluate_and_fold(
+    let (_, e_folded) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
@@ -103,7 +103,6 @@ fn plain_root_d_image<const D: usize>(
     for coord in point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
     }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
     let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         &CpuBackend,
@@ -1023,7 +1022,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let alpha_bits = D.trailing_zeros() as usize;
         let mut ring_opening_points = Vec::with_capacity(NUM_POINTS);
         let mut ring_multiplier_points = Vec::with_capacity(NUM_POINTS);
-        let mut y_rings = Vec::with_capacity(NUM_POINTS);
         let mut e_folded_by_poly = Vec::with_capacity(NUM_POINTS);
         for (point, polys) in opening_points_owned.iter().zip(polys_per_point.iter()) {
             let ring_opening_point = ring_opening_point_from_field(
@@ -1035,14 +1033,13 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             )
             .expect("ring point");
             let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-            let (y_ring, e_folded) = polys[0].evaluate_and_fold(
+            let (_, e_folded) = polys[0].evaluate_and_fold(
                 &ring_opening_point.b,
                 &ring_opening_point.a,
                 lp.block_len,
             );
             ring_opening_points.push(ring_opening_point);
             ring_multiplier_points.push(ring_multiplier_point);
-            y_rings.push(y_ring);
             e_folded_by_poly.push(e_folded);
         }
 
@@ -1054,9 +1051,6 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             for coord in point {
                 transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
             }
-        }
-        for y_ring in &y_rings {
-            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
         }
         let polys_flat: Vec<&DensePoly<F, D>> = polys_per_point
             .iter()
