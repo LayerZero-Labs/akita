@@ -1162,7 +1162,7 @@ where
         b,
         alpha,
     } = rs;
-    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits)?;
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     cfg_if! {
         if #[cfg(feature = "zk")] {
             let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =

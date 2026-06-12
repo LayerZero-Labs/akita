@@ -924,64 +924,58 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
     }
 }
 
-/// Validate the root/recursive-step topology of a batched proof without
-/// requiring field-element validity checks.
-///
-/// # Errors
-///
-/// Returns an error if the root variant and recursive suffix variants do not
-/// form one of the supported proof topologies.
-pub fn check_batched_proof_step_shape<F, L>(
-    proof: &AkitaBatchedProof<F, L>,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    L: FieldCore,
-{
-    match &proof.root {
-        AkitaBatchedRootProof::Fold(_) => {
-            let Some((last, rest)) = proof.steps.split_last() else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if !matches!(last, AkitaProofStep::Terminal(_))
-                || rest
-                    .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => {
-            if !proof.steps.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-    }
-    Ok(())
-}
-
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         #[cfg(feature = "zk")]
         self.zk_hiding.check()?;
-        check_batched_proof_step_shape(self)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         self.root.check()?;
         for step in &self.steps {
             step.check()?;
         }
-        if let AkitaBatchedRootProof::Fold(_) = &self.root {
-            // Headerless validity cannot infer the ring dimension from `y_ring`:
-            // multipoint levels store one D-sized ring per public row.
-            // Schedule-shaped deserialization and verifier replay own the
-            // cross-level dimension checks.
-        }
-        #[cfg(feature = "zk")]
-        if matches!(self.root, AkitaBatchedRootProof::ZeroFold { .. }) && !self.zk_hiding.is_empty()
-        {
-            return Err(SerializationError::InvalidData(
-                "root-direct ZK hiding payload must be empty".to_string(),
-            ));
+        match &self.root {
+            AkitaBatchedRootProof::Fold(_) => {
+                let Some(AkitaProofStep::Terminal(_)) = self.steps.last() else {
+                    return Err(SerializationError::InvalidData(
+                        "fold-rooted batched Akita proof must terminate with a terminal step"
+                            .to_string(),
+                    ));
+                };
+                if self.steps[..self.steps.len().saturating_sub(1)]
+                    .iter()
+                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
+                {
+                    return Err(SerializationError::InvalidData(
+                        "fold-rooted batched Akita proof may only contain intermediate steps before the terminal step"
+                            .to_string(),
+                    ));
+                }
+                // Headerless validity cannot infer the ring dimension from
+                // `y_ring`: multipoint levels store one D-sized ring per
+                // public row. Schedule-shaped deserialization and verifier
+                // replay own the cross-level dimension checks.
+            }
+            AkitaBatchedRootProof::Terminal(_) => {
+                if !self.steps.is_empty() {
+                    return Err(SerializationError::InvalidData(
+                        "terminal-rooted batched proof must not carry recursive-suffix steps"
+                            .to_string(),
+                    ));
+                }
+            }
+            AkitaBatchedRootProof::ZeroFold { .. } => {
+                #[cfg(feature = "zk")]
+                if !self.zk_hiding.is_empty() {
+                    return Err(SerializationError::InvalidData(
+                        "root-direct ZK hiding payload must be empty".to_string(),
+                    ));
+                }
+                if !self.steps.is_empty() {
+                    return Err(SerializationError::InvalidData(
+                        "root-direct batched proof must not carry recursive-suffix steps"
+                            .to_string(),
+                    ));
+                }
+            }
         }
         Ok(())
     }

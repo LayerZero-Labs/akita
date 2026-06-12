@@ -79,7 +79,7 @@ fn stage1_round0_matches_dense_reference() {
     let tau0: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 2))
         .collect();
-    let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
+    let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
     for b in [4usize, 8, 16, 32] {
         let half = (b / 2) as i8;
@@ -149,8 +149,7 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             let tau0: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 19))
                 .collect();
-            let tau0 =
-                reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
+            let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
             let mut prefix_prover =
                 AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
                     .unwrap();
@@ -228,7 +227,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 53))
             .collect();
-        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
+        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
         let mut prover =
             AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits).unwrap();
@@ -280,7 +279,7 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 101))
             .collect();
-        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
+        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
         let mut prover =
             AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits).unwrap();
@@ -350,7 +349,7 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 131))
             .collect();
-        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
+        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
         let mut prover =
             AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits).unwrap();

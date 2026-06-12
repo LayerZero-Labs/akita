@@ -111,6 +111,23 @@ where
     Ok(parts)
 }
 
+fn reorder_stage1_coords_checked<E: FieldCore>(
+    coords: &[E],
+    col_bits: usize,
+    ring_bits: usize,
+) -> Result<Vec<E>, AkitaError> {
+    let expected = col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 coordinate width overflow".to_string()))?;
+    if coords.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: coords.len(),
+        });
+    }
+    Ok(reorder_stage1_coords(coords, col_bits, ring_bits))
+}
+
 enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
     Intermediate {
         y_rings_flat: &'a FlatRingVec<F>,
@@ -701,7 +718,7 @@ where
         _ => return Err(AkitaError::InvalidProof),
     };
     if let Some((proof, tau0)) = stage1 {
-        let tau0_reordered = reorder_stage1_coords(tau0, rs.col_bits, rs.ring_bits)?;
+        let tau0_reordered = reorder_stage1_coords_checked(tau0, rs.col_bits, rs.ring_bits)?;
         let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
         #[cfg(not(feature = "zk"))]
         let stage1_point = {

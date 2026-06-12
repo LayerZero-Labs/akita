@@ -25,11 +25,11 @@ use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_sumcheck::ZkEqFactoredSumcheckInstanceProverExt;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_transcript::labels;
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, AkitaStage1StageProof,
+    combine_polys, eval_poly, linear_combination, stage1_interstage_batch_weights,
+    stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, AkitaStage1StageProof,
 };
 
 #[cfg(feature = "zk")]
@@ -516,6 +516,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         E: ExtField<F>,
         T: Transcript<F>,
     {
+        fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            T: Transcript<F>,
+        {
+            for claim in claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
+        }
         let Self {
             witness,
             tau0,
@@ -654,7 +668,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                 child_claims: child_claims.clone(),
             });
 
-            absorb_interstage_claims::<F, E, T>(&child_claims, transcript);
+            absorb_child_claims::<F, E, T>(&child_claims, transcript);
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,

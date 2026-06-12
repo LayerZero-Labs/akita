@@ -20,13 +20,13 @@ use akita_sumcheck::EqFactoredUniPoly;
 #[cfg(feature = "zk")]
 use akita_sumcheck::{ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::eval_poly;
 use akita_types::{
-    absorb_interstage_claims, combine_polys, linear_combination, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
+    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
+    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
 };
 
 #[cfg(feature = "zk")]
@@ -69,6 +69,17 @@ where
         &lp.fold_challenge_shape,
         stage1_fold_challenge_labels(),
     )
+}
+
+fn absorb_stage1_interstage_claims<F, E, T>(claims: &[E], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for claim in claims {
+        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
+    }
 }
 
 #[cfg(feature = "zk")]
@@ -472,7 +483,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 )?;
             }
 
-            absorb_interstage_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            absorb_stage1_interstage_claims::<F, E, T>(&stage_proof.child_claims, transcript);
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,

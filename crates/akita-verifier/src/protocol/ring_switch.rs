@@ -20,10 +20,11 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FlatRingVec, LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlan,
-    SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
+    RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
+    RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    TerminalWitnessTranscriptParts,
 };
 
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
@@ -729,14 +730,11 @@ where
             num_blocks,
         },
         Challenges::Tensor { factored } => {
-            if D < 2 {
-                return Err(AkitaError::InvalidInput(
-                    "tensor challenge factored evaluation requires D >= 2".to_string(),
-                ));
-            }
-            let aggregate = factored
-                .clone()
-                .prepare_factored_aggregate_at_pows::<F, E, D>(alpha_pows.clone())?;
+            let prepared =
+                PreparedChallengeEvals::prepare_tensor::<F, D>(factored.clone(), alpha_pows)?;
+            let PreparedChallengeEvals::Tensor { aggregate } = &prepared else {
+                return Err(AkitaError::InvalidProof);
+            };
             if aggregate.num_claims() != num_claims {
                 return Err(AkitaError::InvalidSize {
                     expected: num_claims,
@@ -750,7 +748,7 @@ where
                     actual: blocks_per_claim,
                 });
             }
-            PreparedChallengeEvals::Tensor { aggregate }
+            prepared
         }
     };
 
@@ -818,6 +816,27 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
     pub relation: &'a RingRelationInstance<F, D>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
+}
+
+fn check_relation_level_shape<F: FieldCore + CanonicalField, const D: usize>(
+    relation: &RingRelationInstance<F, D>,
+    lp: &LevelParams,
+) -> Result<(), AkitaError> {
+    validate_opening_points_for_claims(
+        relation.opening_points(),
+        relation.claim_to_point(),
+        lp,
+        relation.incidence().num_claims(),
+    )?;
+    if relation.ring_multiplier_points().len() != relation.opening_points().len()
+        || relation
+            .ring_multiplier_points()
+            .iter()
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    relation.check_v_shape_for_level(lp)
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
@@ -943,7 +962,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let claim_to_point = relation.claim_to_point();
-    relation.check_level_shape(lp)?;
+    check_relation_level_shape(relation, lp)?;
     let witness_segment_layout = relation.segment_layout(lp)?;
     let routing = relation.commitment_routing();
     prepare_ring_switch_row_eval_inner::<F, E, D>(

@@ -212,10 +212,22 @@ where
             claims,
         )?
     };
-    let schedule = effective_batched_schedule::<Cfg, D>(
-        &prepared_claims.incidence_summary,
-        &prepared_claims.opening_points,
-    )?;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
+    if let Some(root_step) = schedule_root_fold_step(&schedule) {
+        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            &prepared_claims.opening_points,
+            &root_step.params,
+            alpha_bits,
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            num_vars,
+        ) {
+            let commit_params =
+                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
+            schedule = root_direct_schedule(num_vars, commit_params)?;
+        }
+    }
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => Some(&root.params),
         Some(Step::Direct(root)) => root.params.as_ref(),
