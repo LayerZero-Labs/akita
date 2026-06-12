@@ -38,7 +38,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
     /// the ring-switch row evaluation; must be called before [`verify`](Self::verify).
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
         prepared: &RingSwitchDeferredRowEval<E>,
         x_challenges: &[E],

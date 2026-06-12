@@ -34,33 +34,18 @@ mod tensor_challenges;
 #[cfg(test)]
 mod tests;
 
-/// Verifier-side ring-switch output, carrying only the data needed to replay
-/// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
-    /// Prepared data for deferred ring-switch row MLE evaluation.
     pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
-    /// Evaluation table of alpha powers over the ring-coordinate dimension.
     pub alpha_evals_y: Vec<E>,
-    /// Number of upper variable bits.
     pub col_bits: usize,
-    /// Number of lower variable bits.
     pub ring_bits: usize,
-    /// Stage-1 challenge handoff for intermediate folds.
     pub stage1_tau0: Option<Vec<E>>,
-    /// Challenge tau1 for the stage-2 M-row combination.
     pub tau1: Vec<E>,
-    /// Basis size `b = 2^log_basis`.
     pub b: usize,
-    /// Ring-switch challenge alpha.
     pub alpha: E,
 }
 
-/// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
-///
-/// Stores only data that cannot be derived from context at evaluation time:
-/// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
-/// Everything else is passed by reference at evaluation time to avoid
-/// duplicating setup matrix views and gadget vectors.
+/// Precomputed verifier data for deferred ring-switch row MLE evaluation.
 #[derive(Clone)]
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
@@ -84,9 +69,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_d: usize,
     pub(crate) m_row_layout: MRowLayout,
     pub(crate) n_b: usize,
-    /// Tiered split factor `f` (`1` = single-tier).
     pub(crate) tier_split: usize,
-    /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
     pub(crate) n_f: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
@@ -873,18 +856,6 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
     pub lp: &'a LevelParams,
 }
 
-/// Replay the verifier half of ring switching.
-///
-/// This handles multiple opening points, arbitrary claim-to-point mapping, and
-/// point-local polynomial bundles. The recursive/single-point path is the
-/// `opening_points = [pt]`, `claim_to_point = [0]`,
-/// `num_polys_per_commitment_group = [1]`, `num_public_rows = 1` specialization.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or ring-switch row-eval
-/// preparation fails.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
@@ -898,22 +869,10 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
-    // the outer wrapper just performs the witness absorb before delegating.
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)
 }
 
-/// Terminal variant of [`ring_switch_verifier`].
-///
-/// This owns the required terminal final-witness remainder absorb before
-/// sampling ring-switch challenges.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or
-/// ring-switch row-eval preparation fails.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(

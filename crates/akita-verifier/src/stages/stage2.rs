@@ -162,7 +162,6 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     #[cfg(feature = "zk")]
     s_claim_mask: ZkR1csLinearCombination<E>,
     #[cfg(feature = "zk")]
-    #[allow(dead_code)]
     relation_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
