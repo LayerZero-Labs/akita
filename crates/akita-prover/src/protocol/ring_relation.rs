@@ -12,8 +12,8 @@ use crate::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_folding_challenges, stage1_fold_challenge_labels, Challenges,
-    IntegerChallenge, SparseChallenge,
+    sample_folding_challenges, stage1_fold_challenge_labels, Challenges, IntegerChallenge,
+    SparseChallenge,
 };
 use akita_field::parallel::*;
 use akita_field::AkitaError;
