@@ -45,7 +45,7 @@ pub(crate) fn commit_inner_flat_digit_count(
         })
 }
 
-pub(crate) fn validate_commit_inner_witness_shape<F, const D: usize>(
+pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     inner: &CommitInnerWitness<F, D>,
     num_blocks: usize,
     n_a: usize,
@@ -390,7 +390,7 @@ where
         .zip(cfg_iter_mut!(recomposed_inner_rows))
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
-                let inner = poly.commit_inner_witness(
+                let inner = poly.commit_inner(
                     backend,
                     prepared,
                     params.a_key.row_len(),
@@ -400,7 +400,7 @@ where
                     params.num_digits_open,
                     params.log_basis,
                 )?;
-                validate_commit_inner_witness_shape(
+                validate_commit_inner_shape(
                     &inner,
                     params.num_blocks,
                     params.a_key.row_len(),
@@ -794,35 +794,35 @@ mod tests {
     }
 
     #[test]
-    fn commit_inner_witness_shape_accepts_expected_layout() {
+    fn commit_inner_shape_accepts_expected_layout() {
         let inner = inner_witness(2, 3, vec![6, 6]);
-        validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).expect("shape should match");
+        validate_commit_inner_shape(&inner, 2, 3, 2, 4).expect("shape should match");
     }
 
     #[test]
-    fn commit_inner_witness_shape_rejects_bad_block_count() {
+    fn commit_inner_shape_rejects_bad_block_count() {
         let inner = inner_witness(1, 3, vec![6, 6]);
-        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
+        assert!(validate_commit_inner_shape(&inner, 2, 3, 2, 4).is_err());
     }
 
     #[test]
-    fn commit_inner_witness_shape_rejects_bad_digit_block_size() {
+    fn commit_inner_shape_rejects_bad_digit_block_size() {
         let inner = inner_witness(2, 3, vec![6, 5]);
-        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
+        assert!(validate_commit_inner_shape(&inner, 2, 3, 2, 4).is_err());
     }
 
     #[test]
-    fn commit_inner_witness_shape_rejects_recomposition_mismatch() {
+    fn commit_inner_shape_rejects_recomposition_mismatch() {
         let mut inner = inner_witness(1, 1, vec![2]);
         inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
-        assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+        assert!(validate_commit_inner_shape(&inner, 1, 1, 2, 4).is_err());
     }
 
     #[test]
-    fn commit_inner_witness_shape_rejects_log_basis_above_i8_range() {
+    fn commit_inner_shape_rejects_log_basis_above_i8_range() {
         let inner = inner_witness(1, 1, vec![2]);
         assert!(matches!(
-            validate_commit_inner_witness_shape(&inner, 1, 1, 2, 7),
+            validate_commit_inner_shape(&inner, 1, 1, 2, 7),
             Err(AkitaError::InvalidSetup(_))
         ));
     }

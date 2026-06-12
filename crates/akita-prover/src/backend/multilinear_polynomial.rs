@@ -31,7 +31,7 @@ pub enum MultilinearPolynomial<'a, F: FieldCore, const D: usize, I: OneHotIndex 
     /// One-hot multilinear polynomial.
     OneHot(&'a OneHotPoly<F, D, I>),
     /// Recursive witness view.
-    Recursive(SuffixWitness<'a, F, D>),
+    Witness(SuffixWitness<'a, F, D>),
 }
 
 impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a, F, D, I> {
@@ -47,7 +47,7 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a,
 
     /// Wrap a recursive witness view.
     pub fn recursive(poly: SuffixWitness<'a, F, D>) -> Self {
-        Self::Recursive(poly)
+        Self::Witness(poly)
     }
 }
 
@@ -84,7 +84,7 @@ where
         match self {
             Self::Dense(poly) => poly.num_ring_elems(),
             Self::OneHot(poly) => poly.num_ring_elems(),
-            Self::Recursive(poly) => poly.num_ring_elems(),
+            Self::Witness(poly) => poly.num_ring_elems(),
         }
     }
 
@@ -92,7 +92,7 @@ where
         match self {
             Self::Dense(poly) => poly.num_vars(),
             Self::OneHot(poly) => poly.num_vars(),
-            Self::Recursive(poly) => poly.num_vars(),
+            Self::Witness(poly) => poly.num_vars(),
         }
     }
 
@@ -100,7 +100,7 @@ where
         match self {
             Self::Dense(poly) => poly.onehot_chunk_size(),
             Self::OneHot(poly) => poly.onehot_chunk_size(),
-            Self::Recursive(poly) => poly.onehot_chunk_size(),
+            Self::Witness(poly) => poly.onehot_chunk_size(),
         }
     }
 
@@ -108,7 +108,7 @@ where
         match self {
             Self::Dense(poly) => poly.fold_blocks(scalars, block_len),
             Self::OneHot(poly) => poly.fold_blocks(scalars, block_len),
-            Self::Recursive(poly) => poly.fold_blocks(scalars, block_len),
+            Self::Witness(poly) => poly.fold_blocks(scalars, block_len),
         }
     }
 
@@ -120,7 +120,7 @@ where
         match self {
             Self::Dense(poly) => poly.fold_blocks_ring(scalars, block_len),
             Self::OneHot(poly) => poly.fold_blocks_ring(scalars, block_len),
-            Self::Recursive(poly) => poly.fold_blocks_ring(scalars, block_len),
+            Self::Witness(poly) => poly.fold_blocks_ring(scalars, block_len),
         }
     }
 
@@ -137,7 +137,7 @@ where
             Self::OneHot(poly) => {
                 poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
             }
-            Self::Recursive(poly) => {
+            Self::Witness(poly) => {
                 poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
             }
         }
@@ -156,7 +156,7 @@ where
             Self::OneHot(poly) => {
                 poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
             }
-            Self::Recursive(poly) => {
+            Self::Witness(poly) => {
                 poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
             }
         }
@@ -172,7 +172,7 @@ where
         match self {
             Self::Dense(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
             Self::OneHot(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
-            Self::Recursive(poly) => {
+            Self::Witness(poly) => {
                 poly.decompose_fold(challenges, block_len, num_digits, log_basis)
             }
         }
@@ -193,7 +193,7 @@ where
                     match **poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return None,
-                        Self::Recursive(_) => return None,
+                        Self::Witness(_) => return None,
                     }
                 }
                 <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
@@ -210,7 +210,7 @@ where
                     match **poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return None,
-                        Self::Recursive(_) => return None,
+                        Self::Witness(_) => return None,
                     }
                 }
                 <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_batched(
@@ -221,7 +221,7 @@ where
                     log_basis,
                 )
             }
-            Self::Recursive(_) => None,
+            Self::Witness(_) => None,
         }
     }
 
@@ -242,7 +242,7 @@ where
                     match **poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return Ok(None),
-                        Self::Recursive(_) => return Ok(None),
+                        Self::Witness(_) => return Ok(None),
                     }
                 }
                 <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
@@ -259,7 +259,7 @@ where
                     match **poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return Ok(None),
-                        Self::Recursive(_) => return Ok(None),
+                        Self::Witness(_) => return Ok(None),
                     }
                 }
                 <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
@@ -270,11 +270,11 @@ where
                     log_basis,
                 )
             }
-            Self::Recursive(_) => Ok(None),
+            Self::Witness(_) => Ok(None),
         }
     }
 
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -290,7 +290,7 @@ where
         B: CommitmentComputeBackend<F>,
     {
         match self {
-            Self::Dense(poly) => poly.commit_inner_witness(
+            Self::Dense(poly) => poly.commit_inner(
                 backend,
                 prepared,
                 n_a,
@@ -300,7 +300,7 @@ where
                 num_digits_open,
                 log_basis,
             ),
-            Self::OneHot(poly) => poly.commit_inner_witness(
+            Self::OneHot(poly) => poly.commit_inner(
                 backend,
                 prepared,
                 n_a,
@@ -310,7 +310,7 @@ where
                 num_digits_open,
                 log_basis,
             ),
-            Self::Recursive(poly) => poly.commit_inner_witness(
+            Self::Witness(poly) => poly.commit_inner(
                 backend,
                 prepared,
                 n_a,
@@ -327,7 +327,7 @@ where
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),
-            Self::Recursive(poly) => poly.direct_root_witness(),
+            Self::Witness(poly) => poly.direct_root_witness(),
         }
     }
 }

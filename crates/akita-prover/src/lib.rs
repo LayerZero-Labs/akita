@@ -463,7 +463,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ///
     /// Returns an error if the cached matrix-vector multiply or digit
     /// decomposition fails.
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -648,7 +648,7 @@ where
         P::decompose_fold_tensor_batched(&inner_refs, tensor, block_len, num_digits, log_basis)
     }
 
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -663,7 +663,7 @@ where
         F: CanonicalField,
         B: CommitmentComputeBackend<F>,
     {
-        <P as AkitaPolyOps<F, D>>::commit_inner_witness(
+        <P as AkitaPolyOps<F, D>>::commit_inner(
             *self,
             backend,
             prepared,

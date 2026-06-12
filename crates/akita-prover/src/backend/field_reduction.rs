@@ -154,7 +154,7 @@ where
         }
     }
 
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
@@ -170,7 +170,7 @@ where
         B: CommitmentComputeBackend<F>,
     {
         dispatch_root_projection!(self, poly => {
-            poly.commit_inner_witness(
+            poly.commit_inner(
                 backend,
                 prepared,
                 n_a,

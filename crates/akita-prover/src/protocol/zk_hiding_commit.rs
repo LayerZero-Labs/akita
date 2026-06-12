@@ -39,7 +39,7 @@ where
         root_params.num_digits_open,
         num_ring,
     )?;
-    let inner = poly.commit_inner_witness(
+    let inner = poly.commit_inner(
         backend,
         prepared,
         hiding_params.a_key.row_len(),

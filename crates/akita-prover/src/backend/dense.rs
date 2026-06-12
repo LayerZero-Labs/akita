@@ -450,7 +450,7 @@ where
         )
     }
 
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,

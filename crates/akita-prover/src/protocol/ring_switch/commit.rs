@@ -66,7 +66,7 @@ where
     );
 
     let w_view = w.view::<F, D>()?;
-    let inner = w_view.commit_inner_witness(
+    let inner = w_view.commit_inner(
         backend,
         prepared,
         commit_layout.a_key.row_len(),
@@ -76,7 +76,7 @@ where
         commit_layout.num_digits_open,
         commit_layout.log_basis,
     )?;
-    validate_commit_inner_witness_shape(
+    validate_commit_inner_shape(
         &inner,
         commit_layout.num_blocks,
         commit_layout.a_key.row_len(),

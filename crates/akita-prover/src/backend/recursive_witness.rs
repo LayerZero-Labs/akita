@@ -249,7 +249,7 @@ where
 
     #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
-    fn commit_inner_witness<B>(
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,

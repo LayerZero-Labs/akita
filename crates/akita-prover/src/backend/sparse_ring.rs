@@ -388,8 +388,8 @@ where
         )?))
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner_witness")]
-    fn commit_inner_witness<B>(
+    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,

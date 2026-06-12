@@ -473,8 +473,8 @@ where
         Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 
-    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
-    fn commit_inner_witness<B>(
+    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
+    fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
