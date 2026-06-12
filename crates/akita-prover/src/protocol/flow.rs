@@ -73,9 +73,9 @@ use std::array::from_fn;
 use std::sync::Arc;
 
 mod inputs;
-mod recursive;
 mod root_extension;
 mod root_fold;
+mod suffix;
 #[cfg(test)]
 mod tests;
 
@@ -83,15 +83,15 @@ pub use inputs::{
     batched_prove, build_terminal_root_batched_proof, prepare_batched_prove_inputs,
     prove_folded_batched, prove_root_direct,
 };
-pub use recursive::prove_suffix;
-#[cfg(test)]
-pub(in crate::protocol::flow) use recursive::{
-    prove_extension_opening_reduction, recursive_witness_base_evals,
-};
-pub(in crate::protocol::flow) use recursive::{prove_fold, PreparedRecursiveFold};
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_points;
 pub use root_fold::{prove_root_fold, prove_terminal_root_fold_with_params};
+pub use suffix::prove_suffix;
+#[cfg(test)]
+pub(in crate::protocol::flow) use suffix::{
+    prove_extension_opening_reduction, recursive_witness_base_evals,
+};
+pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedRecursiveFold};
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {

@@ -217,7 +217,7 @@ gadgets.
   the high eq-weights and scatter by head (per-chunk add instead of a dense
   `O(2^high)` build + per-chunk multiply), parallel over outer blocks.
 - Parallelize the recursive-EOR-prep serial loops
-  (`protocol/flow/recursive.rs`, `extension_opening_reduction/mod.rs`):
+  (`protocol/flow/suffix.rs`, `extension_opening_reduction/mod.rs`):
   column-partials fold, input-claim dot product, and witness-evals maps,
   threshold-gated.
 - `algebra/poly.rs` parallel `fold_evals_in_place`; raise

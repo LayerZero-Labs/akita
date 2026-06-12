@@ -69,9 +69,9 @@ use extension_opening_reduction::ExtensionOpeningReductionVerifier;
 #[cfg(feature = "zk")]
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
 
-mod suffix;
+mod recursive;
 
-pub(crate) use suffix::verify_fold_batched_proof;
+pub(crate) use recursive::verify_fold_batched_proof;
 
 fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     mode: SetupContributionMode,
