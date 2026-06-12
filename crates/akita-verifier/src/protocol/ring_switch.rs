@@ -731,19 +731,17 @@ where
             "A-key column width is too small for verifier layout".to_string(),
         ));
     }
-    let _expected_d_width = depth_open
-        .checked_mul(num_blocks)
-        .and_then(|width| width.checked_mul(num_claims))
-        .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
-    // TODO: re-enable (or gate on schedule shape) once root-direct
-    // commit params no longer carry zero-width D-key placeholders.
-    // The planner emits `d_key.col_len = 0` for root-direct schedules
-    // since the relation fold (which is what consumes D) doesn't run.
-    // if lp.d_key.col_len() < expected_d_width {
-    //     return Err(AkitaError::InvalidSetup(
-    //         "D-key column width is too small for verifier layout".to_string(),
-    //     ));
-    // }
+    if m_row_layout == MRowLayout::WithDBlock {
+        let expected_d_width = depth_open
+            .checked_mul(num_blocks)
+            .and_then(|width| width.checked_mul(num_claims))
+            .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
+        if lp.d_key.col_len() < expected_d_width {
+            return Err(AkitaError::InvalidSetup(
+                "D-key column width is too small for verifier layout".to_string(),
+            ));
+        }
+    }
     let max_point_poly_count = num_polys_per_commitment_group
         .iter()
         .copied()

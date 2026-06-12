@@ -94,16 +94,12 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
 }
 
-struct TerminalWitnessReplay {
-    parts: TerminalWitnessTranscriptParts,
-}
-
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
     final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     layout: TerminalWitnessSegmentLayout,
-) -> Result<TerminalWitnessReplay, AkitaError>
+) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -113,7 +109,7 @@ where
     }
     let parts = final_witness.terminal_transcript_parts(layout)?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
-    Ok(TerminalWitnessReplay { parts })
+    Ok(parts)
 }
 
 enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
@@ -687,38 +683,12 @@ pub(super) struct Stage1Replay<E: FieldCore> {
     pub(super) s_claim_mask: ZkR1csLinearCombination<E>,
 }
 
-pub(super) struct Stage1ReplayInput<'a, E: FieldCore> {
-    pub(super) stage1: Stage1ReplayProof<'a, E>,
-    pub(super) col_bits: usize,
-    pub(super) ring_bits: usize,
-    pub(super) b: usize,
-}
-
-pub(super) enum Stage1ReplayProof<'a, E: FieldCore> {
-    Intermediate {
-        proof: &'a AkitaStage1Proof<E>,
-        tau0: &'a [E],
-    },
-    Terminal,
-}
-
-impl<'a, E: FieldCore> Stage1ReplayProof<'a, E> {
-    pub(super) fn from_parts(
-        proof: Option<&'a AkitaStage1Proof<E>>,
-        handoff: &'a RingSwitchStage1<E>,
-    ) -> Result<Self, AkitaError> {
-        match (proof, handoff) {
-            (Some(proof), RingSwitchStage1::Intermediate { tau0 }) => {
-                Ok(Self::Intermediate { proof, tau0 })
-            }
-            (None, RingSwitchStage1::Terminal) => Ok(Self::Terminal),
-            _ => Err(AkitaError::InvalidProof),
-        }
-    }
-}
-
 pub(super) fn verify_stage1_or_terminal<F, E, T>(
-    input: Stage1ReplayInput<'_, E>,
+    proof: Option<&AkitaStage1Proof<E>>,
+    handoff: &RingSwitchStage1<E>,
+    col_bits: usize,
+    ring_bits: usize,
+    b: usize,
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
@@ -728,16 +698,15 @@ where
     E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let Stage1ReplayInput {
-        stage1,
-        col_bits,
-        ring_bits,
-        b,
-    } = input;
     let num_rounds = col_bits
         .checked_add(ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    if let Stage1ReplayProof::Intermediate { proof, tau0 } = stage1 {
+    let stage1 = match (proof, handoff) {
+        (Some(proof), RingSwitchStage1::Intermediate { tau0 }) => Some((proof, tau0.as_slice())),
+        (None, RingSwitchStage1::Terminal) => None,
+        _ => return Err(AkitaError::InvalidProof),
+    };
+    if let Some((proof, tau0)) = stage1 {
         let tau0_reordered = reorder_stage1_coords(tau0, col_bits, ring_bits)?;
         let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, b);
         #[cfg(not(feature = "zk"))]
@@ -860,7 +829,6 @@ where
     let num_claims = incidence_summary.num_claims();
     let num_points = incidence_summary.num_points();
     if num_points == 0
-        || num_points != incidence_summary.num_points()
         || claim_points.len() != incidence_summary.num_points()
         || y_rings.len() != incidence_summary.num_public_rows()
         || openings.len() != num_claims
@@ -1118,7 +1086,7 @@ where
                 &ring_switch_replay,
                 w_len,
                 transcript,
-                &replay.parts,
+                replay,
             )?
         }
     };
@@ -1137,12 +1105,11 @@ where
         RootLevelProofView::Terminal { .. } => None,
     };
     let stage1_replay = verify_stage1_or_terminal::<F, C, T>(
-        Stage1ReplayInput {
-            stage1: Stage1ReplayProof::from_parts(stage1_proof, &rs.stage1)?,
-            col_bits: rs.col_bits,
-            ring_bits: rs.ring_bits,
-            b: rs.b,
-        },
+        stage1_proof,
+        &rs.stage1,
+        rs.col_bits,
+        rs.ring_bits,
+        rs.b,
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
