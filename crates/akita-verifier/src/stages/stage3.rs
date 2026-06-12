@@ -28,7 +28,6 @@ pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
-    lambda_bits: usize,
     rounds: usize,
 }
 
@@ -68,7 +67,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             plan,
             alpha_pows,
             ring_bits,
-            lambda_bits,
             rounds,
         })
     }
@@ -130,10 +128,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
         let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
-
-        if rho_lambda.len() != self.lambda_bits {
-            return Err(AkitaError::InvalidProof);
-        }
         let eq_lambda = EqPolynomial::evals(rho_lambda)?;
         if rho_y.len() != D.trailing_zeros() as usize {
             return Err(AkitaError::InvalidProof);

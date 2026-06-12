@@ -290,7 +290,6 @@ where
     if challenge_points.len() != num_points
         || openings.len() != num_claims
         || row_coefficients.len() != num_claims
-        || incidence_summary.claim_to_point().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }

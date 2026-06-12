@@ -11,7 +11,6 @@ use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     AkitaExpandedSetup, CleartextWitnessProof, RingMultiplierOpeningPoint, RingSubfieldEncoding,
 };
-use std::marker::PhantomData;
 
 fn witness_eval_by_index<E, V>(
     witness_len: usize,
@@ -135,7 +134,6 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
-    _marker: PhantomData<([F; D], E)>,
 }
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
@@ -205,7 +203,6 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-            _marker: PhantomData,
         })
     }
 

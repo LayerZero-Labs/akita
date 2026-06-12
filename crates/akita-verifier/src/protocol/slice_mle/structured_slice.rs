@@ -139,46 +139,41 @@ where
 
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
 /// and evaluates it through the generic offset-equality tensor helper.
-pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
-    pub g1_commit: &'a [F],
-    pub fold_gadget: &'a [F],
-    pub consistency_weight: E,
-    pub a_evals_by_point: &'a [Vec<E>],
-    pub full_vec_randomness: &'a [E],
-    pub offset_z: usize,
-    pub block_len: usize,
-}
-
-impl<F, E> ZDenseSlicesEvaluator<'_, F, E>
+pub(crate) fn evaluate_z_dense_slices<F, E>(
+    g1_commit: &[F],
+    fold_gadget: &[F],
+    consistency_weight: E,
+    a_evals_by_point: &[Vec<E>],
+    full_vec_randomness: &[E],
+    offset_z: usize,
+    block_len: usize,
+) -> Result<E, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    /// Evaluate the dense materialized Z segment.
-    pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
-        let z_total_blocks = self.a_evals_by_point.len() * self.block_len;
-        let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
-        let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
-            .map(|x| {
-                let compound_dig = x / z_total_blocks;
-                let global_blk = x % z_total_blocks;
-                let dc_idx = compound_dig / self.fold_gadget.len();
-                let df = compound_dig % self.fold_gadget.len();
-                let point_idx = global_blk / self.block_len;
-                let blk = global_blk % self.block_len;
-                -self.consistency_weight
-                    * self.a_evals_by_point[point_idx][blk]
-                        .mul_base(self.g1_commit[dc_idx])
-                        .mul_base(self.fold_gadget[df])
-            })
-            .collect();
-        eval_offset_eq_tensor(
-            self.full_vec_randomness,
-            self.offset_z,
-            E::one(),
-            &[z_segment_struct.as_slice()],
-        )
-    }
+    let z_total_blocks = a_evals_by_point.len() * block_len;
+    let z_len = fold_gadget.len() * g1_commit.len() * z_total_blocks;
+    let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
+        .map(|x| {
+            let compound_dig = x / z_total_blocks;
+            let global_blk = x % z_total_blocks;
+            let dc_idx = compound_dig / fold_gadget.len();
+            let df = compound_dig % fold_gadget.len();
+            let point_idx = global_blk / block_len;
+            let blk = global_blk % block_len;
+            -consistency_weight
+                * a_evals_by_point[point_idx][blk]
+                    .mul_base(g1_commit[dc_idx])
+                    .mul_base(fold_gadget[df])
+        })
+        .collect();
+    eval_offset_eq_tensor(
+        full_vec_randomness,
+        offset_z,
+        E::one(),
+        &[z_segment_struct.as_slice()],
+    )
 }
 
 /// Compute the `r`-tail contribution. Power-of-two `levels` uses a
@@ -404,8 +399,7 @@ mod tests {
             .iter()
             .map(|&point_idx| p.eq_tau1[1 + point_idx])
             .collect();
-        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas
-        else {
+        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
             unreachable!("structured slice fixture uses flat challenges");
         };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
@@ -457,8 +451,7 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = p.witness_segment_layout.offset_t & (p.num_blocks - 1);
 
-        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas
-        else {
+        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
             unreachable!("structured slice fixture uses flat challenges");
         };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
@@ -554,16 +547,15 @@ mod tests {
             .iter()
             .map(|point| point.a[..p.block_len].to_vec())
             .collect();
-        let got = ZDenseSlicesEvaluator {
-            g1_commit: &fx.g1_commit,
-            fold_gadget: &fx.fold_gadget,
-            consistency_weight: p.eq_tau1[0],
-            a_evals_by_point: &a_evals_by_point,
-            full_vec_randomness: &fx.full_vec_randomness,
-            offset_z: p.witness_segment_layout.offset_z,
-            block_len: p.block_len,
-        }
-        .evaluate()
+        let got = evaluate_z_dense_slices(
+            &fx.g1_commit,
+            &fx.fold_gadget,
+            p.eq_tau1[0],
+            &a_evals_by_point,
+            &fx.full_vec_randomness,
+            p.witness_segment_layout.offset_z,
+            p.block_len,
+        )
         .unwrap();
 
         let mut expected = F::zero();

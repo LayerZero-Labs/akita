@@ -4,7 +4,7 @@
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
     compute_r_contribution, evaluate_e_structured_slices, evaluate_t_structured_slices,
-    evaluate_z_structured_pow2_slices, ZDenseSlicesEvaluator,
+    evaluate_z_dense_slices, evaluate_z_structured_pow2_slices,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
@@ -399,22 +399,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     .iter()
                     .map(|ring_multiplier_point| {
                         (0..self.block_len)
-                            .map(|idx| {
-                                ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows)
-                            })
+                            .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .collect::<Result<_, AkitaError>>()?;
-                ZDenseSlicesEvaluator {
-                    g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
-                    consistency_weight: self.eq_tau1[0],
-                    a_evals_by_point: &a_evals_by_point,
-                    full_vec_randomness: x_challenges,
-                    offset_z: layout.offset_z,
-                    block_len: self.block_len,
-                }
-                .evaluate()?
+                evaluate_z_dense_slices(
+                    &g1_commit,
+                    &fold_gadget,
+                    self.eq_tau1[0],
+                    &a_evals_by_point,
+                    x_challenges,
+                    layout.offset_z,
+                    self.block_len,
+                )?
             }
         };
 
@@ -423,13 +420,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let r_gadget =
                 gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
             let denom = alpha_pows[D - 1] * alpha + E::one();
-            compute_r_contribution(
-                self,
-                x_challenges,
-                layout.offset_r,
-                denom,
-                &r_gadget,
-            )?
+            compute_r_contribution(self, x_challenges, layout.offset_r, denom, &r_gadget)?
         };
 
         // ----- Tiered B_inner RHS: -recompose(û_concat) ----------------------

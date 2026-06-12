@@ -178,16 +178,10 @@ where
                 continue;
             }
             for (claim_idx, out_terms) in out.iter_mut().enumerate() {
-                out_terms[final_carry] += challenges.eval_factored_aggregate_at_pows::<
-                    Base,
-                    F,
-                    D,
-                >(
-                    claim_idx,
-                    &u_weights,
-                    &v_weights,
-                    alpha_pows,
-                )?;
+                out_terms[final_carry] += challenges
+                    .eval_factored_aggregate_at_pows::<Base, F, D>(
+                        claim_idx, &u_weights, &v_weights, alpha_pows,
+                    )?;
             }
         }
     }
