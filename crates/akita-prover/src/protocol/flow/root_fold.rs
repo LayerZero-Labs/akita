@@ -56,6 +56,39 @@ where
     Ok(poly.evaluate_and_fold_ring(b, a, block_len))
 }
 
+fn validate_non_eor_root_opening_shape<F, E, C, const D: usize>(
+    alpha_bits: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F> + ExtField<E>,
+{
+    if <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
+        return Err(AkitaError::InvalidInput(
+            "baseline extension root openings require claim and challenge fields to have the same base degree"
+                .to_string(),
+        ));
+    }
+    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
+        || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    {
+        return Err(AkitaError::InvalidInput(
+            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
+        ));
+    }
+
+    let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if packed_inner_bits > alpha_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: alpha_bits,
+        });
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     backend: &B,
@@ -74,7 +107,7 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     extension_reduction: Option<RootExtensionOpeningReduction<C>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     expected_w_len: usize,
-) -> Result<PreparedRecursiveFold<F, C, D>, AkitaError>
+) -> Result<PreparedFold<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
@@ -181,7 +214,7 @@ where
         Some(v) => v.as_slice(),
         None => commitments[0].u.as_slice(),
     };
-    Ok(PreparedRecursiveFold {
+    Ok(PreparedFold {
         commitment: FlatRingVec::from_ring_elems(commitment_rows),
         instance,
         witness,
@@ -210,7 +243,7 @@ fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
     expected_w_len: usize,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
-) -> Result<PreparedRecursiveFold<F, C, D>, AkitaError>
+) -> Result<PreparedFold<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
@@ -299,6 +332,7 @@ where
         );
     }
 
+    validate_non_eor_root_opening_shape::<F, E, C, D>(alpha_bits)?;
     let prepared_points = claim_points
         .iter()
         .map(|opening_point| {
@@ -706,6 +740,7 @@ where
         );
     }
 
+    validate_non_eor_root_opening_shape::<F, E, C, D>(alpha_bits)?;
     let prepared_points = claim_points
         .iter()
         .map(|opening_point| {
@@ -843,7 +878,7 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = PreparedRecursiveFold {
+    let prepared_fold = PreparedFold {
         commitment: FlatRingVec::from_ring_elems(commitment_rows),
         instance,
         witness,
@@ -975,7 +1010,7 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = PreparedRecursiveFold {
+    let prepared_fold = PreparedFold {
         commitment: FlatRingVec::from_ring_elems(commitment_rows),
         instance,
         witness,

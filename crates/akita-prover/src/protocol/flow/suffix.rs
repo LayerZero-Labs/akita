@@ -1,11 +1,7 @@
 use super::*;
 use cfg_if::cfg_if;
 
-pub(in crate::protocol::flow) struct PreparedRecursiveFold<
-    F: FieldCore,
-    L: FieldCore,
-    const D: usize,
-> {
+pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::flow) commitment: FlatRingVec<F>,
     pub(in crate::protocol::flow) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::flow) witness: RingRelationWitness<F, D>,
@@ -241,7 +237,7 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     level: usize,
     lp: &LevelParams,
     next_level_params: Option<&LevelParams>,
-    prepared_fold: PreparedRecursiveFold<F, L, D>,
+    prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_final_log_basis: Option<u32>,
@@ -828,6 +824,24 @@ where
     }
 }
 
+fn validate_recursive_opening_block_count<F, L, const D: usize>(
+    prepared_point: &PreparedOpeningPoint<F, L, D>,
+    level_params: &LevelParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    let actual = prepared_point.ring_opening_point.b.len();
+    if actual != level_params.num_blocks {
+        return Err(AkitaError::InvalidInput(format!(
+            "recursive opening block count {actual} does not match scheduled num_blocks {}",
+            level_params.num_blocks
+        )));
+    }
+    Ok(())
+}
+
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
 ///
@@ -851,7 +865,7 @@ fn prepare_fold_data<F, L, T, B, const D: usize>(
     level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
-) -> Result<PreparedRecursiveFold<F, L, D>, AkitaError>
+) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -879,25 +893,16 @@ where
         );
     }
 
-    let RecursiveProverState {
-        w,
-        logical_w,
-        commitment,
-        hint,
-        sumcheck_challenges,
-        opening: expected_opening,
-        log_basis: _,
-        #[cfg(feature = "zk")]
-        zk_hiding,
-    } = current_state;
-    let witness_view = w.view::<F, D>()?;
-    let logical_w = logical_w.as_ref().unwrap_or(&w);
-    let typed_hint = hint.to_typed::<D>()?;
-    let opening_point = &sumcheck_challenges;
+    let witness_view = current_state.w.view::<F, D>()?;
+    let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
+    let typed_hint = current_state.hint.to_typed::<D>()?;
+    let opening_point = &current_state.sumcheck_challenges;
     #[cfg(feature = "zk")]
-    let mut zk_hiding = zk_hiding;
+    let mut zk_hiding = current_state.zk_hiding;
 
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    current_state
+        .commitment
+        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let (reduction, protocol_point) = if <L as ExtField<F>>::EXT_DEGREE == 1 {
@@ -906,7 +911,7 @@ where
         let reduction = prove_extension_opening_reduction::<F, L, T>(
             logical_w,
             opening_point,
-            expected_opening,
+            current_state.opening,
             transcript,
             #[cfg(feature = "zk")]
             &mut zk_hiding,
@@ -917,13 +922,15 @@ where
         )?;
         (Some(reduction), protocol_point)
     };
-    let prepared_points = vec![prepare_opening_point::<F, L, D>(
+    let prepared_point = prepare_opening_point::<F, L, D>(
         &protocol_point,
         BasisMode::Lagrange,
         level_params,
         alpha,
         BlockOrder::ColumnMajor,
-    )?];
+    )?;
+    validate_recursive_opening_block_count(&prepared_point, level_params)?;
+    let prepared_points = vec![prepared_point];
     let recursive_polys = [&witness_view];
     let claim_to_point = vec![0usize];
 
@@ -937,7 +944,7 @@ where
         &reduction,
         &y_rings[0],
         &prepared_points[0].inner_reduction,
-        expected_opening,
+        current_state.opening,
     )?;
     cfg_if! {
         if #[cfg(feature = "zk")] {
@@ -966,7 +973,7 @@ where
             }
         }
     }
-    let commitment_u = commitment.as_ring_slice::<D>()?;
+    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
     let ring_opening_points = prepared_points
         .iter()
@@ -1003,8 +1010,8 @@ where
         m_row_layout,
     )?;
 
-    Ok(PreparedRecursiveFold {
-        commitment,
+    Ok(PreparedFold {
+        commitment: current_state.commitment,
         instance,
         witness,
         extension_opening_reduction: reduction.map(|reduction| reduction.proof),
@@ -1016,4 +1023,56 @@ where
         expected_w_len: None,
         row_coefficients: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Fp32;
+    use akita_types::{RingOpeningPoint, SisModulusFamily};
+
+    type TestF = Fp32<251>;
+    const D: usize = 4;
+
+    fn level_params_with_four_blocks() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![1],
+            },
+        )
+        .with_decomp(1, 2, 1, 1, 0)
+        .expect("synthetic level params")
+    }
+
+    #[test]
+    fn recursive_opening_block_count_mismatch_is_rejected() {
+        let level_params = level_params_with_four_blocks();
+        assert_eq!(level_params.num_blocks, 4);
+        let prepared_point: PreparedOpeningPoint<TestF, TestF, D> = PreparedOpeningPoint {
+            padded_point: Vec::new(),
+            ring_opening_point: RingOpeningPoint {
+                a: vec![TestF::one()],
+                b: vec![TestF::one(), TestF::zero()],
+            },
+            ring_multiplier_point: RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+                a: vec![TestF::one()],
+                b: vec![TestF::one(), TestF::zero()],
+            }),
+            inner_reduction: CyclotomicRing::<TestF, D>::zero(),
+        };
+
+        let err = validate_recursive_opening_block_count(&prepared_point, &level_params)
+            .expect_err("mismatched recursive opening block count should reject");
+        assert!(
+            matches!(err, AkitaError::InvalidInput(message) if message.contains("scheduled num_blocks"))
+        );
+    }
 }

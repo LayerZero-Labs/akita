@@ -91,7 +91,7 @@ pub use suffix::prove_suffix;
 pub(in crate::protocol::flow) use suffix::{
     prove_extension_opening_reduction, recursive_witness_base_evals,
 };
-pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedRecursiveFold};
+pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedFold};
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
