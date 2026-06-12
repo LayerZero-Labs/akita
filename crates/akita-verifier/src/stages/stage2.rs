@@ -301,7 +301,7 @@ where
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let alpha_val = multilinear_eval(self.alpha_evals_y, y_challenges)?;
         let row_val = {
             let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
             self.row_eval(x_challenges)?
@@ -359,7 +359,7 @@ where
     ) -> Result<(), AkitaError> {
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let alpha_val = multilinear_eval(self.alpha_evals_y, y_challenges)?;
         let row_val = self.row_eval(x_challenges)?;
 
         // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
