@@ -136,8 +136,27 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
 
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
-        let eq_y = ring_eq_table::<E, D>(rho_y)?;
+        let lambda_len = self
+            .plan
+            .required()
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup product lambda length overflow".into())
+            })?;
+        if rho_lambda.len() != lambda_len.trailing_zeros() as usize {
+            return Err(AkitaError::InvalidProof);
+        }
+        let eq_lambda = EqPolynomial::evals(rho_lambda)?;
+        if rho_y.len() != D.trailing_zeros() as usize {
+            return Err(AkitaError::InvalidProof);
+        }
+        let eq_y = EqPolynomial::evals(rho_y)?;
+        if eq_y.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: eq_y.len(),
+            });
+        }
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
             &setup.expanded,
             self.plan.required(),
@@ -146,54 +165,26 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             &eq_y,
         )?;
         let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
-        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
+        if self.alpha_pows.len() != eq_y.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.alpha_pows.len(),
+                actual: eq_y.len(),
+            });
+        }
+        let alpha_val = cfg_fold_reduce!(
+            0..self.alpha_pows.len(),
+            E::zero,
+            |mut acc, idx| {
+                acc += self.alpha_pows[idx] * eq_y[idx];
+                acc
+            },
+            |lhs, rhs| lhs + rhs
+        );
         if final_claim != setup_val * omega * alpha_val {
             return Err(AkitaError::InvalidProof);
         }
         Ok(())
     }
-}
-
-fn lambda_eq_table<E: FieldCore>(required: usize, rho_lambda: &[E]) -> Result<Vec<E>, AkitaError> {
-    let lambda_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
-    if rho_lambda.len() != lambda_len.trailing_zeros() as usize {
-        return Err(AkitaError::InvalidProof);
-    }
-    EqPolynomial::evals(rho_lambda)
-}
-
-fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
-    if rho_y.len() != D.trailing_zeros() as usize {
-        return Err(AkitaError::InvalidProof);
-    }
-    let eq_y = EqPolynomial::evals(rho_y)?;
-    if eq_y.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: eq_y.len(),
-        });
-    }
-    Ok(eq_y)
-}
-
-fn eval_dense_table_with_eq<E: FieldCore>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
-    if evals.len() != eq.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: evals.len(),
-            actual: eq.len(),
-        });
-    }
-    Ok(cfg_fold_reduce!(
-        0..evals.len(),
-        E::zero,
-        |mut acc, idx| {
-            acc += evals[idx] * eq[idx];
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
 }
 
 fn setup_mle_at_eq_tables<F, E, const D: usize>(

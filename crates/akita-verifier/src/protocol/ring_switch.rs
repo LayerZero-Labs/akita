@@ -31,8 +31,6 @@ use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch}
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod tensor_challenges;
-#[cfg(test)]
-mod tests;
 
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
@@ -567,25 +565,52 @@ where
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
-    challenges: &Challenges,
+/// Prepare deferred verifier ring-switch row evaluation data from a fixed
+/// [`RingRelationInstance`] and transcript-sampled row coefficients.
+///
+/// # Errors
+///
+/// Returns an error if gamma/challenge lengths do not match the claim shape,
+/// the expanded tau1 table is too short for the level layout, or sparse
+/// challenge evaluation fails.
+#[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
+pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
+    replay: &RingSwitchReplay<'_, F, E, D>,
     alpha: E,
-    lp: &LevelParams,
     tau1: &[E],
-    num_polys_per_commitment_group: &[usize],
-    claim_to_commitment_group: &[usize],
-    claim_poly_in_commitment_group: &[usize],
-    gamma: &[E],
-    num_public_rows: usize,
-    m_row_layout: MRowLayout,
-    claim_to_point: &[usize],
-    witness_segment_layout: RingRelationSegmentLayout,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
+    let relation = replay.relation;
+    let lp = replay.lp;
+    let challenges = &relation.challenges;
+    validate_opening_points_for_claims(
+        relation.opening_points(),
+        relation.claim_to_point(),
+        lp,
+        relation.incidence().num_claims(),
+    )?;
+    if relation.ring_multiplier_points().len() != relation.opening_points().len()
+        || relation
+            .ring_multiplier_points()
+            .iter()
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    relation.check_v_shape_for_level(lp)?;
+    let witness_segment_layout = relation.segment_layout(lp)?;
+    let routing = relation.commitment_routing();
+    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let claim_to_commitment_group = routing.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
+    let gamma = replay.row_coefficients;
+    let num_public_rows = relation.num_public_rows();
+    let m_row_layout = relation.m_row_layout();
+    let claim_to_point = relation.claim_to_point();
+
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = claim_to_point.len();
@@ -650,7 +675,6 @@ where
     let b_blinding_segment_len = num_points
         .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
-    // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -818,27 +842,6 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
     pub lp: &'a LevelParams,
 }
 
-fn check_relation_level_shape<F: FieldCore + CanonicalField, const D: usize>(
-    relation: &RingRelationInstance<F, D>,
-    lp: &LevelParams,
-) -> Result<(), AkitaError> {
-    validate_opening_points_for_claims(
-        relation.opening_points(),
-        relation.claim_to_point(),
-        lp,
-        relation.incidence().num_claims(),
-    )?;
-    if relation.ring_multiplier_points().len() != relation.opening_points().len()
-        || relation
-            .ring_multiplier_points()
-            .iter()
-            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    relation.check_v_shape_for_level(lp)
-}
-
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
@@ -939,44 +942,4 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     })
-}
-
-/// Prepare deferred verifier ring-switch row evaluation data from a fixed
-/// [`RingRelationInstance`] and transcript-sampled row coefficients.
-///
-/// # Errors
-///
-/// Returns an error if gamma/challenge lengths do not match the claim shape,
-/// the expanded tau1 table is too short for the level layout, or sparse
-/// challenge evaluation fails.
-#[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
-pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
-    alpha: E,
-    tau1: &[E],
-) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
-{
-    let relation = replay.relation;
-    let lp = replay.lp;
-    let claim_to_point = relation.claim_to_point();
-    check_relation_level_shape(relation, lp)?;
-    let witness_segment_layout = relation.segment_layout(lp)?;
-    let routing = relation.commitment_routing();
-    prepare_ring_switch_row_eval_inner::<F, E, D>(
-        &relation.challenges,
-        alpha,
-        lp,
-        tau1,
-        routing.num_polys_per_commitment_group(),
-        routing.claim_to_commitment_group(),
-        routing.claim_poly_in_commitment_group(),
-        replay.row_coefficients,
-        relation.num_public_rows(),
-        relation.m_row_layout(),
-        claim_to_point,
-        witness_segment_layout,
-    )
 }

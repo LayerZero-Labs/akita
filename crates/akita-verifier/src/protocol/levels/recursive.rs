@@ -232,9 +232,8 @@ where
     for pt in &prepared_point.padded_point {
         append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
-    // See the root verifier comment at `levels.rs` on absorbing `y_rings` before
-    // EOR for the recommended (transcript-breaking) reorder and the invariant
-    // it relies on.
+    // Bind the standalone y-ring wire data before downstream relation-sumcheck
+    // challenges are sampled.
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }

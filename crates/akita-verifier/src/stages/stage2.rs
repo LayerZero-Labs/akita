@@ -9,8 +9,7 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    AkitaExpandedSetup, CleartextWitnessProof, PackedDigits, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding,
+    AkitaExpandedSetup, CleartextWitnessProof, RingMultiplierOpeningPoint, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 
@@ -75,49 +74,6 @@ where
     Ok(acc)
 }
 
-fn packed_witness_eval<F, E, const D: usize>(
-    packed_witness: &PackedDigits,
-    physical_w_len: usize,
-    challenges: &[E],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
-    if packed_witness.num_elems != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
-    witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
-        packed_witness
-            .digit_at(idx)
-            .map(|digit| E::from_i64(digit as i64))
-            .ok_or(AkitaError::InvalidProof)
-    })
-}
-
-fn field_witness_eval<F, E>(
-    field_witness: &[F],
-    physical_w_len: usize,
-    challenges: &[E],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
-    if field_witness.len() != physical_w_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
-        Ok(E::lift_base(field_witness[idx]))
-    })
-}
-
 fn cleartext_witness_eval<F, E, const D: usize>(
     cleartext_witness: &CleartextWitnessProof<F>,
     physical_w_len: usize,
@@ -129,21 +85,31 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
+    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
     match cleartext_witness {
-        CleartextWitnessProof::PackedDigits(packed_witness) => packed_witness_eval::<F, E, D>(
-            packed_witness,
-            physical_w_len,
-            challenges,
-            col_bits,
-            ring_bits,
-        ),
-        CleartextWitnessProof::FieldElements(field_witness) => field_witness_eval::<F, E>(
-            field_witness.coeffs(),
-            physical_w_len,
-            challenges,
-            col_bits,
-            ring_bits,
-        ),
+        CleartextWitnessProof::PackedDigits(packed_witness) => {
+            if packed_witness.num_elems != physical_w_len
+                || D == 0
+                || !physical_w_len.is_multiple_of(D)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
+                packed_witness
+                    .digit_at(idx)
+                    .map(|digit| E::from_i64(digit as i64))
+                    .ok_or(AkitaError::InvalidProof)
+            })
+        }
+        CleartextWitnessProof::FieldElements(field_witness) => {
+            let field_witness = field_witness.coeffs();
+            if field_witness.len() != physical_w_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
+                Ok(E::lift_base(field_witness[idx]))
+            })
+        }
     }
 }
 
@@ -396,11 +362,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{field_witness_eval, packed_witness_eval};
+    use super::cleartext_witness_eval;
     use akita_field::{AkitaError, FieldCore};
     use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
-    use akita_types::PackedDigits;
+    use akita_types::{CleartextWitnessProof, FlatRingVec, PackedDigits};
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;
@@ -448,8 +414,8 @@ mod tests {
         assert_eq!(col_bits + ring_bits, challenges.len());
 
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let actual = packed_witness_eval::<F, F, 4>(
-            &packed,
+        let actual = cleartext_witness_eval::<F, F, 4>(
+            &CleartextWitnessProof::PackedDigits(packed),
             w_digits.len(),
             &challenges,
             col_bits,
@@ -480,9 +446,14 @@ mod tests {
             .collect();
         let expected =
             multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
-        let actual =
-            field_witness_eval::<F, E>(&field_witness, field_witness.len(), &challenges, 1, 1)
-                .expect("valid witness");
+        let actual = cleartext_witness_eval::<F, E, D>(
+            &CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(field_witness.clone())),
+            field_witness.len(),
+            &challenges,
+            1,
+            1,
+        )
+        .expect("valid witness");
 
         assert_eq!(actual, expected);
     }
@@ -490,8 +461,14 @@ mod tests {
     #[test]
     fn packed_witness_eval_rejects_challenge_dimension_mismatch() {
         let packed = PackedDigits::from_i8_digits(&[1, -1, 0, 2], 3);
-        let err = packed_witness_eval::<F, E, D>(&packed, 1, &[E::zero()], 1, 1)
-            .expect_err("wrong arity");
+        let err = cleartext_witness_eval::<F, E, D>(
+            &CleartextWitnessProof::PackedDigits(packed),
+            1,
+            &[E::zero()],
+            1,
+            1,
+        )
+        .expect_err("wrong arity");
         assert!(matches!(err, AkitaError::InvalidSize { .. }));
     }
 
@@ -503,16 +480,28 @@ mod tests {
             data: vec![],
         };
         let challenges = vec![E::zero(), E::zero()];
-        let err = packed_witness_eval::<F, E, D>(&packed, 1, &challenges, 1, 1)
-            .expect_err("truncated packed witness");
+        let err = cleartext_witness_eval::<F, E, D>(
+            &CleartextWitnessProof::PackedDigits(packed),
+            1,
+            &challenges,
+            1,
+            1,
+        )
+        .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 
     #[test]
     fn packed_witness_eval_rejects_zero_ring_dimension() {
         let packed = PackedDigits::from_i8_digits(&[], 3);
-        let err = packed_witness_eval::<F, E, 0>(&packed, 0, &[], 0, 0)
-            .expect_err("zero ring dimension should be rejected");
+        let err = cleartext_witness_eval::<F, E, 0>(
+            &CleartextWitnessProof::PackedDigits(packed),
+            0,
+            &[],
+            0,
+            0,
+        )
+        .expect_err("zero ring dimension should be rejected");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }
