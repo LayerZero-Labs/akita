@@ -131,6 +131,15 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
+    let total_group_polys = incidence_summary
+        .num_polys_per_point()
+        .iter()
+        .try_fold(0usize, |acc, &count| {
+            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
+        })?;
+    if total_group_polys != witnesses.len() {
+        return Err(AkitaError::InvalidProof);
+    }
 
     let a_required_cols = params
         .block_len
@@ -374,15 +383,6 @@ where
     }
     #[cfg(feature = "zk")]
     if b_blinding_digits.len() != flat_commitments.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let total_group_polys = incidence_summary
-        .num_polys_per_point()
-        .iter()
-        .try_fold(0usize, |acc, &count| {
-            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
-        })?;
-    if total_group_polys != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
     validate_root_direct_recommitment_shape::<F, D>(

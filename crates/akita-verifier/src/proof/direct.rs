@@ -53,11 +53,6 @@ where
 /// while openings are stored once per claim. Multipoint openings of the same
 /// committed polynomial therefore reuse the same witness through the
 /// claim's `(group_idx, poly_idx)` route.
-///
-/// This is the zero-fold counterpart to incidence-driven schedule lookup:
-/// claim-to-point routing comes from [`ClaimIncidenceSummary`] rather than the
-/// temporary legacy batch-shape adapter.
-///
 /// # Errors
 ///
 /// Returns an error if the incidence summary is inconsistent with the flattened
