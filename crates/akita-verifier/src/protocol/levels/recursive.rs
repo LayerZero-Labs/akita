@@ -223,10 +223,7 @@ where
             setup_contribution_mode,
             proof.stage3_sumcheck_proof.as_ref(),
         )?
-        .map(|proof| Stage3Replay {
-            proof,
-            next_fold_level_params,
-        }),
+        .map(|proof| (proof, *next_fold_level_params)),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage2_replay = match &proof {

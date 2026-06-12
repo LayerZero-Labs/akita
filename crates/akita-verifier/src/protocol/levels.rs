@@ -526,13 +526,8 @@ struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usize> {
     relation_claim: E,
     #[cfg(feature = "zk")]
     relation_claim_mask: ZkR1csLinearCombination<E>,
-    stage3: Option<Stage3Replay<'a, E>>,
+    stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-}
-
-struct Stage3Replay<'a, E: FieldCore> {
-    proof: &'a SetupSumcheckProof<E>,
-    next_fold_level_params: &'a LevelParams,
 }
 
 struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
@@ -551,7 +546,7 @@ struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     stage2: Stage2ProofReplay<'a, F, E>,
     next_w_commitment: Option<&'a FlatRingVec<F>>,
     terminal_replay: Option<&'a TerminalWitnessTranscriptParts>,
-    stage3: Option<Stage3Replay<'a, E>>,
+    stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     #[cfg(feature = "zk")]
     y_masks: Vec<ZkR1csLinearCombination<E>>,
 }
@@ -601,7 +596,7 @@ where
         #[cfg(feature = "zk")]
         s_claim_mask,
     } = stage1;
-    let setup_claim = stage3.as_ref().map(|replay| replay.proof.claim);
+    let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
@@ -678,18 +673,13 @@ where
     if let Stage2ProofReplay::Intermediate { next_w_eval, .. } = stage2 {
         transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
     }
-    if let Some(stage3) = stage3 {
+    if let Some((proof, next_fold_level_params)) = stage3 {
         let verifier = SetupSumcheckVerifier::new::<F, D>(
             &rs.prepared_row_eval,
             &sumcheck_challenges[rs.ring_bits..],
             rs.alpha,
         )?;
-        verifier.verify::<F, T, D>(
-            setup,
-            stage3.next_fold_level_params,
-            stage3.proof,
-            transcript,
-        )?;
+        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
     }
     Ok(sumcheck_challenges)
 }
@@ -1242,10 +1232,7 @@ where
         stage2: stage2_replay,
         next_w_commitment,
         terminal_replay: terminal_replay.as_ref(),
-        stage3: stage3_sumcheck_proof.map(|proof| Stage3Replay {
-            proof,
-            next_fold_level_params,
-        }),
+        stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         #[cfg(feature = "zk")]
         y_masks,
     };
