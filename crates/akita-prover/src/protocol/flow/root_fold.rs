@@ -125,7 +125,7 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_reduction: Option<RootExtensionOpeningReduction<C>>,
-    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     expected_w_len: usize,
 ) -> Result<PreparedFold<F, C, D>, AkitaError>
 where

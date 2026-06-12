@@ -450,7 +450,7 @@ where
         setup_contribution_mode,
     )?;
     let next_state = root.next_state;
-    let root = AkitaBatchedRootProof::from_level(root.level_proof);
+    let root = AkitaBatchedRootProof::new(root.level_proof);
 
     let suffix = crate::prove_suffix::<Cfg, T, B, D>(
         expanded,

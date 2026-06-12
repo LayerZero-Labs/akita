@@ -1105,21 +1105,28 @@ where
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let _incidence = ClaimIncidenceSummary::from_point_polys(
+    let incidence = ClaimIncidenceSummary::from_point_polys(
         recursive_num_vars,
         vec![1; prepared_points.len()],
     )?;
-    let (instance, witness) = RingRelationProver::new_recursive_multipoint::<F, D, T, B>(
+    let recursive_commitment = RingCommitment {
+        u: commitment_u.to_vec(),
+    };
+    let row_coefficient_rings = vec![CyclotomicRing::one(); incidence.num_claims()];
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        &witness_view,
+        claim_to_point,
+        &recursive_polys,
         e_folded_by_claim,
+        &incidence,
         level_params.clone(),
-        typed_hint,
+        vec![typed_hint],
         transcript,
-        commitment_u,
+        &[recursive_commitment],
+        row_coefficient_rings,
         m_row_layout,
     )?;
     let trace_prepared = prepared_points

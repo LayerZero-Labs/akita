@@ -84,7 +84,7 @@ pub use proof::{
     FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits,
     PreparedOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSliceSerializer, RootLevelRawOutput, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
     SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
