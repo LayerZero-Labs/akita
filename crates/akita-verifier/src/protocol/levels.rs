@@ -75,7 +75,7 @@ mod recursive;
 pub(crate) use recursive::verify_fold_batched_proof;
 
 /// Verifier state carried between recursive fold levels.
-pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
+struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     /// Current opening point for the committed recursive witness.
     pub opening_point: Vec<L>,
     /// Claimed opening value for the current commitment.
@@ -134,21 +134,21 @@ enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
     },
 }
 
-pub(super) struct RootEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
-    pub(super) prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
-    pub(super) reduction_challenges: Option<Vec<C>>,
+struct RootEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
+    prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
+    reduction_challenges: Option<Vec<C>>,
     #[cfg(feature = "zk")]
-    pub(super) final_relation: Option<(ZkR1csLinearCombination<C>, Vec<C>)>,
+    final_relation: Option<(ZkR1csLinearCombination<C>, Vec<C>)>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct EorReductionShape {
-    pub(super) split_bits: usize,
-    pub(super) width: usize,
-    pub(super) num_rounds: usize,
+struct EorReductionShape {
+    split_bits: usize,
+    width: usize,
+    num_rounds: usize,
 }
 
-pub(super) fn eor_reduction_shape<F, C>(
+fn eor_reduction_shape<F, C>(
     opening_num_vars: usize,
     partials_len: usize,
     num_claims: usize,
@@ -172,7 +172,7 @@ where
     })
 }
 
-pub(super) fn eor_input_claim_from_partials<F, C>(
+fn eor_input_claim_from_partials<F, C>(
     partials: &[C],
     shape: EorReductionShape,
     eta: &[C],
@@ -202,7 +202,7 @@ where
 
 #[cfg(feature = "zk")]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_zk_extension_opening_reduction_sumcheck<F, E, T, S>(
+fn verify_zk_extension_opening_reduction_sumcheck<F, E, T, S>(
     input_claim: E,
     num_rounds: usize,
     proof: &akita_sumcheck::SumcheckProofMasked<E>,
@@ -260,7 +260,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root_eor_and_prepare_points<F, E, C, T, const D: usize>(
+fn verify_root_eor_and_prepare_points<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     y_rings: &[CyclotomicRing<F, D>],
     claim_points: &[&[E]],
@@ -495,7 +495,7 @@ where
     })
 }
 
-pub(super) enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
+enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
     Intermediate {
         next_w_eval: E,
         #[cfg(not(feature = "zk"))]
@@ -513,24 +513,24 @@ pub(super) enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
     },
 }
 
-pub(super) struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    pub(super) setup: &'a AkitaVerifierSetup<F>,
-    pub(super) stage2: Stage2ProofReplay<'a, F, E>,
-    pub(super) stage1: Stage1Replay<E>,
-    pub(super) rs: RingSwitchVerifyOutput<E>,
-    pub(super) relation_claim: E,
+struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usize> {
+    setup: &'a AkitaVerifierSetup<F>,
+    stage2: Stage2ProofReplay<'a, F, E>,
+    stage1: Stage1Replay<E>,
+    rs: RingSwitchVerifyOutput<E>,
+    relation_claim: E,
     #[cfg(feature = "zk")]
-    pub(super) relation_claim_mask: ZkR1csLinearCombination<E>,
-    pub(super) setup_replay: Option<SetupReplay<'a, E>>,
-    pub(super) ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+    relation_claim_mask: ZkR1csLinearCombination<E>,
+    setup_replay: Option<SetupReplay<'a, E>>,
+    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
 }
 
-pub(super) struct SetupReplay<'a, E: FieldCore> {
-    pub(super) proof: &'a SetupSumcheckProof<E>,
-    pub(super) next_fold_level_params: &'a LevelParams,
+struct SetupReplay<'a, E: FieldCore> {
+    proof: &'a SetupSumcheckProof<E>,
+    next_fold_level_params: &'a LevelParams,
 }
 
-pub(super) fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
+fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     mode: SetupContributionMode,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
 ) -> Result<Option<&SetupSumcheckProof<L>>, AkitaError> {
@@ -546,7 +546,7 @@ pub(super) fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     }
 }
 
-pub(super) fn verify_stage2_and_setup_replay<F, E, T, const D: usize>(
+fn verify_stage2_and_setup_replay<F, E, T, const D: usize>(
     transcript: &mut T,
     input: Stage2ReplayInput<'_, F, E, D>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -668,15 +668,15 @@ where
     Ok(sumcheck_challenges)
 }
 
-pub(super) struct Stage1Replay<E: FieldCore> {
-    pub(super) batching_coeff: E,
-    pub(super) s_claim: E,
-    pub(super) stage1_point: Vec<E>,
+struct Stage1Replay<E: FieldCore> {
+    batching_coeff: E,
+    s_claim: E,
+    stage1_point: Vec<E>,
     #[cfg(feature = "zk")]
-    pub(super) s_claim_mask: ZkR1csLinearCombination<E>,
+    s_claim_mask: ZkR1csLinearCombination<E>,
 }
 
-pub(super) fn verify_stage1_or_terminal<F, E, T>(
+fn verify_stage1_or_terminal<F, E, T>(
     proof: Option<&AkitaStage1Proof<E>>,
     rs: &RingSwitchVerifyOutput<E>,
     transcript: &mut T,

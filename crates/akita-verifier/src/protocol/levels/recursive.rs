@@ -499,7 +499,7 @@ macro_rules! dispatch_verifier_ring_dim_result {
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
+fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
     proof: &'a AkitaBatchedProof<F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
