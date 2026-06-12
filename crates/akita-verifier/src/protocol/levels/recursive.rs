@@ -500,17 +500,6 @@ where
     #[cfg(feature = "zk")]
     let mut zk_hiding_cursor = 0usize;
 
-    if let Some(root_y_rings) = match &proof.root {
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => None,
-        akita_types::AkitaBatchedRootProof::Terminal(terminal) => Some(&terminal.y_rings),
-        akita_types::AkitaBatchedRootProof::Fold(fold_root) => Some(&fold_root.y_rings),
-    } {
-        let y_coeff_len = root_y_rings.coeff_len();
-        if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
-
     match &proof.root {
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
