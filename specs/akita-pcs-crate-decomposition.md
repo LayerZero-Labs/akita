@@ -516,7 +516,7 @@ conditional AArch64 NEON sparse accumulation kernel into `akita-prover` as
 internal prover plumbing. Root polynomial backends still call those helpers
 during the transition, but the helper ownership is now prover-side.
 The recursive witness cut then moves `RecursiveWitnessFlat` and
-`RecursiveWitnessView` into `akita-prover`, because those types model
+`SuffixWitness` into `akita-prover`, because those types model
 prover-only ring-switch witness state and are consumed only by prover
 orchestration, quadratic-equation construction, and ring-switch handoff paths.
 Root code imports them directly from the prover crate during the cutover.
