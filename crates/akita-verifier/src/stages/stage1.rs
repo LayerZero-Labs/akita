@@ -382,14 +382,14 @@ impl<E: FieldCore> ZkEqFactoredFinalRelation<E> for PolynomialStageVerifier<E> {
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
-pub struct AkitaStage1Verifier<E: FieldCore> {
+pub(crate) struct AkitaStage1Verifier<E: FieldCore> {
     tau0: Vec<E>,
     b: usize,
 }
 
 impl<E: FieldCore> AkitaStage1Verifier<E> {
     /// Construct the stage-1 verifier from `tau0` and `b`.
-    pub fn new(tau0: Vec<E>, b: usize) -> Self {
+    pub(crate) fn new(tau0: Vec<E>, b: usize) -> Self {
         Self { tau0, b }
     }
 }
@@ -401,7 +401,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
     ///
     /// Returns an error if the staged proof shape is inconsistent with `b`, if
     /// any internal stage sumcheck fails, or if the final oracle check fails.
-    pub fn verify<F, T>(
+    pub(crate) fn verify<F, T>(
         &self,
         proof: &AkitaStage1Proof<E>,
         transcript: &mut T,

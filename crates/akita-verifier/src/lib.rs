@@ -20,8 +20,8 @@
 //! These items are kept public solely so a small number of integration tests
 //! in `akita-pcs` can exercise specific replay primitives in isolation:
 //! [`prepare_ring_switch_row_eval`], [`RingSwitchDeferredRowEval`],
-//! [`SetupEvaluator`], and [`AkitaStage1Verifier`]. They are not part of the
-//! verifier's intended downstream API.
+//! and [`SetupEvaluator`]. They are not part of the verifier's intended
+//! downstream API.
 
 mod proof;
 mod protocol;
@@ -33,4 +33,3 @@ pub use protocol::{
     prepare_ring_switch_row_eval, verify_batched, RingSwitchDeferredRowEval, RingSwitchReplay,
     SetupEvaluator,
 };
-pub use stages::AkitaStage1Verifier;
