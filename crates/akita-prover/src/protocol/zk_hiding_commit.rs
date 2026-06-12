@@ -44,6 +44,7 @@ where
         prepared,
         hiding_params.a_key.row_len(),
         hiding_params.block_len,
+        hiding_params.num_blocks,
         hiding_params.num_digits_commit,
         hiding_params.num_digits_open,
         hiding_params.log_basis,

@@ -388,24 +388,6 @@ where
         )?))
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
-        decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)
-    }
-
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner_witness")]
     fn commit_inner_witness<B>(
         &self,
@@ -413,6 +395,7 @@ where
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
+        _num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,

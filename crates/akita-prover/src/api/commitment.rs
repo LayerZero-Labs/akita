@@ -395,6 +395,7 @@ where
                     prepared,
                     params.a_key.row_len(),
                     params.block_len,
+                    params.num_blocks,
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,

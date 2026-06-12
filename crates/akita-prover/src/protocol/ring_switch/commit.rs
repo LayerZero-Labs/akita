@@ -1,4 +1,5 @@
 use super::*;
+use crate::AkitaPolyOps;
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {

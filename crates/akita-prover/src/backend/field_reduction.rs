@@ -154,38 +154,13 @@ where
         }
     }
 
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<akita_types::FlatDigitBlocks<D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        dispatch_root_projection!(self, poly => {
-            poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            )
-        })
-    }
-
     fn commit_inner_witness<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
@@ -200,6 +175,7 @@ where
                 prepared,
                 n_a,
                 block_len,
+                num_blocks,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
