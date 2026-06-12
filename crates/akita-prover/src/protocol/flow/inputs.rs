@@ -166,7 +166,7 @@ where
 /// Returns an error if claim preparation, schedule selection, root-direct
 /// witness construction, transcript binding, or folded-root proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
+pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
@@ -259,8 +259,6 @@ where
             "root schedule does not start with a fold".to_string(),
         ));
     }
-    let root_next_params = scheduled_next_level_params(&schedule, 1)?;
-
     prove_folded_batched::<Cfg, T, P, B, D>(
         expanded,
         prefix_slots,
@@ -270,7 +268,6 @@ where
         prepared_claims,
         &schedule,
         basis,
-        &root_next_params,
         setup_contribution_mode,
     )
     .map(|(proof, _total_levels)| proof)
@@ -317,7 +314,6 @@ pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
-    root_next_params: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, usize), AkitaError>
 where
@@ -394,8 +390,8 @@ where
                 ));
             }
         };
-        let _ = root_next_params;
         let terminal = prove_terminal_root_fold_with_params::<
+            Cfg,
             Cfg::Field,
             Cfg::ClaimField,
             Cfg::ChallengeField,
@@ -404,7 +400,7 @@ where
             B,
             D,
         >(
-            expanded.as_ref(),
+            expanded,
             backend,
             prepared,
             transcript,
@@ -433,16 +429,8 @@ where
         ));
     }
 
-    let root = prove_root_fold_with_params::<
-        Cfg::Field,
-        Cfg::ClaimField,
-        Cfg::ChallengeField,
-        T,
-        P,
-        B,
-        Cfg,
-        D,
-    >(
+    let root_next_params = scheduled_next_level_params(schedule, 1)?;
+    let root = prove_root_fold::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,
@@ -455,21 +443,14 @@ where
         prepared_claims.flat_hints,
         &root_step.params,
         root_step.next_w_len,
-        root_next_params,
-        #[cfg(feature = "zk")]
-        zk_hiding_commitment,
+        &root_next_params,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
         setup_contribution_mode,
     )?;
-    let RootLevelProverOutput {
-        #[cfg(feature = "zk")]
-        zk_hiding_commitment,
-        raw,
-        next_state: starting_state,
-    } = root;
-    let root = AkitaBatchedRootProof::new::<D>(raw);
+    let next_state = root.next_state;
+    let root = AkitaBatchedRootProof::new(root.level_proof);
 
     let suffix = crate::prove_suffix::<Cfg, T, B, D>(
         expanded,
@@ -478,7 +459,7 @@ where
         prepared,
         num_vars,
         transcript,
-        starting_state,
+        next_state,
         schedule,
         setup_contribution_mode,
     )?;

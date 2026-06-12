@@ -633,7 +633,7 @@ mod tests {
         root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
         AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, PackedDigits, RootLevelRawOutput, SisModulusFamily, TerminalLevelProof,
+        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
@@ -950,18 +950,31 @@ mod tests {
             ])
             .into_compact();
             let num_points = 5;
-            let root_proof = AkitaBatchedRootProof::new::<D>(RootLevelRawOutput {
-                y_rings: vec![CyclotomicRing::<F, D>::zero(); num_points],
+            let root_proof = AkitaBatchedRootProof::new(AkitaLevelProof {
+                y_ring: FlatRingVec::from_ring_elems(&vec![
+                    CyclotomicRing::<F, D>::zero();
+                    num_points
+                ])
+                .into_compact(),
                 extension_opening_reduction: None,
-                v: vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+                v: FlatRingVec::from_ring_elems(&vec![
+                    CyclotomicRing::<F, D>::zero();
+                    lp.d_key.row_len()
+                ])
+                .into_compact(),
                 stage1: dummy_stage1_proof(rounds, b),
-                #[cfg(not(feature = "zk"))]
-                stage2_sumcheck_proof: dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                stage2_sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
+                stage2: AkitaStage2Proof {
+                    #[cfg(not(feature = "zk"))]
+                    sumcheck_proof: dummy_sumcheck(rounds, 3),
+                    #[cfg(feature = "zk")]
+                    sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
+                    next_w_commitment: next_commitment,
+                    #[cfg(not(feature = "zk"))]
+                    next_w_eval: F::zero(),
+                    #[cfg(feature = "zk")]
+                    next_w_eval_masked: F::zero(),
+                },
                 stage3_sumcheck_proof: None,
-                w_commitment_proof: next_commitment,
-                w_eval: F::zero(),
             });
 
             assert_eq!(

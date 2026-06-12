@@ -28,8 +28,8 @@ pub use api::{
 };
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootTensorProjectionPoly, SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly,
+    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
 };
 pub use compute::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
@@ -41,12 +41,10 @@ pub use compute::{
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs, prove_batched,
-    prove_folded_batched, prove_root_direct, prove_root_fold_from_ring_relation,
-    prove_root_fold_with_params, prove_suffix, prove_terminal_root_fold_from_ring_relation,
+    batched_prove, build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs,
+    prove_folded_batched, prove_root_direct, prove_root_fold, prove_suffix,
     prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
-    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput, RootLevelProverOutput,
-    RootLevelRawOutput,
+    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 /// One commitment plus the polynomials it bundles, opened at one point.
@@ -93,33 +91,6 @@ pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     /// Digit decompositions of `A * s_i` in flat column-major order plus
     /// explicit block boundaries.
     pub decomposed_inner_rows: FlatDigitBlocks<D>,
-}
-
-fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
-    t_hat_blocks: &FlatDigitBlocks<D>,
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    if num_digits_open == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_digits_open must be nonzero when recomposing commit witness".to_string(),
-        ));
-    }
-    t_hat_blocks
-        .iter_blocks()
-        .map(|block| {
-            if block.len() % num_digits_open != 0 {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "t_hat block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
-                    block.len()
-                )));
-            }
-            Ok(block
-                .chunks(num_digits_open)
-                .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
-                .collect())
-        })
-        .collect()
 }
 
 /// Operations the Akita commitment scheme needs from a root polynomial.
@@ -486,61 +457,26 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(None)
     }
 
-    /// Inner Ajtai commit step.
+    /// Inner Ajtai commit step that also preserves recomposed inner rows.
     ///
     /// # Errors
     ///
-    /// Returns an error if the cached matrix-vector multiply fails.
+    /// Returns an error if the cached matrix-vector multiply or digit
+    /// decomposition fails.
     fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>;
-
-    /// Inner Ajtai commit step that also preserves recomposed inner rows.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if [`Self::commit_inner`] fails or if the resulting
-    /// decomposed blocks cannot be recomposed into full inner rows.
-    fn commit_inner_witness<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
-        let t_hat = self.commit_inner(
-            backend,
-            prepared,
-            n_a,
-            block_len,
-            num_digits_commit,
-            num_digits_open,
-            log_basis,
-        )?;
-        let recomposed_inner_rows =
-            recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows,
-            decomposed_inner_rows: t_hat,
-        })
-    }
+        B: CommitmentComputeBackend<F>;
 
     /// Materialize a direct root witness for zero-fold openings.
     ///
@@ -718,10 +654,11 @@ where
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
         B: CommitmentComputeBackend<F>,
@@ -732,32 +669,7 @@ where
             prepared,
             n_a,
             block_len,
-            num_digits_commit,
-            num_digits_open,
-            log_basis,
-        )
-    }
-
-    fn commit_inner_witness<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
-        <P as AkitaPolyOps<F, D>>::commit_inner_witness(
-            *self,
-            backend,
-            prepared,
-            n_a,
-            block_len,
+            num_blocks,
             num_digits_commit,
             num_digits_open,
             log_basis,

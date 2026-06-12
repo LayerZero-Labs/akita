@@ -23,8 +23,7 @@ use akita_types::{
 
 /// Closure that recomputes the inner ring-slot reduction `v` at the sumcheck
 /// point `rho`. The root and recursive sites capture their own opening-point
-/// preparation (`prepare_root_opening_point_ext` / `prepare_recursive_*`), so
-/// the generic instance stays free of the divergent point-prep bounds.
+/// preparation, so the generic instance stays free of point-prep bounds.
 type InnerReductionFn<'a, F, C, const D: usize> =
     Box<dyn Fn(&[C]) -> Result<CyclotomicRing<F, D>, AkitaError> + Send + Sync + 'a>;
 
