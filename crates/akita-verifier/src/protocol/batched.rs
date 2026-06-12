@@ -442,9 +442,6 @@ where
             if !proof.zk_hiding.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            if !proof.steps.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
                 return Err(AkitaError::InvalidProof);
             };

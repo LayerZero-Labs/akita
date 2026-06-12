@@ -708,7 +708,7 @@ where
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             // 1-fold case: the root itself is the terminal fold. No recursive
             // suffix follows.
-            if total_fold_levels != 1 || !proof.steps.is_empty() {
+            if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
             if terminal.final_witness.shape() != terminal_direct.witness_shape {
