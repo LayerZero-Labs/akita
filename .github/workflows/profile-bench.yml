@@ -140,10 +140,7 @@ jobs:
 
       # PR deltas must compare binaries measured on this runner: ubuntu-latest
       # is a heterogeneous fleet, and baselines measured on different silicon
-      # produced phantom double-digit deltas. The worktree builds with the
-      # merge-base's own rust-toolchain.toml so toolchain bumps show their
-      # real performance impact, and into its own target dir so the base and
-      # head builds cannot interfere.
+      # produced phantom double-digit deltas.
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request'
         run: |
