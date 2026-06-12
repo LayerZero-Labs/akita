@@ -3,8 +3,8 @@
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, EStructuredSlicesEvaluator, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, EStructuredSlicesEvaluator, TStructuredSlicesEvaluator,
+    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;

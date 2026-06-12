@@ -5,33 +5,30 @@ use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
-/// Peeled-block MLE evaluator for one structured slice of `M`. See
-/// `specs/optimized_verifier.md` for the full derivation.
-pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
-    fn num_outer_indices(&self) -> usize;
-    fn get_high_challenges(&self) -> &[F];
-    fn get_offset_high(&self) -> usize;
-    fn compute_inner_sum(&self, outer_index: usize) -> [F; 2];
-
-    #[inline]
-    fn evaluate(&self) -> F {
-        let offset_high = self.get_offset_high();
-        let high_challenges = self.get_high_challenges();
-
-        (0..self.num_outer_indices()).fold(F::zero(), |acc, q| {
-            let [carry0, carry1] = self.compute_inner_sum(q);
-            let acc = if carry0.is_zero() {
-                acc
-            } else {
-                acc + carry0 * eq_eval_at_index(high_challenges, offset_high + q)
-            };
-            if carry1.is_zero() {
-                acc
-            } else {
-                acc + carry1 * eq_eval_at_index(high_challenges, offset_high + q + 1)
-            }
-        })
-    }
+#[inline]
+fn evaluate_structured_slice<F, InnerSum>(
+    num_outer_indices: usize,
+    high_challenges: &[F],
+    offset_high: usize,
+    mut inner_sum: InnerSum,
+) -> F
+where
+    F: FieldCore,
+    InnerSum: FnMut(usize) -> [F; 2],
+{
+    (0..num_outer_indices).fold(F::zero(), |acc, q| {
+        let [carry0, carry1] = inner_sum(q);
+        let acc = if carry0.is_zero() {
+            acc
+        } else {
+            acc + carry0 * eq_eval_at_index(high_challenges, offset_high + q)
+        };
+        if carry1.is_zero() {
+            acc
+        } else {
+            acc + carry1 * eq_eval_at_index(high_challenges, offset_high + q + 1)
+        }
+    })
 }
 
 /// E-hat segment slice evaluator. See `specs/optimized_verifier.md`.
@@ -45,45 +42,37 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     pub challenge_weight: E,
 }
 
-impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
+impl<F, E> EStructuredSlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.public_block_summaries.len() * self.gadget_vector.len()
-    }
+    pub(crate) fn evaluate(&self) -> E {
+        evaluate_structured_slice(
+            self.public_block_summaries.len() * self.gadget_vector.len(),
+            self.high_challenges,
+            self.offset_high,
+            |outer_index| {
+                let num_claims = self.public_block_summaries.len();
+                let digit = outer_index / num_claims;
+                let claim_idx = outer_index % num_claims;
 
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
+                let [aggregated_opening_carry0, aggregated_opening_carry1] =
+                    self.public_block_summaries[claim_idx];
+                let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
+                    self.challenge_block_summaries[claim_idx];
 
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
-        let num_claims = self.public_block_summaries.len();
-        let digit = outer_index / num_claims;
-        let claim_idx = outer_index % num_claims;
-
-        let [aggregated_opening_carry0, aggregated_opening_carry1] =
-            self.public_block_summaries[claim_idx];
-        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-            self.challenge_block_summaries[claim_idx];
-
-        [
-            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
-                + self.challenge_weight * aggregated_challenge_carry0)
-                .mul_base(self.gadget_vector[digit]),
-            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
-                + self.challenge_weight * aggregated_challenge_carry1)
-                .mul_base(self.gadget_vector[digit]),
-        ]
+                [
+                    (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
+                        + self.challenge_weight * aggregated_challenge_carry0)
+                        .mul_base(self.gadget_vector[digit]),
+                    (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
+                        + self.challenge_weight * aggregated_challenge_carry1)
+                        .mul_base(self.gadget_vector[digit]),
+                ]
+            },
+        )
     }
 }
 
@@ -96,42 +85,36 @@ pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     pub a_row_weights: &'a [E],
 }
 
-impl<F, E> StructuredSliceMleEvaluator<E> for TStructuredSlicesEvaluator<'_, F, E>
+impl<F, E> TStructuredSlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.challenge_block_summaries.len() * self.gadget_vector.len() * self.a_row_weights.len()
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
-        let num_claims = self.challenge_block_summaries.len();
-        let num_digits = self.gadget_vector.len();
-        let claim_idx = outer_index % num_claims;
-        let compound = outer_index / num_claims;
-        let digit = compound % num_digits;
-        let a_row_idx = compound / num_digits;
-        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-            self.challenge_block_summaries[claim_idx];
-        [
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry0,
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry1,
-        ]
+    pub(crate) fn evaluate(&self) -> E {
+        evaluate_structured_slice(
+            self.challenge_block_summaries.len()
+                * self.gadget_vector.len()
+                * self.a_row_weights.len(),
+            self.high_challenges,
+            self.offset_high,
+            |outer_index| {
+                let num_claims = self.challenge_block_summaries.len();
+                let num_digits = self.gadget_vector.len();
+                let claim_idx = outer_index % num_claims;
+                let compound = outer_index / num_claims;
+                let digit = compound % num_digits;
+                let a_row_idx = compound / num_digits;
+                let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
+                    self.challenge_block_summaries[claim_idx];
+                [
+                    self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
+                        * aggregated_challenge_carry0,
+                    self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
+                        * aggregated_challenge_carry1,
+                ]
+            },
+        )
     }
 }
 
@@ -145,40 +128,32 @@ pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     pub consistency_weight: E,
 }
 
-impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
+impl<F, E> ZStructuredPow2SlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.a_block_summary.len() * self.fold_gadget.len() * self.g1_commit.len()
-    }
+    pub(crate) fn evaluate(&self) -> E {
+        evaluate_structured_slice(
+            self.a_block_summary.len() * self.fold_gadget.len() * self.g1_commit.len(),
+            self.high_challenges,
+            self.offset_high,
+            |outer_index| {
+                let num_points = self.a_block_summary.len();
+                let depth_fold = self.fold_gadget.len();
+                let pt = outer_index % num_points;
+                let q1 = outer_index / num_points;
+                let df = q1 % depth_fold;
+                let dc = q1 / depth_fold;
 
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
-        let num_points = self.a_block_summary.len();
-        let depth_fold = self.fold_gadget.len();
-        let pt = outer_index % num_points;
-        let q1 = outer_index / num_points;
-        let df = q1 % depth_fold;
-        let dc = q1 / depth_fold;
-
-        let [a_carry0, a_carry1] = self.a_block_summary[pt];
-        let scale = (-self.consistency_weight)
-            .mul_base(self.g1_commit[dc])
-            .mul_base(self.fold_gadget[df]);
-        [scale * a_carry0, scale * a_carry1]
+                let [a_carry0, a_carry1] = self.a_block_summary[pt];
+                let scale = (-self.consistency_weight)
+                    .mul_base(self.g1_commit[dc])
+                    .mul_base(self.fold_gadget[df]);
+                [scale * a_carry0, scale * a_carry1]
+            },
+        )
     }
 }
 

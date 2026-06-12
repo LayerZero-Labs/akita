@@ -18,8 +18,8 @@ mod structured_slice;
 mod zk_blinding;
 
 pub(super) use structured_slice::{
-    compute_r_contribution, EStructuredSlicesEvaluator, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, EStructuredSlicesEvaluator, TStructuredSlicesEvaluator,
+    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 #[cfg(feature = "zk")]
 pub(super) use zk_blinding::{compute_b_blinding_part, compute_d_blinding_part};
