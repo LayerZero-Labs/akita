@@ -11,7 +11,9 @@ mod slice_mle;
 
 pub use batched::verify_batched;
 pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
-pub use root_direct::{verify_root_direct_commitments_with_params, RootDirectBlindingPayload};
+pub use root_direct::verify_root_direct_commitments_with_params;
+#[cfg(feature = "zk")]
+pub use root_direct::RootDirectBlindingPayload;
 pub(crate) use slice_mle::SetupEvalPlan;
 pub use slice_mle::SetupEvaluator;
 

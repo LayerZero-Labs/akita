@@ -4,8 +4,6 @@ use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_zero_fold_openings_with_incidence;
 use crate::protocol::levels::verify_fold_batched_proof;
 use crate::protocol::root_direct::verify_root_direct_commitments_with_params;
-#[cfg(not(feature = "zk"))]
-use crate::protocol::root_direct::NoRootDirectBlindingPayload;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -192,14 +190,13 @@ where
                 .root
                 .direct_b_blinding_digits()
                 .ok_or(AkitaError::InvalidProof)?;
-            #[cfg(not(feature = "zk"))]
-            let direct_commitment_payload = &NoRootDirectBlindingPayload;
             verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
                 &commitments,
                 &incidence_summary,
                 params,
+                #[cfg(feature = "zk")]
                 direct_commitment_payload,
             )?;
         }

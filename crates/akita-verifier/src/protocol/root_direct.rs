@@ -14,12 +14,6 @@ use std::array::from_fn;
 #[cfg(feature = "zk")]
 /// Root-direct commitment blinding payload carried by zk proofs.
 pub type RootDirectBlindingPayload<'a> = &'a [Vec<i8>];
-#[cfg(not(feature = "zk"))]
-/// Typed empty root-direct commitment blinding payload for transparent builds.
-pub struct NoRootDirectBlindingPayload;
-#[cfg(not(feature = "zk"))]
-/// Borrowed transparent-build placeholder for root-direct blinding payloads.
-pub type RootDirectBlindingPayload<'a> = &'a NoRootDirectBlindingPayload;
 
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
@@ -354,7 +348,7 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     flat_commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
-    b_blinding_digits: RootDirectBlindingPayload<'_>,
+    #[cfg(feature = "zk")] b_blinding_digits: RootDirectBlindingPayload<'_>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
@@ -369,8 +363,6 @@ where
     if b_blinding_digits.len() != flat_commitments.len() {
         return Err(AkitaError::InvalidProof);
     }
-    #[cfg(not(feature = "zk"))]
-    let _ = b_blinding_digits;
     let total_group_polys = incidence_summary
         .num_polys_per_point()
         .iter()
