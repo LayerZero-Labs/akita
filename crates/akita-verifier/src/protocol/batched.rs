@@ -415,91 +415,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
-
-    type F = Fp32<251>;
-    const D: usize = 32;
-
-    fn stage1_config() -> SparseChallengeConfig {
-        SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![1],
-        }
-    }
-
-    fn incidence_summary(num_vars: usize) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
-    }
-
-    #[test]
-    fn root_direct_recommitment_rejects_undersized_setup() {
-        let params =
-            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 0)
-                .expect("valid direct layout");
-        let setup_seed = AkitaSetupSeed {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            max_num_points: 1,
-            gen_ring_dim: D,
-            max_setup_len: 3,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-            public_matrix_seed: [0u8; 32],
-        };
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 64]),
-        )];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
-            &witnesses,
-            &setup_seed,
-            &incidence_summary(6),
-            &params,
-        )
-        .expect_err("A layout needs four setup entries but setup has three");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn root_direct_recommitment_rejects_wrong_witness_dimension() {
-        let mut params =
-            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 0)
-                .expect("valid direct layout");
-        params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
-        let setup_seed = AkitaSetupSeed {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            max_num_points: 1,
-            gen_ring_dim: D,
-            max_setup_len: 128,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-            public_matrix_seed: [0u8; 32],
-        };
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 32]),
-        )];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
-            &witnesses,
-            &setup_seed,
-            &incidence_summary(6),
-            &params,
-        )
-        .expect_err("num_vars=6 requires 64 direct witness elements");
-        assert!(matches!(err, AkitaError::InvalidProof));
-    }
-}
-
 fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
     schedule: &Schedule,
 ) -> Result<(), AkitaError> {
@@ -528,9 +443,8 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 ///
 /// The root-direct branch recomputes commitments with the same root commitment
 /// layout the prover used at commit time (`Cfg::get_params_for_batched_commitment`
-/// for the same incidence); a mismatching layout would cause
-/// [`verify_root_direct_commitments_with_params`] to reject a correctly
-/// produced proof.
+/// for the same incidence); a mismatching layout would cause root-direct
+/// commitment recomputation to reject a correctly produced proof.
 ///
 /// # Errors
 ///
@@ -635,4 +549,89 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Fp32;
+    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
+
+    type F = Fp32<251>;
+    const D: usize = 32;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![1],
+        }
+    }
+
+    fn incidence_summary(num_vars: usize) -> ClaimIncidenceSummary {
+        ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
+    }
+
+    #[test]
+    fn root_direct_recommitment_rejects_undersized_setup() {
+        let params =
+            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
+                .with_decomp(1, 0, 2, 1, 0)
+                .expect("valid direct layout");
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 6,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            gen_ring_dim: D,
+            max_setup_len: 3,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+            public_matrix_seed: [0u8; 32],
+        };
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::zero(); 64]),
+        )];
+        let err = validate_root_direct_recommitment_shape::<F, D>(
+            &witnesses,
+            &setup_seed,
+            &incidence_summary(6),
+            &params,
+        )
+        .expect_err("A layout needs four setup entries but setup has three");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn root_direct_recommitment_rejects_wrong_witness_dimension() {
+        let mut params =
+            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
+                .with_decomp(1, 0, 2, 1, 0)
+                .expect("valid direct layout");
+        params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 6,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            gen_ring_dim: D,
+            max_setup_len: 128,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+            public_matrix_seed: [0u8; 32],
+        };
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::zero(); 32]),
+        )];
+        let err = validate_root_direct_recommitment_shape::<F, D>(
+            &witnesses,
+            &setup_seed,
+            &incidence_summary(6),
+            &params,
+        )
+        .expect_err("num_vars=6 requires 64 direct witness elements");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
 }

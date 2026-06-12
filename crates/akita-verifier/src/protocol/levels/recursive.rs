@@ -379,10 +379,7 @@ where
     };
     let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
         stage1_proof,
-        &rs.stage1,
-        rs.col_bits,
-        rs.ring_bits,
-        rs.b,
+        &rs,
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,

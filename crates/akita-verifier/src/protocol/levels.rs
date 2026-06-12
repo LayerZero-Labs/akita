@@ -685,10 +685,7 @@ pub(super) struct Stage1Replay<E: FieldCore> {
 
 pub(super) fn verify_stage1_or_terminal<F, E, T>(
     proof: Option<&AkitaStage1Proof<E>>,
-    handoff: &RingSwitchStage1<E>,
-    col_bits: usize,
-    ring_bits: usize,
-    b: usize,
+    rs: &RingSwitchVerifyOutput<E>,
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
@@ -698,17 +695,18 @@ where
     E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_rounds = col_bits
-        .checked_add(ring_bits)
+    let num_rounds = rs
+        .col_bits
+        .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    let stage1 = match (proof, handoff) {
+    let stage1 = match (proof, &rs.stage1) {
         (Some(proof), RingSwitchStage1::Intermediate { tau0 }) => Some((proof, tau0.as_slice())),
         (None, RingSwitchStage1::Terminal) => None,
         _ => return Err(AkitaError::InvalidProof),
     };
     if let Some((proof, tau0)) = stage1 {
-        let tau0_reordered = reorder_stage1_coords(tau0, col_bits, ring_bits)?;
-        let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, b);
+        let tau0_reordered = reorder_stage1_coords(tau0, rs.col_bits, rs.ring_bits)?;
+        let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
         #[cfg(not(feature = "zk"))]
         let stage1_point = {
             let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -1106,10 +1104,7 @@ where
     };
     let stage1_replay = verify_stage1_or_terminal::<F, C, T>(
         stage1_proof,
-        &rs.stage1,
-        rs.col_bits,
-        rs.ring_bits,
-        rs.b,
+        &rs,
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
