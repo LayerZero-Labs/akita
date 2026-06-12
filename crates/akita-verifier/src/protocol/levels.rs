@@ -128,7 +128,7 @@ enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
     },
 }
 
-struct RootEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
+struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
     prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
     reduction_challenges: Option<Vec<C>>,
     #[cfg(feature = "zk")]
@@ -257,24 +257,26 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_root_eor_and_prepare_points<F, E, C, T, const D: usize>(
+fn verify_fold_eor<F, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     y_rings: &[CyclotomicRing<F, D>],
-    claim_points: &[&[E]],
-    openings: &[E],
+    challenge_points: &[Vec<C>],
+    openings: &[C],
     row_coefficients: &[C],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
-    root_lp: &LevelParams,
+    lp: &LevelParams,
+    block_order: BlockOrder,
+    requires_reduction: bool,
     transcript: &mut T,
+    #[cfg(feature = "zk")] opening_masks: &[Option<&ZkR1csLinearCombination<C>>],
+    #[cfg(feature = "zk")] partial_relation_name: &'static str,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
-) -> Result<RootEorReplay<F, C, D>, AkitaError>
+) -> Result<FoldEorReplay<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F>
-        + ExtField<E>
         + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
@@ -283,7 +285,21 @@ where
 {
     #[cfg(feature = "zk")]
     let _ = y_rings;
-    let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+    let num_claims = incidence_summary.num_claims();
+    let num_points = incidence_summary.num_points();
+    if challenge_points.len() != num_points
+        || openings.len() != num_claims
+        || row_coefficients.len() != num_claims
+        || incidence_summary.claim_to_point().len() != num_claims
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    #[cfg(feature = "zk")]
+    if opening_masks.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
     // The zk EOR final relation consumes the y-ring opening masks, which are a
     // shared resource with the downstream ring-switch binding, so it stays in
     // this outer flow rather than inside the sumcheck driver. These extras carry
@@ -294,34 +310,29 @@ where
         if <C as ExtField<F>>::EXT_DEGREE == 1 {
             return Err(AkitaError::InvalidProof);
         }
-        if <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
-            return Err(AkitaError::InvalidProof);
-        }
         let shape = eor_reduction_shape::<F, C>(
             incidence_summary.num_vars(),
             reduction.partials.len(),
-            incidence_summary.num_claims(),
+            num_claims,
         )?;
-        let padded_points = claim_points
+        let eor_points = challenge_points
             .iter()
             .map(|point| {
                 if point.len() > incidence_summary.num_vars() {
                     return Err(AkitaError::InvalidProof);
                 }
-                let mut lifted = point.iter().copied().map(C::lift_base).collect::<Vec<_>>();
-                lifted.resize(incidence_summary.num_vars(), C::zero());
-                Ok(lifted)
+                let mut padded = point.clone();
+                padded.resize(incidence_summary.num_vars(), C::zero());
+                Ok(padded)
             })
             .collect::<Result<Vec<_>, _>>()?;
         #[cfg(feature = "zk")]
         let mut input_claim_mask = ZkR1csLinearCombination::zero();
-        for (claim_idx, opening) in openings
-            .iter()
-            .copied()
-            .enumerate()
-            .take(incidence_summary.num_claims())
-        {
+        for (claim_idx, opening) in openings.iter().copied().enumerate().take(num_claims) {
             let point_idx = incidence_summary.claim_to_point()[claim_idx];
+            if point_idx >= eor_points.len() {
+                return Err(AkitaError::InvalidProof);
+            }
             let partial_start = claim_idx * shape.width;
             let partial_end = partial_start + shape.width;
             let partials = &reduction.partials[partial_start..partial_end];
@@ -331,27 +342,30 @@ where
                 .collect::<Vec<_>>();
             #[cfg(not(feature = "zk"))]
             check_tensor_extension_opening_claim::<F, C>(
-                &padded_points[point_idx],
-                C::lift_base(opening),
+                &eor_points[point_idx],
+                opening,
                 partials,
             )?;
             #[cfg(feature = "zk")]
             {
                 let head_weights =
-                    EqPolynomial::<C>::evals(&padded_points[point_idx][..shape.split_bits])?;
-                let mut residual = ZkR1csLinearCombination::constant(-C::lift_base(opening));
+                    EqPolynomial::<C>::evals(&eor_points[point_idx][..shape.split_bits])?;
+                let mut residual = match opening_masks[claim_idx] {
+                    Some(mask) => {
+                        let true_opening = ZkRelationAccumulator::unmask_lc(opening, mask);
+                        let mut residual = ZkR1csLinearCombination::zero();
+                        residual.add_scaled(-C::one(), &true_opening);
+                        residual
+                    }
+                    None => ZkR1csLinearCombination::constant(-opening),
+                };
                 for ((&partial, mask), weight) in
                     partials.iter().zip(partial_masks.iter()).zip(head_weights)
                 {
                     let true_partial = ZkRelationAccumulator::unmask_lc(partial, mask);
                     residual.add_scaled(weight, &true_partial);
                 }
-                zk_relations.push_r1cs(
-                    "root extension-opening partial claim",
-                    residual,
-                    ZkR1csLinearCombination::one(),
-                    ZkR1csLinearCombination::zero(),
-                )?;
+                zk_push_linear_zero(zk_relations, partial_relation_name, residual)?;
             }
             for partial in partials {
                 append_ext_field::<F, C, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
@@ -395,7 +409,7 @@ where
                 .enumerate()
                 .map(|(row_idx, row)| {
                     let y_ring = y_rings.get(row_idx).ok_or(AkitaError::InvalidProof)?;
-                    let point = padded_points
+                    let point = eor_points
                         .get(row.point_idx())
                         .ok_or(AkitaError::InvalidProof)?;
                     let point_tail = point
@@ -419,9 +433,9 @@ where
                         Ok(prepare_opening_point::<F, C, D>(
                             &protocol_point,
                             basis,
-                            root_lp,
+                            lp,
                             alpha_bits,
-                            BlockOrder::RowMajor,
+                            block_order,
                         )?
                         .inner_reduction)
                     },
@@ -445,7 +459,7 @@ where
                     zk_relations,
                     zk_hiding_cursor,
                 )?;
-            let factors_by_point = padded_points
+            let factors_by_point = eor_points
                 .iter()
                 .map(|point| {
                     tensor_equality_factor_eval_at_point::<F, C>(
@@ -458,6 +472,8 @@ where
             zk_eor_final = Some((final_claim_lc, factors_by_point));
             Some(challenges)
         }
+    } else if requires_reduction && <C as ExtField<F>>::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidProof);
     } else {
         None
     };
@@ -465,34 +481,18 @@ where
     let prepared_points = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
-        let prepared = prepare_opening_point::<F, C, D>(
-            &protocol_point,
-            basis,
-            root_lp,
-            alpha_bits,
-            BlockOrder::RowMajor,
-        )?;
-        vec![prepared; incidence_summary.num_points()]
+        let prepared =
+            prepare_opening_point::<F, C, D>(&protocol_point, basis, lp, alpha_bits, block_order)?;
+        vec![prepared; num_points]
     } else {
-        claim_points
+        challenge_points
             .iter()
             .map(|opening_point| {
-                let challenge_point = opening_point
-                    .iter()
-                    .copied()
-                    .map(C::lift_base)
-                    .collect::<Vec<_>>();
-                prepare_opening_point::<F, C, D>(
-                    &challenge_point,
-                    basis,
-                    root_lp,
-                    alpha_bits,
-                    BlockOrder::RowMajor,
-                )
+                prepare_opening_point::<F, C, D>(opening_point, basis, lp, alpha_bits, block_order)
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    Ok(RootEorReplay {
+    Ok(FoldEorReplay {
         prepared_points,
         reduction_challenges: reduction_check,
         #[cfg(feature = "zk")]
@@ -862,16 +862,39 @@ where
     let row_coefficients =
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
 
-    let root_eor = verify_root_eor_and_prepare_points::<F, E, C, T, D>(
+    if extension_opening_reduction.is_some()
+        && <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let challenge_points = claim_points
+        .iter()
+        .map(|point| point.iter().copied().map(C::lift_base).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let openings_lifted = openings
+        .iter()
+        .copied()
+        .map(C::lift_base)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "zk")]
+    let opening_masks = vec![None; num_claims];
+
+    let root_eor = verify_fold_eor::<F, C, T, D>(
         extension_opening_reduction,
         y_rings,
-        claim_points,
-        openings,
+        &challenge_points,
+        &openings_lifted,
         &row_coefficients,
         incidence_summary,
         basis,
         root_lp,
+        BlockOrder::RowMajor,
+        false,
         transcript,
+        #[cfg(feature = "zk")]
+        &opening_masks,
+        #[cfg(feature = "zk")]
+        "root extension-opening partial claim",
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
