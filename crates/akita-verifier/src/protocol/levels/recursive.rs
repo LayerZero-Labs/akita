@@ -1,6 +1,5 @@
 #[cfg(not(feature = "zk"))]
 use super::extension_opening_reduction::ExtensionOpeningReductionVerifier;
-use super::root_eor::{eor_input_claim_from_partials, eor_reduction_shape};
 use super::*;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
