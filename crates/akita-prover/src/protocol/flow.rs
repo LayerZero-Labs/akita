@@ -1,6 +1,5 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
-use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -40,6 +39,7 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::dispatch_ring_dim_result;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,

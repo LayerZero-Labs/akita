@@ -5,10 +5,13 @@ use super::*;
 use akita_algebra::EqPolynomial;
 #[cfg(feature = "zk")]
 use akita_r1cs::{zk_ext_mask_lc, zk_ext_mask_lc_at, zk_row_masks_from_column_masks};
-#[cfg(feature = "zk")]
-use akita_types::tensor_equality_factor_eval_at_point;
 #[cfg(not(feature = "zk"))]
-use akita_types::{check_tensor_extension_opening_claim, recover_ring_subfield_inner_product};
+use akita_types::{
+    check_tensor_extension_opening_claim, dispatch_ring_dim_result,
+    recover_ring_subfield_inner_product,
+};
+#[cfg(feature = "zk")]
+use akita_types::{dispatch_ring_dim_result, tensor_equality_factor_eval_at_point};
 use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
 enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
@@ -461,30 +464,6 @@ fn scheduled_recursive_verify_level<'a, F: FieldCore, L: FieldCore>(
     Ok((&step.params, step.next_w_len, next_level_params))
 }
 
-macro_rules! dispatch_verifier_ring_dim_result {
-    ($d:expr, |$D:ident| $body:expr) => {{
-        match $d {
-            32 => {
-                const $D: usize = 32;
-                $body
-            }
-            64 => {
-                const $D: usize = 64;
-                $body
-            }
-            128 => {
-                const $D: usize = 128;
-                $body
-            }
-            256 => {
-                const $D: usize = 256;
-                $body
-            }
-            _ => Err(AkitaError::InvalidProof),
-        }
-    }};
-}
-
 /// Verify all recursive fold levels after the root proof.
 ///
 /// The supplied `schedule` is the already-selected public schedule for this
@@ -544,7 +523,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
 
-                let challenges = dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
+                let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                     verify_recursive_level::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Intermediate {
                             proof: level_proof,
@@ -606,7 +585,7 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                dispatch_verifier_ring_dim_result!(level_d, |D_LEVEL| {
+                dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                     verify_recursive_level::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Terminal {
                             proof: terminal_proof,

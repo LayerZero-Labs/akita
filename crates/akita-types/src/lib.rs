@@ -6,6 +6,7 @@
 
 pub mod config;
 pub(crate) mod descriptor_bytes;
+pub mod dispatch;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod instance_descriptor;
