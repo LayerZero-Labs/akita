@@ -43,6 +43,7 @@ containing `summary.json` and the rendered comment/report.
 Workspace members under `crates/`:
 
 - `akita-field` — field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros
+- `akita-witness` — the single shared borrowed witness/polynomial view vocabulary (`PolynomialView` + the fallible `WitnessProvider` source trait) consumed by the sumcheck Tier-A kernel and the polyops standard views; depends only on `akita-field`, sits below `akita-sumcheck`/`akita-prover`
 - `akita-serialization` — serialization/validation/compression traits
 - `akita-algebra` — modules/vectors, NTTs, cyclotomic rings, sparse challenges, polynomials
 - `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
