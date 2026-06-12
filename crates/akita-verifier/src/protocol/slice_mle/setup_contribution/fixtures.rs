@@ -3,15 +3,14 @@
 #![allow(unreachable_pub)]
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::scalar_powers;
+use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7};
+use akita_field::{AkitaError, CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
-    RingRelationSegmentLayout,
+    RingRelationSegmentLayout, SetupContributionPlan,
 };
 
-use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
 
 pub(crate) type TestField = Prime128OffsetA7F7;
@@ -153,6 +152,32 @@ impl SetupContributionShape {
         shape.block_len = 64;
         shape
     }
+}
+
+fn recursive_inner_product(
+    plan: &SetupContributionPlan<TestField>,
+    setup: &AkitaExpandedSetup<TestField>,
+    alpha_pows: &[TestField],
+) -> Result<TestField, AkitaError> {
+    let bar_omega = plan.materialize_bar_omega();
+    let setup_len = setup
+        .shared_matrix()
+        .total_ring_elements_at::<TEST_RING_DIM>()?;
+    if setup_len < bar_omega.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: bar_omega.len(),
+            actual: setup_len,
+        });
+    }
+    let setup_view = setup
+        .shared_matrix()
+        .ring_view::<TEST_RING_DIM>(1, setup_len)?;
+    Ok(setup_view
+        .as_slice()
+        .iter()
+        .zip(bar_omega)
+        .map(|(ring, weight)| eval_ring_at_pows(ring, alpha_pows) * weight)
+        .sum())
 }
 
 impl SetupContributionFixture {
@@ -346,54 +371,39 @@ impl SetupContributionFixture {
         }
     }
 
-    pub fn compute_contribution(&self) -> TestField {
+    fn prepare_plan(
+        &self,
+        eq_low: Option<&[TestField]>,
+        z_block_low_eq: Option<&[TestField]>,
+    ) -> SetupContributionPlan<TestField> {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
+        SetupContributionPlan::prepare(
             &setup_contribution,
             &self.full_vec_randomness,
-            Some(&self.eq_low),
-            Some(&self.z_block_low_eq),
-            &self.alpha_pows,
+            eq_low,
+            z_block_low_eq,
             &self.fold_gadget,
             self.offset_e,
             self.offset_t,
             self.offset_z,
             self.prepared.witness_segment_layout.offset_u,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
+        )
+        .unwrap()
+    }
+
+    pub fn compute_contribution(&self) -> TestField {
+        self.prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq))
+            .evaluate_direct::<TestField, TEST_RING_DIM>(&self.setup, &self.alpha_pows)
             .unwrap()
-        {
-            SetupEvaluation::Direct(value) => value,
-            SetupEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for direct mode")
-            }
-        }
     }
 
     pub fn recursive_contribution(&self) -> TestField {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution,
-            &self.full_vec_randomness,
-            None,
-            None,
+        recursive_inner_product(
+            &self.prepare_plan(None, None),
+            &self.setup,
             &self.alpha_pows,
-            &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
-            .unwrap()
-        {
-            SetupEvaluation::Recursive(value) => value,
-            SetupEvaluation::Direct(_) => {
-                panic!("setup evaluator returned direct output for recursive mode")
-            }
-        }
+        )
+        .unwrap()
     }
 
     pub fn assert_direct_matches_recursive(&self) {
@@ -410,20 +420,7 @@ impl SetupContributionFixture {
     /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree,
     /// including the tiered `B'`/`F` blocks.
     pub fn assert_eq_eval_matches_materialized(&self) {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution,
-            &self.full_vec_randomness,
-            Some(&self.eq_low),
-            Some(&self.z_block_low_eq),
-            &self.alpha_pows,
-            &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
-        );
-        let plan = evaluator.prepare().unwrap();
+        let plan = self.prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq));
         let bar_omega = plan.materialize_bar_omega();
         let lambda_len = plan.required().checked_next_power_of_two().unwrap();
         let eq_lambda: Vec<TestField> = (0..lambda_len)

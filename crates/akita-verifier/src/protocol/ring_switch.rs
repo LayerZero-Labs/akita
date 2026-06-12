@@ -3,9 +3,8 @@
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, EStructuredSlicesEvaluator, SetupEvaluation, SetupEvaluator,
-    SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
-    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, EStructuredSlicesEvaluator, StructuredSliceMleEvaluator,
+    TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
@@ -23,8 +22,8 @@ use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
     FlatRingVec, LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlanInputs,
-    TerminalWitnessTranscriptParts,
+    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlan,
+    SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
@@ -401,25 +400,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 Ok(claim)
             } else {
                 let setup_contribution_inputs = self.create_setup_contribution_inputs();
-                let evaluator = SetupEvaluator::new(
+                let plan = SetupContributionPlan::prepare(
                     &setup_contribution_inputs,
                     x_challenges,
                     Some(&context.eq_low),
                     Some(&context.z_block_low_eq),
-                    &context.alpha_pows,
                     &context.fold_gadget,
                     context.layout.offset_e,
                     context.layout.offset_t,
                     context.layout.offset_z,
                     context.layout.offset_u,
-                );
-                match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
-                    SetupEvaluation::Direct(value) => Ok(value),
-                    #[cfg(test)]
-                    SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
-                        "setup evaluator returned recursive output for direct mode".into(),
-                    )),
-                }
+                )?;
+                plan.evaluate_direct::<F, D>(setup, &context.alpha_pows)
             };
             jolt_end_cycle_tracking("setup_contribution");
             result?
