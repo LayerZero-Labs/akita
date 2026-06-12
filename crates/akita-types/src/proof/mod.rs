@@ -29,12 +29,10 @@ mod wire;
 
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
-    append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
-    prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, validate_batched_inputs, PreparedRecursiveOpeningPoint,
-    PreparedRootOpeningPoint, RingMultiplierOpeningPoint,
+    append_claim_values_to_transcript, checked_total_claims, flatten_batched_commitment_rows,
+    folded_root_supports_opening_shape, prepare_opening_point,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
@@ -50,7 +48,7 @@ pub use incidence::{
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, RootLevelRawOutput, SetupSumcheckProof, TerminalLevelProof,
+    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

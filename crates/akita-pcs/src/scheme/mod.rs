@@ -162,7 +162,7 @@ where
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        let proof = akita_prover::prove_batched::<Cfg, T, P, B, D>(
+        let proof = akita_prover::batched_prove::<Cfg, T, P, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
             backend,

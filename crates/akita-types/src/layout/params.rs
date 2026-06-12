@@ -321,7 +321,7 @@ impl LevelParams {
 
     /// Logical opening-point variable count for recursive fold levels.
     ///
-    /// Matches [`crate::prepare_recursive_opening_point_ext`]: outer
+    /// Matches [`crate::prepare_opening_point`]: outer
     /// block/position coordinates plus the inner `log2(ring_dimension)` bits.
     ///
     /// # Errors
