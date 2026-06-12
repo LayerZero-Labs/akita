@@ -250,9 +250,7 @@ fn stage2_num_rounds<const D: usize>(
     let num_ring_elems = next_w_len / D;
     let col_bits = num_ring_elems
         .checked_next_power_of_two()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("stage-2 plan column count overflow".to_string())
-        })?
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 plan column count overflow".to_string()))?
         .trailing_zeros() as usize;
     Ok(col_bits + ring_bits)
 }
