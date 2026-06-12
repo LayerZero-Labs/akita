@@ -99,9 +99,9 @@ pub struct CommitmentRouting {
 }
 
 impl CommitmentRouting {
-    /// Build routing for the root path where each opening point has its own
+    /// Copy routing from incidence where each opening point has its own
     /// commitment group (point index equals group index).
-    pub fn from_root_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
+    pub fn copy_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
         let num_claims = incidence.num_claims();
         Self {
             claim_to_commitment_group: incidence.claim_to_point().to_vec(),
@@ -696,7 +696,7 @@ mod tests {
     fn root_commitment_routing_matches_incidence_axis() {
         let summary =
             ClaimIncidenceSummary::from_point_polys(8, vec![2, 1]).expect("valid incidence");
-        let routing = CommitmentRouting::from_root_incidence(&summary).expect("root routing");
+        let routing = CommitmentRouting::copy_incidence(&summary).expect("root routing");
 
         assert_eq!(routing.claim_to_commitment_group(), &[0, 0, 1]);
         assert_eq!(routing.claim_poly_in_commitment_group(), &[0, 1, 0]);

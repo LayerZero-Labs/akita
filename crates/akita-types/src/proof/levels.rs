@@ -39,7 +39,7 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     #[cfg(feature = "zk")]
     pub sumcheck_proof_masked: SumcheckProofMasked<L>,
     /// Commitment to the next witness `w`
-    /// (ring dim = next level's D, may differ from y_ring/v).
+    /// (ring dim = next level's D, may differ from `v`).
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     #[cfg(not(feature = "zk"))]
@@ -455,6 +455,17 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
+    /// Construct a batched root proof from the shared fold-level proof shape.
+    pub fn from_level(root: AkitaLevelProof<F, L>) -> Self {
+        Self::Fold(AkitaBatchedFoldRoot {
+            extension_opening_reduction: root.extension_opening_reduction,
+            v: root.v,
+            stage1: root.stage1,
+            stage2: root.stage2,
+            stage3_sumcheck_proof: root.stage3_sumcheck_proof,
+        })
+    }
+
     /// Construct a batched root proof from the raw root-level prover payload.
     pub fn new<const D: usize>(raw: RootLevelRawOutput<F, L, D>) -> Self {
         Self::from_parts::<D>(

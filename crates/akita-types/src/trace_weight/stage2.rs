@@ -13,9 +13,9 @@ use super::build::{
 use super::trace_table::TraceTable;
 use crate::{
     block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_terms_closed, lagrange_weights,
-    BasisMode, ClaimIncidenceSummary, LevelParams, PreparedRecursiveOpeningPoint,
-    PreparedRootOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding,
-    TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
+    BasisMode, ClaimIncidenceSummary, LevelParams, PreparedOpeningPoint, RingRelationSegmentLayout,
+    RingSubfieldEncoding, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm,
+    TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -224,7 +224,7 @@ where
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
-    prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    prepared_points: &[PreparedOpeningPoint<F, E, D>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
@@ -306,7 +306,7 @@ where
 /// Build public trace weights for a recursive singleton fold, optionally
 /// scaling it by an EOR final tensor factor.
 pub fn trace_public_weights_recursive<F, E, const D: usize>(
-    prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
+    prepared: &PreparedOpeningPoint<F, E, D>,
     scale: E,
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
@@ -339,7 +339,7 @@ where
 /// to `m_vars + r_vars + alpha_bits` coordinates, the outer coordinates are
 /// `padded[alpha_bits..]` and the block coordinates are their tail
 /// `outer[m_vars..m_vars + r_vars]`. This reproduces the `b_open` that
-/// `prepare_root_opening_point_ext` consumes (and then discards) when it
+/// `prepare_opening_point` consumes (and then discards) when it
 /// materializes the ring block multipliers.
 pub fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
@@ -374,7 +374,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
-    prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    prepared_points: &[PreparedOpeningPoint<F, E, D>],
     b_opens_per_point: &[Vec<E>],
     basis: BasisMode,
     row_coefficients: &[E],
@@ -439,7 +439,7 @@ where
 /// fold. The block-axis opening is sliced from the retained padded point under
 /// the [`crate::BlockOrder::ColumnMajor`] convention.
 pub fn trace_terms_recursive<F, E, const D: usize>(
-    prepared: &PreparedRecursiveOpeningPoint<F, E, D>,
+    prepared: &PreparedOpeningPoint<F, E, D>,
     lp: &LevelParams,
     basis: BasisMode,
     scale: E,

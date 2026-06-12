@@ -13,23 +13,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{append_ext_field, Transcript};
 
-/// Root-level opening point prepared for ring-level replay.
-#[derive(Debug, Clone)]
-pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
-    /// Opening point padded to the root verifier's target variable count.
-    pub padded_point: Vec<F>,
-    /// Ring-level outer opening point.
-    pub ring_opening_point: RingOpeningPoint<F>,
-    /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
-    pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
-    /// Public fixed weight in `TraceOpen(Y) = recover_ring_subfield_inner_product(Y, packed_inner_point)`.
-    pub packed_inner_point: CyclotomicRing<F, D>,
-}
-
 /// Recursive opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
-pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
+pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<L>,
     /// Ring-level outer opening point.
@@ -403,171 +389,6 @@ where
     Ok(())
 }
 
-/// Prepare a root opening point for ring-level verification/proving.
-///
-/// # Errors
-///
-/// Returns an error if the target variable count overflows, the opening point
-/// is too long, or the field-to-ring reduction rejects the point dimensions.
-pub fn prepare_root_opening_point<F, const D: usize>(
-    opening_point: &[F],
-    basis: BasisMode,
-    lp: &LevelParams,
-    alpha_bits: usize,
-) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
-where
-    F: FieldCore,
-{
-    let target_num_vars = lp
-        .m_vars
-        .checked_add(lp.r_vars)
-        .and_then(|n| n.checked_add(alpha_bits))
-        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
-    if opening_point.len() > target_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: target_num_vars,
-            actual: opening_point.len(),
-        });
-    }
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let inner_point = &padded_point[..alpha_bits];
-    let outer_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        outer_point,
-        lp.r_vars,
-        lp.m_vars,
-        basis,
-        BlockOrder::RowMajor,
-    )?;
-    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
-    Ok(PreparedRootOpeningPoint {
-        padded_point,
-        ring_opening_point,
-        ring_multiplier_point,
-        packed_inner_point,
-    })
-}
-
-/// Prepare a root opening point whose public coordinates may live in an
-/// extension field, while the resulting ring payload remains over `F`.
-///
-/// For the degree-one path this is exactly [`prepare_root_opening_point`]. For
-/// true extension challenges, live inner variables use the `D / [E:F]`
-/// ring-subfield slots and outer variables are materialized as ring
-/// multipliers.
-///
-/// # Errors
-///
-/// Returns an error if the extension basis is unsupported, the point does not
-/// fit the packed-inner shape, or the ring-subfield parameter validation
-/// rejects `(D, [L:F])`.
-pub fn prepare_root_opening_point_ext<F, E, L, const D: usize>(
-    opening_point: &[E],
-    basis: BasisMode,
-    lp: &LevelParams,
-    alpha_bits: usize,
-) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
-where
-    F: FieldCore + akita_field::FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
-    L: RingSubfieldEncoding<F> + ExtField<E>,
-{
-    if <L as ExtField<F>>::EXT_DEGREE == 1 {
-        let base_point = opening_point
-            .iter()
-            .map(|coord| {
-                coord.degree_one_base().ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "claim field element had no base coordinate".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        return prepare_root_opening_point::<F, D>(&base_point, basis, lp, alpha_bits);
-    }
-
-    if <L as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
-        return Err(AkitaError::InvalidInput(
-            "baseline extension root openings require claim and challenge fields to have the same base degree"
-                .to_string(),
-        ));
-    }
-    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
-        ));
-    }
-
-    let target_num_vars = lp
-        .m_vars
-        .checked_add(lp.r_vars)
-        .and_then(|n| n.checked_add(alpha_bits))
-        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
-    if opening_point.len() > target_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: target_num_vars,
-            actual: opening_point.len(),
-        });
-    }
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, E::zero());
-
-    let packed_slots = D / E::EXT_DEGREE;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if packed_inner_bits > alpha_bits {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: alpha_bits,
-        });
-    }
-    if padded_point[packed_inner_bits..alpha_bits]
-        .iter()
-        .any(|coord| !coord.is_zero())
-    {
-        return Err(AkitaError::InvalidInput(
-            "inactive extension inner coordinates must be zero after psi packing".to_string(),
-        ));
-    }
-
-    let mut inner_point = padded_point[..packed_inner_bits]
-        .iter()
-        .copied()
-        .map(L::lift_base)
-        .collect::<Vec<_>>();
-    inner_point.resize(packed_inner_bits, L::zero());
-    let inner_weights = basis_weights(&inner_point, basis)?;
-    let packed_inner_point = embed_ring_subfield_vector::<F, L, D>(
-        &inner_weights,
-        AkitaError::InvalidInput(
-            "opening point does not encode in the ring-subfield basis".to_string(),
-        ),
-    )?;
-    let outer_point = &padded_point[alpha_bits..];
-    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
-        outer_point,
-        lp.r_vars,
-        lp.m_vars,
-        basis,
-        BlockOrder::RowMajor,
-    )?;
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        &vec![F::zero(); outer_point.len()],
-        lp.r_vars,
-        lp.m_vars,
-        basis,
-        BlockOrder::RowMajor,
-    )?;
-
-    Ok(PreparedRootOpeningPoint {
-        padded_point: Vec::new(),
-        ring_opening_point,
-        ring_multiplier_point,
-        packed_inner_point,
-    })
-}
-
 /// Prepare a recursive opening point whose coordinates may live in the proof
 /// scalar field `L`, while the resulting ring payload remains over `F`.
 ///
@@ -584,17 +405,18 @@ where
 /// Returns an error when the point length is invalid, the extension degree is
 /// unsupported by the ring-subfield dispatcher, or the level has outer
 /// variables that require the later split/Frobenius route.
-pub fn prepare_recursive_opening_point_ext<F, L, const D: usize>(
+pub fn prepare_opening_point<F, L, const D: usize>(
     opening_point: &[L],
     basis: BasisMode,
     lp: &LevelParams,
     alpha_bits: usize,
     block_order: BlockOrder,
-) -> Result<PreparedRecursiveOpeningPoint<F, L, D>, AkitaError>
+) -> Result<PreparedOpeningPoint<F, L, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     L: RingSubfieldEncoding<F>,
 {
+    let _span = tracing::info_span!("ring_opening_point").entered();
     let target_num_vars = lp
         .m_vars
         .checked_add(lp.r_vars)
@@ -631,7 +453,7 @@ where
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
-        return Ok(PreparedRecursiveOpeningPoint {
+        return Ok(PreparedOpeningPoint {
             padded_point,
             ring_opening_point,
             ring_multiplier_point,
@@ -678,7 +500,7 @@ where
         block_order,
     )?;
 
-    Ok(PreparedRecursiveOpeningPoint {
+    Ok(PreparedOpeningPoint {
         padded_point,
         ring_opening_point,
         ring_multiplier_point,
@@ -808,19 +630,6 @@ where
         && num_vars >= D.trailing_zeros() as usize
 }
 
-/// Append a prepared root opening point to the transcript.
-pub fn append_prepared_root_opening_point<F, T, const D: usize>(
-    prepared_point: &PreparedRootOpeningPoint<F, D>,
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    for pt in &prepared_point.padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,7 +694,7 @@ mod tests {
         let lp = packed_inner_lp();
         let point = [L::lift_base(F::from_u64(3)), L::lift_base(F::from_u64(5))];
 
-        let prepared = prepare_recursive_opening_point_ext::<F, L, 32>(
+        let prepared = prepare_opening_point::<F, L, 32>(
             &point,
             BasisMode::Lagrange,
             &lp,

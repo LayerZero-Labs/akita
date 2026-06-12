@@ -1,7 +1,7 @@
 use super::*;
 use akita_types::{
     ensure_trace_stage2_supported, trace_input_claim, trace_terms_recursive,
-    trace_weight_layout_from_segment, PreparedRecursiveOpeningPoint, RingRelationSegmentLayout,
+    trace_weight_layout_from_segment, PreparedOpeningPoint, RingRelationSegmentLayout,
     RingSubfieldEncoding, TraceClaim,
 };
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
@@ -277,7 +277,7 @@ where
         Some(rho) => ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?,
         None => current_state.opening_point.clone(),
     };
-    let prepared_points = vec![prepare_recursive_opening_point_ext::<F, L, D>(
+    let prepared_points = vec![prepare_opening_point::<F, L, D>(
         &protocol_point,
         current_state.basis,
         lp,
@@ -1112,7 +1112,7 @@ fn build_trace_claim_recursive<F, L, const D: usize>(
     segment: &RingRelationSegmentLayout,
     col_bits: usize,
     ring_bits: usize,
-    prepared: &PreparedRecursiveOpeningPoint<F, L, D>,
+    prepared: &PreparedOpeningPoint<F, L, D>,
     basis: BasisMode,
     trace_eval_target: L,
     trace_scale: L,

@@ -7,8 +7,8 @@ use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
-    RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRowsPlan,
+    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRowsPlan,
+    SuffixWitness,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -98,6 +98,90 @@ where
     Ok(())
 }
 
+fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
+    pre_folded_e: &[Vec<CyclotomicRing<F, D>>],
+    depth_open: usize,
+    log_basis: u32,
+) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
+    let total_rows: usize = pre_folded_e.iter().map(Vec::len).sum();
+    let mut e_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+    let mut offset = 0usize;
+    for folded_rows in pre_folded_e {
+        for w_i in folded_rows {
+            w_i.balanced_decompose_pow2_i8_into_with_params(
+                &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
+                &decompose_params,
+            );
+            offset += depth_open;
+        }
+    }
+    Ok(e_hat)
+}
+
+fn flatten_commitment_hints_for_ring_relation<F, const D: usize>(
+    hints: Vec<AkitaCommitmentHint<F, D>>,
+    group_sizes: &[usize],
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<AkitaCommitmentHint<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if hints.len() != group_sizes.len() {
+        return Err(AkitaError::InvalidInput(
+            "prover hint group count does not match commitment groups".to_string(),
+        ));
+    }
+
+    let mut decomposed_inner_rows = Vec::new();
+    let mut t_rows_by_poly = Vec::new();
+    #[cfg(feature = "zk")]
+    let mut b_blinding_digits = Vec::new();
+    for (mut hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
+        if hint.decomposed_inner_rows.len() != group_size {
+            return Err(AkitaError::InvalidInput(
+                "prover hint group sizes do not match polynomial groups".to_string(),
+            ));
+        }
+        hint.ensure_recomposed_inner_rows(num_digits_open, log_basis)?;
+        #[cfg(feature = "zk")]
+        let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
+        #[cfg(not(feature = "zk"))]
+        let (digits_by_poly, rows_by_poly) = hint.into_parts();
+        #[cfg(feature = "zk")]
+        if blinding_by_group.len() != 1 {
+            return Err(AkitaError::InvalidInput(
+                "prover hint must carry exactly one blinding group per commitment".to_string(),
+            ));
+        }
+        decomposed_inner_rows.extend(digits_by_poly);
+        let rows_by_poly = rows_by_poly.ok_or_else(|| {
+            AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
+        })?;
+        t_rows_by_poly.extend(rows_by_poly);
+        #[cfg(feature = "zk")]
+        b_blinding_digits.append(&mut blinding_by_group);
+    }
+
+    #[cfg(feature = "zk")]
+    {
+        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
+            decomposed_inner_rows,
+            t_rows_by_poly,
+            b_blinding_digits,
+        ))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
+            decomposed_inner_rows,
+            t_rows_by_poly,
+        ))
+    }
+}
+
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -140,6 +224,53 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
+
+    Ok(DecomposeFoldWitness {
+        z_folded_rings,
+        centered_coeffs,
+        centered_inf_norm,
+    })
+}
+
+fn decompose_fold_witness<F, P, const D: usize>(
+    challenges: &Challenges,
+    polys: &[&P],
+    claim_to_point: &[usize],
+    num_points: usize,
+    lp: &LevelParams,
+) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: AkitaPolyOps<F, D>,
+{
+    // Per-point chunking keeps each aggregated witness aligned with one
+    // opening point's challenge claims.
+    let _span = tracing::info_span!("compute_batched_z_folded", num_points = num_points).entered();
+    let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
+    let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
+    for (claim_idx, poly) in polys.iter().enumerate() {
+        let point_idx = claim_to_point[claim_idx];
+        polys_by_point[point_idx].push(*poly);
+        claim_indices_by_point[point_idx].push(claim_idx);
+    }
+
+    let mut z_folded_rings = Vec::new();
+    let mut centered_coeffs = Vec::new();
+    let mut centered_inf_norm = 0u32;
+    for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
+        let point_indices = &claim_indices_by_point[point_idx];
+        let point_claim_count = point_polys.len();
+        let witness = build_point_decompose_fold_witness::<F, P, D>(
+            challenges,
+            point_polys,
+            point_indices,
+            lp,
+        )?;
+        let witness = validate_decompose_fold(witness, lp, point_claim_count)?;
+        centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
+        z_folded_rings.extend(witness.z_folded_rings);
+        centered_coeffs.extend(witness.centered_coeffs);
+    }
 
     Ok(DecomposeFoldWitness {
         z_folded_rings,
@@ -270,6 +401,43 @@ where
             return Err(AkitaError::InvalidProof);
         }
         Ok(rows)
+    }
+}
+
+fn compute_v_rows_for_layout<F, T, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    transcript: &mut T,
+    lp: &LevelParams,
+    e_hat: &FlatDigitBlocks<D>,
+    m_row_layout: MRowLayout,
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    B: DigitRowsComputeBackend<F>,
+{
+    match m_row_layout {
+        MRowLayout::WithDBlock => {
+            let _span = tracing::info_span!(
+                "compute_relation_v",
+                e_hat_planes = e_hat.flat_digits().len()
+            )
+            .entered();
+            let v = compute_v_rows(
+                backend,
+                prepared,
+                lp.d_key.row_len(),
+                e_hat,
+                lp.log_basis,
+                #[cfg(feature = "zk")]
+                d_blinding_digits,
+            )?;
+            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+            Ok(v)
+        }
+        MRowLayout::WithoutDBlock => Ok(Vec::new()),
     }
 }
 
@@ -414,76 +582,14 @@ impl RingRelationProver {
 
         let e_hat = {
             let _span = tracing::info_span!("decompose_batched_e_hat").entered();
-            let depth_open = lp.num_digits_open;
-            let log_basis = lp.log_basis;
-            let q = (-F::one()).to_canonical_u128() + 1;
-            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let total_rows: usize = pre_folded_e_by_poly.iter().map(Vec::len).sum();
-            let block_sizes = vec![depth_open; total_rows];
-            let mut e_hat = FlatDigitBlocks::zeroed(block_sizes)
-                .expect("batched e_hat decomposition preserves block sizes");
-            let mut offset = 0usize;
-            for folded_rows in &pre_folded_e_by_poly {
-                for w_i in folded_rows {
-                    w_i.balanced_decompose_pow2_i8_into_with_params(
-                        &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
-                        &decompose_params,
-                    );
-                    offset += depth_open;
-                }
-            }
-            e_hat
+            decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
         };
-        let flattened_hint = {
-            let mut decomposed_inner_rows = Vec::new();
-            let mut t_rows_by_poly = Vec::new();
-            #[cfg(feature = "zk")]
-            let mut b_blinding_digits = Vec::new();
-            for (mut hint, &group_size) in hints.into_iter().zip(num_polys_per_point.iter()) {
-                if hint.decomposed_inner_rows.len() != group_size {
-                    return Err(AkitaError::InvalidInput(
-                        "batched prover hint group sizes do not match polynomial groups"
-                            .to_string(),
-                    ));
-                }
-                hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
-                #[cfg(feature = "zk")]
-                let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
-                #[cfg(not(feature = "zk"))]
-                let (digits_by_poly, rows_by_poly) = hint.into_parts();
-                #[cfg(feature = "zk")]
-                if blinding_by_group.len() != 1 {
-                    return Err(AkitaError::InvalidInput(
-                        "batched prover hint must carry exactly one blinding group per commitment"
-                            .to_string(),
-                    ));
-                }
-                decomposed_inner_rows.extend(digits_by_poly);
-                let rows_by_poly = rows_by_poly.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "missing recomposed inner rows in batched prover hint".to_string(),
-                    )
-                })?;
-                t_rows_by_poly.extend(rows_by_poly);
-                #[cfg(feature = "zk")]
-                b_blinding_digits.append(&mut blinding_by_group);
-            }
-            #[cfg(feature = "zk")]
-            {
-                AkitaCommitmentHint::with_recomposed_inner_rows(
-                    decomposed_inner_rows,
-                    t_rows_by_poly,
-                    b_blinding_digits,
-                )
-            }
-            #[cfg(not(feature = "zk"))]
-            {
-                AkitaCommitmentHint::with_recomposed_inner_rows(
-                    decomposed_inner_rows,
-                    t_rows_by_poly,
-                )
-            }
-        };
+        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
+            hints,
+            num_polys_per_point,
+            lp.num_digits_open,
+            lp.log_basis,
+        )?;
 
         // Terminal layout drops the D-block from the M-matrix entirely:
         // `v = D · e_hat` never travels on the wire, the verifier never
@@ -498,27 +604,16 @@ impl RingRelationProver {
             MRowLayout::WithoutDBlock => FlatDigitBlocks::<D>::empty(),
         };
 
-        let v = match m_row_layout {
-            MRowLayout::WithDBlock => {
-                let _span = tracing::info_span!(
-                    "compute_batched_v",
-                    e_hat_planes = e_hat.flat_digits().len()
-                )
-                .entered();
-                let v = compute_v_rows(
-                    backend,
-                    prepared,
-                    lp.d_key.row_len(),
-                    &e_hat,
-                    lp.log_basis,
-                    #[cfg(feature = "zk")]
-                    &d_blinding_digits,
-                )?;
-                transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
-                v
-            }
-            MRowLayout::WithoutDBlock => Vec::new(),
-        };
+        let v = compute_v_rows_for_layout::<F, T, B, D>(
+            backend,
+            prepared,
+            transcript,
+            &lp,
+            &e_hat,
+            m_row_layout,
+            #[cfg(feature = "zk")]
+            &d_blinding_digits,
+        )?;
 
         if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
@@ -532,44 +627,13 @@ impl RingRelationProver {
             stage1_fold_challenge_labels(),
         )?;
 
-        // Per-point chunking keeps each aggregated witness aligned with one
-        // opening point's challenge claims.
-        let z_folded_rings = {
-            let num_points = opening_points.len();
-            let _span =
-                tracing::info_span!("compute_batched_z_folded", num_points = num_points).entered();
-            let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
-            let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
-            for (claim_idx, poly) in polys.iter().enumerate() {
-                let point_idx = claim_to_point[claim_idx];
-                polys_by_point[point_idx].push(*poly);
-                claim_indices_by_point[point_idx].push(claim_idx);
-            }
-
-            let mut z_folded_rings = Vec::new();
-            let mut centered_coeffs = Vec::new();
-            let mut centered_inf_norm = 0u32;
-            for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-                let point_indices = &claim_indices_by_point[point_idx];
-                let point_claim_count = point_polys.len();
-                let witness = build_point_decompose_fold_witness::<F, P, D>(
-                    &challenges,
-                    point_polys,
-                    point_indices,
-                    &lp,
-                )?;
-                let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
-                centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
-                z_folded_rings.extend(witness.z_folded_rings);
-                centered_coeffs.extend(witness.centered_coeffs);
-            }
-
-            DecomposeFoldWitness {
-                z_folded_rings,
-                centered_coeffs,
-                centered_inf_norm,
-            }
-        };
+        let z_folded_rings = decompose_fold_witness::<F, _, D>(
+            &challenges,
+            polys,
+            &claim_to_point,
+            opening_points.len(),
+            &lp,
+        )?;
 
         let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
             .iter()
@@ -594,7 +658,7 @@ impl RingRelationProver {
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
         let incidence = incidence_summary.clone();
-        let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
+        let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
         let instance = RingRelationInstance::new(
             m_row_layout,
             challenges,
@@ -638,7 +702,7 @@ impl RingRelationProver {
         prepared: &B::PreparedSetup<D>,
         ring_opening_points: Vec<RingOpeningPoint<F>>,
         ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
-        witness: &RecursiveWitnessView<'_, F, D>,
+        witness: &SuffixWitness<'_, F, D>,
         pre_folded_e_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         mut hint: AkitaCommitmentHint<F, D>,
@@ -783,7 +847,6 @@ impl RingRelationProver {
                 let witness_part = witness.decompose_fold(
                     &sparse_challenges[challenge_offset..next_offset],
                     lp.block_len,
-                    lp.num_blocks,
                     lp.num_digits_commit,
                     lp.log_basis,
                 );

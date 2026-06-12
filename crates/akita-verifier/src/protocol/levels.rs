@@ -49,8 +49,8 @@ use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
-    flatten_batched_commitment_rows, generate_y, prepare_recursive_opening_point_ext,
-    prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
+    flatten_batched_commitment_rows, generate_y, prepare_opening_point,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
     sample_public_row_coefficients, schedule_num_fold_levels, tensor_equality_factor_eval_at_point,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -614,17 +614,18 @@ where
 
     // Alongside each prepared opening point, keep the short block-axis opening
     // `b_open` (in the challenge field `C`) for the verifier's closed-form trace
-    // term. `prepare_root_opening_point_ext` consumes and discards it, so it is
-    // re-sliced here from the same source point.
+    // term. The prepared point materializes ring multipliers, so the same
+    // source point is re-sliced here for the trace table.
     let (prepared_points, trace_block_openings): (Vec<_>, Vec<Vec<C>>) =
         if let Some(rho) = &reduction_check {
             let protocol_point =
                 ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
-            let prepared = prepare_root_opening_point_ext::<F, C, C, D>(
+            let prepared = prepare_opening_point::<F, C, D>(
                 &protocol_point,
                 basis,
                 root_lp,
                 alpha_bits,
+                BlockOrder::RowMajor,
             )?;
             let b_open = root_trace_block_opening::<C>(&protocol_point, root_lp, alpha_bits)?;
             let num_points = incidence_summary.num_points();
@@ -633,11 +634,17 @@ where
             let mut prepared = Vec::with_capacity(claim_points.len());
             let mut block_openings = Vec::with_capacity(claim_points.len());
             for opening_point in claim_points.iter() {
-                prepared.push(prepare_root_opening_point_ext::<F, E, C, D>(
-                    opening_point,
+                let challenge_point = opening_point
+                    .iter()
+                    .copied()
+                    .map(C::lift_base)
+                    .collect::<Vec<_>>();
+                prepared.push(prepare_opening_point::<F, C, D>(
+                    &challenge_point,
                     basis,
                     root_lp,
                     alpha_bits,
+                    BlockOrder::RowMajor,
                 )?);
                 let b_open = root_trace_block_opening::<E>(opening_point, root_lp, alpha_bits)?;
                 block_openings.push(
@@ -726,7 +733,7 @@ where
     } else {
         MRowLayout::WithDBlock
     };
-    let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
+    let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
             &row_coefficients,
