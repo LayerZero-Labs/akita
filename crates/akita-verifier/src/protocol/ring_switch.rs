@@ -141,8 +141,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
-        SetupContributionPlanInputs {
+    pub(crate) fn prepare_setup_contribution_plan<F>(
+        &self,
+        x_challenges: &[E],
+        eq_low: Option<&[E]>,
+        z_block_low_eq: Option<&[E]>,
+        fold_gadget: &[F],
+    ) -> Result<SetupContributionPlan<E>, AkitaError>
+    where
+        F: FieldCore,
+        E: MulBase<F>,
+    {
+        let inputs = SetupContributionPlanInputs {
             eq_tau1: self.eq_tau1.clone(),
             num_t_vectors: self.num_t_vectors,
             num_blocks: self.num_blocks,
@@ -162,7 +172,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             num_public_rows: self.num_public_rows,
             tier_split: self.tier_split,
             n_f: self.n_f,
-        }
+        };
+        let layout = self.witness_segment_layout;
+        SetupContributionPlan::prepare(
+            &inputs,
+            x_challenges,
+            eq_low,
+            z_block_low_eq,
+            fold_gadget,
+            layout.offset_e,
+            layout.offset_t,
+            layout.offset_z,
+            layout.offset_u,
+        )
     }
 
     fn prepare_point_context<'a, F, const D: usize>(
@@ -374,17 +396,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let result = if let Some(claim) = setup_claim {
                 Ok(claim)
             } else {
-                let setup_contribution_inputs = self.create_setup_contribution_inputs();
-                let plan = SetupContributionPlan::prepare(
-                    &setup_contribution_inputs,
+                let plan = self.prepare_setup_contribution_plan::<F>(
                     x_challenges,
                     Some(&context.eq_low),
                     context.z_block_low_eq.as_deref(),
                     &context.fold_gadget,
-                    context.layout.offset_e,
-                    context.layout.offset_t,
-                    context.layout.offset_z,
-                    context.layout.offset_u,
                 )?;
                 plan.evaluate_direct::<F, D>(setup, &context.alpha_pows)
             };

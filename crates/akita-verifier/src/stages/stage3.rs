@@ -48,18 +48,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     {
         let alpha_pows = scalar_powers(alpha, D);
         let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-        let layout = prepared.witness_segment_layout;
-        let setup_contribution_inputs = prepared.create_setup_contribution_inputs();
-        let plan = SetupContributionPlan::prepare(
-            &setup_contribution_inputs,
+        let plan = prepared.prepare_setup_contribution_plan::<F>(
             x_challenges,
             None,
             None,
             &fold_gadget,
-            layout.offset_e,
-            layout.offset_t,
-            layout.offset_z,
-            layout.offset_u,
         )?;
         let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("setup product lambda length overflow".into())

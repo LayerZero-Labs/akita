@@ -366,19 +366,14 @@ impl SetupContributionFixture {
         eq_low: Option<&[TestField]>,
         z_block_low_eq: Option<&[TestField]>,
     ) -> SetupContributionPlan<TestField> {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        SetupContributionPlan::prepare(
-            &setup_contribution,
-            &self.full_vec_randomness,
-            eq_low,
-            z_block_low_eq,
-            &self.fold_gadget,
-            self.prepared.witness_segment_layout.offset_e,
-            self.prepared.witness_segment_layout.offset_t,
-            self.prepared.witness_segment_layout.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
-        )
-        .unwrap()
+        self.prepared
+            .prepare_setup_contribution_plan::<TestField>(
+                &self.full_vec_randomness,
+                eq_low,
+                z_block_low_eq,
+                &self.fold_gadget,
+            )
+            .unwrap()
     }
 
     pub(super) fn assert_direct_matches_recursive(&self) {
