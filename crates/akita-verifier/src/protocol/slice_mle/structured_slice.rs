@@ -5,89 +5,42 @@ use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
-/// Number of carry buckets per outer index produced by
-/// [`StructuredSliceMleEvaluator::compute_inner_sum`].
-///
-/// **Note:** This module is only tested and intended for the
-/// `POSSIBLE_CARRIES = 2` case. Anything other than `2` would require the
-/// outer-sum algebra to be reworked; do not change this constant.
-pub(super) const POSSIBLE_CARRIES: usize = 2;
-
-/// Inner-sum slot for the no-carry bucket (`carry = 0`).
-pub(super) const CARRY0: usize = 0;
-
-/// Inner-sum slot for the one-carry bucket (`carry = 1`).
-pub(super) const CARRY1: usize = 1;
-
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `specs/optimized_verifier.md` for the full derivation.
 pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
 
-    /// High-bit segment of the slice's randomness:
-    /// `full_vec_randomness[offset_low_bits..]`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
+    /// High-bit segment of the slice's randomness.
     fn get_high_challenges(&self) -> &[F];
 
-    /// High-bit part of the slice offset: `offset >> offset_low_bits`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
+    /// High-bit part of the slice offset.
     fn get_offset_high(&self) -> usize;
 
     /// Compute the inner sum at `outer_index`: this evaluator's contribution
-    /// to each carry bucket ([`CARRY0`], [`CARRY1`]) for that outer index.
-    fn compute_inner_sum(&self, outer_index: usize) -> [F; POSSIBLE_CARRIES];
-
-    /// Compute the outer sum: combine the per-outer-index carry terms with
-    /// the high-bit equality polynomial.
-    ///
-    /// Default implementation is the standard high-bit equality pass:
-    ///
-    /// ```text
-    /// Σ_q  carry_terms[q][CARRY0] · eq_high(offset_high + q)
-    ///    + carry_terms[q][CARRY1] · eq_high(offset_high + q + 1)
-    /// ```
-    ///
-    /// where `offset_high = self.get_offset_high()` and `eq_high` is the
-    /// multilinear equality polynomial on `self.get_high_challenges()`.
-    ///
-    /// **Note:** Both this default impl and the algebra it implements are
-    /// only tested and intended for [`POSSIBLE_CARRIES`] = 2. The two carry
-    /// buckets [`CARRY0`] and [`CARRY1`] are the only ones that arise from
-    /// the peeled-block split.
-    #[inline]
-    fn compute_outer_sum(&self, carry_terms: &[[F; POSSIBLE_CARRIES]]) -> F {
-        let offset_high = self.get_offset_high();
-        let high_challenges = self.get_high_challenges();
-
-        carry_terms
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |acc, (q, terms)| {
-                let acc = if terms[CARRY0].is_zero() {
-                    acc
-                } else {
-                    acc + terms[CARRY0] * eq_eval_at_index(high_challenges, offset_high + q)
-                };
-                if terms[CARRY1].is_zero() {
-                    acc
-                } else {
-                    acc + terms[CARRY1] * eq_eval_at_index(high_challenges, offset_high + q + 1)
-                }
-            })
-    }
+    /// to the no-carry and one-carry buckets for that outer index.
+    fn compute_inner_sum(&self, outer_index: usize) -> [F; 2];
 
     /// Evaluate this slice's multilinear extension at the slice's
     /// randomness.
     #[inline]
     fn evaluate(&self) -> F {
-        let n = self.num_outer_indices();
-        let carry_terms: Vec<[F; POSSIBLE_CARRIES]> = (0..n)
-            .map(|outer_index| self.compute_inner_sum(outer_index))
-            .collect();
-        self.compute_outer_sum(&carry_terms)
+        let offset_high = self.get_offset_high();
+        let high_challenges = self.get_high_challenges();
+
+        (0..self.num_outer_indices()).fold(F::zero(), |acc, q| {
+            let [carry0, carry1] = self.compute_inner_sum(q);
+            let acc = if carry0.is_zero() {
+                acc
+            } else {
+                acc + carry0 * eq_eval_at_index(high_challenges, offset_high + q)
+            };
+            if carry1.is_zero() {
+                acc
+            } else {
+                acc + carry1 * eq_eval_at_index(high_challenges, offset_high + q + 1)
+            }
+        })
     }
 }
 
@@ -132,7 +85,7 @@ where
     }
 
     #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
+    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
         let num_claims = self.public_block_summaries.len();
         let digit = outer_index / num_claims;
         let claim_idx = outer_index % num_claims;
@@ -190,7 +143,7 @@ where
     }
 
     #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
+    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
         let num_claims = self.challenge_block_summaries.len();
         let num_digits = self.gadget_vector.len();
         let claim_idx = outer_index % num_claims;
@@ -245,7 +198,7 @@ where
     }
 
     #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
+    fn compute_inner_sum(&self, outer_index: usize) -> [E; 2] {
         let num_points = self.a_block_summary.len();
         let depth_fold = self.fold_gadget.len();
         let pt = outer_index % num_points;
