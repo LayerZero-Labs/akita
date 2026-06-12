@@ -10,7 +10,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
-use akita_r1cs::{zk_ext_mask_lc_at, ZkR1csLinearCombination, ZkR1csTerm, ZkRelationAccumulator};
+use akita_r1cs::{zk_ext_mask_lc_at, ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceVerifier;
 #[cfg(not(feature = "zk"))]
@@ -136,30 +136,6 @@ struct ProductStageVerifier<E: FieldCore> {
     arity: usize,
 }
 
-impl<E: FieldCore> ProductStageVerifier<E> {
-    fn new(
-        tau: Vec<E>,
-        input_claim: E,
-        #[cfg(feature = "zk")] input_claim_mask: ZkR1csLinearCombination<E>,
-        child_claims: Vec<E>,
-        #[cfg(feature = "zk")] child_claim_masks: Vec<ZkR1csLinearCombination<E>>,
-        batch_weights: Vec<E>,
-        arity: usize,
-    ) -> Self {
-        Self {
-            tau,
-            input_claim,
-            #[cfg(feature = "zk")]
-            input_claim_mask,
-            child_claims,
-            #[cfg(feature = "zk")]
-            child_claim_masks,
-            batch_weights,
-            arity,
-        }
-    }
-}
-
 impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifier<E> {
     type RoundState = GruenSplitEq<E>;
 
@@ -256,25 +232,6 @@ struct PolynomialStageVerifier<E: FieldCore> {
     input_claim_mask: ZkR1csLinearCombination<E>,
     poly_coeffs: Vec<E>,
     s_claim: E,
-}
-
-impl<E: FieldCore> PolynomialStageVerifier<E> {
-    fn new(
-        tau: Vec<E>,
-        input_claim: E,
-        #[cfg(feature = "zk")] input_claim_mask: ZkR1csLinearCombination<E>,
-        poly_coeffs: Vec<E>,
-        s_claim: E,
-    ) -> Self {
-        Self {
-            tau,
-            input_claim,
-            #[cfg(feature = "zk")]
-            input_claim_mask,
-            poly_coeffs,
-            s_claim,
-        }
-    }
 }
 
 impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVerifier<E> {
@@ -438,17 +395,17 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                     .ok_or(AkitaError::InvalidProof)?;
                 hidden_ext_mask_lcs::<F, E>(child_mask_start, expected_child_claims)
             };
-            let product_verifier = ProductStageVerifier::new(
-                current_tau,
-                current_claim,
+            let product_verifier = ProductStageVerifier {
+                tau: current_tau,
+                input_claim: current_claim,
                 #[cfg(feature = "zk")]
-                current_claim_mask.clone(),
-                stage_proof.child_claims.clone(),
+                input_claim_mask: current_claim_mask.clone(),
+                child_claims: stage_proof.child_claims.clone(),
                 #[cfg(feature = "zk")]
-                child_claim_masks.clone(),
-                current_weights,
+                child_claim_masks: child_claim_masks.clone(),
+                batch_weights: current_weights,
                 arity,
-            );
+            };
             #[cfg(feature = "zk")]
             {
                 let (next_tau, _stage_handoff_mask) = product_verifier.verify_zk::<F, T, _>(
@@ -490,26 +447,20 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
             {
                 current_claim_mask = ZkR1csLinearCombination::zero();
                 for (&weight, mask) in current_weights.iter().zip(child_claim_masks.iter()) {
-                    current_claim_mask.constant += weight * mask.constant;
-                    current_claim_mask
-                        .terms
-                        .extend(mask.terms.iter().map(|term| ZkR1csTerm {
-                            variable: term.variable,
-                            coeff: weight * term.coeff,
-                        }));
+                    current_claim_mask.add_scaled(weight, mask);
                 }
             }
         }
 
         let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
-        let leaf_verifier = PolynomialStageVerifier::new(
-            current_tau,
-            current_claim,
+        let leaf_verifier = PolynomialStageVerifier {
+            tau: current_tau,
+            input_claim: current_claim,
             #[cfg(feature = "zk")]
-            current_claim_mask,
-            batched_leaf_coeffs,
-            proof.s_claim,
-        );
+            input_claim_mask: current_claim_mask,
+            poly_coeffs: batched_leaf_coeffs,
+            s_claim: proof.s_claim,
+        };
         #[cfg(feature = "zk")]
         {
             leaf_verifier.verify_zk::<F, T, _>(

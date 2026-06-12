@@ -28,6 +28,7 @@ pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
+    lambda_bits: usize,
     rounds: usize,
 }
 
@@ -67,6 +68,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             plan,
             alpha_pows,
             ring_bits,
+            lambda_bits,
             rounds,
         })
     }
@@ -129,14 +131,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
 
-        let lambda_len = self
-            .plan
-            .required()
-            .checked_next_power_of_two()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup product lambda length overflow".into())
-            })?;
-        if rho_lambda.len() != lambda_len.trailing_zeros() as usize {
+        if rho_lambda.len() != self.lambda_bits {
             return Err(AkitaError::InvalidProof);
         }
         let eq_lambda = EqPolynomial::evals(rho_lambda)?;

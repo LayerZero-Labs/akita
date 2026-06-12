@@ -473,7 +473,7 @@ mod tests {
         let challenges = vec![E::zero(), E::zero()];
         let err = cleartext_witness_eval::<F, E, D>(
             &CleartextWitnessProof::PackedDigits(packed),
-            1,
+            4,
             &challenges,
             1,
             1,
