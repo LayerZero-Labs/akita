@@ -21,13 +21,6 @@ use akita_types::{
 };
 use std::array::from_fn;
 
-fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    CyclotomicRing::from_coefficients(from_fn(|idx| F::from_i64(plane[idx] as i64)))
-}
-
 pub(crate) fn field_evals_to_rings<F, const D: usize>(
     evals: &[F],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -159,11 +152,15 @@ where
     matrix_rows
         .iter()
         .map(|row| {
-            row.iter()
-                .zip(digits.iter())
-                .fold(CyclotomicRing::<F, D>::zero(), |acc, (entry, digit)| {
-                    acc + (*entry * i8_plane_to_ring::<F, D>(digit))
-                })
+            row.iter().zip(digits.iter()).fold(
+                CyclotomicRing::<F, D>::zero(),
+                |acc, (entry, digit)| {
+                    let digit_ring = CyclotomicRing::from_coefficients(from_fn(|idx| {
+                        F::from_i64(digit[idx] as i64)
+                    }));
+                    acc + (*entry * digit_ring)
+                },
+            )
         })
         .collect()
 }
