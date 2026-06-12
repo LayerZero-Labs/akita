@@ -3,23 +3,13 @@ use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::TensorChallenges;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
-#[derive(Clone)]
-pub(crate) struct PreparedTensorAggregate<F: FieldCore> {
-    challenges: TensorChallenges,
-    alpha_pows: Vec<F>,
-    prepared_d: usize,
-}
-
 /// Challenge evaluations used by deferred ring-switch row replay.
 #[derive(Clone)]
 pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
-    Flat {
-        evals: Vec<F>,
-        num_claims: usize,
-        num_blocks: usize,
-    },
+    Flat(Vec<F>),
     Tensor {
-        aggregate: PreparedTensorAggregate<F>,
+        challenges: TensorChallenges,
+        alpha_pows: Vec<F>,
     },
 }
 
@@ -45,16 +35,15 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         }
         challenges.validate::<D>()?;
         Ok(Self::Tensor {
-            aggregate: PreparedTensorAggregate {
-                challenges,
-                alpha_pows,
-                prepared_d: D,
-            },
+            challenges,
+            alpha_pows,
         })
     }
 
     pub(crate) fn summarize_all_block_carries<Base, const D: usize>(
         &self,
+        num_claims: usize,
+        num_blocks: usize,
         x_low_challenges: &[F],
         eq_low: &[F],
         offset_low: usize,
@@ -64,12 +53,8 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         F: MulBase<Base>,
     {
         match self {
-            Self::Flat {
-                evals,
-                num_claims,
-                num_blocks,
-            } => {
-                let expected_len = num_claims.checked_mul(*num_blocks).ok_or_else(|| {
+            Self::Flat(evals) => {
+                let expected_len = num_claims.checked_mul(num_blocks).ok_or_else(|| {
                     AkitaError::InvalidSetup("flat challenge summary length overflow".to_string())
                 })?;
                 if evals.len() != expected_len {
@@ -78,9 +63,9 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                         actual: evals.len(),
                     });
                 }
-                (0..*num_claims)
+                (0..num_claims)
                     .map(|claim_idx| {
-                        let start = claim_idx.checked_mul(*num_blocks).ok_or_else(|| {
+                        let start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
                             AkitaError::InvalidSetup(
                                 "flat challenge summary offset overflow".to_string(),
                             )
@@ -88,13 +73,19 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                         summarize_pow2_block_carries(
                             eq_low,
                             offset_low,
-                            &evals[start..start + *num_blocks],
+                            &evals[start..start + num_blocks],
                         )
                     })
                     .collect()
             }
-            Self::Tensor { aggregate } => summarize_tensor_all_block_carries::<Base, F, D>(
-                aggregate,
+            Self::Tensor {
+                challenges,
+                alpha_pows,
+            } => summarize_tensor_all_block_carries::<Base, F, D>(
+                challenges,
+                alpha_pows,
+                num_claims,
+                num_blocks,
                 x_low_challenges,
                 offset_low,
             ),
@@ -102,51 +93,11 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
     }
 }
 
-impl<F: FieldCore> PreparedTensorAggregate<F> {
-    pub(super) fn num_claims(&self) -> usize {
-        self.challenges.num_claims
-    }
-
-    pub(super) fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
-        self.challenges.blocks_per_claim()
-    }
-
-    fn left_len(&self) -> usize {
-        self.challenges.left_len
-    }
-
-    fn right_len(&self) -> usize {
-        self.challenges.right_len
-    }
-
-    fn eval_factored_aggregate<Base, const D: usize>(
-        &self,
-        claim_idx: usize,
-        u_weights: &[F],
-        v_weights: &[F],
-    ) -> Result<F, AkitaError>
-    where
-        Base: FieldCore + FromPrimitiveInt,
-        F: MulBase<Base>,
-    {
-        if self.prepared_d != D {
-            return Err(AkitaError::InvalidSize {
-                expected: self.prepared_d,
-                actual: D,
-            });
-        }
-        self.challenges
-            .eval_factored_aggregate_at_pows::<Base, F, D>(
-                claim_idx,
-                u_weights,
-                v_weights,
-                &self.alpha_pows,
-            )
-    }
-}
-
 fn summarize_tensor_all_block_carries<Base, F, const D: usize>(
-    aggregate: &PreparedTensorAggregate<F>,
+    challenges: &TensorChallenges,
+    alpha_pows: &[F],
+    expected_claims: usize,
+    expected_blocks: usize,
     x_low_challenges: &[F],
     offset_low: usize,
 ) -> Result<Vec<[F; 2]>, AkitaError>
@@ -154,17 +105,34 @@ where
     Base: FieldCore + FromPrimitiveInt,
     F: FieldCore + MulBase<Base>,
 {
-    let num_claims = aggregate.num_claims();
-    let blocks_per_claim = aggregate.blocks_per_claim()?;
-    let num_blocks = blocks_per_claim;
+    if alpha_pows.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
+    }
+    let num_claims = challenges.num_claims;
+    if num_claims != expected_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_claims,
+            actual: num_claims,
+        });
+    }
+    let num_blocks = challenges.blocks_per_claim()?;
+    if num_blocks != expected_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_blocks,
+            actual: num_blocks,
+        });
+    }
     if offset_low >= num_blocks {
         return Err(AkitaError::InvalidInput(format!(
             "low offset {offset_low} out of range for {num_blocks} blocks"
         )));
     }
 
-    let right_bits = aggregate.right_len().trailing_zeros() as usize;
-    let left_bits = aggregate.left_len().trailing_zeros() as usize;
+    let right_bits = challenges.right_len.trailing_zeros() as usize;
+    let left_bits = challenges.left_len.trailing_zeros() as usize;
     if x_low_challenges.len() != right_bits + left_bits {
         return Err(AkitaError::InvalidSize {
             expected: right_bits + left_bits,
@@ -174,14 +142,14 @@ where
 
     let eq_right = EqPolynomial::evals(&x_low_challenges[..right_bits])?;
     let eq_left = EqPolynomial::evals(&x_low_challenges[right_bits..])?;
-    let right_mask = aggregate.right_len() - 1;
-    let left_mask = aggregate.left_len() - 1;
+    let right_mask = challenges.right_len - 1;
+    let left_mask = challenges.left_len - 1;
     let offset_right = offset_low & right_mask;
     let offset_left = offset_low >> right_bits;
 
     let mut out = vec![[F::zero(), F::zero()]; num_claims];
-    let mut v_weights = vec![F::zero(); aggregate.right_len()];
-    let mut u_weights = vec![F::zero(); aggregate.left_len()];
+    let mut v_weights = vec![F::zero(); challenges.right_len];
+    let mut u_weights = vec![F::zero(); challenges.left_len];
     for carry_q in 0..=1 {
         v_weights.fill(F::zero());
         let mut has_v_weight = false;
@@ -210,8 +178,16 @@ where
                 continue;
             }
             for (claim_idx, out_terms) in out.iter_mut().enumerate() {
-                out_terms[final_carry] += aggregate
-                    .eval_factored_aggregate::<Base, D>(claim_idx, &u_weights, &v_weights)?;
+                out_terms[final_carry] += challenges.eval_factored_aggregate_at_pows::<
+                    Base,
+                    F,
+                    D,
+                >(
+                    claim_idx,
+                    &u_weights,
+                    &v_weights,
+                    alpha_pows,
+                )?;
             }
         }
     }
@@ -276,11 +252,7 @@ mod tests {
             .unwrap();
         assert_eq!(flat_evals.len(), num_claims * num_blocks);
 
-        let flat = PreparedChallengeEvals::Flat {
-            evals: flat_evals,
-            num_claims,
-            num_blocks,
-        };
+        let flat = PreparedChallengeEvals::Flat(flat_evals);
         let factored = PreparedChallengeEvals::prepare_tensor::<F, D>(set, alpha_pows).unwrap();
 
         let x_low_cases = [
@@ -298,10 +270,14 @@ mod tests {
             let eq_low = EqPolynomial::evals(&x_low).unwrap();
             for offset_low in 0..num_blocks {
                 let got_factored = factored
-                    .summarize_all_block_carries::<F, D>(&x_low, &eq_low, offset_low)
+                    .summarize_all_block_carries::<F, D>(
+                        num_claims, num_blocks, &x_low, &eq_low, offset_low,
+                    )
                     .unwrap();
                 let got_flat = flat
-                    .summarize_all_block_carries::<F, D>(&x_low, &eq_low, offset_low)
+                    .summarize_all_block_carries::<F, D>(
+                        num_claims, num_blocks, &x_low, &eq_low, offset_low,
+                    )
                     .unwrap();
                 assert_eq!(
                     got_factored, got_flat,

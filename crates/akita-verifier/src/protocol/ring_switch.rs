@@ -238,6 +238,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         let challenge_block_summaries: Vec<[E; 2]> =
             self.c_alphas.summarize_all_block_carries::<F, D>(
+                self.num_claims,
+                self.num_blocks,
                 x_low_challenges,
                 &eq_low,
                 block_offset_low,
@@ -322,6 +324,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         // Canonical A-block start (tiered-aware): consistency | public | D |
         // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+        let n_d_active = self.n_d_active();
+        let commit_start = 1 + self.num_public_rows + n_d_active;
         let commit_rows_pg = if self.tier_split > 1 {
             self.n_f
         } else {
@@ -332,10 +336,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         } else {
             0
         };
-        let a_start = 1
-            + self.num_public_rows
-            + self.n_d_active()
-            + (commit_rows_pg + b_inner_rows_pg) * self.num_points;
+        let b_inner_start = commit_start + commit_rows_pg * self.num_points;
+        let a_start = b_inner_start + b_inner_rows_pg * self.num_points;
 
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
@@ -373,9 +375,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let z_structured_contribution = {
             let _span = tracing::info_span!("z_structured").entered();
             let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
-            if self.block_len.is_power_of_two() {
+            if let Some(z_block_low_eq) = z_block_low_eq.as_ref() {
                 let z_offset_low = layout.offset_z & (self.block_len - 1);
-                let z_block_low_eq = z_block_low_eq.as_ref().ok_or(AkitaError::InvalidProof)?;
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
                     .iter()
                     .map(|ring_multiplier_point| {
@@ -440,17 +441,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // `-recompose(û)` term (a constant gadget map on the `û_concat`
         // columns), weighted by the B_inner row eq. Zero for single-tier.
         let u_recompose_contribution = if self.tier_split > 1 {
-            let n_d_active = self.n_d_active();
-            let f_start = 1 + self.num_public_rows + n_d_active;
-            let b_inner_start = f_start + commit_rows_pg * self.num_points;
-            let n_b_small = self.n_b;
-            let inner_rows_pg = self.tier_split * n_b_small;
-            let width_f = inner_rows_pg * self.depth_open;
+            let width_f = b_inner_rows_pg * self.depth_open;
             let offset_u = layout.offset_u;
             let mut acc = E::zero();
             for g in 0..self.num_points {
-                for slice_row in 0..inner_rows_pg {
-                    let row = b_inner_start + g * inner_rows_pg + slice_row;
+                for slice_row in 0..b_inner_rows_pg {
+                    let row = b_inner_start + g * b_inner_rows_pg + slice_row;
                     let row_w = self.eq_tau1[row];
                     if row_w.is_zero() {
                         continue;
@@ -720,34 +716,27 @@ where
     let c_alphas: PreparedChallengeEvals<E> = match challenges {
         Challenges::Sparse {
             challenges: sparse, ..
-        } => PreparedChallengeEvals::Flat {
-            evals: sparse
+        } => PreparedChallengeEvals::Flat(
+            sparse
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
                 .collect::<Result<_, _>>()?,
-            num_claims,
-            num_blocks,
-        },
+        ),
         Challenges::Tensor { factored } => {
-            let prepared =
-                PreparedChallengeEvals::prepare_tensor::<F, D>(factored.clone(), alpha_pows)?;
-            let PreparedChallengeEvals::Tensor { aggregate } = &prepared else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if aggregate.num_claims() != num_claims {
+            if factored.num_claims != num_claims {
                 return Err(AkitaError::InvalidSize {
                     expected: num_claims,
-                    actual: aggregate.num_claims(),
+                    actual: factored.num_claims,
                 });
             }
-            let blocks_per_claim = aggregate.blocks_per_claim()?;
+            let blocks_per_claim = factored.blocks_per_claim()?;
             if blocks_per_claim != lp.num_blocks {
                 return Err(AkitaError::InvalidSize {
                     expected: lp.num_blocks,
                     actual: blocks_per_claim,
                 });
             }
-            prepared
+            PreparedChallengeEvals::prepare_tensor::<F, D>(factored.clone(), alpha_pows)?
         }
     };
 
