@@ -35,10 +35,6 @@ impl<F: FieldCore, L: FieldCore> RecursiveFoldProofView<'_, F, L> {
             Self::Terminal { proof, .. } => proof.extension_opening_reduction.as_ref(),
         }
     }
-
-    fn is_terminal(&self) -> bool {
-        matches!(self, Self::Terminal { .. })
-    }
 }
 
 /// Verify one recursive fold level.
@@ -75,7 +71,11 @@ where
     T: Transcript<F>,
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
-    let is_last = proof.is_terminal();
+    let m_row_layout = match &proof {
+        RecursiveFoldProofView::Intermediate { .. } => MRowLayout::WithDBlock,
+        RecursiveFoldProofView::Terminal { .. } => MRowLayout::WithoutDBlock,
+    };
+    let is_last = m_row_layout == MRowLayout::WithoutDBlock;
     let y_rings = proof.y_rings_typed::<D>()?;
     let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
@@ -227,17 +227,15 @@ where
         Some(rho) => ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?,
         None => current_state.opening_point.clone(),
     };
-    let prepared_points = vec![prepare_recursive_opening_point_ext::<F, L, D>(
+    let prepared_point = prepare_recursive_opening_point_ext::<F, L, D>(
         &protocol_point,
         current_state.basis,
         lp,
         alpha_bits,
         block_order,
-    )?];
-    for prepared_point in &prepared_points {
-        for pt in &prepared_point.padded_point {
-            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-        }
+    )?;
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
     // See the root verifier comment at `levels.rs` on absorbing `y_rings` before
     // EOR for the recommended (transcript-breaking) reorder and the invariant
@@ -249,19 +247,16 @@ where
     let y_masks = zk_base_mask_lcs::<L>(y_rings.len() * D, zk_hiding_cursor);
 
     #[cfg(not(feature = "zk"))]
-    let internal_claims = y_rings
-        .iter()
-        .zip(prepared_points.iter())
-        .map(|(y_ring, prepared_point)| {
-            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let internal_claim = recover_ring_subfield_inner_product::<F, L, D>(
+        &y_rings[0],
+        &prepared_point.inner_reduction,
+    )?;
     #[cfg(feature = "zk")]
     {
         let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
             &y_rings[0],
             y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
-            &prepared_points[0].inner_reduction,
+            &prepared_point.inner_reduction,
         )?;
         if let Some((final_claim, factor)) = &zk_eor_final {
             let mut residual = final_claim.clone();
@@ -284,18 +279,12 @@ where
     // When `reduction_check` is `Some`, the non-zk EOR final relation is enforced
     // inside the sumcheck driver via `expected_output_claim`.
     #[cfg(not(feature = "zk"))]
-    if reduction_check.is_none() && internal_claims[0] != current_state.opening {
+    if reduction_check.is_none() && internal_claim != current_state.opening {
         return Err(AkitaError::InvalidProof);
     }
 
-    let ring_opening_points = prepared_points
-        .iter()
-        .map(|prepared_point| prepared_point.ring_opening_point.clone())
-        .collect::<Vec<_>>();
-    let ring_multiplier_points = prepared_points
-        .iter()
-        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
-        .collect::<Vec<_>>();
+    let ring_opening_points = vec![prepared_point.ring_opening_point.clone()];
+    let ring_multiplier_points = vec![prepared_point.ring_multiplier_point.clone()];
     let num_claims = y_rings.len();
     let w_len = match &proof {
         RecursiveFoldProofView::Terminal { final_w_len, .. } => *final_w_len,
@@ -329,19 +318,10 @@ where
         lp.num_blocks,
         num_claims,
         lp,
-        if is_last {
-            MRowLayout::WithoutDBlock
-        } else {
-            MRowLayout::WithDBlock
-        },
+        m_row_layout,
     )?;
     tracing::debug!(w_len, is_last, "verify ring_switch");
     let gamma = vec![L::one(); num_claims];
-    let m_row_layout = if is_last {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
-    };
     let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
