@@ -1,0 +1,22 @@
+[package]
+name = "akita-witness"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Shared borrowed witness/polynomial view vocabulary for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-field = { version = "0.1.0", path = "../akita-field" }
+
+[lints]
+workspace = true
