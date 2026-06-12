@@ -1,7 +1,6 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 use crate::api::commitment::{
-    validate_commit_inner_witness_shape, validate_commit_level_params,
-    validate_commit_outer_input_nonempty,
+    validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]

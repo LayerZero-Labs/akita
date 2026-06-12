@@ -34,13 +34,7 @@ where
     Ok(lifted)
 }
 
-pub(in crate::protocol::flow) fn prepare_root_extension_opening_reduction<
-    F,
-    E,
-    C,
-    P,
-    const D: usize,
->(
+fn prepare_root_extension_opening_reduction<F, E, C, P, const D: usize>(
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
     claim_points: &[&[E]],
@@ -171,7 +165,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::flow) fn prove_prepared_root_extension_opening_reduction<
+pub(in crate::protocol::flow) fn prove_root_extension_opening_reduction<
     F,
     E,
     C,
@@ -181,16 +175,13 @@ pub(in crate::protocol::flow) fn prove_prepared_root_extension_opening_reduction
 >(
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
-    _root_params: &LevelParams,
-    _basis: BasisMode,
-    row_coefficients: &[C],
-    prepared: PreparedRootExtensionOpeningReduction<E, C>,
+    claim_points: &[&[E]],
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
-) -> Result<RootExtensionOpeningReduction<C>, AkitaError>
+) -> Result<(RootExtensionOpeningReduction<C>, Vec<C>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + ExtField<F>
@@ -201,11 +192,19 @@ where
     P: AkitaPolyOps<F, D>,
 {
     let _span = tracing::info_span!(
-        "prove_prepared_root_extension_opening_reduction",
+        "prove_root_extension_opening_reduction",
         num_claims = incidence_summary.num_claims(),
         num_points = incidence_summary.num_points()
     )
     .entered();
+    let prepared = prepare_root_extension_opening_reduction::<F, E, C, P, D>(
+        polys,
+        incidence_summary,
+        claim_points,
+    )?;
+    append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
+    let row_coefficients =
+        sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
     let PreparedRootExtensionOpeningReduction {
         openings: _,
         partials,
@@ -406,18 +405,21 @@ where
             .collect::<Result<Vec<_>, _>>()?
     };
 
-    Ok(RootExtensionOpeningReduction {
-        proof: ExtensionOpeningReductionProof {
-            partials: proof_partials,
-            #[cfg(not(feature = "zk"))]
-            sumcheck,
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked,
+    Ok((
+        RootExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials: proof_partials,
+                #[cfg(not(feature = "zk"))]
+                sumcheck,
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked,
+            },
+            rho,
+            final_claim,
+            factors_by_point,
         },
-        rho,
-        final_claim,
-        factors_by_point,
-    })
+        row_coefficients,
+    ))
 }
 
 pub(in crate::protocol::flow) type MultiplierWeightSlices<'a, F, const D: usize> =

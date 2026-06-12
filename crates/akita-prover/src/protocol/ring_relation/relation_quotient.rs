@@ -3,6 +3,7 @@ use super::repeated_b::repeated_b_commitment_rows;
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
+use std::iter::repeat_n;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
