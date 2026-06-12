@@ -14,6 +14,54 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+fn witness_eval_by_index<E, V>(
+    witness_len: usize,
+    challenges: &[E],
+    col_bits: usize,
+    ring_bits: usize,
+    mut value_at: V,
+) -> Result<E, AkitaError>
+where
+    E: FieldCore,
+    V: FnMut(usize) -> Result<E, AkitaError>,
+{
+    if challenges.len() != col_bits + ring_bits {
+        return Err(AkitaError::InvalidSize {
+            expected: col_bits + ring_bits,
+            actual: challenges.len(),
+        });
+    }
+
+    let y_len = 1usize
+        .checked_shl(
+            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
+                expected: usize::BITS as usize,
+                actual: ring_bits,
+            })?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+    if !witness_len.is_multiple_of(y_len) {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
+    let eq_y = EqPolynomial::evals(y_challenges)?;
+    let eq_x = EqPolynomial::evals(x_challenges)?;
+    let live_x_cols = witness_len / y_len;
+
+    let mut acc = E::zero();
+    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+        let base = x * y_len;
+        let mut y_eval = E::zero();
+        for (y, &y_weight) in eq_y.iter().enumerate() {
+            y_eval += y_weight * value_at(base + y)?;
+        }
+        acc += x_weight * y_eval;
+    }
+
+    Ok(acc)
+}
+
 fn packed_witness_eval<F, E, const D: usize>(
     packed_witness: &PackedDigits,
     physical_w_len: usize,
@@ -31,48 +79,20 @@ where
             actual: challenges.len(),
         });
     }
-
-    let y_len = 1usize
-        .checked_shl(
-            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                expected: usize::BITS as usize,
-                actual: ring_bits,
-            })?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-    if packed_witness.num_elems != physical_w_len {
+    if packed_witness.num_elems != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
         return Err(AkitaError::InvalidProof);
     }
-    if !packed_witness.num_elems.is_multiple_of(y_len) {
-        return Err(AkitaError::InvalidProof);
-    }
-    if D == 0 || !physical_w_len.is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
-    let eq_y = EqPolynomial::evals(y_challenges)?;
-    let eq_x = EqPolynomial::evals(x_challenges)?;
-    let live_x_cols = physical_w_len / D;
-
-    let mut acc = E::zero();
-    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x * y_len;
-        let mut y_eval = E::zero();
-        for (y, &y_weight) in eq_y.iter().enumerate() {
-            let digit = packed_witness
-                .digit_at(base + y)
-                .ok_or(AkitaError::InvalidProof)?;
-            y_eval += y_weight * E::from_i64(digit as i64);
-        }
-        acc += x_weight * y_eval;
-    }
-
-    Ok(acc)
+    witness_eval_by_index(physical_w_len, challenges, col_bits, ring_bits, |idx| {
+        packed_witness
+            .digit_at(idx)
+            .map(|digit| E::from_i64(digit as i64))
+            .ok_or(AkitaError::InvalidProof)
+    })
 }
 
 fn field_witness_eval<F, E>(
     field_witness: &[F],
+    physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
@@ -81,41 +101,12 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if challenges.len() != col_bits + ring_bits {
-        return Err(AkitaError::InvalidSize {
-            expected: col_bits + ring_bits,
-            actual: challenges.len(),
-        });
-    }
-
-    let d = 1usize
-        .checked_shl(
-            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                expected: usize::BITS as usize,
-                actual: ring_bits,
-            })?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-    if !field_witness.len().is_multiple_of(d) {
+    if field_witness.len() != physical_w_len {
         return Err(AkitaError::InvalidProof);
     }
-
-    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
-    let eq_y = EqPolynomial::evals(y_challenges)?;
-    let eq_x = EqPolynomial::evals(x_challenges)?;
-    let live_x_cols = field_witness.len() / d;
-
-    let mut acc = E::zero();
-    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x << ring_bits;
-        let mut y_eval = E::zero();
-        for (y, &y_weight) in eq_y.iter().enumerate() {
-            y_eval += y_weight.mul_base(field_witness[base + y]);
-        }
-        acc += x_weight * y_eval;
-    }
-
-    Ok(acc)
+    witness_eval_by_index(physical_w_len, challenges, col_bits, ring_bits, |idx| {
+        Ok(E::lift_base(field_witness[idx]))
+    })
 }
 
 fn cleartext_witness_eval<F, E, const D: usize>(
@@ -137,9 +128,13 @@ where
             col_bits,
             ring_bits,
         ),
-        CleartextWitnessProof::FieldElements(field_witness) => {
-            field_witness_eval::<F, E>(field_witness.coeffs(), challenges, col_bits, ring_bits)
-        }
+        CleartextWitnessProof::FieldElements(field_witness) => field_witness_eval::<F, E>(
+            field_witness.coeffs(),
+            physical_w_len,
+            challenges,
+            col_bits,
+            ring_bits,
+        ),
     }
 }
 
@@ -477,7 +472,8 @@ mod tests {
         let expected =
             multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
         let actual =
-            field_witness_eval::<F, E>(&field_witness, &challenges, 1, 1).expect("valid witness");
+            field_witness_eval::<F, E>(&field_witness, field_witness.len(), &challenges, 1, 1)
+                .expect("valid witness");
 
         assert_eq!(actual, expected);
     }

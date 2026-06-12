@@ -523,7 +523,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 }
 
 #[inline]
-pub(super) fn summarize_pow2_multiplier_block_carries<E, EvalAt>(
+fn summarize_pow2_multiplier_block_carries<E, EvalAt>(
     eq_low: &[E],
     offset_low: usize,
     values_len: usize,
@@ -569,7 +569,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
+fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     challenges: &Challenges,
     alpha: E,
     lp: &LevelParams,

@@ -8,21 +8,11 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `specs/optimized_verifier.md` for the full derivation.
 pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
-    /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
-
-    /// High-bit segment of the slice's randomness.
     fn get_high_challenges(&self) -> &[F];
-
-    /// High-bit part of the slice offset.
     fn get_offset_high(&self) -> usize;
-
-    /// Compute the inner sum at `outer_index`: this evaluator's contribution
-    /// to the no-carry and one-carry buckets for that outer index.
     fn compute_inner_sum(&self, outer_index: usize) -> [F; 2];
 
-    /// Evaluate this slice's multilinear extension at the slice's
-    /// randomness.
     #[inline]
     fn evaluate(&self) -> F {
         let offset_high = self.get_offset_high();
@@ -46,21 +36,12 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
 
 /// E-hat segment slice evaluator. See `specs/optimized_verifier.md`.
 pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
     pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of `e`. Length =
-    /// `num_digits`.
     pub gadget_vector: &'a [F],
-    /// Per-claim carry summary of the public-row ring multiplier after any
-    /// claim batching coefficient has been applied.
     pub public_block_summaries: &'a [[E; 2]],
-    /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// `tau1` equality weight for each claim's public input row.
     pub public_row_weights_by_claim: &'a [E],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub challenge_weight: E,
 }
 
@@ -108,17 +89,10 @@ where
 
 /// T-segment slice evaluator. See `specs/optimized_verifier.md`.
 pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
     pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of `w`. Length =
-    /// `num_digits`.
     pub gadget_vector: &'a [F],
-    /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// `tau1` equality weight for each `A`-row of `M`. Length =
-    /// number of `A` rows.
     pub a_row_weights: &'a [E],
 }
 
@@ -163,17 +137,11 @@ where
 
 /// Pow2 Z-segment slice evaluator. See `specs/optimized_verifier.md`.
 pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
-    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
-    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
     pub offset_high: usize,
-    /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
-    /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
-    /// Per-opening-point carry summary of `opening_point.a[..block_len]`.
     pub a_block_summary: &'a [[E; 2]],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
 }
 
@@ -217,19 +185,12 @@ where
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
 /// and evaluates it through the generic offset-equality tensor helper.
 pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
-    /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
-    /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
-    /// Per-point alpha-evaluated ring-multiplier `a` values.
     pub a_evals_by_point: &'a [Vec<E>],
-    /// Full multilinear evaluation point.
     pub full_vec_randomness: &'a [E],
-    /// Start-of-slice offset of `z` inside `M`.
     pub offset_z: usize,
-    /// Inner block size of the `z` segment.
     pub block_len: usize,
 }
 

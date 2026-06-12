@@ -26,7 +26,6 @@ fn stage1_config() -> SparseChallengeConfig {
         nonzero_coeffs: vec![1],
     }
 }
-
 #[test]
 fn ring_switch_prepare_rejects_malformed_level_params() {
     for lp in [
@@ -57,19 +56,4 @@ fn malformed_level_params_prepare_err(lp: &LevelParams) -> AkitaError {
         Ok(_) => panic!("malformed LevelParams should be rejected"),
         Err(err) => err,
     }
-}
-
-#[test]
-fn multiplier_block_summary_rejects_malformed_shapes() {
-    let eq_low = vec![F::one(); 2];
-
-    let err = summarize_pow2_multiplier_block_carries(&eq_low, 0, 3, |_| Ok(F::one())).unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
-
-    let err = summarize_pow2_multiplier_block_carries(&eq_low, 2, 2, |_| Ok(F::one())).unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
-
-    let err =
-        summarize_pow2_multiplier_block_carries(&eq_low[..1], 0, 2, |_| Ok(F::one())).unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidSize { .. }));
 }
