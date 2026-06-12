@@ -1,5 +1,5 @@
 use akita_algebra::offset_eq::eval_offset_eq_tensor;
-use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
+use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
@@ -13,7 +13,7 @@ pub(crate) fn compute_b_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
-    alpha: E,
+    alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -26,7 +26,6 @@ where
     let _span = tracing::info_span!("b_blinding").entered();
 
     let layout = prepared.witness_segment_layout;
-    let alpha_pows = scalar_powers(alpha, D);
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
@@ -49,7 +48,7 @@ where
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc +=
-                        eq_i * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + local], &alpha_pows);
+                        eq_i * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + local], alpha_pows);
                 }
             }
             acc
@@ -68,7 +67,7 @@ pub(crate) fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
-    alpha: E,
+    alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -81,7 +80,6 @@ where
     let _span = tracing::info_span!("d_blinding").entered();
 
     let layout = prepared.witness_segment_layout;
-    let alpha_pows = scalar_powers(alpha, D);
     let d_start = 1 + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
@@ -97,7 +95,7 @@ where
             for (row_idx, &eq_i) in d_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc +=
-                        eq_i * eval_ring_at_pows(&d_zk[row_idx * d_zk_stride + local], &alpha_pows);
+                        eq_i * eval_ring_at_pows(&d_zk[row_idx * d_zk_stride + local], alpha_pows);
                 }
             }
             acc
@@ -115,6 +113,7 @@ where
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
+    use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
@@ -301,7 +300,7 @@ mod tests {
         let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
 
         let got =
-            compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
+            compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, &alpha_pows)
                 .unwrap();
         let mut expected = F::zero();
         for idx in 0..p.b_blinding_segment_len {
@@ -335,7 +334,7 @@ mod tests {
         let d_zk_rows: Vec<_> = d_zk_view.rows().collect();
 
         let got =
-            compute_d_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
+            compute_d_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, &alpha_pows)
                 .unwrap();
         let mut expected = F::zero();
         for local in 0..p.d_blinding_segment_len {

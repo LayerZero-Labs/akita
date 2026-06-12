@@ -51,8 +51,6 @@ fn malformed_level_params_prepare_err(lp: &LevelParams) -> AkitaError {
         &[],
         1,
         MRowLayout::WithDBlock,
-        0,
-        &[],
         &[],
         dummy_witness_segment_layout(),
     ) {

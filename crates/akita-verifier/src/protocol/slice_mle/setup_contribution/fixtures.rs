@@ -387,24 +387,17 @@ impl SetupContributionFixture {
         .unwrap()
     }
 
-    pub fn compute_contribution(&self) -> TestField {
-        self.prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq))
+    pub fn assert_direct_matches_recursive(&self) {
+        let got = self
+            .prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq))
             .evaluate_direct::<TestField, TEST_RING_DIM>(&self.setup, &self.alpha_pows)
-            .unwrap()
-    }
-
-    pub fn recursive_contribution(&self) -> TestField {
-        recursive_inner_product(
+            .unwrap();
+        let recursive = recursive_inner_product(
             &self.prepare_plan(None, None),
             &self.setup,
             &self.alpha_pows,
         )
-        .unwrap()
-    }
-
-    pub fn assert_direct_matches_recursive(&self) {
-        let got = self.compute_contribution();
-        let recursive = self.recursive_contribution();
+        .unwrap();
         assert_eq!(
             got, recursive,
             "packed setup contribution must equal recursive setup contribution"

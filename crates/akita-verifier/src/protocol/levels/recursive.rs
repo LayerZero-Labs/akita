@@ -434,11 +434,11 @@ where
     )
 }
 
-fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
-    schedule: &Schedule,
+fn scheduled_recursive_verify_level<'a, F: FieldCore, L: FieldCore>(
+    schedule: &'a Schedule,
     level: usize,
     current_state: &RecursiveVerifierState<'_, F, L>,
-) -> Result<(LevelParams, usize, Option<LevelParams>), AkitaError> {
+) -> Result<(&'a LevelParams, usize, Option<&'a LevelParams>), AkitaError> {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
         return Err(AkitaError::InvalidSetup(format!(
             "schedule is missing fold step at level {level}"
@@ -451,7 +451,7 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
         ));
     }
     let next_level_params = match schedule.steps.get(level + 1) {
-        Some(Step::Fold(next_step)) => Some(next_step.params.clone()),
+        Some(Step::Fold(next_step)) => Some(&next_step.params),
         Some(Step::Direct(_)) => None,
         None => {
             return Err(AkitaError::InvalidSetup(
@@ -459,7 +459,7 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
             ))
         }
     };
-    Ok((step.params.clone(), step.next_w_len, next_level_params))
+    Ok((&step.params, step.next_w_len, next_level_params))
 }
 
 macro_rules! dispatch_verifier_ring_dim_result {
@@ -549,12 +549,12 @@ where
                     verify_recursive_level::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Intermediate {
                             proof: level_proof,
-                            next_fold_level_params: &scheduled_next_params,
+                            next_fold_level_params: scheduled_next_params,
                         },
                         setup,
                         transcript,
                         &current_state,
-                        &current_lp,
+                        current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -572,7 +572,7 @@ where
                 }
                 let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
                 let computed_next_w_len = w_ring_element_count_with_counts::<F>(
-                    &current_lp,
+                    current_lp,
                     1,
                     1,
                     y_ring_count,
@@ -616,7 +616,7 @@ where
                         setup,
                         transcript,
                         &current_state,
-                        &current_lp,
+                        current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]

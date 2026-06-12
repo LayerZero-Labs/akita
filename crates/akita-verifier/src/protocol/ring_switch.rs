@@ -124,7 +124,7 @@ struct RowEvalPointContext<'a, F: FieldCore, E: FieldCore> {
     g1_open: Vec<F>,
     fold_gadget: Vec<F>,
     eq_low: Vec<E>,
-    z_block_low_eq: Vec<E>,
+    z_block_low_eq: Option<Vec<E>>,
     offset_low_bits: usize,
     z_offset_low_bits: usize,
     block_offset_low: usize,
@@ -134,15 +134,6 @@ struct RowEvalPointContext<'a, F: FieldCore, E: FieldCore> {
 }
 
 impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
-    /// `num_blocks * num_claims` (W/D challenge logical length).
-    ///
-    /// Prepare validates the product with checked arithmetic before building
-    /// this struct; replay uses the unchecked product on those same fields.
-    #[inline(always)]
-    pub(crate) fn total_blocks(&self) -> usize {
-        self.num_blocks * self.num_claims
-    }
-
     /// Number of active D rows in the selected M-row layout.
     pub(crate) fn n_d_active(&self) -> usize {
         match self.m_row_layout {
@@ -208,7 +199,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 actual: x_challenges.len(),
             });
         }
-        let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
+        let z_block_low_eq = if self.block_len.is_power_of_two() {
+            Some(EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?)
+        } else {
+            None
+        };
 
         Ok(RowEvalPointContext {
             layout,
@@ -259,15 +254,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             }
         }
 
-        let total_blocks = self.total_blocks();
-        if let Some(c_alphas) = self.c_alphas.as_flat() {
-            if c_alphas.len() != total_blocks {
-                return Err(AkitaError::InvalidSize {
-                    expected: total_blocks,
-                    actual: c_alphas.len(),
-                });
-            }
-        }
         let challenge_block_summaries: Vec<[E; 2]> =
             self.c_alphas.summarize_all_block_carries::<F, D>(
                 self.num_claims,
@@ -278,14 +264,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             )?;
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        if self.claim_to_t_vector.len() != self.num_claims
-            || self
-                .claim_to_t_vector
-                .iter()
-                .any(|&idx| idx >= self.num_t_vectors)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
         for (claim_idx, &t_vector_idx) in self.claim_to_t_vector.iter().enumerate() {
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
             challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
@@ -404,7 +382,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     &setup_contribution_inputs,
                     x_challenges,
                     Some(&context.eq_low),
-                    Some(&context.z_block_low_eq),
+                    context.z_block_low_eq.as_deref(),
                     &context.fold_gadget,
                     context.layout.offset_e,
                     context.layout.offset_t,
@@ -423,11 +401,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
             if self.block_len.is_power_of_two() {
                 let z_offset_low = context.layout.offset_z & (self.block_len - 1);
+                let z_block_low_eq = context
+                    .z_block_low_eq
+                    .as_ref()
+                    .ok_or(AkitaError::InvalidProof)?;
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
                     .iter()
                     .map(|ring_multiplier_point| {
                         summarize_pow2_multiplier_block_carries(
-                            &context.z_block_low_eq,
+                            z_block_low_eq,
                             z_offset_low,
                             self.block_len,
                             |idx| ring_multiplier_point.eval_a_at::<E>(idx, &context.alpha_pows),
@@ -529,8 +511,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         #[cfg(feature = "zk")]
         {
-            let b_blinding = compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
-            let d_blinding = compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
+            let b_blinding =
+                compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, &context.alpha_pows)?;
+            let d_blinding =
+                compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, &context.alpha_pows)?;
             total = total + b_blinding + d_blinding;
         }
 
@@ -596,8 +580,6 @@ pub(super) fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
-    opening_points_len: usize,
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
     witness_segment_layout: RingRelationSegmentLayout,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
@@ -721,19 +703,9 @@ where
             "B-key column width is too small for verifier layout".to_string(),
         ));
     }
-    if opening_points_len != num_points {
-        return Err(AkitaError::InvalidProof);
-    }
     if claim_to_point
         .iter()
         .any(|&point_idx| point_idx >= num_points)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    if ring_multiplier_points.len() != opening_points_len
-        || ring_multiplier_points
-            .iter()
-            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -985,8 +957,6 @@ where
         replay.row_coefficients,
         relation.num_public_rows(),
         relation.m_row_layout(),
-        relation.opening_points().len(),
-        relation.ring_multiplier_points(),
         claim_to_point,
         witness_segment_layout,
     )

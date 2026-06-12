@@ -22,8 +22,6 @@ fn setup_contribution_matches_recursive_on_supported_shapes() {
 /// tiered alike.
 #[test]
 fn eq_eval_matches_materialized_bar_omega_single_and_tiered() {
-    SetupContributionFixture::from_shape(&SetupContributionShape::root_single_point())
-        .assert_eq_eval_matches_materialized();
     SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multigroup())
         .assert_eq_eval_matches_materialized();
     SetupContributionFixture::from_shape(&SetupContributionShape::tiered_root_single_point())

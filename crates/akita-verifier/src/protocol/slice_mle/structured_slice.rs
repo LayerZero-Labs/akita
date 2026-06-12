@@ -474,7 +474,8 @@ mod tests {
     fn e_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let e_len = p.depth_open * p.total_blocks();
+        let total_blocks = p.num_blocks * p.num_claims;
+        let e_len = p.depth_open * total_blocks;
         let eq = eq_evals(fx.offset_e + e_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
@@ -499,18 +500,20 @@ mod tests {
             .iter()
             .map(|&point_idx| p.eq_tau1[1 + point_idx])
             .collect();
+        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
+            unreachable!("structured slice fixture uses flat challenges");
+        };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas.as_flat().unwrap()[start..(start + p.num_blocks)],
+                    &c_alphas[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
-        let c_alphas = p.c_alphas.as_flat().unwrap();
         let got = EStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_e >> offset_low_bits,
@@ -524,7 +527,6 @@ mod tests {
 
         let mut expected = F::zero();
         for x in 0..e_len {
-            let total_blocks = p.total_blocks();
             let dig = x / total_blocks;
             let blk = x % total_blocks;
             let claim_idx = blk / p.num_blocks;
@@ -544,24 +546,27 @@ mod tests {
     fn t_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let t_len = p.depth_open * p.n_a * p.total_blocks();
+        let total_blocks = p.num_blocks * p.num_claims;
+        let t_len = p.depth_open * p.n_a * total_blocks;
         let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
 
+        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
+            unreachable!("structured slice fixture uses flat challenges");
+        };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas.as_flat().unwrap()[start..(start + p.num_blocks)],
+                    &c_alphas[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
-        let c_alphas = p.c_alphas.as_flat().unwrap();
         let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
@@ -574,7 +579,6 @@ mod tests {
 
         let mut expected = F::zero();
         for x in 0..t_len {
-            let total_blocks = p.total_blocks();
             let compound_dig = x / total_blocks;
             let blk = x % total_blocks;
             let a_idx = compound_dig / p.depth_open;

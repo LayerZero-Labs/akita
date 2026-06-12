@@ -13,13 +13,6 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
 }
 
 impl<F: FieldCore> PreparedChallengeEvals<F> {
-    pub(crate) fn as_flat(&self) -> Option<&[F]> {
-        match self {
-            Self::Flat(c_alphas) => Some(c_alphas),
-            Self::Tensor { .. } => None,
-        }
-    }
-
     pub(crate) fn summarize_all_block_carries<Base, const D: usize>(
         &self,
         num_claims: usize,

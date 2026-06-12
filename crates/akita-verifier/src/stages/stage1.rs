@@ -402,38 +402,11 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         }
 
         let leaf_coeffs = stage1_leaf_coeffs::<E>(self.b);
-        if leaf_coeffs.len() == 1 {
-            if !proof.stages[0].child_claims.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-            let leaf_verifier = PolynomialStageVerifier::new(
-                self.tau0.clone(),
-                E::zero(),
-                #[cfg(feature = "zk")]
-                ZkR1csLinearCombination::zero(),
-                leaf_coeffs
-                    .into_iter()
-                    .next()
-                    .ok_or(AkitaError::InvalidProof)?,
-                proof.s_claim,
-            );
-            #[cfg(feature = "zk")]
-            return leaf_verifier.verify_zk::<F, T, _>(
-                &proof.stages[0].sumcheck_proof_masked,
-                transcript,
-                relations,
-                hiding_cursor,
-                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
-            );
-            #[cfg(not(feature = "zk"))]
-            return leaf_verifier.verify::<F, T, _>(
-                &proof.stages[0].sumcheck_proof,
-                transcript,
-                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
-            );
-        }
-
-        let product_stage_arities = stage1_tree_product_stage_arities(self.b);
+        let product_stage_arities = if leaf_coeffs.len() == 1 {
+            Vec::new()
+        } else {
+            stage1_tree_product_stage_arities(self.b)
+        };
         let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
             return Err(AkitaError::InvalidProof);
         };
