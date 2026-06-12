@@ -49,14 +49,13 @@ use akita_types::dispatch_trace_inner_product_check;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
-    flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
-    prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
-    schedule_num_fold_levels, scheduled_next_level_params, terminal_witness_segment_layout,
-    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, PreparedRootOpeningPoint,
+    flatten_batched_commitment_rows, prepare_opening_point, relation_claim_from_rows_extension,
+    reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
+    sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
+    terminal_witness_segment_layout, w_ring_element_count_with_counts, AkitaBatchedProof,
+    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, BlockOrder, ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, PreparedOpeningPoint,
     RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
     RingSubfieldEncoding, Schedule, SetupContributionMode, SetupSumcheckProof, Step,
     TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
@@ -135,7 +134,7 @@ enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
 }
 
 struct RootEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
-    prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
+    prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
     reduction_challenges: Option<Vec<C>>,
     #[cfg(feature = "zk")]
     final_relation: Option<(ZkR1csLinearCombination<C>, Vec<C>)>,
@@ -422,11 +421,12 @@ where
                             rho.len(),
                             rho,
                         )?;
-                        Ok(prepare_root_opening_point_ext::<F, C, C, D>(
+                        Ok(prepare_opening_point::<F, C, D>(
                             &protocol_point,
                             basis,
                             root_lp,
                             alpha_bits,
+                            BlockOrder::RowMajor,
                         )?
                         .inner_reduction)
                     },
@@ -470,22 +470,29 @@ where
     let prepared_points = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
-        let prepared = prepare_root_opening_point_ext::<F, C, C, D>(
+        let prepared = prepare_opening_point::<F, C, D>(
             &protocol_point,
             basis,
             root_lp,
             alpha_bits,
+            BlockOrder::RowMajor,
         )?;
         vec![prepared; incidence_summary.num_points()]
     } else {
         claim_points
             .iter()
             .map(|opening_point| {
-                prepare_root_opening_point_ext::<F, E, C, D>(
-                    opening_point,
+                let challenge_point = opening_point
+                    .iter()
+                    .copied()
+                    .map(C::lift_base)
+                    .collect::<Vec<_>>();
+                prepare_opening_point::<F, C, D>(
+                    &challenge_point,
                     basis,
                     root_lp,
                     alpha_bits,
+                    BlockOrder::RowMajor,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?
@@ -1043,7 +1050,7 @@ where
                 .clone()
         })
         .collect();
-    let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
+    let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
             &row_coefficients,

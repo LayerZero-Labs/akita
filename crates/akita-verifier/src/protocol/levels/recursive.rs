@@ -183,7 +183,7 @@ where
                             rho.len(),
                             rho,
                         )?;
-                        Ok(prepare_recursive_opening_point_ext::<F, L, D>(
+                        Ok(prepare_opening_point::<F, L, D>(
                             &protocol_point,
                             basis,
                             lp,
@@ -222,7 +222,7 @@ where
         Some(rho) => ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?,
         None => current_state.opening_point.clone(),
     };
-    let prepared_point = prepare_recursive_opening_point_ext::<F, L, D>(
+    let prepared_point = prepare_opening_point::<F, L, D>(
         &protocol_point,
         current_state.basis,
         lp,

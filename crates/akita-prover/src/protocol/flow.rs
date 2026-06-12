@@ -14,8 +14,8 @@ use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
     AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
-    RingRelationWitness, RootTensorProjectionPoly,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
+    RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -45,8 +45,7 @@ use akita_types::{
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
-    prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
+    folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
@@ -57,15 +56,16 @@ use akita_types::{
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
-    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
-    LevelParams, MRowLayout, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, RootLevelRawOutput, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, AkitaStage2Proof,
+    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
+use cfg_if::cfg_if;
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 #[cfg(feature = "zk")]
@@ -73,27 +73,25 @@ use std::array::from_fn;
 use std::sync::Arc;
 
 mod inputs;
-mod recursive;
 mod root_extension;
 mod root_fold;
+mod suffix;
 #[cfg(test)]
 mod tests;
 
 pub use inputs::{
-    build_terminal_root_batched_proof, prepare_batched_prove_inputs, prove_batched,
+    batched_prove, build_terminal_root_batched_proof, prepare_batched_prove_inputs,
     prove_folded_batched, prove_root_direct,
 };
-pub use recursive::prove_suffix;
+pub(in crate::protocol::flow) use root_extension::*;
+pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_points;
+pub use root_fold::{prove_root_fold, prove_terminal_root_fold_with_params};
+pub use suffix::prove_suffix;
 #[cfg(test)]
-pub(in crate::protocol::flow) use recursive::{
+pub(in crate::protocol::flow) use suffix::{
     prove_extension_opening_reduction, recursive_witness_base_evals,
 };
-pub(in crate::protocol::flow) use root_extension::*;
-pub(in crate::protocol::flow) use root_fold::evaluate_witness_at_multiplier_point;
-pub use root_fold::{
-    prove_root_fold_from_ring_relation, prove_root_fold_with_params,
-    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
-};
+pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedFold};
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
@@ -292,20 +290,6 @@ pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     pub next_state: RecursiveProverState<F, L>,
 }
 
-/// Output produced by the unified root-level prover.
-///
-/// Callers assemble either a singleton or batched root proof from these
-/// components while sharing the same inner prover flow and suffix state.
-pub struct RootLevelProverOutput<F: FieldCore, L: FieldCore, const D: usize> {
-    /// Proof-level ZK hiding commitment fixed before root challenges.
-    #[cfg(feature = "zk")]
-    pub zk_hiding_commitment: ZkHidingCommitment<F>,
-    /// Wire proof payload for the root level.
-    pub raw: RootLevelRawOutput<F, L, D>,
-    /// Recursive prover state for the first suffix level.
-    pub next_state: RecursiveProverState<F, L>,
-}
-
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     /// Recursive suffix proof steps: intermediate folds followed by terminal.
@@ -318,15 +302,79 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     pub num_levels: usize,
 }
 
-fn root_claim_opening_from_y_ring<F, E, const D: usize>(
+#[cfg(not(feature = "zk"))]
+pub(in crate::protocol::flow) type Stage2ProveResult<L> =
+    (SumcheckProof<L>, Vec<L>, AkitaStage2Prover<L>);
+#[cfg(feature = "zk")]
+pub(in crate::protocol::flow) type Stage2ProveResult<L> =
+    (SumcheckProofMasked<L>, Vec<L>, AkitaStage2Prover<L>);
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::flow) fn prove_stage2<F, L, T>(
+    transcript: &mut T,
+    batching_coeff: L,
+    rs: RingSwitchOutput<L>,
+    stage1_point: &[L],
+    s_claim: L,
+    relation_claim: L,
+    #[cfg(feature = "zk")] relation_claim_public: L,
+    #[cfg(feature = "zk")] stage1_s_claim: L,
+    #[cfg(feature = "zk")] stage2_round_pads: Vec<CompressedUniPoly<L>>,
+) -> Result<Stage2ProveResult<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+    let mut stage2_prover = AkitaStage2Prover::new(
+        batching_coeff,
+        rs.w_evals_compact,
+        stage1_point,
+        s_claim,
+        rs.b,
+        rs.alpha_evals_y,
+        rs.m_evals_x,
+        rs.live_x_cols,
+        rs.col_bits,
+        rs.ring_bits,
+        relation_claim,
+    )?;
+    cfg_if! {
+        if #[cfg(feature = "zk")] {
+            let stage2_public_input = batching_coeff * stage1_s_claim + relation_claim_public;
+            let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
+                .prove_zk::<F, T, _>(
+                    stage2_public_input,
+                    transcript,
+                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                    stage2_round_pads,
+                )?;
+            Ok((
+                stage2_sumcheck_proof_masked,
+                sumcheck_challenges,
+                stage2_prover,
+            ))
+        } else {
+            let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+                .prove::<F, T, _>(transcript, |tr| {
+                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                })?;
+            Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
+        }
+    }
+}
+
+fn root_claim_opening_from_y_ring<F, E, L, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
-    prepared_point: &PreparedRootOpeningPoint<F, D>,
+    prepared_point: &PreparedOpeningPoint<F, L, D>,
     inner_opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F>,
+    L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
         return (*y_ring * prepared_point.inner_reduction.sigma_m1())

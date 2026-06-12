@@ -13,13 +13,12 @@ pub mod sumcheck;
 #[cfg(feature = "zk")]
 pub(crate) mod zk_hiding_commit;
 
-pub use akita_types::{RingRelationInstance, RootLevelRawOutput};
+pub use akita_types::RingRelationInstance;
 pub use flow::{
-    build_terminal_root_batched_proof, prepare_batched_prove_inputs, prove_batched,
-    prove_folded_batched, prove_root_direct, prove_root_fold_from_ring_relation,
-    prove_root_fold_with_params, prove_suffix, prove_terminal_root_fold_from_ring_relation,
+    batched_prove, build_terminal_root_batched_proof, prepare_batched_prove_inputs,
+    prove_folded_batched, prove_root_direct, prove_root_fold, prove_suffix,
     prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
-    RecursiveProverState, RecursiveSuffixOutcome, RootLevelProverOutput,
+    RecursiveProverState, RecursiveSuffixOutcome,
 };
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;
