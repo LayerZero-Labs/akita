@@ -14,16 +14,13 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
-fn witness_eval_by_index<E, V>(
-    witness_len: usize,
+fn witness_eval_y_len<E>(
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
-    mut value_at: V,
-) -> Result<E, AkitaError>
+) -> Result<usize, AkitaError>
 where
     E: FieldCore,
-    V: FnMut(usize) -> Result<E, AkitaError>,
 {
     if challenges.len() != col_bits + ring_bits {
         return Err(AkitaError::InvalidSize {
@@ -32,14 +29,27 @@ where
         });
     }
 
-    let y_len = 1usize
+    1usize
         .checked_shl(
             u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
                 expected: usize::BITS as usize,
                 actual: ring_bits,
             })?,
         )
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or(AkitaError::InvalidProof)
+}
+
+fn witness_eval_by_index<E, V>(
+    witness_len: usize,
+    challenges: &[E],
+    ring_bits: usize,
+    y_len: usize,
+    mut value_at: V,
+) -> Result<E, AkitaError>
+where
+    E: FieldCore,
+    V: FnMut(usize) -> Result<E, AkitaError>,
+{
     if !witness_len.is_multiple_of(y_len) {
         return Err(AkitaError::InvalidProof);
     }
@@ -48,6 +58,9 @@ where
     let eq_y = EqPolynomial::evals(y_challenges)?;
     let eq_x = EqPolynomial::evals(x_challenges)?;
     let live_x_cols = witness_len / y_len;
+    if live_x_cols > eq_x.len() {
+        return Err(AkitaError::InvalidProof);
+    }
 
     let mut acc = E::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
@@ -73,16 +86,11 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if challenges.len() != col_bits + ring_bits {
-        return Err(AkitaError::InvalidSize {
-            expected: col_bits + ring_bits,
-            actual: challenges.len(),
-        });
-    }
+    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
     if packed_witness.num_elems != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
         return Err(AkitaError::InvalidProof);
     }
-    witness_eval_by_index(physical_w_len, challenges, col_bits, ring_bits, |idx| {
+    witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
         packed_witness
             .digit_at(idx)
             .map(|digit| E::from_i64(digit as i64))
@@ -101,10 +109,11 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
+    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
     if field_witness.len() != physical_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    witness_eval_by_index(physical_w_len, challenges, col_bits, ring_bits, |idx| {
+    witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
         Ok(E::lift_base(field_witness[idx]))
     })
 }

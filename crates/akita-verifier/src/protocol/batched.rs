@@ -220,10 +220,13 @@ where
         let start = block_idx.checked_mul(params.block_len).ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
         })?;
-        let end = start
-            .saturating_add(params.block_len)
-            .min(witness_rings.len());
         let block = if start < witness_rings.len() {
+            let end = start
+                .checked_add(params.block_len)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("direct witness block end overflow".to_string())
+                })?
+                .min(witness_rings.len());
             &witness_rings[start..end]
         } else {
             &[]

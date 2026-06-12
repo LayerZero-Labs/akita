@@ -256,11 +256,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         let challenge_block_summaries: Vec<[E; 2]> =
             self.c_alphas.summarize_all_block_carries::<F, D>(
-                self.num_claims,
                 context.x_low_challenges,
                 &context.eq_low,
                 context.block_offset_low,
-                self.num_blocks,
             )?;
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
@@ -722,12 +720,14 @@ where
     let c_alphas: PreparedChallengeEvals<E> = match challenges {
         Challenges::Sparse {
             challenges: sparse, ..
-        } => PreparedChallengeEvals::Flat(
-            sparse
+        } => PreparedChallengeEvals::Flat {
+            evals: sparse
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
                 .collect::<Result<_, _>>()?,
-        ),
+            num_claims,
+            num_blocks,
+        },
         Challenges::Tensor { factored } => {
             if D < 2 {
                 return Err(AkitaError::InvalidInput(

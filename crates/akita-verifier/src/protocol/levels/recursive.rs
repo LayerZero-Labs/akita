@@ -703,6 +703,17 @@ where
     #[cfg(feature = "zk")]
     let mut zk_hiding_cursor = 0usize;
 
+    if let Some(root_y_rings) = match &proof.root {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => None,
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => Some(&terminal.y_rings),
+        akita_types::AkitaBatchedRootProof::Fold(fold_root) => Some(&fold_root.y_rings),
+    } {
+        let y_coeff_len = root_y_rings.coeff_len();
+        if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+
     match &proof.root {
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
@@ -712,10 +723,6 @@ where
                 return Err(AkitaError::InvalidProof);
             }
             if terminal.final_witness.shape() != terminal_direct.witness_shape {
-                return Err(AkitaError::InvalidProof);
-            }
-            let y_coeff_len = terminal.y_rings.coeff_len();
-            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
                 return Err(AkitaError::InvalidProof);
             }
             verify_root_level::<F, E, C, T, D>(
@@ -743,14 +750,6 @@ where
                 #[cfg(feature = "zk")]
                 &mut zk_relations,
             )?;
-            #[cfg(feature = "zk")]
-            {
-                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
-                zk_relations.verify_all(&lifted)?;
-            }
             Ok(())
         }
         akita_types::AkitaBatchedRootProof::Fold(fold_root) => {
@@ -758,10 +757,6 @@ where
                 .checked_sub(1)
                 .ok_or(AkitaError::InvalidProof)?;
             if proof.steps.len() != expected_recursive_levels {
-                return Err(AkitaError::InvalidProof);
-            }
-            let y_coeff_len = fold_root.y_rings.coeff_len();
-            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
                 return Err(AkitaError::InvalidProof);
             }
 
@@ -838,15 +833,18 @@ where
                 #[cfg(feature = "zk")]
                 &mut zk_relations,
             )?;
-            #[cfg(feature = "zk")]
-            {
-                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
-                zk_relations.verify_all(&lifted)?;
-            }
             Ok(())
         }
+    }?;
+
+    #[cfg(feature = "zk")]
+    {
+        if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
+        zk_relations.verify_all(&lifted)?;
     }
+
+    Ok(())
 }

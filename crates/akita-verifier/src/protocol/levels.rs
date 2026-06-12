@@ -162,7 +162,10 @@ where
     let num_rounds = opening_num_vars
         .checked_sub(split_bits)
         .ok_or(AkitaError::InvalidProof)?;
-    if width == 1 || partials_len != width.saturating_mul(num_claims) {
+    let expected_partials = width
+        .checked_mul(num_claims)
+        .ok_or(AkitaError::InvalidProof)?;
+    if width == 1 || partials_len != expected_partials {
         return Err(AkitaError::InvalidProof);
     }
     Ok(EorReductionShape {
@@ -876,6 +879,18 @@ where
     let prepared_points = root_eor.prepared_points;
     #[cfg(feature = "zk")]
     let zk_eor_final = root_eor.final_relation;
+    for row in incidence_summary.public_rows() {
+        if row.point_idx() >= prepared_points.len() || row.claim_indices().is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        for &claim_idx in row.claim_indices() {
+            if claim_idx >= openings.len()
+                || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+    }
 
     // `y_ring` is standalone wire data pinned at the EOR output point ρ (see
     // `ExtensionOpeningReductionVerifier::expected_output_claim`). A future
@@ -898,15 +913,7 @@ where
         let mut batched_openings_per_row: Vec<C> =
             vec![C::zero(); incidence_summary.num_public_rows()];
         for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
-            if row.point_idx() >= prepared_points.len() || row.claim_indices().is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
             for &claim_idx in row.claim_indices() {
-                if claim_idx >= openings.len()
-                    || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
                 batched_openings_per_row[row_idx] +=
                     row_coefficients[claim_idx] * C::lift_base(openings[claim_idx]);
             }
@@ -957,8 +964,7 @@ where
     if let Some((final_claim, factors_by_point)) = &zk_eor_final {
         let mut final_opening = ZkR1csLinearCombination::zero();
         for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
-            if row.point_idx() >= factors_by_point.len() || row.point_idx() >= prepared_points.len()
-            {
+            if row.point_idx() >= factors_by_point.len() {
                 return Err(AkitaError::InvalidProof);
             }
             let y_mask_start = row_idx.checked_mul(D).ok_or(AkitaError::InvalidProof)?;

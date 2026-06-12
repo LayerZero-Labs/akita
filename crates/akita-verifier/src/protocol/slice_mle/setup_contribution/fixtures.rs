@@ -291,11 +291,13 @@ impl SetupContributionFixture {
             .map(|&(point_idx, _)| point_idx)
             .collect();
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
+            c_alphas: PreparedChallengeEvals::Flat {
+                evals: (0..total_blocks)
                     .map(|idx| test_scalar(41 + idx as u128))
                     .collect(),
-            ),
+                num_claims,
+                num_blocks: shape.num_blocks,
+            },
             eq_tau1,
             num_t_vectors,
             num_blocks: shape.num_blocks,

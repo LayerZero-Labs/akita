@@ -146,10 +146,6 @@ impl<E: FieldCore> ProductStageVerifier<E> {
         batch_weights: Vec<E>,
         arity: usize,
     ) -> Self {
-        debug_assert!(matches!(arity, 2 | 4));
-        debug_assert_eq!(child_claims.len(), batch_weights.len() * arity);
-        #[cfg(feature = "zk")]
-        debug_assert_eq!(child_claims.len(), child_claim_masks.len());
         Self {
             tau,
             input_claim,

@@ -239,11 +239,13 @@ mod tests {
             FlatMatrix::from_ring_slice::<D>(&zk_d_entries),
         );
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
+            c_alphas: PreparedChallengeEvals::Flat {
+                evals: (0..total_blocks)
                     .map(|idx| f(2_000 + idx as u128))
                     .collect(),
-            ),
+                num_claims,
+                num_blocks,
+            },
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),

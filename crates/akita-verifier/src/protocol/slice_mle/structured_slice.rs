@@ -366,11 +366,13 @@ mod tests {
             })
             .collect();
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
+            c_alphas: PreparedChallengeEvals::Flat {
+                evals: (0..total_blocks)
                     .map(|idx| f(3_000 + idx as u128))
                     .collect(),
-            ),
+                num_claims,
+                num_blocks,
+            },
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
@@ -461,7 +463,10 @@ mod tests {
             .iter()
             .map(|&point_idx| p.eq_tau1[1 + point_idx])
             .collect();
-        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
+        let PreparedChallengeEvals::Flat {
+            evals: c_alphas, ..
+        } = &p.c_alphas
+        else {
             unreachable!("structured slice fixture uses flat challenges");
         };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
@@ -514,7 +519,10 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
 
-        let PreparedChallengeEvals::Flat(c_alphas) = &p.c_alphas else {
+        let PreparedChallengeEvals::Flat {
+            evals: c_alphas, ..
+        } = &p.c_alphas
+        else {
             unreachable!("structured slice fixture uses flat challenges");
         };
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
