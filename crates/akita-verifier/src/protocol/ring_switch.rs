@@ -96,7 +96,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_f: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
-    pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
+    pub(crate) claim_to_t_vector: Vec<usize>,
     pub(crate) num_polys_per_commitment_group: Vec<usize>,
     pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
@@ -308,21 +308,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             )?;
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        // Per-commitment-group t-vector starting indices. Under the current
-        // relation-routing contract these match opening-point groups.
-        let t_vector_offsets: Vec<usize> = self
-            .num_polys_per_commitment_group
-            .iter()
-            .scan(0usize, |acc, &count| {
-                let offset = *acc;
-                *acc += count;
-                Some(offset)
-            })
-            .collect();
-        for (claim_idx, &(group_idx, poly_idx)) in
-            self.claim_to_commitment_group_poly.iter().enumerate()
+        if self.claim_to_t_vector.len() != self.num_claims
+            || self
+                .claim_to_t_vector
+                .iter()
+                .any(|&idx| idx >= self.num_t_vectors)
         {
-            let t_vector_idx = t_vector_offsets[group_idx] + poly_idx;
+            return Err(AkitaError::InvalidProof);
+        }
+        for (claim_idx, &t_vector_idx) in self.claim_to_t_vector.iter().enumerate() {
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
             challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
@@ -825,11 +819,29 @@ where
         }
     };
 
-    let claim_to_commitment_group_poly: Vec<(usize, usize)> = claim_to_commitment_group
+    let t_vector_offsets: Vec<usize> = num_polys_per_commitment_group
+        .iter()
+        .scan(0usize, |acc, &count| {
+            let offset = *acc;
+            *acc = acc.checked_add(count)?;
+            Some(offset)
+        })
+        .collect();
+    if t_vector_offsets.len() != num_points {
+        return Err(AkitaError::InvalidSetup(
+            "batched t-vector offsets overflow".to_string(),
+        ));
+    }
+    let claim_to_t_vector: Vec<usize> = claim_to_commitment_group
         .iter()
         .zip(claim_poly_in_commitment_group.iter())
-        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
-        .collect();
+        .map(|(&group_idx, &poly_idx)| {
+            t_vector_offsets[group_idx]
+                .checked_add(poly_idx)
+                .filter(|&idx| idx < num_t_vectors)
+                .ok_or(AkitaError::InvalidProof)
+        })
+        .collect::<Result<_, _>>()?;
 
     Ok(RingSwitchDeferredRowEval {
         c_alphas,
@@ -857,7 +869,7 @@ where
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         num_points,
         rows,
-        claim_to_commitment_group_poly,
+        claim_to_t_vector,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         num_public_rows,
         gamma: gamma.to_vec(),

@@ -268,7 +268,7 @@ mod tests {
             n_f: 0,
             num_points,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
+            claim_to_t_vector: vec![1, 2, 0],
             num_polys_per_commitment_group: num_polys_per_point,
             num_public_rows,
             gamma: vec![F::one(); num_claims],

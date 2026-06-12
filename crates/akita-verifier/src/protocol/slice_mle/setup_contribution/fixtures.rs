@@ -255,6 +255,20 @@ impl SetupContributionFixture {
         let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect();
+        let t_vector_offsets: Vec<usize> = shape
+            .num_polys_per_point
+            .iter()
+            .scan(0usize, |acc, &count| {
+                let offset = *acc;
+                *acc += count;
+                Some(offset)
+            })
+            .collect();
+        let claim_to_t_vector: Vec<usize> = shape
+            .claim_to_point_poly
+            .iter()
+            .map(|&(point_idx, poly_idx)| t_vector_offsets[point_idx] + poly_idx)
+            .collect();
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -285,7 +299,7 @@ impl SetupContributionFixture {
             n_f: shape.n_f,
             num_points,
             rows,
-            claim_to_commitment_group_poly: shape.claim_to_point_poly.clone(),
+            claim_to_t_vector,
             num_polys_per_commitment_group: shape.num_polys_per_point.clone(),
             num_public_rows: shape.num_public_rows,
             gamma: vec![TestField::one(); shape.num_claims],

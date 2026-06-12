@@ -40,16 +40,6 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// to each carry bucket ([`CARRY0`], [`CARRY1`]) for that outer index.
     fn compute_inner_sum(&self, outer_index: usize) -> [F; POSSIBLE_CARRIES];
 
-    /// Whether [`Self::evaluate`] should iterate the outer dimension in
-    /// parallel when collecting carry terms.
-    ///
-    /// Default `false` (sequential). Override to `true` for evaluators with
-    /// non-trivial per-outer-index work.
-    #[inline]
-    fn parallelize_outer(&self) -> bool {
-        false
-    }
-
     /// Compute the outer sum: combine the per-outer-index carry terms with
     /// the high-bit equality polynomial.
     ///
@@ -94,15 +84,9 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     #[inline]
     fn evaluate(&self) -> F {
         let n = self.num_outer_indices();
-        let carry_terms: Vec<[F; POSSIBLE_CARRIES]> = if self.parallelize_outer() {
-            cfg_into_iter!(0..n)
-                .map(|outer_index| self.compute_inner_sum(outer_index))
-                .collect()
-        } else {
-            (0..n)
-                .map(|outer_index| self.compute_inner_sum(outer_index))
-                .collect()
-        };
+        let carry_terms: Vec<[F; POSSIBLE_CARRIES]> = (0..n)
+            .map(|outer_index| self.compute_inner_sum(outer_index))
+            .collect();
         self.compute_outer_sum(&carry_terms)
     }
 }
@@ -499,7 +483,7 @@ mod tests {
             n_f: 0,
             num_points,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
+            claim_to_t_vector: vec![1, 2, 0],
             num_polys_per_commitment_group: num_polys_per_point,
             num_public_rows,
             gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
