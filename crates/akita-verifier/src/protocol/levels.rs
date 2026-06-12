@@ -1044,9 +1044,9 @@ where
         )?;
     let relation_instance = RingRelationInstance::new(
         m_row_layout,
-        stage1_challenges.clone(),
-        ring_opening_points.clone(),
-        ring_multiplier_points.clone(),
+        stage1_challenges,
+        ring_opening_points,
+        ring_multiplier_points,
         incidence_summary.clone(),
         commitment_routing,
         gamma,
@@ -1135,7 +1135,7 @@ where
             proof,
             next_fold_level_params,
         }),
-        ring_multiplier_points: &ring_multiplier_points,
+        ring_multiplier_points: relation_instance.ring_multiplier_points(),
     };
     verify_stage2_and_setup_replay::<F, C, T, D>(
         transcript,

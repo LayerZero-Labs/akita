@@ -75,7 +75,6 @@ where
         RecursiveFoldProofView::Intermediate { .. } => MRowLayout::WithDBlock,
         RecursiveFoldProofView::Terminal { .. } => MRowLayout::WithoutDBlock,
     };
-    let is_last = m_row_layout == MRowLayout::WithoutDBlock;
     let y_rings = proof.y_rings_typed::<D>()?;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
         RecursiveFoldProofView::Intermediate { proof, .. } => proof.v.as_ring_slice::<D>()?,
@@ -316,7 +315,6 @@ where
         lp,
         m_row_layout,
     )?;
-    tracing::debug!(w_len, is_last, "verify ring_switch");
     let gamma = vec![L::one(); num_claims];
     let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
@@ -325,9 +323,9 @@ where
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<L>(&gamma)?;
     let relation_instance = RingRelationInstance::new(
         m_row_layout,
-        stage1_challenges.clone(),
-        ring_opening_points.clone(),
-        ring_multiplier_points.clone(),
+        stage1_challenges,
+        ring_opening_points,
+        ring_multiplier_points,
         incidence,
         commitment_routing,
         gamma_base,
@@ -431,7 +429,7 @@ where
         #[cfg(feature = "zk")]
         relation_claim_mask,
         setup_replay,
-        ring_multiplier_points: &ring_multiplier_points,
+        ring_multiplier_points: relation_instance.ring_multiplier_points(),
     };
     verify_stage2_and_setup_replay::<F, L, T, D>(
         transcript,
