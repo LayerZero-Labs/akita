@@ -21,12 +21,6 @@ use akita_types::{
 };
 use std::array::from_fn;
 
-// Root-direct verifier commitment recomputation.
-
-#[cfg(feature = "zk")]
-/// Root-direct commitment blinding payload carried by zk proofs.
-pub(crate) type RootDirectBlindingPayload<'a> = &'a [Vec<i8>];
-
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -360,7 +354,7 @@ pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     flat_commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
-    #[cfg(feature = "zk")] b_blinding_digits: RootDirectBlindingPayload<'_>,
+    #[cfg(feature = "zk")] b_blinding_digits: &[Vec<i8>],
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,

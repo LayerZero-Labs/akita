@@ -77,13 +77,9 @@ where
     };
     let is_last = m_row_layout == MRowLayout::WithoutDBlock;
     let y_rings = proof.y_rings_typed::<D>()?;
-    let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
         RecursiveFoldProofView::Intermediate { proof, .. } => proof.v.as_ring_slice::<D>()?,
-        RecursiveFoldProofView::Terminal { .. } => {
-            v_typed_owned = Vec::new();
-            &v_typed_owned
-        }
+        RecursiveFoldProofView::Terminal { .. } => &[],
     };
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {

@@ -155,21 +155,6 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     },
 }
 
-/// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
-pub(crate) struct Stage2RowEvalSource<F: FieldCore> {
-    prepared: RingSwitchDeferredRowEval<F>,
-    setup_claim: Option<F>,
-}
-
-impl<F: FieldCore> Stage2RowEvalSource<F> {
-    pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>, setup_claim: Option<F>) -> Self {
-        Self {
-            prepared,
-            setup_claim,
-        }
-    }
-}
-
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
@@ -181,8 +166,9 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     relation_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
-    alpha_evals_y: Vec<E>,
-    row_eval_source: Stage2RowEvalSource<E>,
+    alpha_evals_y: &'a [E],
+    prepared_row_eval: &'a RingSwitchDeferredRowEval<E>,
+    setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     alpha: E,
@@ -208,8 +194,9 @@ where
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        row_eval_source: Stage2RowEvalSource<E>,
+        alpha_evals_y: &'a [E],
+        prepared_row_eval: &'a RingSwitchDeferredRowEval<E>,
+        setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
         ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         relation_claim: E,
@@ -250,7 +237,8 @@ where
             witness_oracle,
             stage1_point,
             alpha_evals_y,
-            row_eval_source,
+            prepared_row_eval,
+            setup_claim,
             setup,
             ring_multiplier_points,
             alpha,
@@ -278,12 +266,12 @@ where
     }
 
     fn row_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.row_eval_source.prepared.eval_at_point::<F, D>(
+        self.prepared_row_eval.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
             self.ring_multiplier_points,
             self.alpha,
-            self.row_eval_source.setup_claim,
+            self.setup_claim,
         )
     }
 }

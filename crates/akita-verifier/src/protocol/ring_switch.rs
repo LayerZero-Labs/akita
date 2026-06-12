@@ -45,20 +45,14 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
-    /// Stage-1 challenge handoff for intermediate folds; absent for terminal folds.
-    pub stage1: RingSwitchStage1<E>,
+    /// Stage-1 challenge handoff for intermediate folds.
+    pub stage1_tau0: Option<Vec<E>>,
     /// Challenge tau1 for the stage-2 M-row combination.
     pub tau1: Vec<E>,
     /// Basis size `b = 2^log_basis`.
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
-}
-
-/// Ring-switch output needed by stage-1 replay.
-pub(crate) enum RingSwitchStage1<E: FieldCore> {
-    Intermediate { tau0: Vec<E> },
-    Terminal,
 }
 
 /// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
@@ -104,8 +98,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
 
-pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
-
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
 fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
@@ -145,7 +137,7 @@ fn jolt_end_cycle_tracking(marker_id: &str) {
 fn jolt_end_cycle_tracking(_marker_id: &str) {}
 
 struct RowEvalPointContext<'a, F: FieldCore, E: FieldCore> {
-    layout: RingSwitchSegmentLayout,
+    layout: RingRelationSegmentLayout,
     alpha_pows: Vec<E>,
     g1_open: Vec<F>,
     fold_gadget: Vec<F>,
@@ -177,7 +169,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> RingSwitchSegmentLayout {
+    pub(crate) fn segment_layout(&self) -> RingRelationSegmentLayout {
         self.witness_segment_layout
     }
 
@@ -984,13 +976,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let stage1 = match m_row_layout {
-        MRowLayout::WithDBlock => RingSwitchStage1::Intermediate {
-            tau0: (0..num_sc_vars)
+    let stage1_tau0 = match m_row_layout {
+        MRowLayout::WithDBlock => Some(
+            (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
-        },
-        MRowLayout::WithoutDBlock => RingSwitchStage1::Terminal,
+        ),
+        MRowLayout::WithoutDBlock => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -1003,7 +995,7 @@ where
         alpha_evals_y,
         col_bits,
         ring_bits,
-        stage1,
+        stage1_tau0,
         tau1,
         b: 1usize
             .checked_shl(lp.log_basis)

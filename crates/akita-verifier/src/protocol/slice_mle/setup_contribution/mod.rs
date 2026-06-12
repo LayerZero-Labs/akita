@@ -1,8 +1,7 @@
 mod evaluator;
 
 pub(crate) use akita_types::SetupContributionPlan as SetupEvalPlan;
-pub use evaluator::SetupEvaluator;
-pub(crate) use evaluator::{SetupEvaluation, SetupEvaluatorMode};
+pub(crate) use evaluator::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 
 #[cfg(test)]
 mod fixtures;

@@ -10,11 +10,10 @@ mod extension_opening_reduction;
 #[cfg(feature = "zk")]
 mod zk;
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchStage1,
-    RingSwitchVerifyOutput,
+    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource, Stage2WitnessOracle};
+use crate::stages::stage2::{AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
@@ -576,11 +575,7 @@ where
         #[cfg(feature = "zk")]
         s_claim_mask,
     } = stage1;
-    let setup_prepared_row_eval = setup_replay.as_ref().map(|_| rs.prepared_row_eval.clone());
-    let row_eval_source = Stage2RowEvalSource::new(
-        rs.prepared_row_eval,
-        setup_replay.as_ref().map(|replay| replay.proof.claim),
-    );
+    let setup_claim = setup_replay.as_ref().map(|replay| replay.proof.claim);
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
@@ -608,8 +603,9 @@ where
         relation_claim_mask,
         witness_oracle,
         stage1_point,
-        rs.alpha_evals_y,
-        row_eval_source,
+        &rs.alpha_evals_y,
+        &rs.prepared_row_eval,
+        setup_claim,
         &setup.expanded,
         ring_multiplier_points,
         relation_claim,
@@ -657,11 +653,8 @@ where
         transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
     }
     if let Some(setup_replay) = setup_replay {
-        let setup_prepared_row_eval = setup_prepared_row_eval
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
         let verifier = SetupSumcheckVerifier::new::<F, D>(
-            setup_prepared_row_eval,
+            &rs.prepared_row_eval,
             &sumcheck_challenges[rs.ring_bits..],
             rs.alpha,
         )?;
@@ -699,9 +692,9 @@ where
         .col_bits
         .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    let stage1 = match (proof, &rs.stage1) {
-        (Some(proof), RingSwitchStage1::Intermediate { tau0 }) => Some((proof, tau0.as_slice())),
-        (None, RingSwitchStage1::Terminal) => None,
+    let stage1 = match (proof, rs.stage1_tau0.as_deref()) {
+        (Some(proof), Some(tau0)) => Some((proof, tau0)),
+        (None, None) => None,
         _ => return Err(AkitaError::InvalidProof),
     };
     if let Some((proof, tau0)) = stage1 {
@@ -801,13 +794,9 @@ where
         ),
     };
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
-    let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
         RootLevelProofView::Intermediate { v_flat, .. } => v_flat.as_ring_slice::<D>()?,
-        RootLevelProofView::Terminal { .. } => {
-            v_typed_owned = Vec::new();
-            &v_typed_owned
-        }
+        RootLevelProofView::Terminal { .. } => &[],
     };
     let next_fold_level_params = match &proof {
         RootLevelProofView::Intermediate {
