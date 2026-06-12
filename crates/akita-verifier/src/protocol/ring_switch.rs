@@ -498,8 +498,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             E::zero()
         };
 
-        #[allow(unused_mut)]
-        let mut total = e_structured_contribution
+        let total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution
@@ -512,10 +511,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, &context.alpha_pows)?;
             let d_blinding =
                 compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, &context.alpha_pows)?;
-            total = total + b_blinding + d_blinding;
+            Ok(total + b_blinding + d_blinding)
         }
-
-        Ok(total)
+        #[cfg(not(feature = "zk"))]
+        {
+            Ok(total)
+        }
     }
 }
 
