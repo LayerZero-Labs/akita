@@ -38,6 +38,17 @@ pub(super) struct RootEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
     pub(super) final_relation: Option<(ZkR1csLinearCombination<C>, Vec<C>)>,
 }
 
+pub(super) struct RootEorInput<'a, F: FieldCore, E: FieldCore, C: FieldCore, const D: usize> {
+    pub(super) extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<C>>,
+    pub(super) y_rings: &'a [CyclotomicRing<F, D>],
+    pub(super) claim_points: &'a [&'a [E]],
+    pub(super) openings: &'a [E],
+    pub(super) row_coefficients: &'a [C],
+    pub(super) incidence_summary: &'a ClaimIncidenceSummary,
+    pub(super) basis: BasisMode,
+    pub(super) root_lp: &'a LevelParams,
+}
+
 #[cfg(feature = "zk")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_zk_extension_opening_reduction_sumcheck<F, E, T, S>(
@@ -97,16 +108,8 @@ where
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root_eor_and_prepare_points<F, E, C, T, const D: usize>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    y_rings: &[CyclotomicRing<F, D>],
-    claim_points: &[&[E]],
-    openings: &[E],
-    row_coefficients: &[C],
-    incidence_summary: &ClaimIncidenceSummary,
-    basis: BasisMode,
-    root_lp: &LevelParams,
+    input: RootEorInput<'_, F, E, C, D>,
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
@@ -122,6 +125,16 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
+    let RootEorInput {
+        extension_opening_reduction,
+        y_rings,
+        claim_points,
+        openings,
+        row_coefficients,
+        incidence_summary,
+        basis,
+        root_lp,
+    } = input;
     #[cfg(feature = "zk")]
     let _ = y_rings;
     let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
