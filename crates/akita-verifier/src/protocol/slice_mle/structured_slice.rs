@@ -31,130 +31,110 @@ where
     })
 }
 
-/// E-hat segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
-    pub high_challenges: &'a [E],
-    pub offset_high: usize,
-    pub gadget_vector: &'a [F],
-    pub public_block_summaries: &'a [[E; 2]],
-    pub challenge_block_summaries: &'a [[E; 2]],
-    pub public_row_weights_by_claim: &'a [E],
-    pub challenge_weight: E,
-}
-
-impl<F, E> EStructuredSlicesEvaluator<'_, F, E>
+pub(crate) fn evaluate_e_structured_slices<F, E>(
+    high_challenges: &[E],
+    offset_high: usize,
+    gadget_vector: &[F],
+    public_block_summaries: &[[E; 2]],
+    challenge_block_summaries: &[[E; 2]],
+    public_row_weights_by_claim: &[E],
+    challenge_weight: E,
+) -> E
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    #[inline]
-    pub(crate) fn evaluate(&self) -> E {
-        evaluate_structured_slice(
-            self.public_block_summaries.len() * self.gadget_vector.len(),
-            self.high_challenges,
-            self.offset_high,
-            |outer_index| {
-                let num_claims = self.public_block_summaries.len();
-                let digit = outer_index / num_claims;
-                let claim_idx = outer_index % num_claims;
+    evaluate_structured_slice(
+        public_block_summaries.len() * gadget_vector.len(),
+        high_challenges,
+        offset_high,
+        |outer_index| {
+            let num_claims = public_block_summaries.len();
+            let digit = outer_index / num_claims;
+            let claim_idx = outer_index % num_claims;
 
-                let [aggregated_opening_carry0, aggregated_opening_carry1] =
-                    self.public_block_summaries[claim_idx];
-                let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-                    self.challenge_block_summaries[claim_idx];
+            let [aggregated_opening_carry0, aggregated_opening_carry1] =
+                public_block_summaries[claim_idx];
+            let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
+                challenge_block_summaries[claim_idx];
 
-                [
-                    (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
-                        + self.challenge_weight * aggregated_challenge_carry0)
-                        .mul_base(self.gadget_vector[digit]),
-                    (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
-                        + self.challenge_weight * aggregated_challenge_carry1)
-                        .mul_base(self.gadget_vector[digit]),
-                ]
-            },
-        )
-    }
+            [
+                (public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
+                    + challenge_weight * aggregated_challenge_carry0)
+                    .mul_base(gadget_vector[digit]),
+                (public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
+                    + challenge_weight * aggregated_challenge_carry1)
+                    .mul_base(gadget_vector[digit]),
+            ]
+        },
+    )
 }
 
-/// T-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
-    pub high_challenges: &'a [E],
-    pub offset_high: usize,
-    pub gadget_vector: &'a [F],
-    pub challenge_block_summaries: &'a [[E; 2]],
-    pub a_row_weights: &'a [E],
-}
-
-impl<F, E> TStructuredSlicesEvaluator<'_, F, E>
+pub(crate) fn evaluate_t_structured_slices<F, E>(
+    high_challenges: &[E],
+    offset_high: usize,
+    gadget_vector: &[F],
+    challenge_block_summaries: &[[E; 2]],
+    a_row_weights: &[E],
+) -> E
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    #[inline]
-    pub(crate) fn evaluate(&self) -> E {
-        evaluate_structured_slice(
-            self.challenge_block_summaries.len()
-                * self.gadget_vector.len()
-                * self.a_row_weights.len(),
-            self.high_challenges,
-            self.offset_high,
-            |outer_index| {
-                let num_claims = self.challenge_block_summaries.len();
-                let num_digits = self.gadget_vector.len();
-                let claim_idx = outer_index % num_claims;
-                let compound = outer_index / num_claims;
-                let digit = compound % num_digits;
-                let a_row_idx = compound / num_digits;
-                let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-                    self.challenge_block_summaries[claim_idx];
-                [
-                    self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                        * aggregated_challenge_carry0,
-                    self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                        * aggregated_challenge_carry1,
-                ]
-            },
-        )
-    }
+    evaluate_structured_slice(
+        challenge_block_summaries.len() * gadget_vector.len() * a_row_weights.len(),
+        high_challenges,
+        offset_high,
+        |outer_index| {
+            let num_claims = challenge_block_summaries.len();
+            let num_digits = gadget_vector.len();
+            let claim_idx = outer_index % num_claims;
+            let compound = outer_index / num_claims;
+            let digit = compound % num_digits;
+            let a_row_idx = compound / num_digits;
+            let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
+                challenge_block_summaries[claim_idx];
+            [
+                a_row_weights[a_row_idx].mul_base(gadget_vector[digit])
+                    * aggregated_challenge_carry0,
+                a_row_weights[a_row_idx].mul_base(gadget_vector[digit])
+                    * aggregated_challenge_carry1,
+            ]
+        },
+    )
 }
 
-/// Pow2 Z-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
-    pub high_challenges: &'a [E],
-    pub offset_high: usize,
-    pub g1_commit: &'a [F],
-    pub fold_gadget: &'a [F],
-    pub a_block_summary: &'a [[E; 2]],
-    pub consistency_weight: E,
-}
-
-impl<F, E> ZStructuredPow2SlicesEvaluator<'_, F, E>
+pub(crate) fn evaluate_z_structured_pow2_slices<F, E>(
+    high_challenges: &[E],
+    offset_high: usize,
+    g1_commit: &[F],
+    fold_gadget: &[F],
+    a_block_summary: &[[E; 2]],
+    consistency_weight: E,
+) -> E
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    #[inline]
-    pub(crate) fn evaluate(&self) -> E {
-        evaluate_structured_slice(
-            self.a_block_summary.len() * self.fold_gadget.len() * self.g1_commit.len(),
-            self.high_challenges,
-            self.offset_high,
-            |outer_index| {
-                let num_points = self.a_block_summary.len();
-                let depth_fold = self.fold_gadget.len();
-                let pt = outer_index % num_points;
-                let q1 = outer_index / num_points;
-                let df = q1 % depth_fold;
-                let dc = q1 / depth_fold;
+    evaluate_structured_slice(
+        a_block_summary.len() * fold_gadget.len() * g1_commit.len(),
+        high_challenges,
+        offset_high,
+        |outer_index| {
+            let num_points = a_block_summary.len();
+            let depth_fold = fold_gadget.len();
+            let pt = outer_index % num_points;
+            let q1 = outer_index / num_points;
+            let df = q1 % depth_fold;
+            let dc = q1 / depth_fold;
 
-                let [a_carry0, a_carry1] = self.a_block_summary[pt];
-                let scale = (-self.consistency_weight)
-                    .mul_base(self.g1_commit[dc])
-                    .mul_base(self.fold_gadget[df]);
-                [scale * a_carry0, scale * a_carry1]
-            },
-        )
-    }
+            let [a_carry0, a_carry1] = a_block_summary[pt];
+            let scale = (-consistency_weight)
+                .mul_base(g1_commit[dc])
+                .mul_base(fold_gadget[df]);
+            [scale * a_carry0, scale * a_carry1]
+        },
+    )
 }
 
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
@@ -439,16 +419,15 @@ mod tests {
             })
             .collect::<Result<_, _>>()
             .unwrap();
-        let got = EStructuredSlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: p.witness_segment_layout.offset_e >> offset_low_bits,
-            gadget_vector: &fx.g1_open,
-            public_block_summaries: &public_block_summaries,
-            challenge_block_summaries: &challenge_block_summaries,
-            public_row_weights_by_claim: &public_row_weights_by_claim,
-            challenge_weight: p.eq_tau1[0],
-        }
-        .evaluate();
+        let got = evaluate_e_structured_slices(
+            &fx.full_vec_randomness[offset_low_bits..],
+            p.witness_segment_layout.offset_e >> offset_low_bits,
+            &fx.g1_open,
+            &public_block_summaries,
+            &challenge_block_summaries,
+            &public_row_weights_by_claim,
+            p.eq_tau1[0],
+        );
 
         let mut expected = F::zero();
         for x in 0..e_len {
@@ -494,14 +473,13 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
-        let got = TStructuredSlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: p.witness_segment_layout.offset_t >> offset_low_bits,
-            gadget_vector: &fx.g1_open,
-            challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &p.eq_tau1[a_start..p.rows],
-        }
-        .evaluate();
+        let got = evaluate_t_structured_slices(
+            &fx.full_vec_randomness[offset_low_bits..],
+            p.witness_segment_layout.offset_t >> offset_low_bits,
+            &fx.g1_open,
+            &challenge_block_summaries,
+            &p.eq_tau1[a_start..p.rows],
+        );
 
         let mut expected = F::zero();
         for x in 0..t_len {
@@ -534,15 +512,14 @@ mod tests {
             })
             .collect::<Result<_, _>>()
             .unwrap();
-        let got = ZStructuredPow2SlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
-            offset_high: p.witness_segment_layout.offset_z >> z_offset_low_bits,
-            g1_commit: &fx.g1_commit,
-            fold_gadget: &fx.fold_gadget,
-            a_block_summary: &a_block_summary,
-            consistency_weight: p.eq_tau1[0],
-        }
-        .evaluate();
+        let got = evaluate_z_structured_pow2_slices(
+            &fx.full_vec_randomness[z_offset_low_bits..],
+            p.witness_segment_layout.offset_z >> z_offset_low_bits,
+            &fx.g1_commit,
+            &fx.fold_gadget,
+            &a_block_summary,
+            p.eq_tau1[0],
+        );
 
         let mut expected = F::zero();
         let z_total_blocks = p.num_points * p.block_len;

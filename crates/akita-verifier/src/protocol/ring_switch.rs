@@ -3,8 +3,8 @@
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, EStructuredSlicesEvaluator, TStructuredSlicesEvaluator,
-    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, evaluate_e_structured_slices, evaluate_t_structured_slices,
+    evaluate_z_structured_pow2_slices, ZDenseSlicesEvaluator,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
@@ -310,16 +310,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         .ok_or(AkitaError::InvalidProof)
                 })
                 .collect::<Result<_, _>>()?;
-            EStructuredSlicesEvaluator {
+            evaluate_e_structured_slices(
                 high_challenges,
-                offset_high: layout.offset_e >> offset_low_bits,
-                gadget_vector: &g1_open,
-                public_block_summaries: &public_block_summaries,
-                challenge_block_summaries: &challenge_block_summaries,
-                public_row_weights_by_claim: &public_row_weights_by_claim,
-                challenge_weight: self.eq_tau1[0],
-            }
-            .evaluate()
+                layout.offset_e >> offset_low_bits,
+                &g1_open,
+                &public_block_summaries,
+                &challenge_block_summaries,
+                &public_row_weights_by_claim,
+                self.eq_tau1[0],
+            )
         };
 
         // Canonical A-block start (tiered-aware): consistency | public | D |
@@ -342,14 +341,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
-            TStructuredSlicesEvaluator {
+            evaluate_t_structured_slices(
                 high_challenges,
-                offset_high: layout.offset_t >> offset_low_bits,
-                gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries_by_t_vector,
-                a_row_weights: &self.eq_tau1[a_start..self.rows],
-            }
-            .evaluate()
+                layout.offset_t >> offset_low_bits,
+                &g1_open,
+                &challenge_block_summaries_by_t_vector,
+                &self.eq_tau1[a_start..self.rows],
+            )
         };
 
         // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
@@ -388,15 +386,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         )
                     })
                     .collect::<Result<_, _>>()?;
-                ZStructuredPow2SlicesEvaluator {
-                    high_challenges: z_high_challenges,
-                    offset_high: layout.offset_z >> z_offset_low_bits,
-                    g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
-                    a_block_summary: &a_block_summary,
-                    consistency_weight: self.eq_tau1[0],
-                }
-                .evaluate()
+                evaluate_z_structured_pow2_slices(
+                    z_high_challenges,
+                    layout.offset_z >> z_offset_low_bits,
+                    &g1_commit,
+                    &fold_gadget,
+                    &a_block_summary,
+                    self.eq_tau1[0],
+                )
             } else {
                 let a_evals_by_point: Vec<Vec<E>> = ring_multiplier_points
                     .iter()
