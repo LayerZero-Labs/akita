@@ -13,31 +13,6 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
-fn witness_eval_y_len<E>(
-    challenges: &[E],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Result<usize, AkitaError>
-where
-    E: FieldCore,
-{
-    if challenges.len() != col_bits + ring_bits {
-        return Err(AkitaError::InvalidSize {
-            expected: col_bits + ring_bits,
-            actual: challenges.len(),
-        });
-    }
-
-    1usize
-        .checked_shl(
-            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                expected: usize::BITS as usize,
-                actual: ring_bits,
-            })?,
-        )
-        .ok_or(AkitaError::InvalidProof)
-}
-
 fn witness_eval_by_index<E, V>(
     witness_len: usize,
     challenges: &[E],
@@ -85,7 +60,23 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let y_len = witness_eval_y_len(challenges, col_bits, ring_bits)?;
+    let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
+        AkitaError::InvalidSetup("stage-2 witness variable count overflow".to_string())
+    })?;
+    if challenges.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: challenges.len(),
+        });
+    }
+    let y_len = 1usize
+        .checked_shl(
+            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
+                expected: usize::BITS as usize,
+                actual: ring_bits,
+            })?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
     match cleartext_witness {
         CleartextWitnessProof::PackedDigits(packed_witness) => {
             if packed_witness.num_elems != physical_w_len

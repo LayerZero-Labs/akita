@@ -3,20 +3,6 @@
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof};
 
-/// Borrow the field-element payload from a cleartext witness.
-///
-/// # Errors
-///
-/// Returns an error if the witness is not encoded as field elements.
-pub(crate) fn cleartext_witness_field_elements<F: FieldCore>(
-    cleartext_witness: &CleartextWitnessProof<F>,
-) -> Result<&[F], AkitaError> {
-    cleartext_witness
-        .as_field_elements()
-        .map(|witness| witness.coeffs())
-        .ok_or(AkitaError::InvalidProof)
-}
-
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
 /// Zero-fold cleartext witnesses are raw field-element tables. Under
@@ -37,7 +23,10 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let witness = cleartext_witness_field_elements(cleartext_witness)?;
+    let witness = cleartext_witness
+        .as_field_elements()
+        .map(|witness| witness.coeffs())
+        .ok_or(AkitaError::InvalidProof)?;
     if !witness.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }

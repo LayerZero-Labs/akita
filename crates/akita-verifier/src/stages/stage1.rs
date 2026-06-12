@@ -71,17 +71,6 @@ where
     )
 }
 
-fn absorb_stage1_interstage_claims<F, E, T>(claims: &[E], transcript: &mut T)
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for claim in claims {
-        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
-    }
-}
-
 #[cfg(feature = "zk")]
 fn zk_child_claim_product<E: FieldCore>(
     child_claims: &[E],
@@ -483,7 +472,13 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 )?;
             }
 
-            absorb_stage1_interstage_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            for claim in &stage_proof.child_claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
