@@ -436,34 +436,6 @@ where
     )
 }
 
-fn scheduled_recursive_verify_level<'a, F: FieldCore, L: FieldCore>(
-    schedule: &'a Schedule,
-    level: usize,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-) -> Result<(&'a LevelParams, usize, Option<&'a LevelParams>), AkitaError> {
-    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(AkitaError::InvalidSetup(format!(
-            "schedule is missing fold step at level {level}"
-        )));
-    };
-    if step.current_w_len != current_state.w_len || step.params.log_basis != current_state.log_basis
-    {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled recursive level did not match runtime state".to_string(),
-        ));
-    }
-    let next_level_params = match schedule.steps.get(level + 1) {
-        Some(Step::Fold(next_step)) => Some(&next_step.params),
-        Some(Step::Direct(_)) => None,
-        None => {
-            return Err(AkitaError::InvalidSetup(
-                "schedule is missing successor step".to_string(),
-            ))
-        }
-    };
-    Ok((&step.params, step.next_w_len, next_level_params))
-}
-
 /// Verify all recursive fold levels after the root proof.
 ///
 /// The supplied `schedule` is the already-selected public schedule for this
@@ -482,6 +454,7 @@ fn verify_suffix<'a, F, L, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
+    num_vars: usize,
     mut current_state: RecursiveVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -498,14 +471,31 @@ where
 {
     for (offset, step) in steps.iter().enumerate() {
         let level_index = offset + 1;
-        let (current_lp, next_w_len, scheduled_next_params) =
-            scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
+        let Some(Step::Fold(scheduled_step)) = schedule.steps.get(level_index) else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule is missing fold step at level {level_index}"
+            )));
+        };
+        let next_w_len = scheduled_step.next_w_len;
+        let schedule_inputs = AkitaScheduleInputs {
+            num_vars,
+            level: level_index,
+            current_w_len: current_state.w_len,
+        };
+        let (current_lp, next_params) = scheduled_fold_execution(
+            schedule,
+            level_index,
+            schedule_inputs,
+            current_state.log_basis,
+        )?;
+        let successor_is_fold = matches!(schedule.steps.get(level_index + 1), Some(Step::Fold(_)));
         let level_d = current_lp.ring_dimension;
 
         match step {
             AkitaProofStep::Intermediate(level_proof) => {
-                let scheduled_next_params =
-                    scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
+                if !successor_is_fold {
+                    return Err(AkitaError::InvalidProof);
+                }
                 if !current_state.commitment.can_decode_vec(level_d)
                     || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
@@ -517,12 +507,12 @@ where
                     verify_recursive_level::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Intermediate {
                             proof: level_proof,
-                            next_fold_level_params: scheduled_next_params,
+                            next_fold_level_params: &next_params,
                         },
                         setup,
                         transcript,
                         &current_state,
-                        current_lp,
+                        &current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -532,7 +522,7 @@ where
                     )
                 })?;
 
-                let next_level_d = scheduled_next_params.ring_dimension;
+                let next_level_d = next_params.ring_dimension;
                 if next_level_d == 0
                     || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
                 {
@@ -540,7 +530,7 @@ where
                 }
                 let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
                 let computed_next_w_len = w_ring_element_count_with_counts::<F>(
-                    current_lp,
+                    &current_lp,
                     1,
                     1,
                     y_ring_count,
@@ -563,7 +553,7 @@ where
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
-                    log_basis: scheduled_next_params.log_basis,
+                    log_basis: next_params.log_basis,
                 };
             }
             AkitaProofStep::Terminal(terminal_proof) => {
@@ -581,7 +571,7 @@ where
                         setup,
                         transcript,
                         &current_state,
-                        current_lp,
+                        &current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -590,12 +580,10 @@ where
                         zk_relations,
                     )
                 })?;
-                // Invariant: a terminal step implies the scheduled successor
-                // is a Direct step (not a Fold), which `scheduled_recursive_verify_level`
-                // signals by returning `None`. The trailing-`Direct` witness
-                // shape is already validated in `verify_folded_batched_proof`
-                // before this loop runs.
-                if scheduled_next_params.is_some() {
+                // Invariant: a terminal step implies the scheduled successor is
+                // a Direct step. The trailing-Direct witness shape is already
+                // validated in `verify_folded_batched_proof` before this loop.
+                if successor_is_fold {
                     return Err(AkitaError::InvalidProof);
                 }
             }
@@ -783,6 +771,7 @@ where
                 setup,
                 transcript,
                 schedule,
+                incidence_summary.num_vars(),
                 current_state,
                 setup_contribution_mode,
                 #[cfg(feature = "zk")]
