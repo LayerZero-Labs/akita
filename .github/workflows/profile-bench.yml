@@ -142,9 +142,11 @@ jobs:
       # is a heterogeneous fleet, and baselines measured on different silicon
       # produced phantom double-digit deltas. The worktree builds with the
       # merge-base's own rust-toolchain.toml so toolchain bumps show their
-      # real performance impact. The shared CARGO_TARGET_DIR compiles the dep
-      # graph once; the binary is copied out before the head build overwrites
-      # target/release/examples/profile.
+      # real performance impact. The base build MUST use an isolated
+      # CARGO_TARGET_DIR: with a shared target dir, cargo treats the head
+      # build as fresh after the worktree build (verified: "Build profile
+      # binary" ran 0s and the PR was silently benchmarked against itself;
+      # caught by the slowdown probe in run 27448810143).
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request'
         run: |
@@ -152,10 +154,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bench-bins"
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
               cargo build --release --quiet --example profile
           )
-          cp "$GITHUB_WORKSPACE/target/release/examples/profile" \
+          cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
              "$RUNNER_TEMP/bench-bins/profile-base"
 
       - name: Build profile binary
