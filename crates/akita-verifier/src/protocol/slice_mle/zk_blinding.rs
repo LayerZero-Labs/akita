@@ -25,7 +25,7 @@ where
     }
     let _span = tracing::info_span!("b_blinding").entered();
 
-    let layout = prepared.segment_layout();
+    let layout = prepared.witness_segment_layout;
     let alpha_pows = scalar_powers(alpha, D);
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
@@ -80,7 +80,7 @@ where
     }
     let _span = tracing::info_span!("d_blinding").entered();
 
-    let layout = prepared.segment_layout();
+    let layout = prepared.witness_segment_layout;
     let alpha_pows = scalar_powers(alpha, D);
     let d_start = 1 + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
@@ -292,7 +292,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let b_start = 1 + p.num_public_rows + p.n_d;
-        let b_offset = p.segment_layout().b_blinding_offset;
+        let b_offset = p.witness_segment_layout.b_blinding_offset;
         let b_zk_view = fx
             .setup
             .zk_b_matrix()
@@ -326,7 +326,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let d_start = 1 + p.num_public_rows;
-        let d_offset = p.segment_layout().d_blinding_offset;
+        let d_offset = p.witness_segment_layout.d_blinding_offset;
         let d_zk_view = fx
             .setup
             .zk_d_matrix()

@@ -169,10 +169,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> RingRelationSegmentLayout {
-        self.witness_segment_layout
-    }
-
     pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
         SetupContributionPlanInputs {
             eq_tau1: self.eq_tau1.clone(),
@@ -206,7 +202,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         F: FieldCore + CanonicalField,
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
-        let layout = self.segment_layout();
+        let layout = self.witness_segment_layout;
         validate_log_basis(self.log_basis)?;
         let alpha_pows = scalar_powers(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);

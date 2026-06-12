@@ -383,7 +383,6 @@ where
     )?;
 
     let mut claim_offset = 0usize;
-    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_points());
     for (group_idx, &group_size) in incidence_summary.num_polys_per_point().iter().enumerate() {
         #[cfg(not(feature = "zk"))]
         let _ = group_idx;
@@ -395,12 +394,10 @@ where
             #[cfg(feature = "zk")]
             &b_blinding_digits[group_idx],
         )?;
-        expected_commitments.push(commitment);
+        if commitment != flat_commitments[group_idx] {
+            return Err(AkitaError::InvalidProof);
+        }
         claim_offset += group_size;
-    }
-
-    if expected_commitments != flat_commitments {
-        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())
