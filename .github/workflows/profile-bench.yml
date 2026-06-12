@@ -183,6 +183,27 @@ jobs:
             fi
           done <<< "$AKITA_BENCH_CASES"
 
+          # Same-runner main baseline: benchmark the merge-base binary first,
+          # with the unchanged script, writing into the directory that
+          # `render --main-baseline-dir` already consumes. Any failure here
+          # degrades to the artifact-download fallback; it must not fail the
+          # job (the PR's own code is benchmarked below, as today).
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -x "$RUNNER_TEMP/bench-bins/profile-base" ]; then
+            echo "Benchmarking merge-base $AKITA_BENCH_MERGE_BASE_SHA on this runner as the main baseline"
+            python3 scripts/profile_bench_report.py run \
+              --binary "$RUNNER_TEMP/bench-bins/profile-base" \
+              --output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+              --mode "$AKITA_BENCH_MODE" \
+              --runs "$AKITA_BENCH_RUNS" \
+              --warmups "$AKITA_BENCH_WARMUPS" \
+              "${case_args[@]}" \
+              && echo "AKITA_BENCH_SAME_RUNNER_BASELINE=1" >> "$GITHUB_ENV" \
+              || {
+                echo "::warning::merge-base benchmark failed; falling back to artifact baselines."
+                rm -rf "$AKITA_BENCH_MAIN_BASELINE_DIR"
+              }
+          fi
+
           python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
@@ -241,6 +262,9 @@ jobs:
             setBaselineOutput('previous', null, '');
             setBaselineOutput('main', null, '');
 
+            const sameRunnerBaseline =
+              process.env.AKITA_BENCH_SAME_RUNNER_BASELINE === '1';
+
             try {
               const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
                 owner,
@@ -266,37 +290,43 @@ jobs:
               }
               setBaselineOutput('previous', previousPrRun, 'the previous PR update with a benchmark artifact');
 
-              const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-                owner,
-                repo,
-                event: 'push',
-                branch: baseRef,
-                status: 'completed',
-                per_page: 100,
-              });
-              const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
-                run.name === workflowName && run.conclusion === 'success'
-              );
-              const exactMergeBaseCandidates = mergeBaseSha
-                ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
-                : [];
-              const exactMergeBaseRun =
-                exactMergeBaseCandidates.length > 0
-                  ? await firstRunWithArtifact(exactMergeBaseCandidates)
-                  : null;
-              const fallbackBaseCandidates = mergeBaseSha
-                ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
-                : baseCandidates;
-              const mainRun =
-                exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
-              if (!mainRun) {
-                core.info('No main baseline artifact found.');
+              if (sameRunnerBaseline) {
+                core.info(
+                  'Same-runner merge-base baseline present; skipping artifact main-baseline lookup.'
+                );
+              } else {
+                const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner,
+                  repo,
+                  event: 'push',
+                  branch: baseRef,
+                  status: 'completed',
+                  per_page: 100,
+                });
+                const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
+                  run.name === workflowName && run.conclusion === 'success'
+                );
+                const exactMergeBaseCandidates = mergeBaseSha
+                  ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
+                  : [];
+                const exactMergeBaseRun =
+                  exactMergeBaseCandidates.length > 0
+                    ? await firstRunWithArtifact(exactMergeBaseCandidates)
+                    : null;
+                const fallbackBaseCandidates = mergeBaseSha
+                  ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
+                  : baseCandidates;
+                const mainRun =
+                  exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
+                if (!mainRun) {
+                  core.info('No main baseline artifact found.');
+                }
+                const mainLabel =
+                  mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
+                    ? `merge-base on \`${baseRef}\``
+                    : `the latest successful \`${baseRef}\` run`;
+                setBaselineOutput('main', mainRun, mainLabel);
               }
-              const mainLabel =
-                mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
-                  ? `merge-base on \`${baseRef}\``
-                  : `the latest successful \`${baseRef}\` run`;
-              setBaselineOutput('main', mainRun, mainLabel);
             } catch (error) {
               core.warning(`Could not determine benchmark baselines: ${error.message}`);
             }
@@ -322,8 +352,8 @@ jobs:
       - name: Render benchmark report
         if: always()
         env:
-          AKITA_BENCH_MAIN_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.main-label }}
-          AKITA_BENCH_MAIN_BASELINE_SHA: ${{ steps.bench-baselines.outputs.main-sha }}
+          AKITA_BENCH_MAIN_BASELINE_LABEL: ${{ env.AKITA_BENCH_SAME_RUNNER_BASELINE == '1' && 'the merge-base benchmarked on this runner' || steps.bench-baselines.outputs.main-label }}
+          AKITA_BENCH_MAIN_BASELINE_SHA: ${{ env.AKITA_BENCH_SAME_RUNNER_BASELINE == '1' && env.AKITA_BENCH_MERGE_BASE_SHA || steps.bench-baselines.outputs.main-sha }}
           AKITA_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
@@ -362,6 +392,11 @@ jobs:
           } > "$AKITA_BENCH_COMMENT.marked"
           mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
+          if [ "$AKITA_BENCH_SAME_RUNNER_BASELINE" = "1" ] && [ -f "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" ]; then
+            mkdir -p "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline"
+            cp "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" \
+               "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline/summary.json"
+          fi
 
       - name: Upsert benchmark PR comment
         if: >-
