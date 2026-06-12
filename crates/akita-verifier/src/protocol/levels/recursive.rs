@@ -335,7 +335,6 @@ where
         y_rings.clone(),
         v_typed.to_vec(),
     )?;
-    relation_instance.check_level_shape(lp)?;
     let ring_switch_replay = crate::protocol::ring_switch::RingSwitchReplay {
         relation: &relation_instance,
         row_coefficients: &gamma,

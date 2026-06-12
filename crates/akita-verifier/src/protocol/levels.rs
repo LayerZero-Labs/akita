@@ -1054,7 +1054,6 @@ where
         y_rings.to_vec(),
         v_typed.to_vec(),
     )?;
-    relation_instance.check_level_shape(batched_lp)?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,
         row_coefficients: &row_coefficients,

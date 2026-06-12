@@ -28,39 +28,22 @@ fn stage1_config() -> SparseChallengeConfig {
 }
 
 #[test]
-fn ring_switch_prepare_rejects_invalid_log_basis() {
-    let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config());
-    let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
-        &challenges,
-        F::one(),
-        &lp,
-        &[],
-        &[],
-        &[],
-        &[],
-        &[],
-        1,
-        MRowLayout::WithDBlock,
-        0,
-        &[],
-        &[],
-        dummy_witness_segment_layout(),
-    ) {
-        Ok(_) => panic!("invalid log_basis should be rejected"),
-        Err(err) => err,
-    };
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+fn ring_switch_prepare_rejects_malformed_level_params() {
+    for lp in [
+        LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config()),
+        LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config()),
+    ] {
+        let err = malformed_level_params_prepare_err(&lp);
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
 }
 
-#[test]
-fn ring_switch_prepare_rejects_zero_num_blocks() {
-    let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config());
+fn malformed_level_params_prepare_err(lp: &LevelParams) -> AkitaError {
     let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
+    match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
         F::one(),
-        &lp,
+        lp,
         &[],
         &[],
         &[],
@@ -73,10 +56,9 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         &[],
         dummy_witness_segment_layout(),
     ) {
-        Ok(_) => panic!("zero num_blocks should be rejected"),
+        Ok(_) => panic!("malformed LevelParams should be rejected"),
         Err(err) => err,
-    };
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
 }
 
 #[test]

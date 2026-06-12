@@ -954,7 +954,6 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    relation.check_level_shape(lp)?;
     let num_points = relation
         .commitment_routing()
         .num_polys_per_commitment_group()

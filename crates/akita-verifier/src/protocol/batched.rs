@@ -362,9 +362,6 @@ where
     if flat_commitments.len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
     }
-    if incidence_summary.num_polys_per_point().len() != incidence_summary.num_points() {
-        return Err(AkitaError::InvalidProof);
-    }
     #[cfg(feature = "zk")]
     if b_blinding_digits.len() != flat_commitments.len() {
         return Err(AkitaError::InvalidProof);
