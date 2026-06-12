@@ -1,7 +1,5 @@
 //! Shared fixtures for packed setup inner-product equivalence tests.
 
-#![allow(unreachable_pub)]
-
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
@@ -13,48 +11,45 @@ use akita_types::{
 
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
 
-pub(crate) type TestField = Prime128OffsetA7F7;
-pub(crate) const TEST_RING_DIM: usize = 32;
+type TestField = Prime128OffsetA7F7;
+const TEST_RING_DIM: usize = 32;
 
-pub(crate) fn test_scalar(value: u128) -> TestField {
+fn test_scalar(value: u128) -> TestField {
     TestField::from_canonical_u128_reduced(value)
 }
 
-pub(crate) struct SetupContributionFixture {
-    pub prepared: RingSwitchDeferredRowEval<TestField>,
-    pub setup: AkitaExpandedSetup<TestField>,
-    pub full_vec_randomness: Vec<TestField>,
-    pub eq_low: Vec<TestField>,
-    pub z_block_low_eq: Vec<TestField>,
-    pub alpha_pows: Vec<TestField>,
-    pub fold_gadget: Vec<TestField>,
-    pub offset_e: usize,
-    pub offset_t: usize,
-    pub offset_z: usize,
+pub(super) struct SetupContributionFixture {
+    prepared: RingSwitchDeferredRowEval<TestField>,
+    setup: AkitaExpandedSetup<TestField>,
+    full_vec_randomness: Vec<TestField>,
+    eq_low: Vec<TestField>,
+    z_block_low_eq: Vec<TestField>,
+    alpha_pows: Vec<TestField>,
+    fold_gadget: Vec<TestField>,
 }
 
-pub(crate) struct SetupContributionShape {
-    pub num_blocks: usize,
-    pub depth_open: usize,
-    pub depth_commit: usize,
-    pub depth_fold: usize,
-    pub block_len: usize,
-    pub log_basis: u32,
-    pub n_a: usize,
-    pub n_d: usize,
-    pub n_b: usize,
-    pub num_polys_per_point: Vec<usize>,
-    pub m_row_layout: MRowLayout,
-    pub z_first: bool,
-    pub claim_to_point_poly: Vec<(usize, usize)>,
+pub(super) struct SetupContributionShape {
+    num_blocks: usize,
+    depth_open: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    block_len: usize,
+    log_basis: u32,
+    n_a: usize,
+    n_d: usize,
+    n_b: usize,
+    num_polys_per_point: Vec<usize>,
+    m_row_layout: MRowLayout,
+    z_first: bool,
+    claim_to_point_poly: Vec<(usize, usize)>,
     /// Tiered split factor `f` (`1` = single-tier).
-    pub tier_split: usize,
+    tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
-    pub n_f: usize,
+    n_f: usize,
 }
 
 impl SetupContributionShape {
-    pub fn root_single_point() -> Self {
+    pub(super) fn root_single_point() -> Self {
         Self {
             num_blocks: 4,
             depth_open: 8,
@@ -79,14 +74,14 @@ impl SetupContributionShape {
     /// tiered `bar_omega` / direct-scan equivalence. Tiering requires a single
     /// commitment group (`num_points == 1`) and `n_f > 0`; `tier_split` divides
     /// the per-group `n_cols_t = n_a · depth_open · num_blocks` (here 64).
-    pub fn tiered_root_single_point() -> Self {
+    pub(super) fn tiered_root_single_point() -> Self {
         let mut shape = Self::root_single_point();
         shape.tier_split = 4;
         shape.n_f = 1;
         shape
     }
 
-    pub fn recursive_multigroup() -> Self {
+    pub(super) fn recursive_multigroup() -> Self {
         Self {
             num_blocks: 8,
             depth_open: 26,
@@ -106,13 +101,13 @@ impl SetupContributionShape {
         }
     }
 
-    pub fn terminal_relation_only() -> Self {
+    pub(super) fn terminal_relation_only() -> Self {
         let mut shape = Self::root_single_point();
         shape.m_row_layout = MRowLayout::WithoutDBlock;
         shape
     }
 
-    pub fn dense_non_pow2_z() -> Self {
+    pub(super) fn dense_non_pow2_z() -> Self {
         let mut shape = Self::root_single_point();
         shape.block_len = 12;
         shape.depth_commit = 3;
@@ -120,13 +115,13 @@ impl SetupContributionShape {
         shape
     }
 
-    pub fn batched_root() -> Self {
+    pub(super) fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.claim_to_point_poly = vec![(0, 0), (0, 0), (0, 0), (0, 0)];
         shape
     }
 
-    pub fn z_first_e_t_offset_carry() -> Self {
+    pub(super) fn z_first_e_t_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_blocks = 8;
         shape.block_len = 10;
@@ -136,7 +131,7 @@ impl SetupContributionShape {
         shape
     }
 
-    pub fn pow2_z_offset_carry() -> Self {
+    pub(super) fn pow2_z_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
         shape.block_len = 64;
         shape
@@ -170,7 +165,7 @@ fn recursive_inner_product(
 }
 
 impl SetupContributionFixture {
-    pub fn from_shape(shape: &SetupContributionShape) -> Self {
+    pub(super) fn from_shape(shape: &SetupContributionShape) -> Self {
         let num_points = shape.num_polys_per_point.len();
         let num_public_rows = num_points;
         let num_claims = shape.claim_to_point_poly.len();
@@ -363,9 +358,6 @@ impl SetupContributionFixture {
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_e,
-            offset_t,
-            offset_z,
         }
     }
 
@@ -381,15 +373,15 @@ impl SetupContributionFixture {
             eq_low,
             z_block_low_eq,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
+            self.prepared.witness_segment_layout.offset_e,
+            self.prepared.witness_segment_layout.offset_t,
+            self.prepared.witness_segment_layout.offset_z,
             self.prepared.witness_segment_layout.offset_u,
         )
         .unwrap()
     }
 
-    pub fn assert_direct_matches_recursive(&self) {
+    pub(super) fn assert_direct_matches_recursive(&self) {
         let got = self
             .prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq))
             .evaluate_direct::<TestField, TEST_RING_DIM>(&self.setup, &self.alpha_pows)
@@ -410,7 +402,7 @@ impl SetupContributionFixture {
     /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
     /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree,
     /// including the tiered `B'`/`F` blocks.
-    pub fn assert_eq_eval_matches_materialized(&self) {
+    pub(super) fn assert_eq_eval_matches_materialized(&self) {
         let plan = self.prepare_plan(Some(&self.eq_low), Some(&self.z_block_low_eq));
         let bar_omega = plan.materialize_bar_omega();
         let lambda_len = plan.required().checked_next_power_of_two().unwrap();
