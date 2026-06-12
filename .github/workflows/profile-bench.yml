@@ -161,6 +161,25 @@ jobs:
       - name: Build profile binary
         run: cargo build --release --quiet --example profile
 
+      - name: Run merge-base baseline benchmark
+        if: github.event_name == 'pull_request'
+        run: |
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_CASES"
+
+          echo "Benchmarking merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
+          python3 scripts/profile_bench_report.py run \
+            --binary "$RUNNER_TEMP/bench-bins/profile-base" \
+            --output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+            --mode "$AKITA_BENCH_MODE" \
+            --runs "$AKITA_BENCH_RUNS" \
+            --warmups "$AKITA_BENCH_WARMUPS" \
+            "${case_args[@]}"
+
       - name: Run profile benchmark cases
         run: |
           case_args=()
@@ -171,20 +190,10 @@ jobs:
           done <<< "$AKITA_BENCH_CASES"
 
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            test -x "$RUNNER_TEMP/bench-bins/profile-base"
-            echo "Benchmarking merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
-            python3 scripts/profile_bench_report.py run \
-              --binary "$RUNNER_TEMP/bench-bins/profile-base" \
-              --output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
-              --mode "$AKITA_BENCH_MODE" \
-              --runs "$AKITA_BENCH_RUNS" \
-              --warmups "$AKITA_BENCH_WARMUPS" \
-              "${case_args[@]}"
-            echo "Merge-base baseline benchmark complete; benchmarking PR head $AKITA_BENCH_SOURCE_SHA"
+            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA"
           else
             echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
           fi
-
           python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
