@@ -4,8 +4,6 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 
-#[cfg(test)]
-use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
 /// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
@@ -111,20 +109,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_fixtures::{
+        recursive_d32_prepared, scalar as f, FixtureField as F, FIXTURE_D as D,
+    };
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7;
-    use akita_types::zk;
-    use akita_types::{
-        ring_relation_segment_layout_for_opening_shape, AkitaSetupSeed, FlatMatrix, LevelParams,
-        MRowLayout, SisModulusFamily,
-    };
-
-    type F = Prime128OffsetA7F7;
-    const D: usize = 32;
+    use akita_types::{AkitaSetupSeed, FlatMatrix};
 
     struct ZkFixture {
         prepared: RingSwitchDeferredRowEval<F>,
@@ -133,74 +125,27 @@ mod tests {
         alpha: F,
     }
 
-    fn f(value: u128) -> F {
-        F::from_canonical_u128_reduced(value)
-    }
-
-    fn fixture_lp() -> LevelParams {
-        LevelParams::params_only(
-            SisModulusFamily::Q128,
-            D,
-            5,
-            2,
-            2,
-            2,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![1],
-            },
-        )
-        .with_decomp(2, 3, 1, 26, 512 * 8)
-        .expect("zk blinding fixture lp")
-    }
-
     fn fixture() -> ZkFixture {
-        // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
-        // recursive levels with this real D=32 shape.
-        let num_blocks = 8usize;
-        let num_claims = 3usize;
-        let depth_open = 26usize;
-        let depth_commit = 1usize;
-        let depth_fold = 4usize;
-        let block_len = 512usize;
-        let inner_width = block_len * depth_commit;
-        let log_basis = 5u32;
-        let n_a = 2usize;
-        let n_d = 2usize;
-        let n_b = 2usize;
-        let num_polys_per_point = vec![2usize, 1usize];
-        let num_public_rows = 2usize;
-        let num_points = num_polys_per_point.len();
-        let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
+        let prepared = recursive_d32_prepared();
+        let bits = prepared
+            .witness_segment_layout
+            .offset_r
+            .next_power_of_two()
+            .trailing_zeros() as usize;
 
-        let w_len = depth_open * total_blocks;
-        let b_blinding_digit_planes_per_point =
-            zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
-        let b_blinding_segment_len = num_points * b_blinding_digit_planes_per_point;
-        let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
-        let lp = fixture_lp();
-        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
-            &lp,
-            MRowLayout::WithDBlock,
-            &num_polys_per_point,
-        )
-        .expect("witness segment layout");
-        let total_len = witness_segment_layout.offset_r;
-        let bits = total_len.next_power_of_two().trailing_zeros() as usize;
-        let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;
-        let max_zk_d_len = n_d * d_blinding_segment_len;
-
-        let t_cols_per_claim = num_blocks * n_a * depth_open;
-        let max_b_local_col = num_polys_per_point
+        let max_zk_b_len = prepared.n_b * prepared.b_blinding_digit_planes_per_point;
+        let max_zk_d_len = prepared.n_d * prepared.d_blinding_segment_len;
+        let t_cols_per_claim = prepared.num_blocks * prepared.n_a * prepared.depth_open;
+        let max_b_local_col = prepared
+            .num_polys_per_commitment_group
             .iter()
             .map(|&count| count * t_cols_per_claim)
             .max()
             .unwrap_or(0);
-        let max_d_local_col = w_len;
-        let max_setup_len = (n_b * max_b_local_col)
-            .max(n_d * max_d_local_col)
-            .max(n_a * inner_width);
+        let max_d_local_col = prepared.depth_open * prepared.num_blocks * prepared.num_claims;
+        let max_setup_len = (prepared.n_b * max_b_local_col)
+            .max(prepared.n_d * max_d_local_col)
+            .max(prepared.n_a * prepared.inner_width);
 
         let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..max_setup_len)
             .map(|idx| {
@@ -226,8 +171,8 @@ mod tests {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: num_polys_per_point.iter().sum(),
-                max_num_points: num_points,
+                max_num_batched_polys: prepared.num_polys_per_commitment_group.iter().sum(),
+                max_num_points: prepared.num_points,
                 gen_ring_dim: D,
                 max_setup_len,
                 max_zk_b_len,
@@ -238,42 +183,7 @@ mod tests {
             FlatMatrix::from_ring_slice::<D>(&zk_b_entries),
             FlatMatrix::from_ring_slice::<D>(&zk_d_entries),
         );
-        let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
-                    .map(|idx| f(2_000 + idx as u128))
-                    .collect(),
-            ),
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| f(3_000 + idx as u128))
-                .collect(),
-            num_t_vectors: num_polys_per_point.iter().sum(),
-            num_blocks,
-            num_claims,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            d_blinding_segment_len,
-            b_blinding_digit_planes_per_point,
-            b_blinding_segment_len,
-            block_len,
-            inner_width,
-            log_basis,
-            n_a,
-            n_d,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b,
-            tier_split: 1,
-            n_f: 0,
-            num_points,
-            rows,
-            claim_to_t_vector: vec![1, 2, 0],
-            num_polys_per_commitment_group: num_polys_per_point,
-            num_public_rows,
-            gamma: vec![F::one(); num_claims],
-            claim_to_point: vec![1, 0, 1],
-            witness_segment_layout,
-        };
+
         ZkFixture {
             prepared,
             setup,

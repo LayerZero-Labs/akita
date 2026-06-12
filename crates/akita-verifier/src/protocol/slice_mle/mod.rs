@@ -14,6 +14,8 @@
 #[cfg(test)]
 mod setup_contribution;
 mod structured_slice;
+#[cfg(test)]
+mod test_fixtures;
 #[cfg(feature = "zk")]
 mod zk_blinding;
 

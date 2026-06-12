@@ -222,18 +222,13 @@ where
 mod tests {
     use super::*;
 
+    use super::super::test_fixtures::{
+        recursive_d32_prepared, scalar as f, FixtureField as F, FIXTURE_D as D,
+    };
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::offset_eq::summarize_pow2_block_carries;
     use akita_algebra::ring::scalar_powers;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7;
-    use akita_types::{
-        gadget_row_scalars, r_decomp_levels, ring_relation_segment_layout_for_opening_shape,
-        LevelParams, MRowLayout, RingOpeningPoint, SisModulusFamily,
-    };
-
-    type F = Prime128OffsetA7F7;
-    const D: usize = 32;
+    use akita_types::{gadget_row_scalars, r_decomp_levels, RingOpeningPoint};
 
     struct StructuredFixture {
         prepared: RingSwitchDeferredRowEval<F>,
@@ -245,111 +240,27 @@ mod tests {
         r_gadget: Vec<F>,
     }
 
-    fn f(value: u128) -> F {
-        F::from_canonical_u128_reduced(value)
-    }
-
-    fn fixture_lp() -> LevelParams {
-        LevelParams::params_only(
-            SisModulusFamily::Q128,
-            D,
-            5,
-            2,
-            2,
-            2,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![1],
-            },
-        )
-        .with_decomp(2, 3, 1, 26, 512 * 8)
-        .expect("structured slice fixture lp")
-    }
-
     fn fixture() -> StructuredFixture {
-        // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
-        // recursive levels with this real D=32 shape.
-        let num_blocks = 8usize;
-        let block_len = 512usize;
-        let log_basis = 5u32;
-        let depth_open = 26usize;
-        let depth_commit = 1usize;
-        let depth_fold = 4usize;
-        let n_a = 2usize;
-        let n_b = 2usize;
-        let n_d = 2usize;
-        let num_polys_per_point = vec![2usize, 1usize];
-        let num_points = num_polys_per_point.len();
-        let num_claims = 3usize;
-        let num_public_rows = num_points;
-        let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
-        let inner_width = block_len * depth_commit;
-
+        let prepared = recursive_d32_prepared();
+        let log_basis = prepared.log_basis;
         let levels = r_decomp_levels::<F>(log_basis);
-        let lp = fixture_lp();
-        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
-            &lp,
-            MRowLayout::WithDBlock,
-            &num_polys_per_point,
-        )
-        .expect("witness segment layout");
-        let total_len = witness_segment_layout.offset_r + rows * levels;
+        let total_len = prepared.witness_segment_layout.offset_r + prepared.rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
-        let opening_points = (0..num_points)
+        let opening_points = (0..prepared.num_points)
             .map(|pt| RingOpeningPoint {
-                a: (0..block_len)
-                    .map(|idx| f(1_000 + (pt * block_len + idx) as u128))
+                a: (0..prepared.block_len)
+                    .map(|idx| f(1_000 + (pt * prepared.block_len + idx) as u128))
                     .collect(),
-                b: (0..num_blocks)
-                    .map(|idx| f(2_000 + (pt * num_blocks + idx) as u128))
+                b: (0..prepared.num_blocks)
+                    .map(|idx| f(2_000 + (pt * prepared.num_blocks + idx) as u128))
                     .collect(),
             })
             .collect();
-        let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
-                    .map(|idx| f(3_000 + idx as u128))
-                    .collect(),
-            ),
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| f(4_000 + idx as u128))
-                .collect(),
-            num_t_vectors: num_polys_per_point.iter().sum(),
-            num_blocks,
-            num_claims,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_len: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_point: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_len: 0,
-            block_len,
-            inner_width,
-            log_basis,
-            n_a,
-            n_d,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b,
-            tier_split: 1,
-            n_f: 0,
-            num_points,
-            rows,
-            claim_to_t_vector: vec![1, 2, 0],
-            num_polys_per_commitment_group: num_polys_per_point,
-            num_public_rows,
-            gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
-            claim_to_point: vec![1, 0, 1],
-            witness_segment_layout,
-        };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
-        let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-        let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+        let g1_open = gadget_row_scalars::<F>(prepared.depth_open, log_basis);
+        let g1_commit = gadget_row_scalars::<F>(prepared.depth_commit, log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, log_basis);
         let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
 
         StructuredFixture {
