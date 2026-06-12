@@ -372,7 +372,7 @@ where
         RecursiveFoldProofView::Intermediate { proof, .. } => Some(&proof.stage1),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
-    let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
+    let stage1_replay = replay_stage1_or_relation_only::<F, L, T>(
         stage1_proof,
         &rs,
         transcript,
@@ -426,7 +426,7 @@ where
         setup_replay,
         ring_multiplier_points: relation_instance.ring_multiplier_points(),
     };
-    verify_stage2_and_setup_replay::<F, L, T, D>(
+    verify_stage2_then_setup_sumcheck::<F, L, T, D>(
         transcript,
         stage2_input,
         #[cfg(feature = "zk")]
@@ -477,8 +477,8 @@ fn scheduled_recursive_verify_level<'a, F: FieldCore, L: FieldCore>(
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
-fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
-    proof: &'a AkitaBatchedProof<F, L>,
+fn verify_suffix<'a, F, L, T, const D: usize>(
+    steps: &'a [AkitaProofStep<F, L>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
@@ -496,14 +496,8 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_steps = proof.steps.len();
-    if num_steps == 0 {
-        // Root was itself the terminal — no suffix to verify.
-        return Ok(());
-    }
-    for (offset, step) in proof.steps.iter().enumerate() {
+    for (offset, step) in steps.iter().enumerate() {
         let level_index = offset + 1;
-        let is_last = offset == num_steps - 1;
         let (current_lp, next_w_len, scheduled_next_params) =
             scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
         let level_d = current_lp.ring_dimension;
@@ -512,10 +506,6 @@ where
             AkitaProofStep::Intermediate(level_proof) => {
                 let scheduled_next_params =
                     scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
-                if is_last {
-                    // The terminal slot must be a Terminal variant.
-                    return Err(AkitaError::InvalidProof);
-                }
                 if !current_state.commitment.can_decode_vec(level_d)
                     || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
@@ -577,9 +567,6 @@ where
                 };
             }
             AkitaProofStep::Terminal(terminal_proof) => {
-                if !is_last {
-                    return Err(AkitaError::InvalidProof);
-                }
                 if !current_state.commitment.can_decode_vec(level_d)
                     || !terminal_proof.y_rings.can_decode_vec(level_d)
                 {
@@ -606,7 +593,7 @@ where
                 // Invariant: a terminal step implies the scheduled successor
                 // is a Direct step (not a Fold), which `scheduled_recursive_verify_level`
                 // signals by returning `None`. The trailing-`Direct` witness
-                // shape is already validated in `verify_fold_batched_proof`
+                // shape is already validated in `verify_folded_batched_proof`
                 // before this loop runs.
                 if scheduled_next_params.is_some() {
                     return Err(AkitaError::InvalidProof);
@@ -631,7 +618,7 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
+pub(crate) fn verify_folded_batched_proof<F, E, C, T, const D: usize>(
     proof: &AkitaBatchedProof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -799,8 +786,8 @@ where
                 w_len: root_step.next_w_len,
                 log_basis: first_recursive_params.log_basis,
             };
-            verify_batched_recursive_suffix::<F, C, T, D>(
-                proof,
+            verify_suffix::<F, C, T, D>(
+                &proof.steps,
                 setup,
                 transcript,
                 schedule,

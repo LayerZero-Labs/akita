@@ -3,7 +3,7 @@
 use super::{validate_level_dispatch, validate_log_basis};
 use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_zero_fold_openings_with_incidence;
-use crate::protocol::levels::verify_fold_batched_proof;
+use crate::protocol::levels::verify_folded_batched_proof;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
@@ -528,7 +528,7 @@ where
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
-            verify_fold_batched_proof::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, D>(
+            verify_folded_batched_proof::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, D>(
                 proof,
                 setup,
                 transcript,

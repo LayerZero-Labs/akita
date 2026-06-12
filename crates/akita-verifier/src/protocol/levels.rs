@@ -71,7 +71,7 @@ use extension_opening_reduction::ExtensionOpeningReductionVerifier;
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
 
 mod recursive;
-pub(crate) use recursive::verify_fold_batched_proof;
+pub(crate) use recursive::verify_folded_batched_proof;
 
 /// Verifier state carried between recursive fold levels.
 struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -556,7 +556,7 @@ fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     }
 }
 
-fn verify_stage2_and_setup_replay<F, E, T, const D: usize>(
+fn verify_stage2_then_setup_sumcheck<F, E, T, const D: usize>(
     transcript: &mut T,
     input: Stage2ReplayInput<'_, F, E, D>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -686,7 +686,7 @@ struct Stage1Replay<E: FieldCore> {
     s_claim_mask: ZkR1csLinearCombination<E>,
 }
 
-fn verify_stage1_or_terminal<F, E, T>(
+fn replay_stage1_or_relation_only<F, E, T>(
     proof: Option<&AkitaStage1Proof<E>>,
     rs: &RingSwitchVerifyOutput<E>,
     transcript: &mut T,
@@ -1103,7 +1103,7 @@ where
         RootLevelProofView::Intermediate { stage1, .. } => Some(*stage1),
         RootLevelProofView::Terminal { .. } => None,
     };
-    let stage1_replay = verify_stage1_or_terminal::<F, C, T>(
+    let stage1_replay = replay_stage1_or_relation_only::<F, C, T>(
         stage1_proof,
         &rs,
         transcript,
@@ -1150,7 +1150,7 @@ where
         }),
         ring_multiplier_points: relation_instance.ring_multiplier_points(),
     };
-    verify_stage2_and_setup_replay::<F, C, T, D>(
+    verify_stage2_then_setup_sumcheck::<F, C, T, D>(
         transcript,
         stage2_input,
         #[cfg(feature = "zk")]
