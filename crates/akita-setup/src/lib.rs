@@ -781,6 +781,7 @@ mod tests {
                             &prepared,
                             lp.a_key.row_len(),
                             lp.block_len,
+                            lp.num_blocks,
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,
