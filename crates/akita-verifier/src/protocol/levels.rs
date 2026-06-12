@@ -57,9 +57,9 @@ mod root_eor;
 mod stage2_replay;
 
 pub(crate) use recursive::verify_fold_batched_proof;
+use root_eor::verify_root_eor_and_prepare_points;
 #[cfg(feature = "zk")]
 use root_eor::verify_zk_extension_opening_reduction_sumcheck;
-use root_eor::{verify_root_eor_and_prepare_points, RootEorInput};
 use stage2_replay::{
     stage3_sumcheck_proof_for_mode, verify_stage2_and_setup_replay, Stage2ProofReplay,
     Stage2ReplayInput,
@@ -337,16 +337,14 @@ where
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
 
     let root_eor = verify_root_eor_and_prepare_points::<F, E, C, T, D>(
-        RootEorInput {
-            extension_opening_reduction,
-            y_rings,
-            claim_points,
-            openings,
-            row_coefficients: &row_coefficients,
-            incidence_summary,
-            basis,
-            root_lp,
-        },
+        extension_opening_reduction,
+        y_rings,
+        claim_points,
+        openings,
+        &row_coefficients,
+        incidence_summary,
+        basis,
+        root_lp,
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,

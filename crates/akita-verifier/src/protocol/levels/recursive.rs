@@ -1,5 +1,6 @@
 #[cfg(not(feature = "zk"))]
 use super::extension_opening_reduction::ExtensionOpeningReductionVerifier;
+use super::root_eor::{eor_input_claim_from_partials, eor_reduction_shape};
 use super::*;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
@@ -9,10 +10,7 @@ use akita_r1cs::{zk_ext_mask_lc, zk_ext_mask_lc_at, zk_row_masks_from_column_mas
 use akita_types::tensor_equality_factor_eval_at_point;
 #[cfg(not(feature = "zk"))]
 use akita_types::{check_tensor_extension_opening_claim, recover_ring_subfield_inner_product};
-use akita_types::{
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, ClaimIncidenceSummary,
-    CommitmentRouting, RingRelationInstance,
-};
+use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
 enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
     Intermediate {
@@ -125,16 +123,11 @@ where
         let reduction = proof
             .extension_opening_reduction()
             .ok_or(AkitaError::InvalidProof)?;
-        let (split_bits, width) = {
-            let width = <L as ExtField<F>>::EXT_DEGREE;
-            if width == 0 || !width.is_power_of_two() {
-                return Err(AkitaError::InvalidProof);
-            }
-            (width.trailing_zeros() as usize, width)
-        };
-        if split_bits > current_state.opening_point.len() || reduction.partials.len() != width {
-            return Err(AkitaError::InvalidProof);
-        }
+        let shape = eor_reduction_shape::<F, L>(
+            current_state.opening_point.len(),
+            reduction.partials.len(),
+            1,
+        )?;
         #[cfg(not(feature = "zk"))]
         check_tensor_extension_opening_claim::<F, L>(
             &current_state.opening_point,
@@ -142,13 +135,13 @@ where
             &reduction.partials,
         )?;
         #[cfg(feature = "zk")]
-        let partial_masks = (0..width)
+        let partial_masks = (0..shape.width)
             .map(|_| zk_ext_mask_lc::<F, L>(zk_hiding_cursor))
             .collect::<Vec<_>>();
         #[cfg(feature = "zk")]
         {
             let head_weights =
-                EqPolynomial::<L>::evals(&current_state.opening_point[..split_bits])?;
+                EqPolynomial::<L>::evals(&current_state.opening_point[..shape.split_bits])?;
             let true_opening = ZkRelationAccumulator::unmask_lc(
                 current_state.opening,
                 &current_state.opening_mask,
@@ -173,11 +166,16 @@ where
         for partial in &reduction.partials {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
         }
-        let row_partials = tensor_row_partials_from_columns::<F, L>(&reduction.partials)?;
-        let eta = (0..split_bits)
+        let eta = (0..shape.split_bits)
             .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
             .collect::<Vec<_>>();
-        let input_claim = tensor_reduction_claim_from_rows::<F, L>(&row_partials, &eta)?;
+        let row_coefficients = [L::one()];
+        let input_claim = eor_input_claim_from_partials::<F, L>(
+            &reduction.partials,
+            shape,
+            &eta,
+            &row_coefficients,
+        )?;
         #[cfg(feature = "zk")]
         let input_claim_mask = {
             let mut input_claim_mask = ZkR1csLinearCombination::zero();
@@ -187,12 +185,12 @@ where
             }
             input_claim_mask
         };
-        let tail_point = &current_state.opening_point[split_bits..];
+        let tail_point = &current_state.opening_point[shape.split_bits..];
         #[cfg(not(feature = "zk"))]
         {
             let basis = current_state.basis;
             let eor_verifier = ExtensionOpeningReductionVerifier::<F, L, D>::new(
-                tail_point.len(),
+                shape.num_rounds,
                 input_claim,
                 eta,
                 vec![(&y_rings[0], tail_point.to_vec())],
