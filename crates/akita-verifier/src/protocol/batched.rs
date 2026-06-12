@@ -15,10 +15,9 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    check_batched_proof_step_shape, schedule_is_root_direct, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary,
-    CleartextWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, Step, VerifierClaims,
+    check_batched_proof_step_shape, AkitaBatchedProof, AkitaBatchedRootProof, AkitaSetupSeed,
+    AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof, LevelParams,
+    RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -501,22 +500,6 @@ mod tests {
     }
 }
 
-fn select_batched_verifier_schedule<'a, Cfg, const D: usize>(
-    prepared_claims: &PreparedVerifierClaims<'a, Cfg::ClaimField, RingCommitment<Cfg::Field, D>>,
-) -> Result<Schedule, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field> + ExtField<Cfg::ClaimField>,
-{
-    effective_batched_schedule::<Cfg, D>(
-        &prepared_claims.incidence_summary,
-        &prepared_claims.opening_points,
-    )
-    .map_err(|_| AkitaError::InvalidProof)
-}
-
 fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
     schedule: &Schedule,
 ) -> Result<(), AkitaError> {
@@ -578,7 +561,11 @@ where
     check_batched_proof_step_shape(proof)?;
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let schedule = select_batched_verifier_schedule::<Cfg, D>(&prepared_claims)?;
+    let schedule = effective_batched_schedule::<Cfg, D>(
+        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_points,
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
@@ -608,9 +595,6 @@ where
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
                 return Err(AkitaError::InvalidProof);
             };
-            if !schedule_is_root_direct(&schedule) {
-                return Err(AkitaError::InvalidProof);
-            }
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
             verify_zero_fold_openings_with_incidence(
                 witnesses,
