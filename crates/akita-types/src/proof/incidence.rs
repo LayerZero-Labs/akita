@@ -5,11 +5,189 @@
 //! several claimed openings, and the same commitment may be referenced by
 //! multiple points (multipoint opening of a shared commitment).
 
-use super::VerifierClaims;
+use super::{FlatRingVec, VerifierClaims};
+use crate::BasisMode;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::labels::{
+    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+    CHALLENGE_EVAL_BATCH,
+};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
+
+/// Logical source of a carried opening at a recursive boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarriedOpeningKind {
+    /// The ordinary folded-witness opening carried between recursive levels.
+    RecursiveWitness,
+    /// A setup-prefix opening carried for later setup-claim offloading.
+    SetupPrefix,
+}
+
+impl CarriedOpeningKind {
+    /// Stable wire identifier for proof serialization and transcript binding.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Self::RecursiveWitness => 0,
+            Self::SetupPrefix => 1,
+        }
+    }
+
+    /// Decode a stable wire identifier.
+    pub fn from_u8(tag: u8) -> Result<Self, AkitaError> {
+        match tag {
+            0 => Ok(Self::RecursiveWitness),
+            1 => Ok(Self::SetupPrefix),
+            _ => Err(AkitaError::InvalidProof),
+        }
+    }
+}
+
+/// One commitment source carried into a recursive boundary batch.
+#[derive(Debug, Clone, Copy)]
+pub struct CarriedOpeningSource<'a, F: FieldCore> {
+    /// Commitment opened by claims that reference this source.
+    pub commitment: &'a FlatRingVec<F>,
+}
+
+/// One opening claim carried into a recursive boundary batch.
+#[derive(Debug, Clone, Copy)]
+pub struct CarriedOpeningClaim<'a, L: FieldCore> {
+    /// Source index in the carried-source table.
+    pub source_idx: usize,
+    /// Evaluation point in this claim's basis.
+    pub point: &'a [L],
+    /// Claimed value at `point`.
+    pub value: L,
+    /// Basis used to interpret `point`.
+    pub basis: BasisMode,
+    /// Unpadded logical field length of the opened object.
+    pub natural_len: usize,
+    /// Common padded field-domain length used by the recursive batch.
+    pub padded_len: usize,
+    /// Logical source of this carried opening.
+    pub kind: CarriedOpeningKind,
+}
+
+fn basis_transcript_id(basis: BasisMode) -> u8 {
+    basis.as_u8()
+}
+
+/// Validate carried-opening batch metadata and return the common padded domain arity.
+///
+/// The first implementation uses one common padded power-of-two field domain.
+/// Each claim may have a shorter natural point, which is interpreted as padded
+/// with zero coordinates up to the common arity by the recursive verifier.
+pub fn validate_carried_opening_batch<F, L>(
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
+) -> Result<usize, AkitaError>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    if sources.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "empty carried-opening source table".to_string(),
+        ));
+    }
+    let first = claims
+        .first()
+        .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
+    if first.padded_len == 0 || !first.padded_len.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "carried-opening padded length must be a power of two".to_string(),
+        ));
+    }
+    let padded_num_vars = first.padded_len.trailing_zeros() as usize;
+    if first.source_idx != 0 || !matches!(first.kind, CarriedOpeningKind::RecursiveWitness) {
+        return Err(AkitaError::InvalidInput(
+            "carried-opening batch must start with the recursive witness source".to_string(),
+        ));
+    }
+    let mut source_used = vec![false; sources.len()];
+    for (claim_idx, claim) in claims.iter().enumerate() {
+        if claim.padded_len != first.padded_len {
+            return Err(AkitaError::InvalidInput(
+                "carried openings must share one padded domain".to_string(),
+            ));
+        }
+        if claim.natural_len == 0
+            || claim.natural_len > claim.padded_len
+            || claim.point.len() > padded_num_vars
+            || claim.source_idx >= sources.len()
+        {
+            return Err(AkitaError::InvalidInput(
+                "carried-opening claim shape exceeds its padded domain".to_string(),
+            ));
+        }
+        if claim_idx == 0 {
+            source_used[0] = true;
+            continue;
+        }
+        if claim.source_idx == 0 || !matches!(claim.kind, CarriedOpeningKind::SetupPrefix) {
+            return Err(AkitaError::InvalidInput(
+                "extra carried-opening claims must reference setup-prefix sources".to_string(),
+            ));
+        }
+        source_used[claim.source_idx] = true;
+    }
+    if source_used.iter().any(|&used| !used) {
+        return Err(AkitaError::InvalidInput(
+            "carried-opening source table contains an unused source".to_string(),
+        ));
+    }
+    Ok(padded_num_vars)
+}
+
+/// Build the root-style incidence summary for a carried-opening batch.
+///
+/// The first 02C cut treats each carried opening as a single-polynomial public
+/// row in the common padded domain.
+pub fn carried_opening_incidence_summary<F, L>(
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
+) -> Result<ClaimIncidenceSummary, AkitaError>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    let padded_num_vars = validate_carried_opening_batch(sources, claims)?;
+    ClaimIncidenceSummary::from_point_polys(padded_num_vars, vec![1; claims.len()])
+}
+
+/// Absorb carried-opening batch shape, commitments, points, and claimed values.
+pub fn append_carried_opening_batch_to_transcript<F, L, T>(
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
+    transcript: &mut T,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    L: ExtField<F>,
+    T: Transcript<F>,
+{
+    let padded_num_vars = validate_carried_opening_batch(sources, claims)?;
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &sources.len());
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &claims.len());
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &padded_num_vars);
+    for source in sources {
+        transcript.append_serde(ABSORB_COMMITMENT, source.commitment);
+    }
+    for claim in claims {
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.source_idx);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.kind.as_u8());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &basis_transcript_id(claim.basis));
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.natural_len);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.padded_len);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.point.len());
+        for coord in claim.point {
+            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+        }
+        append_ext_field::<F, L, T>(transcript, ABSORB_EVAL_OPENINGS_FIELD, &claim.value);
+    }
+    Ok(())
+}
 
 /// One claimed opening edge from a point to a polynomial within the point's
 /// commitment.
@@ -122,6 +300,21 @@ impl CommitmentRouting {
         .check(num_claims)
     }
 
+    /// Build routing for recursive carried openings where each claim selects a
+    /// source by `source_idx` and each source commitment contains one vector.
+    pub fn from_recursive_sources(
+        claim_to_source: Vec<usize>,
+        num_sources: usize,
+    ) -> Result<Self, AkitaError> {
+        let num_claims = claim_to_source.len();
+        Self {
+            claim_to_commitment_group: claim_to_source,
+            claim_poly_in_commitment_group: vec![0; num_claims],
+            num_polys_per_commitment_group: vec![1; num_sources],
+        }
+        .check(num_claims)
+    }
+
     /// Validate commitment routing tables.
     pub fn check(self, num_claims: usize) -> Result<Self, AkitaError> {
         if self.claim_to_commitment_group.len() != num_claims
@@ -152,22 +345,43 @@ impl CommitmentRouting {
         Ok(self)
     }
 
-    /// Validate that commitment routing is the same as opening-point incidence.
-    ///
-    /// This is the only relation-routing shape supported by the current
-    /// ring-switch row-evaluation layout.
+    /// Validate that commitment routing is compatible with the opening-point
+    /// incidence shape.
     pub fn check_matches_incidence(
         &self,
         incidence: &ClaimIncidenceSummary,
     ) -> Result<(), AkitaError> {
-        if self.claim_to_commitment_group.as_slice() != incidence.claim_to_point()
-            || self.claim_poly_in_commitment_group.as_slice() != incidence.claim_poly_indices()
-            || self.num_polys_per_commitment_group.as_slice() != incidence.num_polys_per_point()
+        let invalid_shape = || {
+            AkitaError::InvalidInput(
+                "commitment routing does not match ring relation claim shape".to_string(),
+            )
+        };
+        if self.claim_to_commitment_group.len() != incidence.num_claims()
+            || self.claim_poly_in_commitment_group.len() != incidence.num_claims()
+            || self.num_polys_per_commitment_group.is_empty()
         {
-            return Err(AkitaError::InvalidInput(
-                "split opening/commitment routing is not supported by ring relation layout"
-                    .to_string(),
-            ));
+            return Err(invalid_shape());
+        }
+        if self.claim_to_commitment_group == incidence.claim_to_point()
+            && self.claim_poly_in_commitment_group == incidence.claim_poly_indices()
+            && self.num_polys_per_commitment_group == incidence.num_polys_per_point()
+        {
+            return Ok(());
+        }
+        if !self.num_polys_per_commitment_group.iter().all(|&n| n == 1)
+            || !self.claim_poly_in_commitment_group.iter().all(|&n| n == 0)
+        {
+            return Err(invalid_shape());
+        }
+        let mut used_groups = vec![false; self.num_polys_per_commitment_group.len()];
+        for &group_idx in &self.claim_to_commitment_group {
+            let Some(used) = used_groups.get_mut(group_idx) else {
+                return Err(invalid_shape());
+            };
+            *used = true;
+        }
+        if used_groups.iter().any(|&used| !used) {
+            return Err(invalid_shape());
         }
         Ok(())
     }
@@ -624,6 +838,15 @@ mod tests {
         transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
 
+    fn carried_batch_challenge(
+        sources: &[CarriedOpeningSource<'_, TranscriptField>],
+        claims: &[CarriedOpeningClaim<'_, TranscriptField>],
+    ) -> TranscriptField {
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_carried_opening_batch_to_transcript(sources, claims, &mut transcript).unwrap();
+        transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
+    }
+
     #[test]
     fn incidence_summary_tracks_routing_counts() {
         let p0 = [1u64, 2];
@@ -660,6 +883,215 @@ mod tests {
         assert_eq!(summary.claim_poly_indices(), &[0, 1, 0]);
         assert_eq!(summary.num_polys_per_point(), &[2, 1]);
         assert_eq!(summary.num_polynomials(), 3);
+    }
+
+    #[test]
+    fn carried_opening_batch_uses_common_padded_incidence_domain() {
+        let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
+        let point_a = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
+        let point_b = [TranscriptField::from_u64(5)];
+        let claims = [
+            CarriedOpeningClaim {
+                source_idx: 0,
+                point: &point_a,
+                value: TranscriptField::from_u64(6),
+                basis: BasisMode::Lagrange,
+                natural_len: 4,
+                padded_len: 8,
+                kind: CarriedOpeningKind::RecursiveWitness,
+            },
+            CarriedOpeningClaim {
+                source_idx: 1,
+                point: &point_b,
+                value: TranscriptField::from_u64(7),
+                basis: BasisMode::Lagrange,
+                natural_len: 2,
+                padded_len: 8,
+                kind: CarriedOpeningKind::SetupPrefix,
+            },
+        ];
+
+        assert_eq!(
+            validate_carried_opening_batch(&sources, &claims).unwrap(),
+            3
+        );
+        let summary = carried_opening_incidence_summary(&sources, &claims).unwrap();
+        assert_eq!(summary.num_vars(), 3);
+        assert_eq!(summary.num_points(), 2);
+        assert_eq!(summary.num_claims(), 2);
+        assert_eq!(summary.num_polys_per_point(), &[1, 1]);
+        assert_eq!(summary.claim_to_point(), &[0, 1]);
+    }
+
+    #[test]
+    fn carried_opening_batch_rejects_mismatched_or_invalid_domains() {
+        let commitment = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let sources = [CarriedOpeningSource {
+            commitment: &commitment,
+        }];
+        let point = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
+        let good = CarriedOpeningClaim {
+            source_idx: 0,
+            point: &point,
+            value: TranscriptField::from_u64(6),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 8,
+            kind: CarriedOpeningKind::RecursiveWitness,
+        };
+        let mismatched = CarriedOpeningClaim {
+            padded_len: 4,
+            ..good
+        };
+        assert!(validate_carried_opening_batch(&sources, &[good, mismatched]).is_err());
+
+        let not_power_of_two = CarriedOpeningClaim {
+            padded_len: 6,
+            ..good
+        };
+        assert!(validate_carried_opening_batch(&sources, &[not_power_of_two]).is_err());
+
+        let point_too_long = [TranscriptField::from_u64(1), TranscriptField::from_u64(2)];
+        let invalid_point = CarriedOpeningClaim {
+            point: &point_too_long,
+            padded_len: 2,
+            ..good
+        };
+        assert!(validate_carried_opening_batch(&sources, &[invalid_point]).is_err());
+    }
+
+    #[test]
+    fn carried_opening_batch_rejects_invalid_source_kind_routing() {
+        let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
+        let point = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
+        let witness = CarriedOpeningClaim {
+            source_idx: 0,
+            point: &point,
+            value: TranscriptField::from_u64(5),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::RecursiveWitness,
+        };
+        let setup = CarriedOpeningClaim {
+            source_idx: 1,
+            point: &point,
+            value: TranscriptField::from_u64(6),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::SetupPrefix,
+        };
+
+        let witness_not_first = CarriedOpeningClaim {
+            kind: CarriedOpeningKind::RecursiveWitness,
+            ..setup
+        };
+        assert!(validate_carried_opening_batch(&sources, &[witness, witness_not_first]).is_err());
+
+        let setup_on_source_zero = CarriedOpeningClaim {
+            source_idx: 0,
+            ..setup
+        };
+        assert!(
+            validate_carried_opening_batch(&sources, &[witness, setup_on_source_zero]).is_err()
+        );
+
+        assert!(validate_carried_opening_batch(&sources, &[witness]).is_err());
+    }
+
+    #[test]
+    fn carried_opening_transcript_binds_order_and_metadata() {
+        let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let commitment_c = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(9)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_c,
+            },
+        ];
+        let point_a = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
+        let point_b = [TranscriptField::from_u64(5), TranscriptField::from_u64(6)];
+        let point_c = [TranscriptField::from_u64(10), TranscriptField::from_u64(11)];
+        let first = CarriedOpeningClaim {
+            source_idx: 0,
+            point: &point_a,
+            value: TranscriptField::from_u64(7),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::RecursiveWitness,
+        };
+        let second = CarriedOpeningClaim {
+            source_idx: 1,
+            point: &point_b,
+            value: TranscriptField::from_u64(8),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::SetupPrefix,
+        };
+        let third = CarriedOpeningClaim {
+            source_idx: 2,
+            point: &point_c,
+            value: TranscriptField::from_u64(12),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::SetupPrefix,
+        };
+        let forward = carried_batch_challenge(&sources, &[first, second, third]);
+        let reversed = carried_batch_challenge(&sources, &[first, third, second]);
+        assert_ne!(forward, reversed);
+
+        let changed_basis = CarriedOpeningClaim {
+            basis: BasisMode::Monomial,
+            ..second
+        };
+        assert_ne!(
+            forward,
+            carried_batch_challenge(&sources, &[first, changed_basis, third])
+        );
+
+        let swapped_sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_c,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
+        assert_ne!(
+            forward,
+            carried_batch_challenge(&swapped_sources, &[first, second, third])
+        );
     }
 
     #[test]
@@ -706,19 +1138,37 @@ mod tests {
     }
 
     #[test]
-    fn split_commitment_routing_is_rejected_by_same_axis_contract() {
+    fn recursive_split_commitment_routing_matches_claim_shape() {
         let summary =
             ClaimIncidenceSummary::from_point_polys(8, vec![1, 1]).expect("valid incidence");
         let routing =
             CommitmentRouting::from_recursive_multipoint(summary.num_claims()).expect("routing");
 
-        let err = routing
+        assert_eq!(routing.claim_to_commitment_group(), &[0, 0]);
+        assert_eq!(routing.claim_poly_in_commitment_group(), &[0, 0]);
+        assert_eq!(routing.num_polys_per_commitment_group(), &[1]);
+        routing
             .check_matches_incidence(&summary)
-            .expect_err("split-axis routing must be rejected");
-        assert!(
-            format!("{err:?}").contains("split opening/commitment routing is not supported"),
-            "unexpected error: {err:?}"
-        );
+            .expect("recursive split routing is supported");
+    }
+
+    #[test]
+    fn recursive_split_commitment_routing_rejects_malformed_source_shape() {
+        let summary =
+            ClaimIncidenceSummary::from_point_polys(8, vec![1, 1]).expect("valid incidence");
+        let unused_group = CommitmentRouting {
+            claim_to_commitment_group: vec![0, 0],
+            claim_poly_in_commitment_group: vec![0, 0],
+            num_polys_per_commitment_group: vec![1, 1],
+        };
+        assert!(unused_group.check_matches_incidence(&summary).is_err());
+
+        let multi_poly_group = CommitmentRouting {
+            claim_to_commitment_group: vec![0, 0],
+            claim_poly_in_commitment_group: vec![0, 1],
+            num_polys_per_commitment_group: vec![2],
+        };
+        assert!(multi_poly_group.check_matches_incidence(&summary).is_err());
     }
 
     #[test]

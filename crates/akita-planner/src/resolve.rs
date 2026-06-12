@@ -290,6 +290,7 @@ pub fn schedule_from_entry(
                         nt,
                         nw,
                         nz,
+                        level_num_claims,
                         MRowLayout::WithoutDBlock,
                     )?;
                     let len = mul_d(ring)?;

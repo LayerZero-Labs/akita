@@ -1,4 +1,371 @@
 use super::*;
+use akita_field::AkitaError;
+use akita_prover::protocol::flow::{RecursiveCarriedOpening, RecursiveCarriedSource};
+use akita_prover::AkitaProverSetup;
+use akita_prover::{
+    build_folded_batched_proof_with_suffix, commit_next_w, prepare_batched_prove_inputs,
+    prove_root_fold_with_params, prove_suffix, RecursiveWitnessFlat,
+};
+use akita_types::{
+    schedule_num_fold_levels, schedule_root_fold_step, AjtaiKeyParams, AkitaScheduleLookupKey,
+    CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSourceProof, Schedule,
+    SetupContributionMode, SetupMatrixEnvelope,
+};
+
+/// Minimum `num_vars` where `find_recursive_carried_suffix_schedule` succeeds for
+/// `fp128::D64Full` under committed-fold A-role SIS pricing (nv=29 and below
+/// have no shrink-valid carried suffix today).
+const CARRIED_SUFFIX_MIN_NUM_VARS: usize = 30;
+
+#[test]
+fn carried_suffix_schedule_requires_nv30_under_d64_full() {
+    for nv in 28..=CARRIED_SUFFIX_MIN_NUM_VARS {
+        let result = carried_suffix_schedule(nv);
+        if nv < CARRIED_SUFFIX_MIN_NUM_VARS {
+            assert!(
+                result.is_err(),
+                "nv={nv} unexpectedly found a carried suffix schedule"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "nv={nv} should admit a carried suffix schedule: {:?}",
+                result.err()
+            );
+        }
+    }
+}
+
+/// Full prove round-trip at the planner minimum. Dense `make_dense_poly` needs
+/// 2^nv field evals (~16GiB at nv=30), so this stays `#[ignore]` for CI; run
+/// locally with adequate RAM: `cargo test -p akita-pcs -- --ignored recursive_suffix`.
+const CARRIED_SUFFIX_PROVE_NUM_VARS: usize = CARRIED_SUFFIX_MIN_NUM_VARS;
+
+fn carried_suffix_prove_num_vars() -> usize {
+    carried_suffix_schedule(CARRIED_SUFFIX_PROVE_NUM_VARS)
+        .expect("carried suffix schedule for prove num_vars");
+    CARRIED_SUFFIX_PROVE_NUM_VARS
+}
+
+/// Build a `[root fold, carried fold, direct]` schedule whose single recursive
+/// fold consumes a two-claim carried batch (recursive witness + one extra
+/// source). The production planner never emits this shape on its own, so the
+/// carried-batch exit test drives it through the test-only verifier seam.
+fn carried_suffix_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+    let incidence = ClaimIncidenceSummary::same_point(num_vars, 1)?;
+    let base = Cfg::get_params_for_prove(&incidence)?;
+    let root_step = base
+        .steps
+        .first()
+        .cloned()
+        .ok_or(AkitaError::InvalidProof)?;
+    let Step::Fold(root_fold) = &root_step else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let root_next_w_len = root_fold.next_w_len;
+    let root_log_basis = root_fold.params.log_basis;
+    let root_level_bytes = root_fold.level_bytes;
+    let next_params = scheduled_next_level_params(&base, 1)?;
+    let carried_key = AkitaScheduleLookupKey::new_with_points(num_vars, 2, 2, 2, 2);
+    let carried_suffix =
+        akita_prover::dispatch_ring_dim_result!(next_params.ring_dimension, |D_LEVEL| {
+            akita_config::test_support::recursive_carried_suffix_schedule::<
+                akita_config::WCommitmentConfig<{ D_LEVEL }, Cfg>,
+            >(carried_key, 1, root_next_w_len, root_log_basis)
+        })?;
+    if !matches!(carried_suffix.steps.first(), Some(Step::Fold(_))) {
+        return Err(AkitaError::InvalidSetup(
+            "carried batch needs a recursive fold to consume it".to_string(),
+        ));
+    }
+    let mut steps = Vec::with_capacity(carried_suffix.steps.len() + 1);
+    steps.push(root_step);
+    steps.extend(carried_suffix.steps);
+    Ok(Schedule {
+        steps,
+        total_bytes: root_level_bytes
+            .checked_add(carried_suffix.total_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("carried schedule overflow".to_string()))?,
+    })
+}
+
+/// Maximum A/B/D Ajtai footprint (in setup ring elements) used by one level.
+fn level_setup_footprint(params: &LevelParams) -> usize {
+    let key = |k: &AjtaiKeyParams| k.row_len().saturating_mul(k.col_len());
+    key(&params.a_key)
+        .max(key(&params.b_key))
+        .max(key(&params.d_key))
+}
+
+/// Setup capacity (shared-matrix ring elements) large enough for every level
+/// of a carried-batch schedule. The production envelope only plans singleton
+/// recursion, so a two-source carried fold needs a larger recursive Ajtai key
+/// than `Cfg::max_setup_matrix_size` reserves; this walks the actual schedule.
+fn carried_setup_envelope(num_vars: usize, schedule: &Schedule) -> SetupMatrixEnvelope {
+    let mut envelope = Cfg::max_setup_matrix_size(num_vars, 2, 2).expect("baseline setup envelope");
+    let mut needed = envelope.max_setup_len;
+    for step in &schedule.steps {
+        match step {
+            Step::Fold(fold) => needed = needed.max(level_setup_footprint(&fold.params)),
+            Step::Direct(direct) => {
+                if let Some(params) = direct.params.as_ref() {
+                    needed = needed.max(level_setup_footprint(params));
+                }
+            }
+        }
+    }
+    for level in 1..schedule_num_fold_levels(schedule) {
+        if let Ok(next) = scheduled_next_level_params(schedule, level) {
+            needed = needed.max(level_setup_footprint(&next));
+        }
+    }
+    envelope.max_setup_len = needed;
+    envelope
+}
+
+/// Prove a witness opening plus one dummy extra carried source through the
+/// recursive fold, returning the assembled proof together with the schedule,
+/// verifier setup, commitment, point, and opening needed to replay it.
+///
+/// The dummy source is an all-zero witness committed at the recursive level and
+/// carried as a `SetupPrefix` claim opening to zero at the recursive-witness
+/// point. It is genuinely folded and opened by the fold relation (claim 1), not
+/// just serialized.
+#[allow(clippy::type_complexity)]
+fn prove_witness_plus_dummy_carried_batch(
+    num_vars: usize,
+) -> (
+    AkitaBatchedProof<F, F>,
+    Schedule,
+    AkitaVerifierSetup<F>,
+    RingCommitment<F, D>,
+    Vec<F>,
+    F,
+) {
+    let (poly, evals) = make_dense_poly(num_vars);
+
+    let schedule = carried_suffix_schedule(num_vars).expect("carried suffix schedule");
+    // Root fold + one recursive (terminal) carried fold.
+    assert_eq!(schedule_num_fold_levels(&schedule), 2);
+
+    // The production setup envelope only reserves space for singleton
+    // recursion; the carried fold's two-source recursive commit needs a larger
+    // shared matrix, so size capacity from the actual carried schedule.
+    let envelope = carried_setup_envelope(num_vars, &schedule);
+    let setup = AkitaProverSetup::<F, D>::generate_with_capacity(num_vars, 2, 2, envelope).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        std::slice::from_ref(&poly),
+    )
+    .unwrap();
+
+    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+    let opening = dense_opening(&evals, &opening_point);
+
+    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let commitments = [commitment.clone()];
+    let setup_mode = SetupContributionMode::Direct;
+
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    let claims = vec![(
+        &opening_point[..],
+        CommittedPolynomials {
+            polynomials: &poly_refs[..],
+            commitment: &commitments[0],
+            hint,
+        },
+    )];
+    let prepared_claims =
+        prepare_batched_prove_inputs::<F, F, _, D>(setup.expanded.as_ref(), claims).unwrap();
+    let num_vars_inc = prepared_claims.incidence_summary.num_vars();
+
+    akita_config::bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+        setup.expanded.as_ref(),
+        &prepared_claims.incidence_summary,
+        &schedule,
+        BasisMode::Lagrange,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let root_step = schedule_root_fold_step(&schedule).unwrap().clone();
+    let root_next_params = scheduled_next_level_params(&schedule, 1).unwrap();
+
+    let mut root = prove_root_fold_with_params::<F, F, F, _, _, _, Cfg, D>(
+        &setup.expanded,
+        &setup.prefix_slots,
+        &CpuBackend,
+        &prepared,
+        &mut prover_transcript,
+        &prepared_claims.flat_polys,
+        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_points,
+        &prepared_claims.commitments_by_point,
+        prepared_claims.flat_hints,
+        &root_step.params,
+        root_step.next_w_len,
+        &root_next_params,
+        BasisMode::Lagrange,
+        setup_mode,
+    )
+    .unwrap();
+
+    // Inject a dummy second carried source into the level-1 batch.
+    let carried_claim = root.next_state.carried_openings[0].clone();
+    let point = carried_claim.opening_point.clone();
+    let dummy_logical_w = RecursiveWitnessFlat::from_i8_digits(vec![0; carried_claim.natural_len]);
+    let dummy_next = commit_next_w::<Cfg, _, D>(
+        &root_next_params,
+        &setup.expanded,
+        &CpuBackend,
+        &prepared,
+        &dummy_logical_w,
+    )
+    .unwrap();
+    let dummy_commitment = dummy_next.commitment;
+    assert_ne!(dummy_commitment, root.next_state.commitment);
+    let (dummy_w, dummy_logical_w) = match dummy_next.witness {
+        Some(committed_w) => (committed_w, Some(dummy_logical_w)),
+        None => (dummy_logical_w, None),
+    };
+    // A genuine all-zero witness opens to zero at every point.
+    let dummy_value = F::zero();
+    root.extra_carried_sources.push(CarriedOpeningSourceProof {
+        commitment: dummy_commitment.clone(),
+    });
+    root.extra_carried_openings.push(CarriedOpeningProof {
+        source_idx: 1,
+        point: point.clone(),
+        value: dummy_value,
+        basis: BasisMode::Lagrange,
+        natural_len: dummy_w.len(),
+        padded_len: carried_claim.padded_len,
+        kind: CarriedOpeningKind::SetupPrefix,
+    });
+    root.next_state
+        .extra_carried_sources
+        .push(RecursiveCarriedSource {
+            w: dummy_w.clone(),
+            logical_w: dummy_logical_w,
+            commitment: dummy_commitment,
+            hint: dummy_next.hint,
+        });
+    root.next_state
+        .carried_openings
+        .push(RecursiveCarriedOpening {
+            source_idx: 1,
+            opening_point: point,
+            opening: dummy_value,
+            basis: BasisMode::Lagrange,
+            natural_len: dummy_w.len(),
+            padded_len: carried_claim.padded_len,
+            kind: CarriedOpeningKind::SetupPrefix,
+        });
+
+    let (proof, _levels) =
+        build_folded_batched_proof_with_suffix::<F, F, D, _>(root, |next_state| {
+            prove_suffix::<Cfg, _, _, D>(
+                &setup.expanded,
+                &setup.prefix_slots,
+                &CpuBackend,
+                &prepared,
+                num_vars_inc,
+                &mut prover_transcript,
+                next_state,
+                &schedule,
+                setup_mode,
+            )
+        })
+        .unwrap();
+
+    (
+        proof,
+        schedule,
+        verifier_setup,
+        commitment,
+        opening_point,
+        opening,
+    )
+}
+
+#[test]
+#[ignore = "nv=30 dense prove needs ~16GiB eval table; run with: cargo test -p akita-pcs -- --ignored recursive_suffix"]
+fn recursive_suffix_verifies_witness_plus_dummy_carried_batch() {
+    let (proof, schedule, verifier_setup, commitment, opening_point, opening) =
+        prove_witness_plus_dummy_carried_batch(carried_suffix_prove_num_vars());
+
+    let root = proof
+        .root
+        .as_fold()
+        .expect("fixture should use a folded root");
+    assert_eq!(root.stage2.extra_carried_sources.len(), 1);
+    assert_eq!(root.stage2.extra_carried_openings.len(), 1);
+    assert!(!proof.steps.is_empty());
+
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    akita_verifier::verify_batched_with_schedule::<Cfg, _, D>(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitment,
+            },
+        )],
+        BasisMode::Lagrange,
+        SetupContributionMode::Direct,
+        &schedule,
+    )
+    .expect("witness plus dummy carried batch should verify");
+}
+
+#[test]
+#[ignore = "nv=30 dense prove needs ~16GiB eval table; run with: cargo test -p akita-pcs -- --ignored recursive_suffix"]
+fn recursive_suffix_rejects_inconsistent_dummy_carried_opening() {
+    let (mut proof, schedule, verifier_setup, commitment, opening_point, opening) =
+        prove_witness_plus_dummy_carried_batch(carried_suffix_prove_num_vars());
+
+    // Tamper the carried claim's bound opening value: the verifier replays the
+    // fold relation against the proof-visible value and must reject without
+    // panicking (verifier no-panic contract).
+    {
+        let fold = proof.root.as_fold_mut().expect("folded root");
+        fold.stage2.extra_carried_openings[0].value += F::one();
+    }
+
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    let result = akita_verifier::verify_batched_with_schedule::<Cfg, _, D>(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitment,
+            },
+        )],
+        BasisMode::Lagrange,
+        SetupContributionMode::Direct,
+        &schedule,
+    );
+    // Reaching this assertion (rather than panicking) already proves the
+    // verifier honored the no-panic contract; it must also reject.
+    assert!(
+        result.is_err(),
+        "verifier must reject an inconsistent carried opening, got {result:?}"
+    );
+}
 
 #[test]
 fn verify_passes_for_consistent_opening() {

@@ -56,6 +56,18 @@ fn batched_shape_rounds(level_d: usize, next_w_len: usize) -> usize {
     num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
 }
 
+/// Stage-2 round degrees for a terminal fold (`batching_coeff = 0`, no stage-1
+/// virtual cubic term). The fused relation round is quadratic; later rounds
+/// stay cubic.
+fn terminal_stage2_sumcheck_shape(rounds: usize) -> Vec<usize> {
+    if rounds == 0 {
+        return Vec::new();
+    }
+    let mut shape = vec![3; rounds];
+    shape[0] = 2;
+    shape
+}
+
 /// Batched recursion already consults the byte planner before folding
 /// again. The runtime safety guard here only needs to catch tiny tails and
 /// fixed points, not enforce the single-proof shrink-ratio heuristic.
@@ -87,7 +99,7 @@ fn expected_same_point_batched_shape(
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             y_rings_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
             extension_opening_reduction: None,
-            stage2_sumcheck: vec![3; root_rounds],
+            stage2_sumcheck: terminal_stage2_sumcheck_shape(root_rounds),
             final_witness: akita_types::CleartextWitnessShape::PackedDigits((
                 root_step.next_w_len,
                 terminal_next_params.log_basis,
@@ -104,6 +116,8 @@ fn expected_same_point_batched_shape(
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
+        extra_carried_sources: Vec::new(),
+        extra_carried_openings: Vec::new(),
     };
     let first_level_params = next_level_params.clone();
 
@@ -136,6 +150,8 @@ fn expected_same_point_batched_shape(
             stage3_sumcheck: None,
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
+            extra_carried_sources: Vec::new(),
+            extra_carried_openings: Vec::new(),
         }));
         current_w_len = next_w_len;
         current_log_basis = next_level_params.log_basis;
@@ -168,12 +184,7 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_params.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
-    // Every stage-2 round polynomial is the degree-3 fused norm/relation
-    // shape. The first-round degree-2 compression (leading cubic coefficient
-    // structurally zero) only fires on the prover's stage-2 two-round-prefix
-    // path, which requires a small fold basis (`b in {4, 8}`); the terminal
-    // fold here folds at a larger basis, so it keeps degree-3 in every round.
-    let terminal_stage2 = vec![3; terminal_rounds];
+    let terminal_stage2 = terminal_stage2_sumcheck_shape(terminal_rounds);
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_params.ring_dimension,
         extension_opening_reduction: None,

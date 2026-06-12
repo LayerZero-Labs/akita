@@ -29,6 +29,9 @@ tracing = "0.1"
 
 [features]
 default = []
+# Exposes test-only verifier seams (e.g. `verify_batched_with_schedule`) used by
+# exit tests that drive proof shapes the production planner never emits.
+test-support = []
 parallel = [
   "akita-algebra/parallel",
   "akita-field/parallel",

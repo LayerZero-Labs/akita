@@ -1,4 +1,5 @@
 use super::*;
+use crate::BasisMode;
 
 fn serialize_extension_opening_reduction<L, W>(
     reduction: Option<&ExtensionOpeningReductionProof<L>>,
@@ -49,6 +50,171 @@ where
                 }
             }
     })
+}
+
+fn serialize_carried_sources<F, W>(
+    sources: &[CarriedOpeningSourceProof<F>],
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    F: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    for source in sources {
+        source
+            .commitment
+            .serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn carried_sources_serialized_size<F>(
+    sources: &[CarriedOpeningSourceProof<F>],
+    compress: Compress,
+) -> usize
+where
+    F: FieldCore + AkitaSerialize,
+{
+    sources
+        .iter()
+        .map(|source| source.commitment.serialized_size(compress))
+        .sum()
+}
+
+fn serialize_carried_openings<L, W>(
+    claims: &[CarriedOpeningProof<L>],
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    L: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    for claim in claims {
+        claim
+            .source_idx
+            .serialize_with_mode(&mut writer, compress)?;
+        claim
+            .basis
+            .as_u8()
+            .serialize_with_mode(&mut writer, compress)?;
+        claim
+            .kind
+            .as_u8()
+            .serialize_with_mode(&mut writer, compress)?;
+        claim
+            .natural_len
+            .serialize_with_mode(&mut writer, compress)?;
+        claim
+            .padded_len
+            .serialize_with_mode(&mut writer, compress)?;
+        for coordinate in &claim.point {
+            coordinate.serialize_with_mode(&mut writer, compress)?;
+        }
+        claim.value.serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn carried_openings_serialized_size<L>(
+    claims: &[CarriedOpeningProof<L>],
+    compress: Compress,
+) -> usize
+where
+    L: FieldCore + AkitaSerialize,
+{
+    claims
+        .iter()
+        .map(|claim| {
+            claim.source_idx.serialized_size(compress)
+                + 2
+                + claim.natural_len.serialized_size(compress)
+                + claim.padded_len.serialized_size(compress)
+                + claim
+                    .point
+                    .iter()
+                    .map(|coordinate| coordinate.serialized_size(compress))
+                    .sum::<usize>()
+                + claim.value.serialized_size(compress)
+        })
+        .sum()
+}
+
+fn deserialize_carried_sources<F, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shapes: &[CarriedOpeningSourceShape],
+) -> Result<Vec<CarriedOpeningSourceProof<F>>, SerializationError>
+where
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let mut sources = Vec::new();
+    reserve_shape_len(&mut sources, shapes.len())?;
+    for shape in shapes {
+        shape.check()?;
+        let commitment = FlatRingVec::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &shape.commitment_coeffs,
+        )?;
+        sources.push(CarriedOpeningSourceProof { commitment });
+    }
+    Ok(sources)
+}
+
+fn deserialize_carried_openings<L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shapes: &[CarriedOpeningShape],
+) -> Result<Vec<CarriedOpeningProof<L>>, SerializationError>
+where
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let mut claims = Vec::new();
+    reserve_shape_len(&mut claims, shapes.len())?;
+    for shape in shapes {
+        shape.check()?;
+        let source_idx = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let basis_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let kind_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let padded_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let mut point = Vec::new();
+        reserve_shape_len(&mut point, shape.point_len)?;
+        for _ in 0..shape.point_len {
+            point.push(L::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
+        let value = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let basis = BasisMode::from_u8(basis_tag).map_err(|_| {
+            SerializationError::InvalidData(format!(
+                "unknown carried opening basis tag {basis_tag}"
+            ))
+        })?;
+        let kind = CarriedOpeningKind::from_u8(kind_tag).map_err(|_| {
+            SerializationError::InvalidData(format!("unknown carried opening kind tag {kind_tag}"))
+        })?;
+        claims.push(CarriedOpeningProof {
+            source_idx,
+            point,
+            value,
+            basis,
+            natural_len,
+            padded_len,
+            kind,
+        });
+    }
+    Ok(claims)
 }
 
 fn deserialize_extension_opening_reduction<L, R>(
@@ -192,7 +358,9 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2
             .next_w_eval()
-            .serialize_with_mode(&mut writer, compress)
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_carried_sources(&self.stage2.extra_carried_sources, &mut writer, compress)?;
+        serialize_carried_openings(&self.stage2.extra_carried_openings, &mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         let base = self.y_ring.serialized_size(compress)
@@ -236,6 +404,32 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
+            + carried_sources_serialized_size(&self.stage2.extra_carried_sources, compress)
+            + carried_openings_serialized_size(&self.stage2.extra_carried_openings, compress)
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for CarriedOpeningSourceProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.commitment.check()?;
+        Ok(())
+    }
+}
+
+impl<L: FieldCore + Valid> Valid for CarriedOpeningProof<L> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.point.check()?;
+        self.value.check()?;
+        if self.natural_len == 0
+            || self.padded_len == 0
+            || self.natural_len > self.padded_len
+            || !self.padded_len.is_power_of_two()
+        {
+            return Err(SerializationError::InvalidData(
+                "invalid carried opening shape".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -272,7 +466,9 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             stage3_sumcheck.sumcheck.check()?;
         }
         self.stage2.next_w_commitment.check()?;
-        self.stage2.next_w_eval().check()
+        self.stage2.next_w_eval().check()?;
+        self.stage2.extra_carried_sources.check()?;
+        self.stage2.extra_carried_openings.check()
     }
 }
 
@@ -376,6 +572,18 @@ impl<
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
             #[cfg(feature = "zk")]
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            extra_carried_sources: deserialize_carried_sources(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_sources,
+            )?,
+            extra_carried_openings: deserialize_carried_openings(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_openings,
+            )?,
         };
         let out = Self {
             y_ring,
@@ -623,7 +831,9 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2
             .next_w_eval()
-            .serialize_with_mode(&mut writer, compress)
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_carried_sources(&self.stage2.extra_carried_sources, &mut writer, compress)?;
+        serialize_carried_openings(&self.stage2.extra_carried_openings, &mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -668,6 +878,8 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
+            + carried_sources_serialized_size(&self.stage2.extra_carried_sources, compress)
+            + carried_openings_serialized_size(&self.stage2.extra_carried_openings, compress)
     }
 }
 
@@ -699,7 +911,9 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
             stage3_sumcheck.sumcheck.check()?;
         }
         self.stage2.next_w_commitment.check()?;
-        self.stage2.next_w_eval().check()
+        self.stage2.next_w_eval().check()?;
+        self.stage2.extra_carried_sources.check()?;
+        self.stage2.extra_carried_openings.check()
     }
 }
 
@@ -803,6 +1017,18 @@ impl<
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
             #[cfg(feature = "zk")]
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            extra_carried_sources: deserialize_carried_sources(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_sources,
+            )?,
+            extra_carried_openings: deserialize_carried_openings(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_openings,
+            )?,
         };
         let out = Self {
             y_rings,
@@ -1069,5 +1295,92 @@ impl<
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+
+    #[cfg(not(feature = "zk"))]
+    fn empty_stage2_sumcheck() -> SumcheckProof<F> {
+        SumcheckProof {
+            round_polys: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn empty_stage2_sumcheck_masked() -> SumcheckProofMasked<F> {
+        SumcheckProofMasked {
+            masked_round_polys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn carried_opening_wire_roundtrip_uses_shape_point_len() {
+        let proof = AkitaLevelProof {
+            y_ring: FlatRingVec::from_coeffs(vec![F::from_u64(1)]),
+            extension_opening_reduction: None,
+            v: FlatRingVec::from_coeffs(vec![F::from_u64(2)]),
+            stage1: AkitaStage1Proof {
+                stages: Vec::new(),
+                s_claim: F::from_u64(3),
+            },
+            stage2: AkitaStage2Proof {
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: empty_stage2_sumcheck(),
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: empty_stage2_sumcheck_masked(),
+                next_w_commitment: FlatRingVec::from_coeffs(vec![F::from_u64(4)]),
+                #[cfg(not(feature = "zk"))]
+                next_w_eval: F::from_u64(5),
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: F::from_u64(5),
+                extra_carried_sources: vec![CarriedOpeningSourceProof {
+                    commitment: FlatRingVec::from_coeffs(vec![F::from_u64(6)]),
+                }],
+                extra_carried_openings: vec![CarriedOpeningProof {
+                    source_idx: 1,
+                    point: vec![F::from_u64(7), F::from_u64(8)],
+                    value: F::from_u64(9),
+                    basis: BasisMode::Lagrange,
+                    natural_len: 2,
+                    padded_len: 2,
+                    kind: CarriedOpeningKind::SetupPrefix,
+                }],
+            },
+            stage3_sumcheck_proof: None,
+        };
+        let shape = LevelProofShape {
+            y_ring_coeffs: 1,
+            extension_opening_reduction: None,
+            v_coeffs: 1,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck_proof: Vec::new(),
+            next_commit_coeffs: 1,
+            extra_carried_sources: vec![CarriedOpeningSourceShape {
+                commitment_coeffs: 1,
+            }],
+            extra_carried_openings: vec![CarriedOpeningShape { point_len: 2 }],
+            stage3_sumcheck: None,
+        };
+
+        let mut encoded = Vec::new();
+        proof
+            .serialize_with_mode(&mut encoded, Compress::No)
+            .expect("level proof serializes");
+
+        assert_eq!(encoded.len(), proof.serialized_size(Compress::No));
+        let decoded = AkitaLevelProof::<F, F>::deserialize_with_mode(
+            encoded.as_slice(),
+            Compress::No,
+            Validate::Yes,
+            &shape,
+        )
+        .expect("level proof deserializes");
+        assert_eq!(decoded, proof);
     }
 }

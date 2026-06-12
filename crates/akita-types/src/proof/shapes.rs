@@ -28,6 +28,20 @@ pub struct SetupProductSumcheckShape {
     pub sumcheck: SumcheckProofShape,
 }
 
+/// Shape context for one proof-visible carried opening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarriedOpeningSourceShape {
+    /// Number of field coefficients in the carried commitment.
+    pub commitment_coeffs: usize,
+}
+
+/// Shape context for one proof-visible carried opening claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarriedOpeningShape {
+    /// Number of extension-field coordinates in the opening point.
+    pub point_len: usize,
+}
+
 impl ExtensionOpeningReductionShape {
     /// Construct the standard degree-two reduction shape.
     pub fn standard(partials: usize, num_rounds: usize) -> Self {
@@ -102,6 +116,10 @@ pub struct LevelProofShape {
     pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
     /// Number of field coefficients in `next_w_commitment`.
     pub next_commit_coeffs: usize,
+    /// Extra carried sources serialized after the default next-witness claim.
+    pub extra_carried_sources: Vec<CarriedOpeningSourceShape>,
+    /// Extra carried openings serialized after the default next-witness claim.
+    pub extra_carried_openings: Vec<CarriedOpeningShape>,
 }
 
 /// Shape descriptor for deserializing an [`AkitaBatchedProof`] without
@@ -209,6 +227,20 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
         stage2_sumcheck_proof: sumcheck_proof_masked_shape(&stage2.sumcheck_proof_masked),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
+        extra_carried_sources: stage2
+            .extra_carried_sources
+            .iter()
+            .map(|source| CarriedOpeningSourceShape {
+                commitment_coeffs: source.commitment.coeff_len(),
+            })
+            .collect(),
+        extra_carried_openings: stage2
+            .extra_carried_openings
+            .iter()
+            .map(|claim| CarriedOpeningShape {
+                point_len: claim.point.len(),
+            })
+            .collect(),
     }
 }
 
@@ -303,6 +335,85 @@ impl AkitaDeserialize for AkitaStage1StageShape {
     }
 }
 
+impl Valid for CarriedOpeningSourceShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.commitment_coeffs)?;
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for CarriedOpeningSourceShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.commitment_coeffs
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.commitment_coeffs.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for CarriedOpeningSourceShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            commitment_coeffs: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl Valid for CarriedOpeningShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.point_len)?;
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for CarriedOpeningShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.point_len.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.point_len.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for CarriedOpeningShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            point_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl Valid for LevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.y_ring_coeffs)?;
@@ -320,6 +431,10 @@ impl Valid for LevelProofShape {
             shape.check()?;
         }
         checked_shape_len(self.next_commit_coeffs)?;
+        checked_shape_len(self.extra_carried_sources.len())?;
+        self.extra_carried_sources.check()?;
+        checked_shape_len(self.extra_carried_openings.len())?;
+        self.extra_carried_openings.check()?;
         Ok(())
     }
 }
@@ -358,6 +473,10 @@ impl AkitaSerialize for LevelProofShape {
         }
         self.next_commit_coeffs
             .serialize_with_mode(&mut writer, compress)?;
+        self.extra_carried_sources
+            .serialize_with_mode(&mut writer, compress)?;
+        self.extra_carried_openings
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -381,6 +500,8 @@ impl AkitaSerialize for LevelProofShape {
                 .as_ref()
                 .map_or(0, |shape| shape.sumcheck.serialized_size(compress))
             + self.next_commit_coeffs.serialized_size(compress)
+            + self.extra_carried_sources.serialized_size(compress)
+            + self.extra_carried_openings.serialized_size(compress)
     }
 }
 
@@ -416,6 +537,18 @@ impl AkitaDeserialize for LevelProofShape {
         };
         let next_commit_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let extra_carried_sources = Vec::<CarriedOpeningSourceShape>::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
+        let extra_carried_openings = Vec::<CarriedOpeningShape>::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
         let out = Self {
             y_ring_coeffs,
             extension_opening_reduction,
@@ -424,6 +557,8 @@ impl AkitaDeserialize for LevelProofShape {
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,
             next_commit_coeffs,
+            extra_carried_sources,
+            extra_carried_openings,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
