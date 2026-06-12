@@ -776,11 +776,12 @@ mod tests {
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let prepared = CpuBackend.prepare_setup(setup).unwrap();
                     let inner = poly
-                        .commit_inner_witness(
+                        .commit_inner(
                             &CpuBackend,
                             &prepared,
                             lp.a_key.row_len(),
                             lp.block_len,
+                            lp.num_blocks,
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,

@@ -123,7 +123,7 @@ or ring-switch commit:
 | `SparseRingPoly<F, D>` in `backend/sparse_ring.rs` | `type CommitCache = NttSlotCache<D>`; `commit_inner`; `commit_inner_witness` | Must preserve sparse-ring row planning. |
 | `RootTensorProjectionPoly<F, D>` in `backend/field_reduction.rs` | `type CommitCache = NttSlotCache<D>`; forwards to inner poly | Used by transformed root commit path. |
 | `MultilinearPolynomial<'_, F, D, I>` in `backend/multilinear_polynomial.rs` | `type CommitCache = NttSlotCache<D>`; forwards dense/one-hot | Wrapper must not reintroduce CPU cache bounds. |
-| `RecursiveWitnessView<'_, F, D>` in `backend/recursive_witness.rs` | direct `NttSlotCache<D>` parameters on recursive commit helpers | Used by `commit_w` and recursive folded levels. |
+| `SuffixWitness<'_, F, D>` in `backend/recursive_witness.rs` | direct `NttSlotCache<D>` parameters on recursive commit helpers | Used by `commit_w` and recursive folded levels. |
 
 ### Scheme orchestration
 
