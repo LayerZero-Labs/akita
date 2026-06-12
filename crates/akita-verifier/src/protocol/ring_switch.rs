@@ -38,7 +38,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
-    /// Challenge tau0 for the stage-1 sumcheck.
+    /// Challenge tau0 for the stage-1 sumcheck; empty for terminal folds.
     pub tau0: Vec<E>,
     /// Challenge tau1 for the stage-2 M-row combination.
     pub tau1: Vec<E>,
@@ -46,49 +46,6 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
-}
-
-struct RingSwitchVerifyCoreOutput<E: FieldCore> {
-    prepared_row_eval: RingSwitchDeferredRowEval<E>,
-    alpha_evals_y: Vec<E>,
-    col_bits: usize,
-    ring_bits: usize,
-    tau0: Option<Vec<E>>,
-    tau1: Vec<E>,
-    b: usize,
-    alpha: E,
-}
-
-impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
-    fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
-        Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
-            alpha_evals_y: self.alpha_evals_y,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
-            tau0,
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
-
-    fn into_terminal_as_output(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        if self.tau0.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
-            alpha_evals_y: self.alpha_evals_y,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
-            tau0: Vec::new(),
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
 }
 
 /// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
@@ -171,8 +128,7 @@ where
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
-        .into_intermediate()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)
 }
 
 /// Terminal variant of [`ring_switch_verifier`].
@@ -199,8 +155,7 @@ where
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)?
-        .into_terminal_as_output()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
@@ -210,7 +165,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     w_len: usize,
     transcript: &mut T,
     m_row_layout: MRowLayout,
-) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -248,12 +203,10 @@ where
         .trailing_zeros() as usize;
 
     let tau0 = match m_row_layout {
-        MRowLayout::WithDBlock => Some(
-            (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-        ),
-        MRowLayout::WithoutDBlock => None,
+        MRowLayout::WithDBlock => (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect(),
+        MRowLayout::WithoutDBlock => Vec::new(),
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -261,7 +214,7 @@ where
     let alpha_evals_y = scalar_powers(alpha, D);
     let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1)?;
 
-    Ok(RingSwitchVerifyCoreOutput {
+    Ok(RingSwitchVerifyOutput {
         prepared_row_eval,
         alpha_evals_y,
         col_bits,
