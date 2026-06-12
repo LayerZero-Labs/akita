@@ -5,7 +5,9 @@ use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_zero_fold_openings_with_incidence;
 use crate::protocol::levels::verify_fold_batched_proof;
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::{
+    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     PseudoMersenneField, RandomSampling,
@@ -13,11 +15,10 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_is_root_direct, schedule_root_fold_step, scheduled_next_level_params,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaSetupSeed, AkitaVerifierSetup,
-    BasisMode, ClaimIncidenceSummary, CleartextWitnessProof, LevelParams, RingCommitment,
-    RingSubfieldEncoding, Schedule, SetupContributionMode, Step, VerifierClaims,
+    check_batched_proof_step_shape, schedule_is_root_direct, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary,
+    CleartextWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
+    SetupContributionMode, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -25,7 +26,7 @@ use std::array::from_fn;
 
 #[cfg(feature = "zk")]
 /// Root-direct commitment blinding payload carried by zk proofs.
-pub type RootDirectBlindingPayload<'a> = &'a [Vec<i8>];
+pub(crate) type RootDirectBlindingPayload<'a> = &'a [Vec<i8>];
 
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
@@ -354,7 +355,7 @@ where
 /// Returns an error if the direct witness shape does not match the batch shape,
 /// if witness reconstruction fails, or if any recomputed commitment differs
 /// from the proof commitment.
-pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
+pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     flat_commitments: &[RingCommitment<F, D>],
@@ -500,40 +501,6 @@ mod tests {
     }
 }
 
-/// Structural slice of `<AkitaBatchedProof as Valid>::check`, inlined to avoid
-/// requiring `F: Valid + L: Valid` at the verifier entrypoint.
-fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    L: FieldCore,
-{
-    match &proof.root {
-        AkitaBatchedRootProof::Fold(_) => {
-            let Some((last, rest)) = proof.steps.split_last() else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if !matches!(last, AkitaProofStep::Terminal(_))
-                || rest
-                    .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        AkitaBatchedRootProof::Terminal(_) => {
-            if !proof.steps.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        AkitaBatchedRootProof::ZeroFold { .. } => {
-            if !proof.steps.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn select_batched_verifier_schedule<'a, Cfg, const D: usize>(
     prepared_claims: &PreparedVerifierClaims<'a, Cfg::ClaimField, RingCommitment<Cfg::Field, D>>,
 ) -> Result<Schedule, AkitaError>
@@ -543,26 +510,11 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
     Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field> + ExtField<Cfg::ClaimField>,
 {
-    let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    if let Some(root_step) = schedule_root_fold_step(&schedule) {
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
-            &prepared_claims.opening_points,
-            &root_step.params,
-            alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
-            num_vars,
-        ) {
-            let params = Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)
-                .map_err(|_| AkitaError::InvalidProof)?;
-            schedule =
-                root_direct_schedule(num_vars, params).map_err(|_| AkitaError::InvalidProof)?;
-        }
-    }
-
-    Ok(schedule)
+    effective_batched_schedule::<Cfg, D>(
+        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_points,
+    )
+    .map_err(|_| AkitaError::InvalidProof)
 }
 
 fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
@@ -683,11 +635,6 @@ where
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
-            let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-                return Err(AkitaError::InvalidProof);
-            };
-            let next_level_params =
-                scheduled_next_level_params(&schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
             verify_fold_batched_proof::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, D>(
                 proof,
                 setup,
@@ -698,9 +645,6 @@ where
                 &incidence_summary,
                 basis,
                 &schedule,
-                &root_step.params,
-                &next_level_params,
-                &next_level_params,
                 setup_contribution_mode,
             )?;
         }

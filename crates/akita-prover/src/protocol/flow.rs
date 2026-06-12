@@ -18,7 +18,9 @@ use crate::{
     RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::{
+    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
@@ -45,16 +47,14 @@ use akita_types::{
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
-    prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_direct_schedule,
-    root_extension_opening_partials, root_tensor_projection_enabled,
-    sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
+    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
+    ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
+    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
+    schedule_num_fold_levels, schedule_root_fold_step, scheduled_fold_execution,
+    scheduled_next_level_params, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
+    tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,

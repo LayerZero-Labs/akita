@@ -119,6 +119,16 @@ pub struct TensorChallenges {
     pub num_claims: usize,
 }
 
+/// Tensor aggregate evaluator with tensor shape, sparse factors, and alpha
+/// powers validated once at construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedTensorAggregate<E: FieldCore> {
+    challenges: TensorChallenges,
+    alpha_pows: Vec<E>,
+    alpha_pow_d_plus_one: E,
+    prepared_d: usize,
+}
+
 /// Stage-1 fold challenges — the single representation seen by prover and
 /// verifier protocol code, with all per-variant logic encapsulated behind
 /// challenge-domain methods such as [`Self::evals_at_pows`].
@@ -547,6 +557,24 @@ impl TensorChallenges {
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
+        self.clone()
+            .prepare_factored_aggregate_at_pows::<F, E, D>(alpha_pows.to_vec())?
+            .eval_factored_aggregate::<F, D>(claim_idx, u_weights, v_weights)
+    }
+
+    /// Prepare factored aggregate evaluation at a fixed ring-switch point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tensor challenges or alpha powers are malformed.
+    pub fn prepare_factored_aggregate_at_pows<F, E, const D: usize>(
+        self,
+        alpha_pows: Vec<E>,
+    ) -> Result<PreparedTensorAggregate<E>, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
         if alpha_pows.len() != D {
             return Err(AkitaError::InvalidSize {
                 expected: D,
@@ -558,72 +586,14 @@ impl TensorChallenges {
                 "tensor evaluation requires D >= 2".to_string(),
             ));
         }
-        if u_weights.len() != self.left_len {
-            return Err(AkitaError::InvalidSize {
-                expected: self.left_len,
-                actual: u_weights.len(),
-            });
-        }
-        if v_weights.len() != self.right_len {
-            return Err(AkitaError::InvalidSize {
-                expected: self.right_len,
-                actual: v_weights.len(),
-            });
-        }
-        if claim_idx >= self.num_claims {
-            return Err(AkitaError::InvalidInput(format!(
-                "tensor claim index {claim_idx} out of range for {} claims",
-                self.num_claims
-            )));
-        }
-        self.validate_lengths()?;
-
+        self.validate::<D>()?;
         let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + E::one();
-        let left_start = claim_idx * self.left_len;
-        let right_start = claim_idx * self.right_len;
-
-        // Build the weighted dense factors in E directly so the product
-        // evaluation never materializes a length-O(left_len · right_len) buffer.
-        let mut left_bar = [E::zero(); D];
-        let mut right_bar = [E::zero(); D];
-
-        for (p, &weight) in u_weights.iter().enumerate() {
-            if !weight.is_zero() {
-                accumulate_sparse_scaled::<F, E, D>(
-                    &mut left_bar,
-                    &self.left[left_start + p],
-                    weight,
-                )?;
-            }
-        }
-        for (q, &weight) in v_weights.iter().enumerate() {
-            if !weight.is_zero() {
-                accumulate_sparse_scaled::<F, E, D>(
-                    &mut right_bar,
-                    &self.right[right_start + q],
-                    weight,
-                )?;
-            }
-        }
-
-        let product_eval =
-            eval_dense_at_pows(&left_bar, alpha_pows) * eval_dense_at_pows(&right_bar, alpha_pows);
-        let mut quotient_eval = E::zero();
-        for (i, &left_coeff) in left_bar.iter().enumerate() {
-            if left_coeff.is_zero() {
-                continue;
-            }
-            for (j, &right_coeff) in right_bar.iter().enumerate() {
-                if right_coeff.is_zero() {
-                    continue;
-                }
-                if i + j >= D {
-                    quotient_eval += left_coeff * right_coeff * alpha_pows[i + j - D];
-                }
-            }
-        }
-
-        Ok(product_eval - alpha_pow_d_plus_one * quotient_eval)
+        Ok(PreparedTensorAggregate {
+            challenges: self,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+            prepared_d: D,
+        })
     }
 
     fn validate_lengths(&self) -> Result<(), AkitaError> {
@@ -648,6 +618,109 @@ impl TensorChallenges {
             });
         }
         Ok(())
+    }
+}
+
+impl<E: FieldCore> PreparedTensorAggregate<E> {
+    pub fn num_claims(&self) -> usize {
+        self.challenges.num_claims
+    }
+
+    pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
+        self.challenges.blocks_per_claim()
+    }
+
+    pub fn left_len(&self) -> usize {
+        self.challenges.left_len
+    }
+
+    pub fn right_len(&self) -> usize {
+        self.challenges.right_len
+    }
+
+    /// Evaluate one weighted tensor aggregate for a prepared point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the claim index or separable weights do not match
+    /// the prepared tensor dimensions.
+    pub fn eval_factored_aggregate<F, const D: usize>(
+        &self,
+        claim_idx: usize,
+        u_weights: &[E],
+        v_weights: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: MulBase<F>,
+    {
+        if self.prepared_d != D {
+            return Err(AkitaError::InvalidSize {
+                expected: self.prepared_d,
+                actual: D,
+            });
+        }
+        if u_weights.len() != self.challenges.left_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.challenges.left_len,
+                actual: u_weights.len(),
+            });
+        }
+        if v_weights.len() != self.challenges.right_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.challenges.right_len,
+                actual: v_weights.len(),
+            });
+        }
+        if claim_idx >= self.challenges.num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor claim index {claim_idx} out of range for {} claims",
+                self.challenges.num_claims
+            )));
+        }
+
+        let left_start = claim_idx * self.challenges.left_len;
+        let right_start = claim_idx * self.challenges.right_len;
+        let mut left_bar = [E::zero(); D];
+        let mut right_bar = [E::zero(); D];
+
+        for (p, &weight) in u_weights.iter().enumerate() {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, E, D>(
+                    &mut left_bar,
+                    &self.challenges.left[left_start + p],
+                    weight,
+                )?;
+            }
+        }
+        for (q, &weight) in v_weights.iter().enumerate() {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, E, D>(
+                    &mut right_bar,
+                    &self.challenges.right[right_start + q],
+                    weight,
+                )?;
+            }
+        }
+
+        let product_eval = eval_dense_at_pows(&left_bar, &self.alpha_pows)
+            * eval_dense_at_pows(&right_bar, &self.alpha_pows);
+        let mut quotient_eval = E::zero();
+        for (i, &left_coeff) in left_bar.iter().enumerate() {
+            if left_coeff.is_zero() {
+                continue;
+            }
+            for (j, &right_coeff) in right_bar.iter().enumerate() {
+                if right_coeff.is_zero() {
+                    continue;
+                }
+                if i + j >= D {
+                    quotient_eval += left_coeff * right_coeff * self.alpha_pows[i + j - D];
+                }
+            }
+        }
+
+        Ok(product_eval - self.alpha_pow_d_plus_one * quotient_eval)
     }
 }
 
@@ -840,5 +913,46 @@ where
                 num_claims,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+
+    #[test]
+    fn prepared_tensor_aggregate_rejects_mismatched_ring_dimension() {
+        let sparse = SparseChallenge {
+            positions: vec![0],
+            coeffs: vec![1],
+        };
+        let tensor = TensorChallenges {
+            left: vec![sparse.clone()],
+            right: vec![sparse],
+            left_len: 1,
+            right_len: 1,
+            num_claims: 1,
+        };
+        let alpha = F::from_u64(3);
+        let alpha_pows = vec![F::one(), alpha, alpha * alpha, alpha * alpha * alpha];
+        let prepared = tensor
+            .prepare_factored_aggregate_at_pows::<F, F, 4>(alpha_pows)
+            .expect("valid prepared tensor aggregate");
+        let weights = [F::one()];
+
+        let err = prepared
+            .eval_factored_aggregate::<F, 8>(0, &weights, &weights)
+            .expect_err("mismatched dispatch dimension must be rejected");
+
+        assert!(matches!(
+            err,
+            AkitaError::InvalidSize {
+                expected: 4,
+                actual: 8
+            }
+        ));
     }
 }

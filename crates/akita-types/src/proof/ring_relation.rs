@@ -3,8 +3,8 @@
 use super::{ClaimIncidenceSummary, CommitmentRouting};
 use crate::RingSubfieldEncoding;
 use crate::{
-    embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint,
+    embed_ring_subfield_scalar, validate_opening_points_for_claims, LevelParams, MRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -166,6 +166,25 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             ));
         }
         Ok(())
+    }
+
+    /// Validate level-dependent relation payload shape.
+    pub fn check_level_shape(&self, lp: &LevelParams) -> Result<(), AkitaError> {
+        validate_opening_points_for_claims(
+            &self.opening_points,
+            self.claim_to_point(),
+            lp,
+            self.incidence.num_claims(),
+        )?;
+        if self.ring_multiplier_points.len() != self.opening_points.len()
+            || self
+                .ring_multiplier_points
+                .iter()
+                .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.check_v_shape_for_level(lp)
     }
 
     /// Build base-field `gamma` and embedded row rings from transcript-sampled coefficients.

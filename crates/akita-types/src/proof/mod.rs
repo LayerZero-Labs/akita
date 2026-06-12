@@ -87,6 +87,7 @@ pub use terminal_witness::{
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
+pub use wire::check_batched_proof_step_shape;
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;

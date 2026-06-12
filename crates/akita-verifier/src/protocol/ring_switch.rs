@@ -21,10 +21,10 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSubfieldEncoding, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
+    FlatRingVec, LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRelationSegmentLayout, RingSubfieldEncoding, SetupContributionPlanInputs,
+    TerminalWitnessTranscriptParts,
 };
 
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
@@ -45,14 +45,20 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
-    /// Challenge tau0 for the stage-1 sumcheck; empty for terminal folds.
-    pub tau0: Vec<E>,
+    /// Stage-1 challenge handoff for intermediate folds; absent for terminal folds.
+    pub stage1: RingSwitchStage1<E>,
     /// Challenge tau1 for the stage-2 M-row combination.
     pub tau1: Vec<E>,
     /// Basis size `b = 2^log_basis`.
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+/// Ring-switch output needed by stage-1 replay.
+pub(crate) enum RingSwitchStage1<E: FieldCore> {
+    Intermediate { tau0: Vec<E> },
+    Terminal,
 }
 
 /// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
@@ -171,8 +177,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
-        Ok(self.witness_segment_layout)
+    pub(crate) fn segment_layout(&self) -> RingSwitchSegmentLayout {
+        self.witness_segment_layout
     }
 
     pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
@@ -208,7 +214,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         F: FieldCore + CanonicalField,
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
-        let layout = self.segment_layout()?;
+        let layout = self.segment_layout();
         validate_log_basis(self.log_basis)?;
         let alpha_pows = scalar_powers(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
@@ -801,24 +807,23 @@ where
                     "tensor challenge factored evaluation requires D >= 2".to_string(),
                 ));
             }
-            factored.validate::<D>()?;
-            if factored.num_claims != num_claims {
+            let aggregate = factored
+                .clone()
+                .prepare_factored_aggregate_at_pows::<F, E, D>(alpha_pows.clone())?;
+            if aggregate.num_claims() != num_claims {
                 return Err(AkitaError::InvalidSize {
                     expected: num_claims,
-                    actual: factored.num_claims,
+                    actual: aggregate.num_claims(),
                 });
             }
-            let blocks_per_claim = factored.blocks_per_claim()?;
+            let blocks_per_claim = aggregate.blocks_per_claim()?;
             if blocks_per_claim != lp.num_blocks {
                 return Err(AkitaError::InvalidSize {
                     expected: lp.num_blocks,
                     actual: blocks_per_claim,
                 });
             }
-            PreparedChallengeEvals::Tensor {
-                challenges: factored.clone(),
-                alpha_pows: alpha_pows.clone(),
-            }
+            PreparedChallengeEvals::Tensor { aggregate }
         }
     };
 
@@ -943,14 +948,11 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
-    let opening_points = relation.opening_points();
-    let claim_to_point = relation.claim_to_point();
     let num_public_rows = relation.num_public_rows();
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_claims = claim_to_point.len();
-    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
+    relation.check_level_shape(lp)?;
     let num_points = relation
         .commitment_routing()
         .num_polys_per_commitment_group()
@@ -972,11 +974,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0 = match m_row_layout {
-        MRowLayout::WithDBlock => (0..num_sc_vars)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect(),
-        MRowLayout::WithoutDBlock => Vec::new(),
+    let stage1 = match m_row_layout {
+        MRowLayout::WithDBlock => RingSwitchStage1::Intermediate {
+            tau0: (0..num_sc_vars)
+                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                .collect(),
+        },
+        MRowLayout::WithoutDBlock => RingSwitchStage1::Terminal,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -989,7 +993,7 @@ where
         alpha_evals_y,
         col_bits,
         ring_bits,
-        tau0,
+        stage1,
         tau1,
         b: 1usize
             .checked_shl(lp.log_basis)
@@ -1019,12 +1023,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let claim_to_point = relation.claim_to_point();
-    validate_opening_points_for_claims(
-        relation.opening_points(),
-        claim_to_point,
-        lp,
-        claim_to_point.len(),
-    )?;
+    relation.check_level_shape(lp)?;
     let witness_segment_layout = relation.segment_layout(lp)?;
     let routing = relation.commitment_routing();
     prepare_ring_switch_row_eval_inner::<F, E, D>(

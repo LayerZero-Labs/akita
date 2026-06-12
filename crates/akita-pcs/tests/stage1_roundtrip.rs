@@ -30,7 +30,7 @@ fn assert_stage1_roundtrip(
     let col_bits = 3;
     let ring_bits = 1;
     let witness = sample_stage1_witness(b, live_x_cols, ring_bits);
-    let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits).expect("valid stage1 coords");
 
     let prover = AkitaStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
         .expect("stage1 prover should build");

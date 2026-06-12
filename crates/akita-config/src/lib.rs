@@ -14,8 +14,10 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
-    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
+    schedule_root_fold_step, AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary,
+    DecompositionParams, LevelParams, RingSubfieldEncoding, Schedule, SetupMatrixEnvelope,
+    SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -50,6 +52,40 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
     }
+}
+
+/// Select the transcript-bound schedule for a batched opening under `Cfg`.
+///
+/// Starts from the normal proving schedule and applies the root-direct fallback
+/// when the folded-root schedule cannot support the public opening shape and
+/// tensor root projection is unavailable.
+pub fn effective_batched_schedule<Cfg, const D: usize>(
+    incidence_summary: &ClaimIncidenceSummary,
+    opening_points: &[&[Cfg::ClaimField]],
+) -> Result<Schedule, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore,
+    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field> + ExtField<Cfg::ClaimField>,
+{
+    let num_vars = incidence_summary.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(incidence_summary)?;
+    if let Some(root_step) = schedule_root_fold_step(&schedule) {
+        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            opening_points,
+            &root_step.params,
+            alpha_bits,
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            num_vars,
+        ) {
+            let commit_params = Cfg::get_params_for_batched_commitment(incidence_summary)?;
+            schedule = root_direct_schedule(num_vars, commit_params)?;
+        }
+    }
+
+    Ok(schedule)
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).

@@ -39,16 +39,6 @@ impl<F: FieldCore, L: FieldCore> RecursiveFoldProofView<'_, F, L> {
     fn is_terminal(&self) -> bool {
         matches!(self, Self::Terminal { .. })
     }
-
-    fn next_fold_level_params<'a>(&'a self, current_lp: &'a LevelParams) -> &'a LevelParams {
-        match self {
-            Self::Intermediate {
-                next_fold_level_params,
-                ..
-            } => next_fold_level_params,
-            Self::Terminal { .. } => current_lp,
-        }
-    }
 }
 
 /// Verify one recursive fold level.
@@ -86,7 +76,6 @@ where
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let is_last = proof.is_terminal();
-    let next_fold_level_params = proof.next_fold_level_params(lp);
     let y_rings = proof.y_rings_typed::<D>()?;
     let v_typed_owned: Vec<CyclotomicRing<F, D>>;
     let v_typed: &[CyclotomicRing<F, D>] = match &proof {
@@ -370,7 +359,7 @@ where
         y_rings.clone(),
         v_typed.to_vec(),
     )?;
-    relation_instance.check_v_shape_for_level(lp)?;
+    relation_instance.check_level_shape(lp)?;
     let ring_switch_replay = crate::protocol::ring_switch::RingSwitchReplay {
         relation: &relation_instance,
         row_coefficients: &gamma,
@@ -410,8 +399,7 @@ where
     };
     let stage1_replay = verify_stage1_or_terminal::<F, L, T>(
         Stage1ReplayInput {
-            proof: stage1_proof,
-            tau0: &rs.tau0,
+            stage1: Stage1ReplayProof::from_parts(stage1_proof, &rs.stage1)?,
             col_bits: rs.col_bits,
             ring_bits: rs.ring_bits,
             b: rs.b,
@@ -449,6 +437,20 @@ where
             sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
         },
     };
+    let setup_replay = match (&proof, stage3_sumcheck_proof) {
+        (
+            RecursiveFoldProofView::Intermediate {
+                next_fold_level_params,
+                ..
+            },
+            Some(setup_proof),
+        ) => Some(SetupReplay {
+            proof: setup_proof,
+            next_fold_level_params,
+        }),
+        (_, None) => None,
+        (RecursiveFoldProofView::Terminal { .. }, Some(_)) => return Err(AkitaError::InvalidProof),
+    };
     let stage2_input = Stage2ReplayInput {
         setup,
         stage2: stage2_replay,
@@ -457,8 +459,7 @@ where
         relation_claim,
         #[cfg(feature = "zk")]
         relation_claim_mask,
-        setup_sumcheck_proof: stage3_sumcheck_proof,
-        next_fold_level_params,
+        setup_replay,
         ring_multiplier_points: &ring_multiplier_points,
     };
     verify_stage2_and_setup_replay::<F, L, T, D>(
@@ -700,9 +701,6 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
     schedule: &Schedule,
-    root_lp: &LevelParams,
-    next_level_params: &LevelParams,
-    root_next_fold_level_params: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
@@ -719,6 +717,7 @@ where
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(AkitaError::InvalidProof);
     };
+    let root_lp = &root_step.params;
     let total_fold_levels = schedule_num_fold_levels(schedule);
     let terminal_direct = schedule
         .steps
@@ -816,6 +815,8 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
+            let first_recursive_params =
+                scheduled_next_level_params(schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
             let root_challenges = verify_root_level::<F, E, C, T, D>(
                 RootLevelProofView::Intermediate {
                     y_rings_flat: &fold_root.y_rings,
@@ -825,7 +826,7 @@ where
                     stage2: &fold_root.stage2,
                     stage3_sumcheck_proof: fold_root.stage3_sumcheck_proof.as_ref(),
                     setup_contribution_mode,
-                    next_fold_level_params: root_next_fold_level_params,
+                    next_fold_level_params: &first_recursive_params,
                 },
                 setup,
                 transcript,
@@ -842,7 +843,7 @@ where
                 &mut zk_relations,
             )?;
 
-            let first_level_d = next_level_params.ring_dimension;
+            let first_level_d = first_recursive_params.ring_dimension;
             if !fold_root
                 .stage2
                 .next_w_commitment
@@ -861,7 +862,7 @@ where
                 commitment: &fold_root.stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
-                log_basis: next_level_params.log_basis,
+                log_basis: first_recursive_params.log_basis,
             };
             verify_batched_recursive_suffix::<F, C, T, D>(
                 proof,

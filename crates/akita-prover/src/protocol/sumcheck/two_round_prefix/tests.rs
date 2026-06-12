@@ -402,7 +402,7 @@ fn stage1_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(11),
         F::from_u64(13),
     ];
-    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
+    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits).expect("valid stage1 coords");
     assert_eq!(
         build_stage1_bivariate_skip_proof_from_compact(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits
@@ -706,7 +706,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         F::from_u64(11),
         F::from_u64(13),
     ];
-    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
+    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits).expect("valid stage1 coords");
 
     let proof = build_stage1_bivariate_skip_proof_from_compact(
         &w_compact,

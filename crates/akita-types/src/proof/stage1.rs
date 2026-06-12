@@ -1,8 +1,8 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::AkitaStage1StageShape;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_transcript::{labels, Transcript};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_transcript::{append_ext_field, labels, Transcript};
 
 /// Validate the stage-1 range basis.
 ///
@@ -65,19 +65,27 @@ pub fn range_check_eval_from_s<E: FieldCore + FromPrimitiveInt>(s: E, b: usize) 
 /// Ring-switch samples coordinates as columns followed by ring slots. Stage 1
 /// stores the virtual table with ring-slot coordinates first, then columns.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `coords.len() != col_bits + ring_bits`.
+/// Returns an error if `coords.len() != col_bits + ring_bits`.
 pub fn reorder_stage1_coords<F: FieldCore>(
     coords: &[F],
     col_bits: usize,
     ring_bits: usize,
-) -> Vec<F> {
-    assert_eq!(coords.len(), col_bits + ring_bits);
+) -> Result<Vec<F>, AkitaError> {
+    let expected = col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 coordinate width overflow".to_string()))?;
+    if coords.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: coords.len(),
+        });
+    }
     let mut reordered = Vec::with_capacity(coords.len());
     reordered.extend_from_slice(&coords[col_bits..]);
     reordered.extend_from_slice(&coords[..col_bits]);
-    reordered
+    Ok(reordered)
 }
 
 fn stage1_leaf_groups<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> {
@@ -194,11 +202,13 @@ pub fn linear_combination<E: FieldCore>(weights: &[E], values: &[E]) -> E {
 }
 
 /// Absorb stage-1 interstage child claims into the transcript.
-pub fn absorb_interstage_claims<F: FieldCore + CanonicalField, T: Transcript<F>>(
-    claims: &[F],
-    transcript: &mut T,
-) {
+pub fn absorb_interstage_claims<F, E, T>(claims: &[E], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
     for claim in claims {
-        transcript.append_field(labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
+        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
     }
 }
