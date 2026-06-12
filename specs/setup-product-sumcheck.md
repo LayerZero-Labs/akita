@@ -153,7 +153,7 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   `setup_contribution_mode`. For `Recursive` on a non-terminal level they call
   `SetupSumcheckProver::prove`, which prepares the setup terms (required length,
   `bar_omega`, `alpha` powers) and runs the sumcheck, emitting a
-  `SetupSumcheckProof` into `RootLevelRawOutput::stage3_sumcheck_proof`. For
+  `SetupSumcheckProof` into the root fold proof's `stage3_sumcheck_proof`. For
   `Direct` the field is `None`.
 - **Verifier** (`akita-verifier`): `protocol::levels{,/recursive}` select the
   stage-3 proof based on mode (`InvalidSetup` if present/absent inconsistently),
