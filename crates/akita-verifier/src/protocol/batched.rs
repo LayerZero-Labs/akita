@@ -567,24 +567,28 @@ mod tests {
         ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
     }
 
+    fn setup_seed(max_setup_len: usize) -> AkitaSetupSeed {
+        AkitaSetupSeed {
+            max_num_vars: 6,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            gen_ring_dim: D,
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+            public_matrix_seed: [0u8; 32],
+        }
+    }
+
     #[test]
     fn root_direct_recommitment_rejects_undersized_setup() {
         let params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
-        let setup_seed = AkitaSetupSeed {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            max_num_points: 1,
-            gen_ring_dim: D,
-            max_setup_len: 3,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-            public_matrix_seed: [0u8; 32],
-        };
+        let setup_seed = setup_seed(3);
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::zero(); 64]),
         )];
@@ -605,18 +609,7 @@ mod tests {
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
-        let setup_seed = AkitaSetupSeed {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            max_num_points: 1,
-            gen_ring_dim: D,
-            max_setup_len: 128,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-            public_matrix_seed: [0u8; 32],
-        };
+        let setup_seed = setup_seed(128);
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::zero(); 32]),
         )];
