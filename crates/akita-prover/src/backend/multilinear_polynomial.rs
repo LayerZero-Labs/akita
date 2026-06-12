@@ -1,36 +1,37 @@
-//! Canonical multilinear-polynomial wrapper for dense and one-hot representations.
+//! Canonical multilinear-polynomial wrapper for prover polynomial representations.
 //!
 //! This is the intended public wrapper for heterogeneous root batches. All
 //! wrapped polynomials must still share the same commitment config and root
-//! layout chosen by the caller, but one batch can contain both dense and
-//! one-hot roots.
+//! layout chosen by the caller, but one batch can contain dense, one-hot, and
+//! recursive witness views.
 //!
 //! Homogeneous batches still reuse the existing backend-specific batched fast
 //! paths; truly mixed batches fall back to the caller's per-polynomial
 //! aggregation path.
 
+use crate::compute::CommitmentComputeBackend;
+use crate::{
+    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
+    SuffixWitness,
+};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::FlatDigitBlocks;
 
-use crate::compute::CommitmentComputeBackend;
-use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
-};
-
-/// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
+/// Borrowed multilinear-polynomial wrapper for prover polynomial batches.
 ///
-/// This erases the root representation (`DensePoly` vs `OneHotPoly`) while
-/// preserving the operation-oriented `AkitaPolyOps` interface that the
-/// commitment scheme consumes.
+/// This erases the polynomial representation (`DensePoly`, `OneHotPoly`, or
+/// `SuffixWitness`) while preserving the operation-oriented `AkitaPolyOps`
+/// interface that the commitment scheme consumes.
 #[derive(Debug, Clone, Copy)]
 pub enum MultilinearPolynomial<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
     Dense(&'a DensePoly<F, D>),
     /// One-hot multilinear polynomial.
     OneHot(&'a OneHotPoly<F, D, I>),
+    /// Recursive witness view.
+    Witness(SuffixWitness<'a, F, D>),
 }
 
 impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a, F, D, I> {
@@ -42,6 +43,11 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a,
     /// Wrap a one-hot polynomial.
     pub fn onehot(poly: &'a OneHotPoly<F, D, I>) -> Self {
         Self::OneHot(poly)
+    }
+
+    /// Wrap a recursive witness view.
+    pub fn recursive(poly: SuffixWitness<'a, F, D>) -> Self {
+        Self::Witness(poly)
     }
 }
 
@@ -61,6 +67,14 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a OneHotPoly<F, D,
     }
 }
 
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<SuffixWitness<'a, F, D>>
+    for MultilinearPolynomial<'a, F, D, I>
+{
+    fn from(poly: SuffixWitness<'a, F, D>) -> Self {
+        Self::recursive(poly)
+    }
+}
+
 impl<F, const D: usize, I> AkitaPolyOps<F, D> for MultilinearPolynomial<'_, F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -70,6 +84,7 @@ where
         match self {
             Self::Dense(poly) => poly.num_ring_elems(),
             Self::OneHot(poly) => poly.num_ring_elems(),
+            Self::Witness(poly) => poly.num_ring_elems(),
         }
     }
 
@@ -77,6 +92,7 @@ where
         match self {
             Self::Dense(poly) => poly.num_vars(),
             Self::OneHot(poly) => poly.num_vars(),
+            Self::Witness(poly) => poly.num_vars(),
         }
     }
 
@@ -84,6 +100,7 @@ where
         match self {
             Self::Dense(poly) => poly.onehot_chunk_size(),
             Self::OneHot(poly) => poly.onehot_chunk_size(),
+            Self::Witness(poly) => poly.onehot_chunk_size(),
         }
     }
 
@@ -91,6 +108,7 @@ where
         match self {
             Self::Dense(poly) => poly.fold_blocks(scalars, block_len),
             Self::OneHot(poly) => poly.fold_blocks(scalars, block_len),
+            Self::Witness(poly) => poly.fold_blocks(scalars, block_len),
         }
     }
 
@@ -102,6 +120,7 @@ where
         match self {
             Self::Dense(poly) => poly.fold_blocks_ring(scalars, block_len),
             Self::OneHot(poly) => poly.fold_blocks_ring(scalars, block_len),
+            Self::Witness(poly) => poly.fold_blocks_ring(scalars, block_len),
         }
     }
 
@@ -116,6 +135,9 @@ where
                 poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
             }
             Self::OneHot(poly) => {
+                poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+            }
+            Self::Witness(poly) => {
                 poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
             }
         }
@@ -134,6 +156,9 @@ where
             Self::OneHot(poly) => {
                 poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
             }
+            Self::Witness(poly) => {
+                poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
+            }
         }
     }
 
@@ -147,6 +172,9 @@ where
         match self {
             Self::Dense(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
             Self::OneHot(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
+            Self::Witness(poly) => {
+                poly.decompose_fold(challenges, block_len, num_digits, log_basis)
+            }
         }
     }
 
@@ -165,6 +193,7 @@ where
                     match **poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return None,
+                        Self::Witness(_) => return None,
                     }
                 }
                 <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
@@ -181,6 +210,7 @@ where
                     match **poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return None,
+                        Self::Witness(_) => return None,
                     }
                 }
                 <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_batched(
@@ -191,6 +221,7 @@ where
                     log_basis,
                 )
             }
+            Self::Witness(_) => None,
         }
     }
 
@@ -211,6 +242,7 @@ where
                     match **poly {
                         Self::Dense(inner) => dense_polys.push(inner),
                         Self::OneHot(_) => return Ok(None),
+                        Self::Witness(_) => return Ok(None),
                     }
                 }
                 <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
@@ -227,6 +259,7 @@ where
                     match **poly {
                         Self::OneHot(inner) => onehot_polys.push(inner),
                         Self::Dense(_) => return Ok(None),
+                        Self::Witness(_) => return Ok(None),
                     }
                 }
                 <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
@@ -237,6 +270,7 @@ where
                     log_basis,
                 )
             }
+            Self::Witness(_) => Ok(None),
         }
     }
 
@@ -246,41 +280,7 @@ where
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        match self {
-            Self::Dense(poly) => poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            ),
-            Self::OneHot(poly) => poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            ),
-        }
-    }
-
-    fn commit_inner_witness<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
@@ -290,20 +290,32 @@ where
         B: CommitmentComputeBackend<F>,
     {
         match self {
-            Self::Dense(poly) => poly.commit_inner_witness(
+            Self::Dense(poly) => poly.commit_inner(
                 backend,
                 prepared,
                 n_a,
                 block_len,
+                num_blocks,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
             ),
-            Self::OneHot(poly) => poly.commit_inner_witness(
+            Self::OneHot(poly) => poly.commit_inner(
                 backend,
                 prepared,
                 n_a,
                 block_len,
+                num_blocks,
+                num_digits_commit,
+                num_digits_open,
+                log_basis,
+            ),
+            Self::Witness(poly) => poly.commit_inner(
+                backend,
+                prepared,
+                n_a,
+                block_len,
+                num_blocks,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
@@ -315,6 +327,7 @@ where
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),
+            Self::Witness(poly) => poly.direct_root_witness(),
         }
     }
 }

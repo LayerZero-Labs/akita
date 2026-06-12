@@ -17,5 +17,5 @@ pub use field_reduction::{tensor_pack_recursive_witness, RootTensorProjectionPol
 pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{MultiChunkEntry, OneHotIndex, OneHotPoly, SingleChunkEntry};
 pub use recursive_hint::RecursiveCommitmentHintCache;
-pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
+pub use recursive_witness::{RecursiveWitnessFlat, SuffixWitness};
 pub use sparse_ring::{SparseRingBlockEntry, SparseRingPoly};

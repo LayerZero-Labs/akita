@@ -254,22 +254,14 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert!(decoded.extension_opening_reduction.is_none());
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-        vec![CyclotomicRing::<F, D>::zero()],
-        Some(tiny_reduction()),
-        vec![CyclotomicRing::<F, D>::zero()],
-        tiny_stage1(),
-        #[cfg(not(feature = "zk"))]
-        SumcheckProof {
-            round_polys: Vec::new(),
-        },
-        #[cfg(feature = "zk")]
-        SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
-        },
-        FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        F::zero(),
-    );
+    let with_reduction = AkitaLevelProof {
+        y_ring: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        extension_opening_reduction: Some(tiny_reduction()),
+        v: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        stage1: tiny_stage1(),
+        stage2: tiny_stage2::<D>(),
+        stage3_sumcheck_proof: None,
+    };
     let reduction_bytes = extension_opening_reduction_serialized_size(
         with_reduction.extension_opening_reduction.as_ref(),
         Compress::No,

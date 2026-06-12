@@ -330,7 +330,7 @@ pub fn ring_relation_segment_layout_for_opening_shape<
     num_polys_per_point: &[usize],
 ) -> Result<RingRelationSegmentLayout, AkitaError> {
     let incidence = ClaimIncidenceSummary::from_point_polys(32, num_polys_per_point.to_vec())?;
-    let routing = CommitmentRouting::from_root_incidence(&incidence)?;
+    let routing = CommitmentRouting::copy_incidence(&incidence)?;
     let num_public_rows = incidence.num_public_rows();
     let opening_points: Vec<RingOpeningPoint<F>> = (0..num_public_rows)
         .map(|_| RingOpeningPoint {
@@ -444,7 +444,7 @@ mod tests {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
-        let routing = CommitmentRouting::from_root_incidence(&incidence).expect("routing");
+        let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
         let opening_points = vec![opening_point(&lp)];
         let ring_multiplier_points = opening_points
             .iter()
@@ -474,7 +474,7 @@ mod tests {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![2, 1]).expect("valid incidence");
-        let routing = CommitmentRouting::from_root_incidence(&incidence).expect("routing");
+        let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
         let opening_points = vec![opening_point(&lp), opening_point(&lp)];
         let ring_multiplier_points = opening_points
             .iter()
