@@ -171,14 +171,19 @@ where
 #[cfg(feature = "zk")]
 pub(crate) fn zk_b_blinding_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
-    row_len: usize,
-    row_width: usize,
+    params: &LevelParams,
     blinding_digits: &[i8],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    if D == 0 || !blinding_digits.len().is_multiple_of(D) {
+    if D == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let row_len = params.b_key.row_len();
+    let row_width = akita_types::zk::blinding_column_count::<F>(row_len, D, params.log_basis);
+    let expected_digits = row_width.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+    if blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
     }
     let digits = blinding_digits
@@ -189,9 +194,6 @@ where
             plane
         })
         .collect::<Vec<_>>();
-    if digits.len() > row_width {
-        return Err(AkitaError::InvalidProof);
-    }
     let b_zk_view = setup
         .expanded
         .zk_b_matrix()
@@ -261,28 +263,6 @@ where
     Ok(out)
 }
 
-#[cfg(feature = "zk")]
-pub(crate) fn append_direct_blinding<F, const D: usize>(
-    revealed_b_blinding_digits: &[i8],
-    params: &LevelParams,
-) -> Result<(), AkitaError>
-where
-    F: CanonicalField,
-{
-    if D == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_planes =
-        akita_types::zk::blinding_column_count::<F>(params.b_key.row_len(), D, params.log_basis);
-    let expected_digits = expected_planes
-        .checked_mul(D)
-        .ok_or(AkitaError::InvalidProof)?;
-    if revealed_b_blinding_digits.len() != expected_digits {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(())
-}
-
 fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
@@ -322,13 +302,7 @@ where
     #[cfg(feature = "zk")]
     {
         let mut u = u;
-        append_direct_blinding::<F, D>(blinding_digits, params)?;
-        let blinding_rows = zk_b_blinding_rows::<F, D>(
-            setup,
-            params.b_key.row_len(),
-            blinding_digits.len() / D,
-            blinding_digits,
-        )?;
+        let blinding_rows = zk_b_blinding_rows::<F, D>(setup, params, blinding_digits)?;
         for (row, blinding) in u.iter_mut().zip(blinding_rows) {
             *row += blinding;
         }

@@ -903,7 +903,6 @@ where
             }
             for &claim_idx in row.claim_indices() {
                 if claim_idx >= openings.len()
-                    || incidence_summary.claim_to_point()[claim_idx] != row_idx
                     || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
                 {
                     return Err(AkitaError::InvalidProof);

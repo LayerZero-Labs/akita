@@ -35,7 +35,6 @@ pub(crate) struct SetupContributionFixture {
 
 pub(crate) struct SetupContributionShape {
     pub num_blocks: usize,
-    pub num_claims: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -45,11 +44,9 @@ pub(crate) struct SetupContributionShape {
     pub n_d: usize,
     pub n_b: usize,
     pub num_polys_per_point: Vec<usize>,
-    pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
     pub claim_to_point_poly: Vec<(usize, usize)>,
-    pub claim_to_point: Vec<usize>,
     /// Tiered split factor `f` (`1` = single-tier).
     pub tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
@@ -60,7 +57,6 @@ impl SetupContributionShape {
     pub fn root_single_point() -> Self {
         Self {
             num_blocks: 4,
-            num_claims: 1,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
@@ -70,11 +66,9 @@ impl SetupContributionShape {
             n_d: 1,
             n_b: 2,
             num_polys_per_point: vec![1],
-            num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 0)],
-            claim_to_point: vec![0],
             tier_split: 1,
             n_f: 0,
         }
@@ -95,7 +89,6 @@ impl SetupContributionShape {
     pub fn recursive_multigroup() -> Self {
         Self {
             num_blocks: 8,
-            num_claims: 3,
             depth_open: 26,
             depth_commit: 1,
             depth_fold: 4,
@@ -105,11 +98,9 @@ impl SetupContributionShape {
             n_d: 2,
             n_b: 2,
             num_polys_per_point: vec![2, 1],
-            num_public_rows: 2,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
-            claim_to_point: vec![1, 0, 1],
             tier_split: 1,
             n_f: 0,
         }
@@ -131,9 +122,7 @@ impl SetupContributionShape {
 
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
-        shape.num_claims = 4;
         shape.claim_to_point_poly = vec![(0, 0), (0, 0), (0, 0), (0, 0)];
-        shape.claim_to_point = vec![0, 0, 0, 0];
         shape
     }
 
@@ -183,8 +172,10 @@ fn recursive_inner_product(
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
         let num_points = shape.num_polys_per_point.len();
+        let num_public_rows = num_points;
+        let num_claims = shape.claim_to_point_poly.len();
         let num_t_vectors = shape.num_polys_per_point.iter().sum();
-        let total_blocks = shape.num_blocks * shape.num_claims;
+        let total_blocks = shape.num_blocks * num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
         let tiered = shape.tier_split > 1;
@@ -198,11 +189,11 @@ impl SetupContributionFixture {
         } else {
             0
         };
-        let rows = 1 + shape.num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
+        let rows = 1 + num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
-        let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
+        let n_cols_e = num_claims * shape.num_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
         // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
         // commits `tier_split·n_b·depth_open` decomposed digits.
@@ -294,6 +285,11 @@ impl SetupContributionFixture {
             .iter()
             .map(|&(point_idx, poly_idx)| t_vector_offsets[point_idx] + poly_idx)
             .collect();
+        let claim_to_point: Vec<usize> = shape
+            .claim_to_point_poly
+            .iter()
+            .map(|&(point_idx, _)| point_idx)
+            .collect();
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -303,7 +299,7 @@ impl SetupContributionFixture {
             eq_tau1,
             num_t_vectors,
             num_blocks: shape.num_blocks,
-            num_claims: shape.num_claims,
+            num_claims,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
@@ -326,9 +322,9 @@ impl SetupContributionFixture {
             rows,
             claim_to_t_vector,
             num_polys_per_commitment_group: shape.num_polys_per_point.clone(),
-            num_public_rows: shape.num_public_rows,
-            gamma: vec![TestField::one(); shape.num_claims],
-            claim_to_point: shape.claim_to_point.clone(),
+            num_public_rows,
+            gamma: vec![TestField::one(); num_claims],
+            claim_to_point,
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,
