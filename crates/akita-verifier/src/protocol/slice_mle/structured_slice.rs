@@ -264,10 +264,6 @@ mod tests {
         prepared: RingSwitchDeferredRowEval<F>,
         opening_points: Vec<RingOpeningPoint<F>>,
         full_vec_randomness: Vec<F>,
-        offset_e: usize,
-        offset_t: usize,
-        offset_z: usize,
-        offset_r: usize,
         g1_open: Vec<F>,
         g1_commit: Vec<F>,
         fold_gadget: Vec<F>,
@@ -323,11 +319,7 @@ mod tests {
             &num_polys_per_point,
         )
         .expect("witness segment layout");
-        let offset_e = witness_segment_layout.offset_e;
-        let offset_t = witness_segment_layout.offset_t;
-        let offset_z = witness_segment_layout.offset_z;
-        let offset_r = witness_segment_layout.offset_r;
-        let total_len = offset_r + rows * levels;
+        let total_len = witness_segment_layout.offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let opening_points = (0..num_points)
@@ -391,10 +383,6 @@ mod tests {
             prepared,
             opening_points,
             full_vec_randomness,
-            offset_e,
-            offset_t,
-            offset_z,
-            offset_r,
             g1_open,
             g1_commit,
             fold_gadget,
@@ -417,7 +405,7 @@ mod tests {
         let eq = eq_evals(&fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
-        let block_offset_low = fx.offset_e & (p.num_blocks - 1);
+        let block_offset_low = p.witness_segment_layout.offset_e & (p.num_blocks - 1);
 
         let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
@@ -457,7 +445,7 @@ mod tests {
             .unwrap();
         let got = EStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: fx.offset_e >> offset_low_bits,
+            offset_high: p.witness_segment_layout.offset_e >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             public_block_summaries: &public_block_summaries,
             challenge_block_summaries: &challenge_block_summaries,
@@ -478,7 +466,7 @@ mod tests {
                 * fx.opening_points[point_idx].b[block_idx]
                 + p.eq_tau1[0] * c_alphas[blk])
                 * fx.g1_open[dig];
-            expected += entry * eq[fx.offset_e + x];
+            expected += entry * eq[p.witness_segment_layout.offset_e + x];
         }
         assert_eq!(got, expected);
     }
@@ -492,7 +480,7 @@ mod tests {
         let eq = eq_evals(&fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
-        let block_offset_low = fx.offset_t & (p.num_blocks - 1);
+        let block_offset_low = p.witness_segment_layout.offset_t & (p.num_blocks - 1);
 
         let PreparedChallengeEvals::Flat {
             evals: c_alphas, ..
@@ -514,7 +502,7 @@ mod tests {
         let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: fx.offset_t >> offset_low_bits,
+            offset_high: p.witness_segment_layout.offset_t >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
             a_row_weights: &p.eq_tau1[a_start..p.rows],
@@ -528,7 +516,7 @@ mod tests {
             let a_idx = compound_dig / p.depth_open;
             let digit_idx = compound_dig % p.depth_open;
             let entry = p.eq_tau1[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];
-            expected += entry * eq[fx.offset_t + x];
+            expected += entry * eq[p.witness_segment_layout.offset_t + x];
         }
         assert_eq!(got, expected);
     }
@@ -542,7 +530,7 @@ mod tests {
         let z_offset_low_bits = p.block_len.trailing_zeros() as usize;
         let z_block_low_eq =
             EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
-        let z_offset_low = fx.offset_z & (p.block_len - 1);
+        let z_offset_low = p.witness_segment_layout.offset_z & (p.block_len - 1);
 
         let a_block_summary: Vec<[F; 2]> = fx
             .opening_points
@@ -554,7 +542,7 @@ mod tests {
             .unwrap();
         let got = ZStructuredPow2SlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
-            offset_high: fx.offset_z >> z_offset_low_bits,
+            offset_high: p.witness_segment_layout.offset_z >> z_offset_low_bits,
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             a_block_summary: &a_block_summary,
@@ -575,7 +563,7 @@ mod tests {
                 * fx.opening_points[point_idx].a[blk]
                 * fx.g1_commit[dc]
                 * fx.fold_gadget[df]);
-            expected += entry * eq[fx.offset_z + x];
+            expected += entry * eq[p.witness_segment_layout.offset_z + x];
         }
         assert_eq!(got, expected);
     }
@@ -601,7 +589,7 @@ mod tests {
             consistency_weight: p.eq_tau1[0],
             a_evals_by_point: &a_evals_by_point,
             full_vec_randomness: &fx.full_vec_randomness,
-            offset_z: fx.offset_z,
+            offset_z: p.witness_segment_layout.offset_z,
             block_len: p.block_len,
         }
         .evaluate()
@@ -620,7 +608,7 @@ mod tests {
                 * fx.opening_points[point_idx].a[blk]
                 * fx.g1_commit[dc]
                 * fx.fold_gadget[df]);
-            expected += entry * eq[fx.offset_z + x];
+            expected += entry * eq[p.witness_segment_layout.offset_z + x];
         }
         assert_eq!(got, expected);
     }
@@ -638,7 +626,7 @@ mod tests {
         let got = compute_r_contribution::<F, F>(
             p,
             &fx.full_vec_randomness,
-            fx.offset_r,
+            p.witness_segment_layout.offset_r,
             denom,
             &fx.r_gadget,
         )
@@ -648,7 +636,7 @@ mod tests {
             let row_idx = idx / fx.r_gadget.len();
             let level_idx = idx % fx.r_gadget.len();
             let entry = -(p.eq_tau1[row_idx] * denom * fx.r_gadget[level_idx]);
-            expected += entry * eq[fx.offset_r + idx];
+            expected += entry * eq[p.witness_segment_layout.offset_r + idx];
         }
         assert_eq!(got, expected);
     }
