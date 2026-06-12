@@ -2,7 +2,7 @@
 //! prover-side `SetupSumcheckProver`.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use crate::protocol::{SetupEvalPlan, SetupEvaluator};
+use crate::protocol::SetupEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
@@ -14,7 +14,8 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
-    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    LevelParams, SetupContributionPlan, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `SetupSumcheckProver`: replays the setup product
@@ -25,7 +26,7 @@ use akita_types::{
 /// evaluation, then call [`verify`](Self::verify) with the proof and
 /// transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    plan: SetupEvalPlan<E>,
+    plan: SetupContributionPlan<E>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
     rounds: usize,
