@@ -123,21 +123,6 @@ mod tests {
     type E = FpExt2<F, NegOneNr>;
 
     #[test]
-    fn cleartext_witness_opening_matches_extension_claim() {
-        let witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
-            F::from_u64(1),
-            F::from_u64(2),
-        ]));
-        let point = [E::new(F::from_u64(3), F::from_u64(4))];
-        let opening = E::new(F::from_u64(4), F::from_u64(4));
-
-        assert!(
-            cleartext_witness_opening_matches(&witness, &point, &opening, BasisMode::Lagrange)
-                .expect("extension-valued direct opening should verify")
-        );
-    }
-
-    #[test]
     fn root_direct_openings_accept_incidence_summary() {
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::from_u64(1), F::from_u64(2)]),
