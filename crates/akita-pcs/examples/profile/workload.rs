@@ -354,6 +354,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
+    // TEST ONLY: deliberate slowdown to validate same-runner baseline deltas.
+    std::thread::sleep(std::time::Duration::from_secs(2));
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
@@ -758,6 +760,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
+    // TEST ONLY: deliberate slowdown to validate same-runner baseline deltas.
+    std::thread::sleep(std::time::Duration::from_secs(2));
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     tracing::info!(
         label,
