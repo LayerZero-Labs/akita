@@ -40,38 +40,6 @@ where
         .collect())
 }
 
-fn checked_root_direct_witness_rings<const D: usize>(
-    witness_len: usize,
-    num_vars: usize,
-    params: &LevelParams,
-) -> Result<usize, AkitaError> {
-    if D == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "ring dimension must be non-zero".to_string(),
-        ));
-    }
-    if !witness_len.is_power_of_two() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_len = 1usize
-        .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
-        .ok_or(AkitaError::InvalidProof)?;
-    if witness_len != expected_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    let witness_rings = witness_len.div_ceil(D);
-    let capacity = params
-        .num_blocks
-        .checked_mul(params.block_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
-    if witness_rings > capacity {
-        return Err(AkitaError::InvalidSetup(
-            "direct witness exceeds selected verifier layout".to_string(),
-        ));
-    }
-    Ok(witness_rings)
-}
-
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
@@ -91,6 +59,20 @@ where
     if params.num_digits_commit == 0 || params.num_digits_open == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero digit depths".to_string(),
+        ));
+    }
+    let expected_witness_len = 1usize
+        .checked_shl(
+            u32::try_from(incidence_summary.num_vars()).map_err(|_| AkitaError::InvalidProof)?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+    let direct_capacity = params
+        .num_blocks
+        .checked_mul(params.block_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
+    if expected_witness_len.div_ceil(D) > direct_capacity {
+        return Err(AkitaError::InvalidSetup(
+            "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
 
@@ -131,11 +113,9 @@ where
                 .as_field_elements()
                 .ok_or(AkitaError::InvalidProof)?
                 .coeff_len();
-            checked_root_direct_witness_rings::<D>(
-                witness_len,
-                incidence_summary.num_vars(),
-                params,
-            )?;
+            if witness_len != expected_witness_len {
+                return Err(AkitaError::InvalidProof);
+            }
         }
         claim_offset = group_end;
     }
