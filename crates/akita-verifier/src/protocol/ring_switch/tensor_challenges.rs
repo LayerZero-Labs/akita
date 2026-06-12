@@ -66,7 +66,6 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn summarize_tensor_all_block_carries<Base, F, const D: usize>(
     challenges: &TensorChallengeSet,
     num_claims: usize,
@@ -79,22 +78,19 @@ where
     Base: FieldCore + FromPrimitiveInt,
     F: FieldCore + MulBase<Base>,
 {
+    challenges.validate::<D>()?;
     if num_claims > challenges.num_claims {
         return Err(AkitaError::InvalidSize {
             expected: challenges.num_claims,
             actual: num_claims,
         });
     }
-    if challenges.left_len.checked_mul(challenges.right_len) != Some(num_blocks) {
+    let blocks_per_claim = challenges.blocks_per_claim()?;
+    if blocks_per_claim != num_blocks {
         return Err(AkitaError::InvalidSize {
             expected: num_blocks,
-            actual: challenges.left_len.saturating_mul(challenges.right_len),
+            actual: blocks_per_claim,
         });
-    }
-    if !challenges.left_len.is_power_of_two() || !challenges.right_len.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "tensor challenge dimensions must be powers of two".to_string(),
-        ));
     }
     if offset_low >= num_blocks {
         return Err(AkitaError::InvalidInput(format!(
