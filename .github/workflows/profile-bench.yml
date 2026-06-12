@@ -138,6 +138,39 @@ jobs:
           lscpu || head -n 40 /proc/cpuinfo
           echo "::endgroup::"
 
+      # Build the merge-base profile binary so PR deltas compare two binaries
+      # measured on THIS runner. ubuntu-latest is a heterogeneous fleet
+      # (Skylake/Cascade Lake/Ice Lake/Zen3); baseline numbers downloaded from
+      # another run's artifact were measured on different silicon and produced
+      # phantom double-digit deltas.
+      # - fetch-depth: 0 above => the merge-base commit is already local.
+      # - RUSTUP_TOOLCHAIN is pinned to the head checkout's active toolchain:
+      #   rustup would otherwise honor the worktree's own rust-toolchain.toml,
+      #   silently mixing compilers when a PR bumps the toolchain.
+      # - Shared CARGO_TARGET_DIR: this build runs first and compiles the dep
+      #   graph once; the head build below reuses it. Only
+      #   target/release/examples/profile is contended, and the base binary is
+      #   copied out before the head build overwrites it.
+      # - continue-on-error: no base binary => the run step falls back to the
+      #   downloaded-artifact baseline; never redden the PR for this.
+      # - No worktree cleanup: the hosted runner VM is ephemeral and nothing
+      #   later in the job touches the worktree.
+      - name: Build merge-base benchmark binary
+        if: github.event_name == 'pull_request' && env.AKITA_BENCH_MERGE_BASE_SHA != ''
+        continue-on-error: true
+        run: |
+          git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
+          mkdir -p "$RUNNER_TEMP/bench-bins"
+          RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '{print $1}')"
+          export RUSTUP_TOOLCHAIN
+          (
+            cd "$RUNNER_TEMP/bench-base" &&
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+              cargo build --release --quiet --example profile
+          )
+          cp "$GITHUB_WORKSPACE/target/release/examples/profile" \
+             "$RUNNER_TEMP/bench-bins/profile-base"
+
       - name: Build profile example
         run: cargo build --release --quiet --example profile
 
