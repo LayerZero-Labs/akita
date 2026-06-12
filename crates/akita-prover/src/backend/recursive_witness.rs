@@ -102,16 +102,18 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
     fn num_blocks_for_block_len(&self, block_len: usize) -> usize {
         self.padded_ring_elems.div_ceil(block_len)
     }
+}
 
-    fn fold_blocks_with_num_blocks(
-        &self,
-        scalars: &[F],
-        block_len: usize,
-        num_blocks: usize,
-    ) -> Vec<CyclotomicRing<F, D>>
-    where
-        F: CanonicalField,
-    {
+impl<F, const D: usize> AkitaPolyOps<F, D> for SuffixWitness<'_, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.padded_ring_elems
+    }
+
+    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
@@ -130,15 +132,12 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
             .collect()
     }
 
-    fn fold_blocks_ring_with_num_blocks(
+    fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
-        num_blocks: usize,
-    ) -> Vec<CyclotomicRing<F, D>>
-    where
-        F: CanonicalField,
-    {
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
@@ -155,35 +154,6 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
             })
             .collect()
     }
-}
-
-impl<F, const D: usize> AkitaPolyOps<F, D> for SuffixWitness<'_, F, D>
-where
-    F: FieldCore + CanonicalField,
-{
-    fn num_ring_elems(&self) -> usize {
-        self.padded_ring_elems
-    }
-
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        self.fold_blocks_with_num_blocks(
-            scalars,
-            block_len,
-            self.num_blocks_for_block_len(block_len),
-        )
-    }
-
-    fn fold_blocks_ring(
-        &self,
-        scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
-    ) -> Vec<CyclotomicRing<F, D>> {
-        self.fold_blocks_ring_with_num_blocks(
-            scalars,
-            block_len,
-            self.num_blocks_for_block_len(block_len),
-        )
-    }
 
     fn evaluate_and_fold(
         &self,
@@ -191,8 +161,23 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded =
-            self.fold_blocks_with_num_blocks(fold_scalars, block_len, eval_outer_scalars.len());
+        let num_blocks = eval_outer_scalars.len();
+        let folded = cfg_into_iter!(0..num_blocks)
+            .map(|block_idx| {
+                let mut acc = [F::zero(); D];
+                for (col_idx, &scalar) in fold_scalars.iter().take(block_len).enumerate() {
+                    let Some(ring) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                        break;
+                    };
+                    for (coeff, &d) in acc.iter_mut().zip(ring.iter()) {
+                        if d != 0 {
+                            *coeff += scalar * F::from_i8(d);
+                        }
+                    }
+                }
+                CyclotomicRing::from_coefficients(acc)
+            })
+            .collect::<Vec<_>>();
         let eval = folded
             .iter()
             .zip(eval_outer_scalars.iter())
@@ -208,11 +193,22 @@ where
         fold_scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks_ring_with_num_blocks(
-            fold_scalars,
-            block_len,
-            eval_outer_scalars.len(),
-        );
+        let num_blocks = eval_outer_scalars.len();
+        let folded = cfg_into_iter!(0..num_blocks)
+            .map(|block_idx| {
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (col_idx, scalar) in fold_scalars.iter().take(block_len).enumerate() {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                        break;
+                    };
+                    let ring = CyclotomicRing::<F, D>::from_coefficients(
+                        digits.map(|digit| F::from_i8(digit)),
+                    );
+                    ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
+                }
+                acc
+            })
+            .collect::<Vec<_>>();
         let eval = folded
             .iter()
             .zip(eval_outer_scalars.iter())
