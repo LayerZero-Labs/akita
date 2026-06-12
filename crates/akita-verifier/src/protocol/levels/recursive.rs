@@ -379,11 +379,18 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let stage3_sumcheck_proof = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => stage3_sumcheck_proof_for_mode(
+    let setup_replay = match &proof {
+        RecursiveFoldProofView::Intermediate {
+            proof,
+            next_fold_level_params,
+        } => stage3_sumcheck_proof_for_mode(
             setup_contribution_mode,
             proof.stage3_sumcheck_proof.as_ref(),
-        )?,
+        )?
+        .map(|proof| SetupReplay {
+            proof,
+            next_fold_level_params,
+        }),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage2_replay = match &proof {
@@ -405,20 +412,6 @@ where
             #[cfg(feature = "zk")]
             sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
         },
-    };
-    let setup_replay = match (&proof, stage3_sumcheck_proof) {
-        (
-            RecursiveFoldProofView::Intermediate {
-                next_fold_level_params,
-                ..
-            },
-            Some(setup_proof),
-        ) => Some(SetupReplay {
-            proof: setup_proof,
-            next_fold_level_params,
-        }),
-        (_, None) => None,
-        (RecursiveFoldProofView::Terminal { .. }, Some(_)) => return Err(AkitaError::InvalidProof),
     };
     let stage2_input = Stage2ReplayInput {
         setup,

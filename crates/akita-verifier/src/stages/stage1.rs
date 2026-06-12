@@ -10,7 +10,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
-use akita_r1cs::{ZkR1csLinearCombination, ZkR1csTerm, ZkR1csVariable, ZkRelationAccumulator};
+use akita_r1cs::{zk_ext_mask_lc_at, ZkR1csLinearCombination, ZkR1csTerm, ZkRelationAccumulator};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceVerifier;
 #[cfg(not(feature = "zk"))]
@@ -114,34 +114,13 @@ fn zk_record_polynomial_eval<E: FieldCore>(
 }
 
 #[cfg(feature = "zk")]
-fn hidden_ext_mask_lc<F, E>(start: usize) -> ZkR1csLinearCombination<E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let mut out = ZkR1csLinearCombination::zero();
-    for idx in 0..<E as ExtField<F>>::EXT_DEGREE {
-        let mut coeffs = vec![F::zero(); <E as ExtField<F>>::EXT_DEGREE];
-        coeffs[idx] = F::one();
-        out.add_scaled(
-            E::from_base_slice(&coeffs),
-            &ZkR1csLinearCombination::variable(
-                ZkR1csVariable::HiddenWitness(start + idx),
-                E::one(),
-            ),
-        );
-    }
-    out
-}
-
-#[cfg(feature = "zk")]
 fn hidden_ext_mask_lcs<F, E>(start: usize, count: usize) -> Vec<ZkR1csLinearCombination<E>>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     (0..count)
-        .map(|idx| hidden_ext_mask_lc::<F, E>(start + idx * <E as ExtField<F>>::EXT_DEGREE))
+        .map(|idx| zk_ext_mask_lc_at::<F, E>(start + idx * <E as ExtField<F>>::EXT_DEGREE))
         .collect()
 }
 
