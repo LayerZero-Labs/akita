@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::{dispatch_ring_dim_result, recover_ring_subfield_inner_product};
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
+use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
 
 enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
     Intermediate {
@@ -206,77 +206,15 @@ where
     } else {
         None
     };
-    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
-        transcript,
-        v_typed,
-        lp.num_blocks,
-        num_claims,
-        lp,
-        m_row_layout,
-    )?;
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
-    let (gamma_base, row_coefficient_rings) =
-        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<L>(
-            &row_coefficients,
-        )?;
-    let relation_instance = RingRelationInstance::new(
-        m_row_layout,
-        stage1_challenges,
-        ring_opening_points,
-        ring_multiplier_points,
-        incidence,
-        commitment_routing,
-        gamma_base,
-        row_coefficient_rings,
-        y_rings.clone(),
-        v_typed.to_vec(),
-    )?;
-    let ring_switch_replay = crate::protocol::ring_switch::RingSwitchReplay {
-        relation: &relation_instance,
-        row_coefficients: &row_coefficients,
-        lp,
-    };
-
-    let rs = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => ring_switch_verifier::<F, L, T, D>(
-            &ring_switch_replay,
-            w_len,
-            proof.next_w_commitment(),
-            transcript,
-        )?,
-        RecursiveFoldProofView::Terminal { .. } => {
-            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, L, T, D>(
-                &ring_switch_replay,
-                w_len,
-                transcript,
-                replay,
-            )?
-        }
-    };
-    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
-        v_typed,
-        commitment_u,
-        &y_rings,
-    )?;
-    #[cfg(feature = "zk")]
-    let relation_claim_mask =
-        zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
     let stage1_proof = match &proof {
         RecursiveFoldProofView::Intermediate { proof, .. } => Some(&proof.stage1),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
-    let stage1_replay = replay_stage1_or_relation_only::<F, L, T>(
-        stage1_proof,
-        &rs,
-        transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )?;
+    let next_w_commitment = match &proof {
+        RecursiveFoldProofView::Intermediate { proof, .. } => Some(proof.next_w_commitment()),
+        RecursiveFoldProofView::Terminal { .. } => None,
+    };
     let stage3 = match &proof {
         RecursiveFoldProofView::Intermediate {
             proof,
@@ -311,20 +249,30 @@ where
             sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
         },
     };
-    let stage2_input = Stage2ReplayInput {
-        setup,
+    let prepared = PreparedFoldReplay {
+        lp,
+        m_row_layout,
+        y_rings,
+        v: v_typed.to_vec(),
+        commitment_rows: commitment_u,
+        row_coefficients: &row_coefficients,
+        incidence,
+        commitment_routing,
+        ring_opening_points,
+        ring_multiplier_points,
+        w_len,
+        stage1: stage1_proof,
         stage2: stage2_replay,
-        stage1: stage1_replay,
-        rs,
-        relation_claim,
-        #[cfg(feature = "zk")]
-        relation_claim_mask,
+        next_w_commitment,
+        terminal_replay: terminal_replay.as_ref(),
         stage3,
-        ring_multiplier_points: relation_instance.ring_multiplier_points(),
+        #[cfg(feature = "zk")]
+        y_masks,
     };
-    verify_stage2_then_stage3::<F, L, T, D>(
+    verify_fold::<F, L, T, D>(
+        setup,
         transcript,
-        stage2_input,
+        prepared,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
