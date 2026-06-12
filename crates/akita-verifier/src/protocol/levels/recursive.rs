@@ -381,7 +381,7 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let setup_replay = match &proof {
+    let stage3 = match &proof {
         RecursiveFoldProofView::Intermediate {
             proof,
             next_fold_level_params,
@@ -389,7 +389,7 @@ where
             setup_contribution_mode,
             proof.stage3_sumcheck_proof.as_ref(),
         )?
-        .map(|proof| SetupReplay {
+        .map(|proof| Stage3Replay {
             proof,
             next_fold_level_params,
         }),
@@ -423,10 +423,10 @@ where
         relation_claim,
         #[cfg(feature = "zk")]
         relation_claim_mask,
-        setup_replay,
+        stage3,
         ring_multiplier_points: relation_instance.ring_multiplier_points(),
     };
-    verify_stage2_then_setup_sumcheck::<F, L, T, D>(
+    verify_stage2_then_stage3::<F, L, T, D>(
         transcript,
         stage2_input,
         #[cfg(feature = "zk")]
@@ -477,7 +477,7 @@ fn scheduled_recursive_verify_level<'a, F: FieldCore, L: FieldCore>(
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
-fn verify_suffix<'a, F, L, T, const D: usize>(
+fn verify_suffix<'a, F, L, T>(
     steps: &'a [AkitaProofStep<F, L>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -692,13 +692,7 @@ where
             }
             verify_root_level::<F, E, C, T, D>(
                 RootLevelProofView::Terminal {
-                    y_rings_flat: &terminal.y_rings,
-                    extension_opening_reduction: terminal.extension_opening_reduction.as_ref(),
-                    #[cfg(not(feature = "zk"))]
-                    stage2_sumcheck: &terminal.stage2_sumcheck,
-                    #[cfg(feature = "zk")]
-                    stage2_sumcheck_masked: &terminal.stage2_sumcheck_proof_masked,
-                    final_witness: &terminal.final_witness,
+                    proof: terminal,
                     final_w_len: root_step.next_w_len,
                 },
                 setup,
@@ -709,7 +703,6 @@ where
                 incidence_summary,
                 basis,
                 root_lp,
-                &root_step.params,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -758,7 +751,6 @@ where
                 incidence_summary,
                 basis,
                 root_lp,
-                &root_step.params,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -786,7 +778,7 @@ where
                 w_len: root_step.next_w_len,
                 log_basis: first_recursive_params.log_basis,
             };
-            verify_suffix::<F, C, T, D>(
+            verify_suffix::<F, C, T>(
                 &proof.steps,
                 setup,
                 transcript,

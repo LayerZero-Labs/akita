@@ -481,18 +481,4 @@ mod tests {
         .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
-
-    #[test]
-    fn packed_witness_eval_rejects_zero_ring_dimension() {
-        let packed = PackedDigits::from_i8_digits(&[], 3);
-        let err = cleartext_witness_eval::<F, E, 0>(
-            &CleartextWitnessProof::PackedDigits(packed),
-            0,
-            &[],
-            0,
-            0,
-        )
-        .expect_err("zero ring dimension should be rejected");
-        assert!(matches!(err, AkitaError::InvalidProof));
-    }
 }

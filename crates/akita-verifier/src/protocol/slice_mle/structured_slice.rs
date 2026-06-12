@@ -427,7 +427,7 @@ mod tests {
         }
     }
 
-    fn eq_evals(_total_len: usize, full_vec_randomness: &[F]) -> Vec<F> {
+    fn eq_evals(full_vec_randomness: &[F]) -> Vec<F> {
         (0..(1usize << full_vec_randomness.len()))
             .map(|idx| eq_eval_at_index(full_vec_randomness, idx))
             .collect()
@@ -439,7 +439,7 @@ mod tests {
         let p = &fx.prepared;
         let total_blocks = p.num_blocks * p.num_claims;
         let e_len = p.depth_open * total_blocks;
-        let eq = eq_evals(fx.offset_e + e_len, &fx.full_vec_randomness);
+        let eq = eq_evals(&fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_e & (p.num_blocks - 1);
@@ -514,7 +514,7 @@ mod tests {
         let p = &fx.prepared;
         let total_blocks = p.num_blocks * p.num_claims;
         let t_len = p.depth_open * p.n_a * total_blocks;
-        let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
+        let eq = eq_evals(&fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
@@ -563,7 +563,7 @@ mod tests {
         let fx = fixture();
         let p = &fx.prepared;
         let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
-        let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
+        let eq = eq_evals(&fx.full_vec_randomness);
         let z_offset_low_bits = p.block_len.trailing_zeros() as usize;
         let z_block_low_eq =
             EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
@@ -614,7 +614,7 @@ mod tests {
         assert!(!p.block_len.is_power_of_two());
 
         let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
-        let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
+        let eq = eq_evals(&fx.full_vec_randomness);
         let a_evals_by_point: Vec<Vec<F>> = fx
             .opening_points
             .iter()
@@ -658,7 +658,7 @@ mod tests {
         let alpha_pows = scalar_powers(alpha, D);
         let denom = alpha_pows[D - 1] * alpha + F::one();
         let r_len = p.rows * fx.r_gadget.len();
-        let eq = eq_evals(fx.offset_r + r_len, &fx.full_vec_randomness);
+        let eq = eq_evals(&fx.full_vec_randomness);
 
         let got = compute_r_contribution::<F, F>(
             p,
