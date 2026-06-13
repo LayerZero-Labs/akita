@@ -156,6 +156,25 @@ def parse_args() -> argparse.Namespace:
             "and they do not contribute to the reported median."
         ),
     )
+    run_parser.add_argument(
+        "--baseline-binary",
+        default="",
+        help=(
+            "Optional second binary (e.g. the PR merge-base build) benchmarked "
+            "interleaved with --binary: every warm-up and measured run executes "
+            "--binary immediately followed by the baseline, so machine-state "
+            "drift lands on both sides of each pair instead of on one whole "
+            "block."
+        ),
+    )
+    run_parser.add_argument(
+        "--baseline-output-dir",
+        default="",
+        help=(
+            "Directory for the baseline side's logs and summary files (same "
+            "layout as --output-dir). Required with --baseline-binary."
+        ),
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
@@ -903,11 +922,12 @@ def execute_schedule(
 ) -> tuple[list[tuple[ScheduledRun, dict[str, object]]], int]:
     """Execute runs in order, recording the summaries that feed aggregation.
 
-    Successful warm-up output is discarded. The first failure halts that
-    run's case (rerunning a known-broken case would just repeat the same
-    error) and records its failure summary; remaining cases still run.
-    Returns the recorded (run, summary) pairs and the first non-zero exit
-    code, 0 otherwise.
+    Successful warm-up output is discarded. The first failure records its
+    failure summary and cancels the case for every binary — rerunning the
+    failing binary would repeat the same error, and a pairwise comparison
+    is meaningless once one side fails. Remaining cases still run. Returns
+    the recorded (run, summary) pairs and the first non-zero exit code,
+    0 otherwise.
     """
     results: list[tuple[ScheduledRun, dict[str, object]]] = []
     failed_cases: set[str] = set()
@@ -966,13 +986,29 @@ def run_benchmark(args: argparse.Namespace) -> int:
     if args.warmups < 0:
         raise ValueError("--warmups must be non-negative")
 
+    if args.baseline_binary and not args.baseline_output_dir:
+        raise ValueError("--baseline-output-dir is required with --baseline-binary")
+    binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
+    if args.baseline_binary:
+        binaries.append((args.baseline_binary, pathlib.Path(args.baseline_output_dir)))
+
     cases = configured_cases(args)
     schedule: list[ScheduledRun] = []
     for case in cases:
-        schedule.extend(plan_case_runs(args.binary, output_dir, case, args.runs, args.warmups))
+        plans = [
+            plan_case_runs(binary, summary_dir, case, args.runs, args.warmups)
+            for binary, summary_dir in binaries
+        ]
+        # Interleave the binaries' plans: each warm-up/measured slot runs
+        # every binary back-to-back (PR, base, PR, base, ...), so
+        # machine-state drift on shared runners lands on both sides of each
+        # adjacent pair instead of on one whole block.
+        schedule.extend(run for slot in zip(*plans, strict=True) for run in slot)
 
     results, overall_return_code = execute_schedule(schedule)
-    write_aggregate_summaries([output_dir], cases, results, args.warmups)
+    write_aggregate_summaries(
+        [summary_dir for _, summary_dir in binaries], cases, results, args.warmups
+    )
     return overall_return_code
 
 
