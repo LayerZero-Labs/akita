@@ -1,6 +1,5 @@
 //! Prover-side protocol orchestration helpers.
 
-pub mod dispatch;
 pub mod extension_opening_reduction;
 pub mod flow;
 #[cfg(feature = "zk")]

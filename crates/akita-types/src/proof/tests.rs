@@ -190,7 +190,7 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
 }
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
-    AkitaStage2Proof {
+    AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
         #[cfg(not(feature = "zk"))]
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
@@ -205,7 +205,7 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         next_w_eval: F::zero(),
         #[cfg(feature = "zk")]
         next_w_eval_masked: F::zero(),
-    }
+    })
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
@@ -232,7 +232,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         tiny_stage1(),
         tiny_stage2::<D>(),
     );
-    assert!(without_reduction.extension_opening_reduction.is_none());
+    assert!(without_reduction.extension_opening_reduction().is_none());
     assert!(without_reduction
         .shape()
         .extension_opening_reduction
@@ -247,7 +247,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     let decoded =
         AkitaLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
             .expect("deserialize proof without extension-opening reduction");
-    assert!(decoded.extension_opening_reduction.is_none());
+    assert!(decoded.extension_opening_reduction().is_none());
     assert_eq!(decoded, without_reduction);
 
     let with_reduction = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
@@ -266,7 +266,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         F::zero(),
     );
     let reduction_bytes = extension_opening_reduction_serialized_size(
-        with_reduction.extension_opening_reduction.as_ref(),
+        with_reduction.extension_opening_reduction(),
         Compress::No,
     );
     assert!(reduction_bytes > 0);

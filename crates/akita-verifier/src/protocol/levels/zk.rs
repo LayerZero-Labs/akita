@@ -1,6 +1,5 @@
 use crate::protocol::batched::{
-    append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
-    mat_vec_mul_i8_plain, zk_b_blinding_rows,
+    direct_decomposed_inner_rows, field_evals_to_rings, mat_vec_mul_i8_plain, zk_b_blinding_rows,
 };
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{AkitaVerifierSetup, LevelParams, ZkHidingProof};
@@ -42,7 +41,6 @@ where
     )?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
     let b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
-    append_direct_blinding::<F, D>(&proof.b_blinding_digits, &hiding_params)?;
     let shared_matrix = setup.expanded.shared_matrix();
     let b_required = hiding_params
         .b_key
@@ -59,12 +57,8 @@ where
         shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), b_input_digits.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let mut expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
-    let blinding_rows = zk_b_blinding_rows::<F, D>(
-        setup,
-        hiding_params.b_key.row_len(),
-        proof.b_blinding_digits.len() / D,
-        &proof.b_blinding_digits,
-    )?;
+    let blinding_rows =
+        zk_b_blinding_rows::<F, D>(setup, &hiding_params, &proof.b_blinding_digits)?;
     for (row, blinding) in expected_u_blind_rings.iter_mut().zip(blinding_rows) {
         *row += blinding;
     }
