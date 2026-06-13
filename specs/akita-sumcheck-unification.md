@@ -126,7 +126,7 @@ The hot paths are the stage-2 fused witness scan and (later) the stage-1 eq-fact
 Baseline and treatment are measured with the canonical profile command from AGENTS.md:
 
 ```bash
-AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
+AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile
 ```
 
 Expected direction: no regression in stage-2 prover time.
@@ -490,4 +490,4 @@ Risks to resolve first:
   - `specs/l2-msis-opnorm-folded-witness.md` (worktree `akita-l2-msis-cutover`): the folded-witness L2 certificate (grouped-carry realization), operator-norm challenge rejection, and L2 SIS pricing the `l2_certificate` gate targets. Supersedes the earlier `l2-folded-witness-sumchecks.md` / `l2_certificate.rs` (PR-158) binary `Deterministic`/`Realized` claim-list shape.
   - `specs/akita-polyops-cutover.md` (worktree `akita-polyops-cutover-spec`): witness/polynomial source boundary.
   - `STACK.md`, `specs/setup-layout-repack.md`: setup-claim offloading and conditional protocol shape.
-- Profiling: `AKITA_MODE=onehot_fp128_d128 AKITA_NUM_VARS=32 cargo run --release --example profile`.
+- Profiling: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.
