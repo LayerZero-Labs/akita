@@ -10,7 +10,7 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_claim, relation_claim_from_rows_extension, AkitaExpandedSetup,
+    eval_trace_terms_closed, relation_claim_from_rows_extension, AkitaExpandedSetup,
     CleartextWitnessProof, PackedDigits, RingMultiplierOpeningPoint, RingOpeningPoint,
     RingSubfieldEncoding, TraceClaim,
 };
@@ -467,7 +467,12 @@ where
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         let trace_oracle = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_claim(trace, y_challenges, x_challenges)?;
+            let trace_weight = eval_trace_terms_closed::<F, E, D>(
+                &trace.layout,
+                y_challenges,
+                x_challenges,
+                &trace.trace_terms,
+            )?;
             trace.trace_coeff * w_eval * trace_weight
         } else {
             E::zero()
@@ -528,7 +533,12 @@ where
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = self.row_eval(x_challenges)?;
         let trace_val = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_claim(trace, y_challenges, x_challenges)?;
+            let trace_weight = eval_trace_terms_closed::<F, E, D>(
+                &trace.layout,
+                y_challenges,
+                x_challenges,
+                &trace.trace_terms,
+            )?;
             trace.trace_coeff * trace_weight
         } else {
             E::zero()

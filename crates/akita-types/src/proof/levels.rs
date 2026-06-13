@@ -266,11 +266,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         self.v.try_to_vec()
     }
 
-    /// Claimed evaluation of the next witness `w` at the norm-check output point.
-    pub fn next_w_eval(&self) -> L {
-        self.stage2.next_w_eval()
-    }
-
     /// Derive the [`LevelProofShape`] for this level proof.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(

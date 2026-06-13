@@ -12,10 +12,9 @@ use super::build::{
 };
 use super::trace_table::TraceTable;
 use crate::{
-    block_rings_at_opening, embed_ring_subfield_scalar, eval_trace_terms_closed, lagrange_weights,
-    BasisMode, ClaimIncidenceSummary, LevelParams, PreparedOpeningPoint, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm,
-    TraceWeightLayout,
+    embed_ring_subfield_scalar, BasisMode, ClaimIncidenceSummary, LevelParams,
+    PreparedOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, TraceFieldBlockOpening,
+    TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -52,16 +51,10 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub trace_opening_claim: E,
 }
 
-/// Scalar contribution added to the stage-2 input claim.
-#[inline]
-pub fn trace_input_claim<E: FieldCore>(trace_coeff: E, eval_target: E) -> E {
-    trace_coeff * eval_target
-}
-
 /// Whether the trace-weight dispatcher has an algebraic implementation for this
 /// claim-field extension degree.
 #[inline]
-pub fn trace_stage2_supported(extension_degree: usize) -> bool {
+fn trace_stage2_supported(extension_degree: usize) -> bool {
     matches!(extension_degree, 1 | 2 | 4 | 8)
 }
 
@@ -81,11 +74,6 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
             "fused stage-2 trace term has no implementation for claim-field extension degree {extension_degree}; cannot bind the fold opening"
         )))
     }
-}
-
-/// Lagrange block weights for the degree-one closed-form trace evaluator.
-pub fn trace_block_weights_k1<F: FieldCore>(block_open: &[F]) -> Result<Vec<F>, AkitaError> {
-    lagrange_weights(block_open)
 }
 
 /// Derive the trace-weight layout for the `e_hat` digit segment.
@@ -124,22 +112,6 @@ pub fn trace_weight_layout_from_segment(
     Ok(layout)
 }
 
-/// Build degree-one public trace weights from explicit factors.
-pub fn trace_public_weights_k1<F, E, const D: usize>(
-    block_weights: &[F],
-    inner_opening_ring: &CyclotomicRing<F, D>,
-) -> Result<TracePublicWeights<F, E, D>, AkitaError>
-where
-    F: FieldCore,
-    E: FieldCore,
-{
-    trace_public_weights_field_terms(&[TraceFieldBlockOpening {
-        block_offset: 0,
-        block_weights: block_weights.to_vec(),
-        inner_opening_ring: *inner_opening_ring,
-    }])
-}
-
 /// Build degree-one public trace weights from explicit block-offset terms.
 pub fn trace_public_weights_field_terms<F, E, const D: usize>(
     terms: &[TraceFieldBlockOpening<F, D>],
@@ -156,22 +128,6 @@ where
     Ok(TracePublicWeights::Field {
         terms: terms.to_vec(),
     })
-}
-
-/// Build extension-valued public trace weights from explicit factors.
-pub fn trace_public_weights_ring<F, E, const D: usize>(
-    packed_inner_point: &CyclotomicRing<F, D>,
-    block_open: &[E],
-) -> Result<TracePublicWeights<F, E, D>, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + FieldCore,
-{
-    trace_public_weights_ring_terms(&[TraceRingBlockOpening {
-        block_offset: 0,
-        block_rings: block_rings_at_opening::<F, E, D>(block_open)?,
-        packed_inner_point: *packed_inner_point,
-    }])
 }
 
 /// Build extension-valued public trace weights from explicit block-offset terms.
@@ -504,19 +460,6 @@ pub fn trace_weight_evals_for_witness<E: FieldCore>(
     Ok(out)
 }
 
-/// Build the prover-side compact trace table for a stage-2 witness.
-pub fn build_trace_stage2_compact<F, E, const D: usize>(
-    layout: &TraceWeightLayout,
-    public_weights: &TracePublicWeights<F, E, D>,
-    live_x_cols: usize,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    build_trace_stage2_compact_scaled(layout, public_weights, live_x_cols, E::one())
-}
-
 /// Build the prover-side compact trace table and scale each live entry.
 pub fn build_trace_stage2_compact_scaled<F, E, const D: usize>(
     layout: &TraceWeightLayout,
@@ -572,19 +515,6 @@ where
 /// Evaluate the fused trace term at the verifier's final stage-2 point.
 ///
 /// Uses the short closed form: one `Tr_H` per claim term, with no dependence on
-/// the number of fold blocks or opening digits (see [`eval_trace_terms_closed`]).
-pub fn eval_trace_claim<F, E, const D: usize>(
-    claim: &TraceClaim<F, E, D>,
-    ring_point: &[E],
-    col_point: &[E],
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    eval_trace_terms_closed::<F, E, D>(&claim.layout, ring_point, col_point, &claim.trace_terms)
-}
-
 /// Sum batched public opening claims under per-claim row coefficients.
 pub fn batched_eval_target_from_incidence<E, L>(
     incidence: &ClaimIncidenceSummary,
@@ -622,10 +552,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::build::{
+        build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+        build_trace_weight_table_ring_terms,
+    };
     use super::*;
     use crate::{
-        build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
-        build_trace_weight_table_ring_terms, reduce_inner_opening_to_ring_element, BasisMode,
+        eval_trace_terms_closed, lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode,
     };
     use akita_field::{Ext2, Prime128OffsetA7F7};
 
@@ -684,7 +617,9 @@ mod tests {
         ];
         let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
         let live_x_cols = 5;
-        let dense = build_trace_stage2_compact(&layout, &public_weights, live_x_cols).unwrap();
+        let dense =
+            build_trace_stage2_compact_scaled(&layout, &public_weights, live_x_cols, F::one())
+                .unwrap();
         let sparse = build_trace_table_scaled(&layout, &public_weights, live_x_cols, F::one())
             .unwrap()
             .materialize_dense(live_x_cols, layout.ring_len());
@@ -709,7 +644,8 @@ mod tests {
         let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
         let dense = build_trace_weight_table_field_terms::<F, F, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual = build_trace_stage2_compact(&layout, &public_weights, 5).unwrap();
+        let actual =
+            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, F::one()).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -734,7 +670,8 @@ mod tests {
         let public_weights = trace_public_weights_ring_terms::<F, E, D>(&terms).unwrap();
         let dense = build_trace_weight_table_ring_terms::<F, E, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual = build_trace_stage2_compact(&layout, &public_weights, 5).unwrap();
+        let actual =
+            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, E::one()).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -802,7 +739,13 @@ mod tests {
         let dense =
             crate::trace_weight::trace_weight_mle_eval(&layout, &table, &col_point, &ring_point)
                 .unwrap();
-        let closed = eval_trace_claim(&claim, &ring_point, &col_point).unwrap();
+        let closed = eval_trace_terms_closed::<F, F, D>(
+            &claim.layout,
+            &ring_point,
+            &col_point,
+            &claim.trace_terms,
+        )
+        .unwrap();
 
         assert_eq!(closed, dense);
     }

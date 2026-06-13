@@ -8,17 +8,16 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{AkitaProverSetup};
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode,
-    RingCommitment,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;

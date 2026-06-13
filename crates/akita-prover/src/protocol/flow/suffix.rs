@@ -378,10 +378,9 @@ where
     } else {
         batching_coeff * batching_coeff
     };
-    let trace_opening_claim = trace_input_claim(trace_coeff, prepared_fold.trace_eval_target);
+    let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim =
-        trace_input_claim(trace_coeff, prepared_fold.trace_eval_target_public);
+    let trace_eval_target_public_claim = trace_coeff * prepared_fold.trace_eval_target_public;
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
     let trace_compact = if let Some(prepared_points) = prepared_fold.trace_prepared_points.as_ref()
     {

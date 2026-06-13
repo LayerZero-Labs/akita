@@ -1,8 +1,7 @@
 use super::*;
 use akita_types::{
-    ensure_trace_stage2_supported, trace_input_claim, trace_terms_recursive,
-    trace_weight_layout_from_segment, PreparedOpeningPoint, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TraceClaim,
+    ensure_trace_stage2_supported, trace_terms_recursive, trace_weight_layout_from_segment,
+    PreparedOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, TraceClaim,
 };
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
@@ -848,7 +847,7 @@ where
                 }
                 current_state = RecursiveVerifierState {
                     opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
+                    opening: level_proof.stage2.next_w_eval(),
                     #[cfg(feature = "zk")]
                     opening_mask: zk_ext_mask_lc_at::<F, L>(
                         *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
@@ -1129,7 +1128,7 @@ where
     Ok(TraceClaim {
         layout,
         trace_coeff,
-        trace_opening_claim: trace_input_claim(trace_coeff, trace_eval_target),
+        trace_opening_claim: trace_coeff * trace_eval_target,
         trace_terms: trace_terms_recursive(prepared, lp, basis, trace_scale)?,
     })
 }

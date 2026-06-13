@@ -55,7 +55,7 @@ use akita_types::{
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, terminal_witness_segment_layout, trace_input_claim,
+    tensor_row_partials_from_columns, terminal_witness_segment_layout,
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
