@@ -14,7 +14,7 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep,
+    schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof,
     LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
     VerifierClaims,
@@ -50,10 +50,10 @@ where
             let Some((last, rest)) = proof.steps.split_last() else {
                 return Err(AkitaError::InvalidProof);
             };
-            if !matches!(last, AkitaProofStep::Terminal(_))
+            if !matches!(last, AkitaLevelProof::Terminal { .. })
                 || rest
                     .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
+                    .any(|step| !matches!(step, AkitaLevelProof::Intermediate { .. }))
             {
                 return Err(AkitaError::InvalidProof);
             }

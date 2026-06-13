@@ -179,7 +179,8 @@ fn assert_folded_v_hiding<const D: usize>(
         .enumerate()
     {
         assert_ne!(
-            level.v, second_level.v,
+            level.v(),
+            second_level.v(),
             "zk recursive v should re-randomize at recursive level {level_idx} for D={D}, nv={nv}"
         );
     }
@@ -206,7 +207,7 @@ fn tamper_first_stage1_child_claim(proof: &mut AkitaBatchedProof<F, F>) {
     }
     for step in &mut proof.steps {
         if let Some(level) = step.as_intermediate_mut() {
-            for stage in &mut level.stage1.stages {
+            for stage in &mut level.stage1_mut().stages {
                 if let Some(claim) = stage.child_claims.first_mut() {
                     *claim += F::one();
                     return;
@@ -230,7 +231,7 @@ fn tamper_first_stage1_round_coeff(proof: &mut AkitaBatchedProof<F, F>) {
     }
     for step in &mut proof.steps {
         if let Some(level) = step.as_intermediate_mut() {
-            for stage in &mut level.stage1.stages {
+            for stage in &mut level.stage1_mut().stages {
                 for round in &mut stage.sumcheck_proof_masked.masked_round_polys {
                     if let Some(coeff) = round.coeffs_except_linear_term.first_mut() {
                         *coeff += F::one();

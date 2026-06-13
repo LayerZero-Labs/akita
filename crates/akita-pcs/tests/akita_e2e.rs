@@ -160,7 +160,7 @@ fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Sc
 fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
     proof: &AkitaBatchedProof<FF, L>,
 ) -> usize {
-    use akita_types::{AkitaBatchedRootProof, AkitaProofStep};
+    use akita_types::{AkitaBatchedRootProof, AkitaLevelProof};
     let root_fold = match proof.root {
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => 1,
         AkitaBatchedRootProof::ZeroFold { .. } => 0,
@@ -171,7 +171,7 @@ fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
         .filter(|step| {
             matches!(
                 step,
-                AkitaProofStep::Intermediate(_) | AkitaProofStep::Terminal(_)
+                AkitaLevelProof::Intermediate { .. } | AkitaLevelProof::Terminal { .. }
             )
         })
         .count();
@@ -341,8 +341,8 @@ fn terminal_witness_mut<FField: FieldCore, L: FieldCore>(
         akita_types::AkitaBatchedRootProof::Fold(_) => proof
             .steps
             .last_mut()
-            .and_then(akita_types::AkitaProofStep::as_terminal_mut)
-            .and_then(|terminal| terminal.stage2.final_witness_mut())
+            .and_then(akita_types::AkitaLevelProof::as_terminal_mut)
+            .and_then(|terminal| terminal.stage2_mut().final_witness_mut())
             .expect("fold-rooted proof must end in a terminal step"),
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
@@ -567,9 +567,9 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let recursive = malformed
             .steps
             .iter_mut()
-            .find_map(akita_types::AkitaProofStep::as_intermediate_mut)
+            .find_map(akita_types::AkitaLevelProof::as_intermediate_mut)
             .expect("fixture should include an intermediate recursive fold");
-        bump_flat_ring_vec(&mut recursive.v);
+        bump_flat_ring_vec(recursive.v_mut());
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");

@@ -48,7 +48,7 @@ pub use incidence::{
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
     TerminalLevelProof,
 };

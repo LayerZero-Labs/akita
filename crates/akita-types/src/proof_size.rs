@@ -288,7 +288,7 @@ mod tests {
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = AkitaLevelProof {
+        let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),

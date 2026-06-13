@@ -155,129 +155,227 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let stage2 = self.stage2.as_intermediate().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "Akita level proof must carry intermediate stage-2 proof".to_string(),
-            )
-        })?;
-        serialize_extension_opening_reduction(
-            self.extension_opening_reduction.as_ref(),
-            &mut writer,
-            compress,
-        )?;
-        self.v.serialize_with_mode(&mut writer, compress)?;
-        for stage in &self.stage1.stages {
-            #[cfg(not(feature = "zk"))]
-            stage
-                .sumcheck_proof
-                .serialize_with_mode(&mut writer, compress)?;
-            #[cfg(feature = "zk")]
-            stage
-                .sumcheck_proof_masked
-                .serialize_with_mode(&mut writer, compress)?;
-            for claim in &stage.child_claims {
-                claim.serialize_with_mode(&mut writer, compress)?;
+        match self {
+            AkitaLevelProof::Intermediate {
+                extension_opening_reduction,
+                v,
+                stage1,
+                stage2,
+                stage3_sumcheck_proof,
+            } => {
+                let stage2 = stage2.as_intermediate().ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "Akita level proof must carry intermediate stage-2 proof".to_string(),
+                    )
+                })?;
+                serialize_extension_opening_reduction(
+                    extension_opening_reduction.as_ref(),
+                    &mut writer,
+                    compress,
+                )?;
+                v.serialize_with_mode(&mut writer, compress)?;
+                for stage in &stage1.stages {
+                    #[cfg(not(feature = "zk"))]
+                    stage
+                        .sumcheck_proof
+                        .serialize_with_mode(&mut writer, compress)?;
+                    #[cfg(feature = "zk")]
+                    stage
+                        .sumcheck_proof_masked
+                        .serialize_with_mode(&mut writer, compress)?;
+                    for claim in &stage.child_claims {
+                        claim.serialize_with_mode(&mut writer, compress)?;
+                    }
+                }
+                stage1.s_claim.serialize_with_mode(&mut writer, compress)?;
+                #[cfg(not(feature = "zk"))]
+                stage2
+                    .sumcheck_proof
+                    .serialize_with_mode(&mut writer, compress)?;
+                #[cfg(feature = "zk")]
+                stage2
+                    .sumcheck_proof_masked
+                    .serialize_with_mode(&mut writer, compress)?;
+                serialize_stage3_sumcheck(stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
+                stage2
+                    .next_w_commitment
+                    .serialize_with_mode(&mut writer, compress)?;
+                stage2
+                    .next_w_eval()
+                    .serialize_with_mode(&mut writer, compress)
+            }
+            AkitaLevelProof::Terminal {
+                extension_opening_reduction,
+                stage2,
+                ..
+            } => {
+                let stage2 = stage2.as_terminal().ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "terminal level proof must carry terminal stage-2 proof".to_string(),
+                    )
+                })?;
+                serialize_extension_opening_reduction(
+                    extension_opening_reduction.as_ref(),
+                    &mut writer,
+                    compress,
+                )?;
+                #[cfg(not(feature = "zk"))]
+                stage2
+                    .sumcheck_proof
+                    .serialize_with_mode(&mut writer, compress)?;
+                #[cfg(feature = "zk")]
+                stage2
+                    .sumcheck_proof_masked
+                    .serialize_with_mode(&mut writer, compress)?;
+                stage2
+                    .final_witness
+                    .serialize_with_mode(&mut writer, compress)
             }
         }
-        self.stage1
-            .s_claim
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(not(feature = "zk"))]
-        stage2
-            .sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(feature = "zk")]
-        stage2
-            .sumcheck_proof_masked
-            .serialize_with_mode(&mut writer, compress)?;
-        serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
-        stage2
-            .next_w_commitment
-            .serialize_with_mode(&mut writer, compress)?;
-        stage2
-            .next_w_eval()
-            .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        let stage2 = self
-            .stage2
-            .as_intermediate()
-            .expect("Akita level proof must carry intermediate stage-2 proof");
-        let base = extension_opening_reduction_serialized_size(
-            self.extension_opening_reduction.as_ref(),
-            compress,
-        ) + self.v.serialized_size(compress);
-        base + self
-            .stage1
-            .stages
-            .iter()
-            .map(|stage| {
-                ({
+        match self {
+            AkitaLevelProof::Intermediate {
+                extension_opening_reduction,
+                v,
+                stage1,
+                stage2,
+                stage3_sumcheck_proof,
+            } => {
+                let stage2 = stage2
+                    .as_intermediate()
+                    .expect("Akita level proof must carry intermediate stage-2 proof");
+                let base = extension_opening_reduction_serialized_size(
+                    extension_opening_reduction.as_ref(),
+                    compress,
+                ) + v.serialized_size(compress);
+                base + stage1
+                    .stages
+                    .iter()
+                    .map(|stage| {
+                        ({
+                            #[cfg(not(feature = "zk"))]
+                            {
+                                stage.sumcheck_proof.serialized_size(compress)
+                            }
+                            #[cfg(feature = "zk")]
+                            {
+                                stage.sumcheck_proof_masked.serialized_size(compress)
+                            }
+                        }) + stage
+                            .child_claims
+                            .iter()
+                            .map(|claim| claim.serialized_size(compress))
+                            .sum::<usize>()
+                    })
+                    .sum::<usize>()
+                    + stage1.s_claim.serialized_size(compress)
+                    + ({
+                        #[cfg(not(feature = "zk"))]
+                        {
+                            stage2.sumcheck_proof.serialized_size(compress)
+                        }
+                        #[cfg(feature = "zk")]
+                        {
+                            stage2.sumcheck_proof_masked.serialized_size(compress)
+                        }
+                    })
+                    + stage3_sumcheck_serialized_size(stage3_sumcheck_proof.as_ref(), compress)
+                    + stage2.next_w_commitment.serialized_size(compress)
+                    + stage2.next_w_eval().serialized_size(compress)
+            }
+            AkitaLevelProof::Terminal {
+                extension_opening_reduction,
+                stage2,
+                ..
+            } => {
+                let stage2 = stage2
+                    .as_terminal()
+                    .expect("terminal level proof must carry terminal stage-2 proof");
+                extension_opening_reduction_serialized_size(
+                    extension_opening_reduction.as_ref(),
+                    compress,
+                ) + {
                     #[cfg(not(feature = "zk"))]
                     {
-                        stage.sumcheck_proof.serialized_size(compress)
+                        stage2.sumcheck_proof.serialized_size(compress)
                     }
                     #[cfg(feature = "zk")]
                     {
-                        stage.sumcheck_proof_masked.serialized_size(compress)
+                        stage2.sumcheck_proof_masked.serialized_size(compress)
                     }
-                }) + stage
-                    .child_claims
-                    .iter()
-                    .map(|claim| claim.serialized_size(compress))
-                    .sum::<usize>()
-            })
-            .sum::<usize>()
-            + self.stage1.s_claim.serialized_size(compress)
-            + ({
-                #[cfg(not(feature = "zk"))]
-                {
-                    stage2.sumcheck_proof.serialized_size(compress)
-                }
-                #[cfg(feature = "zk")]
-                {
-                    stage2.sumcheck_proof_masked.serialized_size(compress)
-                }
-            })
-            + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
-            + stage2.next_w_commitment.serialized_size(compress)
-            + stage2.next_w_eval().serialized_size(compress)
+                } + stage2.final_witness.serialized_size(compress)
+            }
+        }
     }
 }
 
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
-        if let Some(reduction) = &self.extension_opening_reduction {
-            reduction.partials.check()?;
-            #[cfg(not(feature = "zk"))]
-            reduction.sumcheck.check()?;
-            #[cfg(feature = "zk")]
-            reduction.sumcheck_proof_masked.check()?;
+        match self {
+            AkitaLevelProof::Intermediate {
+                extension_opening_reduction,
+                v,
+                stage1,
+                stage2,
+                stage3_sumcheck_proof,
+            } => {
+                if let Some(reduction) = extension_opening_reduction {
+                    reduction.partials.check()?;
+                    #[cfg(not(feature = "zk"))]
+                    reduction.sumcheck.check()?;
+                    #[cfg(feature = "zk")]
+                    reduction.sumcheck_proof_masked.check()?;
+                }
+                v.check()?;
+                for stage in &stage1.stages {
+                    #[cfg(not(feature = "zk"))]
+                    stage.sumcheck_proof.check()?;
+                    #[cfg(feature = "zk")]
+                    stage.sumcheck_proof_masked.check()?;
+                    stage.child_claims.check()?;
+                }
+                stage1.s_claim.check()?;
+                let stage2 = stage2.as_intermediate().ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "Akita level proof must carry intermediate stage-2 proof".to_string(),
+                    )
+                })?;
+                #[cfg(not(feature = "zk"))]
+                stage2.sumcheck_proof.check()?;
+                #[cfg(feature = "zk")]
+                stage2.sumcheck_proof_masked.check()?;
+                if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
+                    stage3_sumcheck.claim.check()?;
+                    stage3_sumcheck.sumcheck.check()?;
+                }
+                stage2.next_w_commitment.check()?;
+                stage2.next_w_eval().check()
+            }
+            AkitaLevelProof::Terminal {
+                extension_opening_reduction,
+                stage2,
+                ..
+            } => {
+                if let Some(reduction) = extension_opening_reduction {
+                    reduction.partials.check()?;
+                    #[cfg(not(feature = "zk"))]
+                    reduction.sumcheck.check()?;
+                    #[cfg(feature = "zk")]
+                    reduction.sumcheck_proof_masked.check()?;
+                }
+                let stage2 = stage2.as_terminal().ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "terminal level proof must carry terminal stage-2 proof".to_string(),
+                    )
+                })?;
+                #[cfg(not(feature = "zk"))]
+                stage2.sumcheck_proof.check()?;
+                #[cfg(feature = "zk")]
+                stage2.sumcheck_proof_masked.check()?;
+                stage2.final_witness.check()
+            }
         }
-        self.v.check()?;
-        for stage in &self.stage1.stages {
-            #[cfg(not(feature = "zk"))]
-            stage.sumcheck_proof.check()?;
-            #[cfg(feature = "zk")]
-            stage.sumcheck_proof_masked.check()?;
-            stage.child_claims.check()?;
-        }
-        self.stage1.s_claim.check()?;
-        let stage2 = self.stage2.as_intermediate().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "Akita level proof must carry intermediate stage-2 proof".to_string(),
-            )
-        })?;
-        #[cfg(not(feature = "zk"))]
-        stage2.sumcheck_proof.check()?;
-        #[cfg(feature = "zk")]
-        stage2.sumcheck_proof_masked.check()?;
-        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
-            stage3_sumcheck.claim.check()?;
-            stage3_sumcheck.sumcheck.check()?;
-        }
-        stage2.next_w_commitment.check()?;
-        stage2.next_w_eval().check()
     }
 }
 
@@ -376,7 +474,7 @@ impl<
             #[cfg(feature = "zk")]
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         });
-        let out = Self {
+        let out = Self::Intermediate {
             extension_opening_reduction,
             v,
             stage1,
@@ -511,65 +609,6 @@ impl<
                 sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 final_witness,
             }),
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaProofStep<F, L>
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            Self::Intermediate(level) => level.serialize_with_mode(&mut writer, compress),
-            Self::Terminal(terminal) => terminal.serialize_with_mode(&mut writer, compress),
-        }
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            Self::Intermediate(level) => level.serialized_size(compress),
-            Self::Terminal(terminal) => terminal.serialized_size(compress),
-        }
-    }
-}
-
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaProofStep<F, L> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Self::Intermediate(level) => level.check(),
-            Self::Terminal(terminal) => terminal.check(),
-        }
-    }
-}
-
-impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaProofStep<F, L>
-{
-    type Context = AkitaProofStepShape;
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &AkitaProofStepShape,
-    ) -> Result<Self, SerializationError> {
-        let out = match ctx {
-            AkitaProofStepShape::Intermediate(shape) => Self::Intermediate(
-                AkitaLevelProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
-            ),
-            AkitaProofStepShape::Terminal(shape) => Self::Terminal(
-                TerminalLevelProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
-            ),
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -937,7 +976,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
         }
         match &self.root {
             AkitaBatchedRootProof::Fold(_) => {
-                let Some(AkitaProofStep::Terminal(_)) = self.steps.last() else {
+                let Some(AkitaLevelProof::Terminal { .. }) = self.steps.last() else {
                     return Err(SerializationError::InvalidData(
                         "fold-rooted batched Akita proof must terminate with a terminal step"
                             .to_string(),
@@ -945,7 +984,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                 };
                 if self.steps[..self.steps.len().saturating_sub(1)]
                     .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
+                    .any(|step| !matches!(step, AkitaLevelProof::Intermediate { .. }))
                 {
                     return Err(SerializationError::InvalidData(
                         "fold-rooted batched Akita proof may only contain intermediate steps before the terminal step"
@@ -1013,12 +1052,31 @@ impl<
                 let mut steps = Vec::new();
                 reserve_shape_len(&mut steps, step_shapes.len())?;
                 for shape in step_shapes {
-                    steps.push(AkitaProofStep::deserialize_with_mode(
-                        &mut reader,
-                        compress,
-                        validate,
-                        shape,
-                    )?);
+                    let step = match shape {
+                        AkitaProofStepShape::Intermediate(shape) => {
+                            AkitaLevelProof::deserialize_with_mode(
+                                &mut reader,
+                                compress,
+                                validate,
+                                shape,
+                            )?
+                        }
+                        AkitaProofStepShape::Terminal(shape) => {
+                            let terminal = TerminalLevelProof::deserialize_with_mode(
+                                &mut reader,
+                                compress,
+                                validate,
+                                shape,
+                            )?;
+                            let final_w_len = terminal.final_witness().num_elems();
+                            AkitaLevelProof::Terminal {
+                                extension_opening_reduction: terminal.extension_opening_reduction,
+                                stage2: terminal.stage2,
+                                final_w_len,
+                            }
+                        }
+                    };
+                    steps.push(step);
                 }
                 Self {
                     #[cfg(feature = "zk")]

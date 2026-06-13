@@ -238,7 +238,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
     );
 
     for level in proof.fold_levels() {
-        assert_base_flat_ring_vec(&level.v);
+        assert_base_flat_ring_vec(level.v());
         assert_base_flat_ring_vec(level.next_w_commitment());
     }
     assert_base_direct_witness(proof.final_witness());
