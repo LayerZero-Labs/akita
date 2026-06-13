@@ -64,10 +64,10 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
-    append_claim_values_to_transcript, checked_total_claims, derive_public_matrix_flat,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape, generate_y,
-    i8_digits_to_bytes, padded_setup_prefix_len, prepare_opening_point, relation_claim_from_rows,
-    relation_claim_from_rows_extension, ring_column_z_first,
+    append_claim_values_to_transcript, batched_eval_target_from_incidence, checked_total_claims,
+    derive_public_matrix_flat, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    generate_y, i8_digits_to_bytes, padded_setup_prefix_len, prepare_opening_point,
+    relation_claim_from_rows, relation_claim_from_rows_extension, ring_column_z_first,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
@@ -105,11 +105,10 @@ pub use schedule::{
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
-    batched_eval_target_from_incidence, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_trace_terms_closed, root_trace_block_opening, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_terms_recursive, trace_terms_root,
-    trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening, TraceOpeningAtPoint,
-    TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable, TraceTerm,
-    TraceWeightLayout,
+    build_trace_table_scaled, ensure_trace_stage2_supported, eval_trace_terms_closed,
+    root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
+    trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
+    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;

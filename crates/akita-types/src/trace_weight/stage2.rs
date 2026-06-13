@@ -3,9 +3,7 @@
 use std::marker::PhantomData;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible, MulBase,
-};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
@@ -493,44 +491,6 @@ where
             )?,
         )),
     }
-}
-
-/// Evaluate the fused trace term at the verifier's final stage-2 point.
-///
-/// Uses the short closed form: one `Tr_H` per claim term, with no dependence on
-/// Sum batched public opening claims under per-claim row coefficients.
-pub fn batched_eval_target_from_incidence<E, L>(
-    incidence: &ClaimIncidenceSummary,
-    row_coefficients: &[L],
-    openings: &[E],
-) -> Result<L, AkitaError>
-where
-    E: FieldCore,
-    L: ExtField<E> + MulBase<E> + FieldCore,
-{
-    if row_coefficients.len() != incidence.num_claims() {
-        return Err(AkitaError::InvalidSize {
-            expected: incidence.num_claims(),
-            actual: row_coefficients.len(),
-        });
-    }
-    if openings.len() != incidence.num_claims() {
-        return Err(AkitaError::InvalidSize {
-            expected: incidence.num_claims(),
-            actual: openings.len(),
-        });
-    }
-    incidence
-        .public_rows()
-        .iter()
-        .flat_map(|row| row.claim_indices())
-        .try_fold(L::zero(), |acc, &claim_idx| {
-            let coefficient = *row_coefficients
-                .get(claim_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            let opening = *openings.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
-            Ok(acc + coefficient.mul_base(opening))
-        })
 }
 
 #[cfg(test)]

@@ -23,10 +23,9 @@ pub use eval::{
 };
 pub use layout::TraceWeightLayout;
 pub use stage2::{
-    batched_eval_target_from_incidence, build_trace_table_scaled, ensure_trace_stage2_supported,
-    root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
-    TracePublicWeights,
+    build_trace_table_scaled, ensure_trace_stage2_supported, root_trace_block_opening,
+    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
+    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TracePublicWeights,
 };
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
