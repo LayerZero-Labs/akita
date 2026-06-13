@@ -180,6 +180,9 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     stage2: &AkitaStage2Proof<F, L>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
 ) -> LevelProofShape {
+    let stage2 = stage2
+        .as_intermediate()
+        .expect("level proof shape requires intermediate stage-2 proof");
     LevelProofShape {
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),

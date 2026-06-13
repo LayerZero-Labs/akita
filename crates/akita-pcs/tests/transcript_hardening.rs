@@ -14,7 +14,7 @@ use akita_transcript::{
 };
 use akita_types::{
     terminal_witness_segment_layout, AkitaBatchedProof, AkitaBatchedProofShape,
-    AkitaBatchedRootProof, AkitaProofStep, CleartextWitnessProof, CleartextWitnessShape,
+    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
     PackedDigits, TerminalWitnessSegmentLayout,
 };
 use akita_verifier::CommitmentVerifier;
@@ -211,12 +211,20 @@ fn terminal_event_order_rejects_malformed_windows() {
 
 fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitnessProof<F> {
     match &mut proof.root {
-        AkitaBatchedRootProof::Terminal(terminal) => &mut terminal.final_witness,
+        AkitaBatchedRootProof::Terminal(terminal) => terminal
+            .stage2
+            .final_witness_mut()
+            .expect("terminal root proof must carry terminal stage-2 proof"),
         AkitaBatchedRootProof::Fold(_) => proof
             .steps
             .last_mut()
-            .and_then(AkitaProofStep::as_terminal_mut)
-            .map(|terminal| &mut terminal.final_witness)
+            .and_then(AkitaLevelProof::as_terminal_mut)
+            .map(|terminal| {
+                terminal
+                    .stage2_mut()
+                    .final_witness_mut()
+                    .expect("terminal step proof must carry terminal stage-2 proof")
+            })
             .expect("fold-rooted proof must end in a terminal step"),
         AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")

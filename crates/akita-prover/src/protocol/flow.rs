@@ -1,6 +1,5 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
-use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -40,6 +39,7 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::dispatch_ring_dim_result;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
@@ -58,13 +58,14 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout,
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, CleartextWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingRelationSegmentLayout, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaScheduleInputs, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
+    BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
+    LevelParams, MRowLayout, PackedDigits, PreparedOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, Schedule,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    TraceTable,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -376,7 +377,7 @@ pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     /// Recursive suffix proof steps: intermediate folds followed by terminal.
-    pub steps: Vec<AkitaProofStep<F, L>>,
+    pub steps: Vec<AkitaLevelProof<F, L>>,
     /// Proof-level ZK hiding witness state after all suffix masks are consumed.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,

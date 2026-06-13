@@ -154,9 +154,10 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     use crate::{
-        direct_witness_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, FlatRingVec, PackedDigits,
-        SetupSumcheckProof, SisModulusFamily, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
+        direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
+        AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
+        FlatRingVec, PackedDigits, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
+        SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -287,11 +288,11 @@ mod tests {
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = AkitaLevelProof {
+        let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof {
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
@@ -301,7 +302,7 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
-            },
+            }),
             stage3_sumcheck_proof: stage3_setup_ring_len
                 .map(|setup_ring_len| dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len)),
         };
