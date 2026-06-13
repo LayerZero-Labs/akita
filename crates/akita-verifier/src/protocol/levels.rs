@@ -63,8 +63,8 @@ use akita_types::{
     TerminalWitnessTranscriptParts,
 };
 use akita_types::{
-    ensure_trace_stage2_supported, root_trace_block_opening,
-    trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
+    ensure_trace_stage2_supported, root_trace_block_opening, trace_terms_root,
+    trace_weight_layout_from_segment, TraceClaim,
 };
 #[cfg(not(feature = "zk"))]
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
