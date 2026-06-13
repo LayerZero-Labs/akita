@@ -10,7 +10,7 @@ pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::flow) trace_eval_target: L,
     #[cfg(feature = "zk")]
     pub(in crate::protocol::flow) trace_eval_target_public: L,
-    pub(in crate::protocol::flow) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, L, D>>>,
+    pub(in crate::protocol::flow) trace_prepared_points: Vec<PreparedOpeningPoint<F, L, D>>,
     pub(in crate::protocol::flow) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::flow) trace_scale: L,
     #[cfg(feature = "zk")]
@@ -372,45 +372,47 @@ where
     } else {
         sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
-    let trace_coeff = if is_terminal_fold {
-        let trace_gamma = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        trace_gamma * trace_gamma
-    } else {
-        batching_coeff * batching_coeff
+    let trace_coeff = {
+        let trace_gamma = if is_terminal_fold {
+            sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
+        } else {
+            batching_coeff
+        };
+        stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
     };
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     #[cfg(feature = "zk")]
     let trace_eval_target_public_claim = trace_coeff * prepared_fold.trace_eval_target_public;
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
-    let trace_compact = if let Some(prepared_points) = prepared_fold.trace_prepared_points.as_ref()
-    {
-        if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-            Some(build_root_stage2_trace_table::<F, L, D>(
-                lp,
-                &prepared_fold.instance,
-                prepared_points,
-                row_coefficients,
-                prepared_fold.trace_claim_scales.as_deref(),
-                trace_coeff,
-                rs.col_bits,
-                rs.ring_bits,
-                rs.live_x_cols,
-            )?)
-        } else {
-            let prepared = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
-            Some(build_recursive_stage2_trace_table::<F, L, D>(
-                lp,
-                &prepared_fold.instance,
-                prepared,
-                prepared_fold.trace_scale,
-                trace_coeff,
-                rs.col_bits,
-                rs.ring_bits,
-                rs.live_x_cols,
-            )?)
-        }
-    } else {
+    let trace_compact = if prepared_fold.trace_prepared_points.is_empty() {
         None
+    } else if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
+        Some(build_root_stage2_trace_table::<F, L, D>(
+            lp,
+            &prepared_fold.instance,
+            &prepared_fold.trace_prepared_points,
+            row_coefficients,
+            prepared_fold.trace_claim_scales.as_deref(),
+            trace_coeff,
+            rs.col_bits,
+            rs.ring_bits,
+            rs.live_x_cols,
+        )?)
+    } else {
+        let prepared = prepared_fold
+            .trace_prepared_points
+            .first()
+            .ok_or(AkitaError::InvalidProof)?;
+        Some(build_recursive_stage2_trace_table::<F, L, D>(
+            lp,
+            &prepared_fold.instance,
+            prepared,
+            prepared_fold.trace_scale,
+            trace_coeff,
+            rs.col_bits,
+            rs.ring_bits,
+            rs.live_x_cols,
+        )?)
     };
     let ring_bits = rs.ring_bits;
     let tau1 = rs.tau1.clone();
@@ -1140,7 +1142,7 @@ where
         extension_opening_reduction: reduction.map(|reduction| reduction.proof),
         trace_eval_target,
         trace_scale,
-        trace_prepared_points: Some(vec![trace_prepared]),
+        trace_prepared_points: vec![trace_prepared],
         trace_claim_scales: None,
         #[cfg(feature = "zk")]
         trace_eval_target_public,

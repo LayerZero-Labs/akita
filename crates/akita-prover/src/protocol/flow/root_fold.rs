@@ -199,7 +199,7 @@ where
         trace_eval_target,
         #[cfg(feature = "zk")]
         trace_eval_target_public,
-        trace_prepared_points: Some(prepared_points.to_vec()),
+        trace_prepared_points: prepared_points.to_vec(),
         trace_claim_scales,
         trace_scale: C::one(),
         #[cfg(feature = "zk")]
