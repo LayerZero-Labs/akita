@@ -21,7 +21,7 @@ fn accumulate_fused_prefix_x_relation<E: FieldCore>(
         } else {
             (trace.get(left_next, y, table_y_len), E::zero())
         };
-        accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
+        accumulate_relation_coeffs(rel, w0, dw, t0, t1);
     }
 }
 
@@ -46,7 +46,7 @@ fn accumulate_fused_prefix_x_relation_signed<E: FieldCore + HasUnreducedOps>(
         } else {
             (trace.get(left, y, table_y_len), E::zero())
         };
-        accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
+        accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
     }
 }
 

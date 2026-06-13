@@ -64,7 +64,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                             let p0 = alpha_compact[left] * m;
                             let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_witness_relation_at_trace_indices_signed(
+                            self.accumulate_fused_relation_trace_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
@@ -144,7 +144,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                             let p0 = alpha_compact[left] * m;
                             let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_witness_relation_at_trace_indices_signed(
+                            self.accumulate_fused_relation_trace_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
@@ -238,7 +238,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                             let p0 = alpha_compact[left] * m;
                             let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_witness_relation_at_trace_indices(
+                            self.accumulate_fused_relation_trace(
                                 &mut rel,
                                 w0,
                                 dw,
@@ -305,7 +305,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                             let p0 = alpha_compact[left] * m;
                             let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_witness_relation_at_trace_indices(
+                            self.accumulate_fused_relation_trace(
                                 &mut rel,
                                 w0,
                                 dw,

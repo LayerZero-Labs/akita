@@ -376,7 +376,7 @@ where
         FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, D>(
             &ring_switch_replay,
             w_len,
-            level_proof.next_w_commitment(),
+            &level_proof.stage2.next_w_commitment,
             transcript,
         )?,
         FoldProofView::Terminal(_) => {
@@ -830,7 +830,10 @@ where
 
                 let next_level_d = scheduled_next_params.ring_dimension;
                 if next_level_d == 0
-                    || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
+                    || !level_proof
+                        .stage2
+                        .next_w_commitment
+                        .can_decode_vec(next_level_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -850,7 +853,7 @@ where
                     opening_mask: zk_ext_mask_lc_at::<F, L>(
                         *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
                     ),
-                    commitment: level_proof.next_w_commitment(),
+                    commitment: &level_proof.stage2.next_w_commitment,
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
                     log_basis: scheduled_next_params.log_basis,

@@ -266,41 +266,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         self.v.try_to_vec()
     }
 
-    /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
-        &self.stage2.next_w_commitment
-    }
-
-    /// Number of stored field coefficients for the next witness commitment.
-    pub fn next_w_commitment_coeff_len(&self) -> usize {
-        self.stage2.next_w_commitment.coeff_len()
-    }
-
-    /// Reconstruct typed `w_commitment`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
-        RingCommitment {
-            u: self.next_w_commitment().to_vec(),
-        }
-    }
-
-    /// Reconstruct typed `w_commitment`, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored next-level commitment
-    /// is not well-formed for ring dimension `D`.
-    pub fn try_w_commitment_typed<const D: usize>(
-        &self,
-    ) -> Result<RingCommitment<F, D>, AkitaError> {
-        Ok(RingCommitment {
-            u: self.next_w_commitment().try_to_vec()?,
-        })
-    }
-
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
     pub fn next_w_eval(&self) -> L {
         self.stage2.next_w_eval()

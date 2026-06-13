@@ -198,28 +198,6 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
     accum_small_signed::<E>(rel, 4, dp, dw);
 }
 
-#[inline]
-pub(crate) fn accumulate_trace_relation_coeffs<E: FieldCore>(
-    rel: &mut [E; 3],
-    w0: E,
-    dw: E,
-    t0: E,
-    t1: E,
-) {
-    accumulate_relation_coeffs(rel, w0, dw, t0, t1);
-}
-
-#[inline]
-pub(crate) fn accumulate_trace_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
-    rel: &mut [E::MulU64Accum; 6],
-    w0: i64,
-    dw: i64,
-    t0: E,
-    t1: E,
-) {
-    accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
-}
-
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
 ///
 /// Holds a single `w_table` shared by both halves of stage 2. The virtual half
@@ -260,110 +238,49 @@ mod x_prefix;
 mod y_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+    // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
+    // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
+    // (column-major: `col * y_len + ring_slot`). Y-round kernels pass `2*j` and
+    // `2*j+1`; x-prefix fusion passes column-relative indices directly.
+
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn accumulate_relation_with_trace_flat(
+    pub(super) fn accumulate_fused_relation_trace(
         &self,
         rel: &mut [E; 3],
         w0: E,
         dw: E,
-        trace_idx0: usize,
-        trace_idx1: usize,
+        witness_idx0: usize,
+        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
         if let Some(trace) = &self.trace_table {
             let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(trace_idx0, trace_idx1, y_len);
-            accumulate_trace_relation_coeffs(rel, w0, dw, t0, t1);
+            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
+            accumulate_relation_coeffs(rel, w0, dw, t0, t1);
         }
     }
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn accumulate_relation_with_trace_flat_signed(
+    pub(super) fn accumulate_fused_relation_trace_signed(
         &self,
         rel: &mut [E::MulU64Accum; 6],
         w0: i64,
         dw: i64,
-        trace_idx0: usize,
-        trace_idx1: usize,
+        witness_idx0: usize,
+        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
         if let Some(trace) = &self.trace_table {
             let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(trace_idx0, trace_idx1, y_len);
-            accumulate_trace_relation_coeffs_signed(rel, w0, dw, t0, t1);
+            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
+            accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
         }
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_witness_relation_at_trace_indices(
-        &self,
-        rel: &mut [E; 3],
-        w0: E,
-        dw: E,
-        trace_idx0: usize,
-        trace_idx1: usize,
-        p0: E,
-        p1: E,
-    ) {
-        self.accumulate_relation_with_trace_flat(rel, w0, dw, trace_idx0, trace_idx1, p0, p1);
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_witness_relation_at_trace_indices_signed(
-        &self,
-        rel: &mut [E::MulU64Accum; 6],
-        w0: i64,
-        dw: i64,
-        trace_idx0: usize,
-        trace_idx1: usize,
-        p0: E,
-        p1: E,
-    ) {
-        self.accumulate_relation_with_trace_flat_signed(
-            rel, w0, dw, trace_idx0, trace_idx1, p0, p1,
-        );
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_witness_relation_at_corner(
-        &self,
-        rel: &mut [E; 3],
-        w0: E,
-        dw: E,
-        j: usize,
-        p0: E,
-        p1: E,
-        _folding_y_round: bool,
-        _current_y_mask: usize,
-        _current_x_mask: usize,
-    ) {
-        self.accumulate_relation_with_trace_flat(rel, w0, dw, 2 * j, 2 * j + 1, p0, p1);
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_witness_relation_at_corner_signed(
-        &self,
-        rel: &mut [E::MulU64Accum; 6],
-        w0: i64,
-        dw: i64,
-        j: usize,
-        p0: E,
-        p1: E,
-        _folding_y_round: bool,
-        _current_y_mask: usize,
-        _current_x_mask: usize,
-    ) {
-        self.accumulate_relation_with_trace_flat_signed(rel, w0, dw, 2 * j, 2 * j + 1, p0, p1);
     }
 
     #[inline]
