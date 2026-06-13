@@ -43,11 +43,11 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>,
+    Cfg::ExtField: RingSubfieldEncoding<F>,
+    Cfg::ExtField: RingSubfieldEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),

@@ -448,14 +448,14 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     let mut len = 0usize;
 
     if root_tensor_projection_enabled_for_cfg::<Cfg>(incidence.num_vars()) {
-        let split_bits = Cfg::CHAL_EXT_DEGREE.trailing_zeros() as usize;
+        let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
         let rounds = incidence
             .num_vars()
             .checked_sub(split_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("ZK projection round underflow".to_string()))?;
         let partials = incidence
             .num_claims()
-            .checked_mul(Cfg::CHAL_EXT_DEGREE)
+            .checked_mul(Cfg::EXT_DEGREE)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("ZK projection partial overflow".to_string())
             })?;
@@ -485,8 +485,8 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
         let mut current_opening_vars =
             akita_types::sumcheck_rounds(root_step.params.ring_dimension, root_step.next_w_len);
         for (step_idx, step) in fold_steps.iter().enumerate().skip(1) {
-            if Cfg::CHAL_EXT_DEGREE > 1 {
-                let split_bits = Cfg::CHAL_EXT_DEGREE.trailing_zeros() as usize;
+            if Cfg::EXT_DEGREE > 1 {
+                let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
                 let rounds = current_opening_vars
                     .checked_sub(split_bits)
                     .ok_or_else(|| {
@@ -494,7 +494,7 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
                             "ZK recursive projection round underflow".to_string(),
                         )
                     })?;
-                add_zk_extension_reduction_slots::<Cfg>(&mut len, Cfg::CHAL_EXT_DEGREE, rounds)?;
+                add_zk_extension_reduction_slots::<Cfg>(&mut len, Cfg::EXT_DEGREE, rounds)?;
             }
             len = len.checked_add(Cfg::D).ok_or_else(|| {
                 AkitaError::InvalidSetup("ZK recursive mask overflow".to_string())
@@ -514,12 +514,12 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "zk")]
 fn root_tensor_projection_enabled_for_cfg<Cfg: CommitmentConfig>(num_vars: usize) -> bool {
-    let width = Cfg::CHAL_EXT_DEGREE;
+    let width = Cfg::EXT_DEGREE;
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
     width > 1
-        && width == Cfg::CLAIM_EXT_DEGREE
+        && width == Cfg::EXT_DEGREE
         && width.is_power_of_two()
         && Cfg::D.is_power_of_two()
         && Cfg::D >= double_width
@@ -581,7 +581,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
     scalars: usize,
 ) -> Result<(), AkitaError> {
     let slots = scalars
-        .checked_mul(Cfg::CHAL_EXT_DEGREE)
+        .checked_mul(Cfg::EXT_DEGREE)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK scalar pad overflow".to_string()))?;
     *len = len
         .checked_add(slots)
@@ -597,7 +597,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 ///
 /// One macro covers every proof-optimized preset (fp128 and the small-field
 /// fp32/fp64 families): the fp128 presets are the special case where the
-/// claim/challenge field is the base field, `field_bits == 128`, and the SIS
+/// extension field is the base field, `field_bits == 128`, and the SIS
 /// family is `Q128`. All proof-optimized presets share `log_basis = 3`, the
 /// shared ring-challenge policy, the shared setup-matrix sizer, and the
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
@@ -618,8 +618,7 @@ macro_rules! impl_proof_optimized_preset {
     ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr $(, $tiered:expr)?)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ClaimField = $claim_field;
-            type ChallengeField = $claim_field;
+            type ExtField = $claim_field;
             const D: usize = $d;
 
             // Defaults to `false`; the tiered preset(s) pass `true` as the

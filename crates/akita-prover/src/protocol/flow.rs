@@ -79,8 +79,7 @@ mod suffix;
 mod tests;
 
 pub use inputs::{
-    batched_prove, build_terminal_root_batched_proof, prepare_batched_prove_inputs,
-    prove_folded_batched, prove_root_direct,
+    batched_prove, prepare_batched_prove_inputs, prove_folded_batched, prove_root_direct,
 };
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_points;
@@ -567,7 +566,7 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F>,
-    L: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F>,
+    L: RingSubfieldEncoding<F> + ExtField<F>,
     B: ProverComputeBackend<F>,
 {
     let mut rng = OsRng;

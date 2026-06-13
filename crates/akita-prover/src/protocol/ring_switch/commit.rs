@@ -171,7 +171,7 @@ where
     let commit_d = commit_params.ring_dimension;
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
         let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
-        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+        if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 logical_w,
                 expanded.as_ref(),
@@ -189,7 +189,7 @@ where
             // digit count), so the committed witness fits the schedule's
             // recursive commit params directly — no per-length re-derivation.
             let committed_w =
-                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, { D_COMMIT }>(
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, { D_COMMIT }>(
                     logical_w,
                 )?;
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
@@ -233,7 +233,7 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     if commit_params.ring_dimension == D {
-        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+        if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 logical_w,
                 expanded.as_ref(),
@@ -250,7 +250,7 @@ where
             // The tensor pack is length-preserving, so the committed witness
             // fits the schedule's recursive commit params directly.
             let committed_w =
-                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, D>(logical_w)?;
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, D>(logical_w)?;
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 &committed_w,
                 expanded.as_ref(),

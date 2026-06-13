@@ -510,7 +510,7 @@ fn should_transform_root_commitment<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
         incidence.num_vars(),
     ) {
         return Ok(false);
@@ -546,8 +546,8 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
@@ -558,7 +558,7 @@ where
     if should_transform_root_commitment::<Cfg, D>(&incidence)? {
         let transformed = polys
             .iter()
-            .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+            .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
             .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
         return commit_with_validated_params::<
@@ -676,8 +676,8 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
@@ -691,7 +691,7 @@ where
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<_, _>>()?;

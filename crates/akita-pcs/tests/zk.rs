@@ -36,8 +36,7 @@ struct RuntimePlanned<Cfg>(PhantomData<Cfg>);
 
 impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     type Field = Cfg::Field;
-    type ClaimField = Cfg::ClaimField;
-    type ChallengeField = Cfg::ChallengeField;
+    type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
 
@@ -393,8 +392,8 @@ fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
 
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
-    BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ExtField = F>,
     Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
@@ -402,14 +401,14 @@ where
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
@@ -677,8 +676,8 @@ fn run_zk_dense_cursor_binding_negatives() {
 
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
-    BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ExtField = F>,
     Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
@@ -686,14 +685,14 @@ where
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {

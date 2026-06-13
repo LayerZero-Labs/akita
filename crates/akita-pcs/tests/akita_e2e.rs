@@ -185,20 +185,20 @@ fn make_dense_fixture<
 >(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<FField, Cfg::ClaimField, Cfg::ChallengeField, D>
+) -> DenseFixture<FField, Cfg::ExtField, Cfg::ExtField, D>
 where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
         ProverSetup = AkitaProverSetup<FField, D>,
-        ClaimField = Cfg::ClaimField,
+        ExtField = Cfg::ExtField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,
-        BatchedProof = AkitaBatchedProof<FField, Cfg::ChallengeField>,
+        BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
-    Cfg::ClaimField: RingSubfieldEncoding<FField> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
@@ -208,9 +208,8 @@ where
         .collect();
 
     let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_claim_point::<FField, Cfg::ClaimField>(nv);
-    let expected_opening =
-        dense_lagrange_opening_from_evals::<FField, Cfg::ClaimField>(&evals, &pt);
+    let pt = random_claim_point::<FField, Cfg::ExtField>(nv);
+    let expected_opening = dense_lagrange_opening_from_evals::<FField, Cfg::ExtField>(&evals, &pt);
 
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);

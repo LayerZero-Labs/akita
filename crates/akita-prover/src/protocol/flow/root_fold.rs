@@ -72,25 +72,19 @@ where
     Ok(poly.evaluate_and_fold_ring(b, a, block_len))
 }
 
-fn validate_non_eor_root_opening_shape<F, E, C, const D: usize>(
+fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E>,
 {
-    if <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
-        return Err(AkitaError::InvalidInput(
-            "baseline extension root openings require claim and challenge fields to have the same base degree"
-                .to_string(),
-        ));
-    }
     if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(
-            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
+            "extension-field degree must divide the ring dimension into power-of-two slots"
+                .to_string(),
         ));
     }
 
@@ -207,7 +201,7 @@ where
     })
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
+fn prepare_root_fold_data<F, E, T, P, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
@@ -220,16 +214,15 @@ fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
     m_row_layout: MRowLayout,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
-) -> Result<PreparedFold<F, C, D>, AkitaError>
+) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
+        + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
@@ -239,34 +232,33 @@ where
     let num_claims = incidence_summary.num_claims();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars());
+        root_tensor_projection_enabled::<F, E, E, D>(incidence_summary.num_vars());
 
     if needs_extension_reduction {
-        let (reduction, row_coefficients) =
-            prove_root_extension_opening_reduction::<F, E, C, T, P, D>(
-                polys,
-                incidence_summary,
-                claim_points,
-                transcript,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding,
-            )?;
+        let (reduction, row_coefficients) = prove_root_extension_opening_reduction::<F, E, T, P, D>(
+            polys,
+            incidence_summary,
+            claim_points,
+            transcript,
+            #[cfg(feature = "zk")]
+            &mut zk_hiding,
+        )?;
         let transformed_polys = {
             let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
             cfg_iter!(polys)
-                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
+                .map(|poly| poly.tensor_packed_extension_root_poly::<E>())
                 .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
-        let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
+        let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
         let protocol_point = {
             let _span = tracing::info_span!("root_extension_protocol_point").entered();
-            ring_subfield_packed_extension_opening_point::<F, C, D>(
+            ring_subfield_packed_extension_opening_point::<F, E, D>(
                 reduction.rho.len(),
                 &reduction.rho,
             )?
         };
-        let prepared_protocol_point = prepare_opening_point::<F, C, D>(
+        let prepared_protocol_point = prepare_opening_point::<F, E, D>(
             &protocol_point,
             basis,
             root_params,
@@ -290,7 +282,7 @@ where
         )?);
         return prepare_root_fold_from_evaluated_claims::<
             F,
-            C,
+            E,
             T,
             RootTensorProjectionPoly<F, D>,
             B,
@@ -319,17 +311,12 @@ where
         );
     }
 
-    validate_non_eor_root_opening_shape::<F, E, C, D>(alpha_bits)?;
+    validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits)?;
     let prepared_points = claim_points
         .iter()
         .map(|opening_point| {
-            let challenge_point = opening_point
-                .iter()
-                .copied()
-                .map(C::lift_base)
-                .collect::<Vec<_>>();
-            prepare_opening_point::<F, C, D>(
-                &challenge_point,
+            prepare_opening_point::<F, E, D>(
+                opening_point,
                 basis,
                 root_params,
                 alpha_bits,
@@ -367,7 +354,7 @@ where
         .iter()
         .zip(claim_to_point.iter())
         .map(|(folded_ring, &point_idx)| {
-            scalar_opening_from_folded_ring::<F, E, C, D>(
+            scalar_opening_from_folded_ring::<F, E, E, D>(
                 folded_ring,
                 &prepared_points[point_idx],
                 &inner_claim_points[point_idx],
@@ -377,14 +364,14 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let row_coefficients =
-        sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
-    let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
+        sample_public_row_coefficients::<F, E, T>(incidence_summary, transcript)?;
+    let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let trace_eval_target =
         batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
     let trace_eval_target_public = trace_eval_target;
 
-    prepare_root_fold_from_evaluated_claims::<F, C, T, P, B, D>(
+    prepare_root_fold_from_evaluated_claims::<F, E, T, P, B, D>(
         backend,
         prepared,
         transcript,
@@ -422,7 +409,7 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold<F, E, C, T, P, B, Cfg, const D: usize>(
+pub fn prove_root_fold<F, E, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
@@ -437,21 +424,20 @@ pub fn prove_root_fold<F, E, C, T, P, B, Cfg, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<ProveLevelOutput<F, C>, AkitaError>
+) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
-    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
+        + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
-    Cfg: CommitmentConfig<Field = F, ClaimField = E, ChallengeField = C>,
+    Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
@@ -492,7 +478,7 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
-    let prepared_fold = prepare_root_fold_data::<F, E, C, T, P, B, D>(
+    let prepared_fold = prepare_root_fold_data::<F, E, T, P, B, D>(
         backend,
         prepared,
         transcript,
@@ -508,7 +494,7 @@ where
         basis,
     )?;
 
-    prove_fold::<F, C, T, B, Cfg, D>(
+    prove_fold::<F, E, T, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,
@@ -537,7 +523,7 @@ where
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_with_params<Cfg, F, E, C, T, P, B, const D: usize>(
+pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -551,21 +537,20 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, C, T, P, B, const D: usiz
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
-) -> Result<TerminalLevelProof<F, C>, AkitaError>
+) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
-    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
+        + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
-    Cfg: CommitmentConfig<Field = F, ChallengeField = C>,
+    Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
@@ -608,7 +593,7 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = prepare_root_fold_data::<F, E, C, T, P, B, D>(
+    let prepared_fold = prepare_root_fold_data::<F, E, T, P, B, D>(
         backend,
         prepared,
         transcript,
@@ -624,7 +609,7 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, C, T, B, Cfg, D>(
+    let terminal_result = prove_fold::<F, E, T, B, Cfg, D>(
         expanded,
         &prefix_slots,
         backend,

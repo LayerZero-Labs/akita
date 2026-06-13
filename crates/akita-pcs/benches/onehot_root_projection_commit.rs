@@ -6,8 +6,8 @@ use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling,
+    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
@@ -97,10 +97,9 @@ where
         + 'static,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: FrobeniusExtField<F> + RingSubfieldEncoding<F> + AkitaSerialize,
-    Cfg::ChallengeField: FrobeniusExtField<F>
+    Cfg::ExtField: FrobeniusExtField<F> + RingSubfieldEncoding<F> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<F>
         + RingSubfieldEncoding<F>
-        + ExtField<Cfg::ClaimField>
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,
@@ -115,7 +114,7 @@ where
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
     let transformed_polys = onehot_polys
         .iter()
-        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
@@ -139,7 +138,7 @@ where
                 let start = Instant::now();
                 let projected = polys
                     .iter()
-                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
                     .collect::<Result<Vec<_>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();

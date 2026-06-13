@@ -6,7 +6,7 @@
 //! multiple points (multipoint opening of a shared commitment).
 
 use super::VerifierClaims;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
@@ -603,14 +603,13 @@ where
 }
 
 /// Sum batched public opening claims under per-claim row coefficients.
-pub fn batched_eval_target_from_incidence<E, L>(
+pub fn batched_eval_target_from_incidence<E>(
     incidence: &ClaimIncidenceSummary,
-    row_coefficients: &[L],
+    row_coefficients: &[E],
     openings: &[E],
-) -> Result<L, AkitaError>
+) -> Result<E, AkitaError>
 where
     E: FieldCore,
-    L: ExtField<E> + MulBase<E> + FieldCore,
 {
     if row_coefficients.len() != incidence.num_claims() {
         return Err(AkitaError::InvalidSize {
@@ -628,12 +627,12 @@ where
         .public_rows()
         .iter()
         .flat_map(|row| row.claim_indices())
-        .try_fold(L::zero(), |acc, &claim_idx| {
+        .try_fold(E::zero(), |acc, &claim_idx| {
             let coefficient = *row_coefficients
                 .get(claim_idx)
                 .ok_or(AkitaError::InvalidProof)?;
             let opening = *openings.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
-            Ok(acc + coefficient.mul_base(opening))
+            Ok(acc + coefficient * opening)
         })
 }
 

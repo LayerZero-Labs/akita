@@ -38,8 +38,8 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
-    /// Public opening point and claimed-evaluation field.
-    type ClaimField: ExtField<F>;
+    /// Public opening point, claimed-evaluation, and proof scalar field.
+    type ExtField: ExtField<F>;
     /// Batched (potentially multi-point) evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
@@ -60,7 +60,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
+        claims: VerifierClaims<'a, Self::ExtField, Self::Commitment>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;

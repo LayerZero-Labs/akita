@@ -90,8 +90,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     struct UncommittableRootDirectCfg;
     impl CommitmentConfig for UncommittableRootDirectCfg {
         type Field = akita_field::Fp32<251>;
-        type ClaimField = akita_field::Fp32<251>;
-        type ChallengeField = akita_field::Fp32<251>;
+        type ExtField = akita_field::Fp32<251>;
         const D: usize = 8;
         fn decomposition() -> akita_types::DecompositionParams {
             akita_types::DecompositionParams {

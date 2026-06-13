@@ -810,7 +810,7 @@ where
 /// Dispatch a trace inner-product check at runtime on the coordinate count.
 ///
 /// Used at the verifier-extension boundary: `opening_coords` is produced by
-/// `ExtField::to_base_vec` on a typed `ClaimField` value, so its length is
+/// `ExtField::to_base_vec` on a typed extension-field value, so its length is
 /// the runtime extension degree `K`. This helper picks the matching
 /// monomorphization of [`check_trace_inner_product`] for `K ∈ {1, 2, 4, 8}`,
 /// which are the extension degrees the workspace currently exercises. Higher

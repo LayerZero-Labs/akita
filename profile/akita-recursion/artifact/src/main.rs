@@ -72,8 +72,8 @@ struct Args {
 type F = fp128::Field;
 const D: usize = 32;
 type Cfg = fp128::D32OneHot;
-type Claim = <Cfg as CommitmentConfig>::ClaimField;
-type Challenge = <Cfg as CommitmentConfig>::ChallengeField;
+type Claim = <Cfg as CommitmentConfig>::ExtField;
+type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = 256;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d32";

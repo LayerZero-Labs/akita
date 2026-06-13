@@ -7,7 +7,7 @@ use crate::protocol::levels::verify_folded_batched_proof;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
@@ -69,23 +69,22 @@ where
 
 fn effective_batched_schedule<Cfg, const D: usize>(
     incidence_summary: &ClaimIncidenceSummary,
-    opening_points: &[&[Cfg::ClaimField]],
+    opening_points: &[&[Cfg::ExtField]],
 ) -> Result<Schedule, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field> + ExtField<Cfg::ClaimField>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
 {
     let num_vars = incidence_summary.num_vars();
     let mut schedule = Cfg::get_params_for_prove(incidence_summary)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             opening_points,
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             num_vars,
         ) {
             let commit_params = Cfg::get_params_for_batched_commitment(incidence_summary)?;
@@ -450,19 +449,18 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
 pub fn verify_batched<'a, Cfg, T, const D: usize>(
-    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>,
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierClaims<'a, Cfg::ClaimField, RingCommitment<Cfg::Field, D>>,
+    claims: VerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + FromPrimitiveInt
         + AkitaSerialize,
@@ -528,7 +526,7 @@ where
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
-            verify_folded_batched_proof::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, D>(
+            verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T, D>(
                 proof,
                 setup,
                 transcript,

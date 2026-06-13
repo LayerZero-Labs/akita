@@ -22,8 +22,8 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object produced by the scheme.
     type Commitment: Clone + Send + Sync;
-    /// Public opening point and claimed-evaluation field.
-    type ClaimField: ExtField<F>;
+    /// Public opening point, claimed-evaluation, and proof scalar field.
+    type ExtField: ExtField<F>;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -121,7 +121,7 @@ where
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,

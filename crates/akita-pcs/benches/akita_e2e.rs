@@ -65,10 +65,7 @@ fn setup_contribution_modes() -> [(SetupContributionMode, &'static str); 2] {
     ]
 }
 
-fn bench_dense_phases<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
+fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -77,7 +74,7 @@ fn bench_dense_phases<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
@@ -85,7 +82,7 @@ fn bench_dense_phases<
         > + CommitmentVerifier<
             F,
             D,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
@@ -268,10 +265,7 @@ fn bench_dense_phases<
     group.finish();
 }
 
-fn bench_onehot_phases<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
+fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -280,7 +274,7 @@ fn bench_onehot_phases<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
@@ -288,7 +282,7 @@ fn bench_onehot_phases<
         > + CommitmentVerifier<
             F,
             D,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,

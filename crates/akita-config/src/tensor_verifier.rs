@@ -21,8 +21,7 @@ pub mod fp128 {
 
     impl CommitmentConfig for D64OneHotTensor {
         type Field = Field;
-        type ClaimField = Field;
-        type ChallengeField = Field;
+        type ExtField = Field;
         const D: usize = 64;
 
         fn decomposition() -> DecompositionParams {

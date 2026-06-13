@@ -174,8 +174,7 @@ fn fp32_ring_subfield_max_claims(
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
-    type ChallengeField = Self::ClaimField;
+    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -260,8 +259,7 @@ impl Fp32RingSubfieldOuterFallbackCfg {
 
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
-    type ChallengeField = Self::ClaimField;
+    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -359,7 +357,7 @@ fn fp32_ring_subfield_setup_rejects_more_points_than_claims() {
 fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     type SmallCfg = Fp32RingSubfieldRootFoldCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 1;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -501,7 +499,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -632,8 +630,8 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
-    type SmallL = <SmallCfg as CommitmentConfig>::ChallengeField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
+    type SmallL = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -748,7 +746,7 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
 fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;

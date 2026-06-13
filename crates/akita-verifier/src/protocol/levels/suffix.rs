@@ -56,7 +56,7 @@ where
     let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
     let row_coefficients = vec![L::one()];
-    let challenge_points = vec![current_state.opening_point.clone()];
+    let challenge_points = [current_state.opening_point.as_slice()];
     let openings = vec![current_state.opening];
     #[cfg(feature = "zk")]
     let opening_masks = vec![Some(&current_state.opening_mask)];
@@ -342,8 +342,8 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_folded_batched_proof<F, E, C, T, const D: usize>(
-    proof: &AkitaBatchedProof<F, C>,
+pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
+    proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     opening_points: &[&[E]],
@@ -356,9 +356,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, C, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
@@ -403,7 +401,7 @@ where
             if terminal.final_witness().shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root::<F, E, C, T, D>(
+            verify_root::<F, E, T, D>(
                 &proof.root,
                 setup,
                 transcript,
@@ -455,7 +453,7 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, C, T, D>(
+            let root_challenges = verify_root::<F, E, T, D>(
                 &proof.root,
                 setup,
                 transcript,
@@ -483,14 +481,14 @@ where
                 opening_point: root_challenges,
                 opening: root_stage2.next_w_eval(),
                 #[cfg(feature = "zk")]
-                opening_mask: zk_ext_mask_lc_at::<F, C>(
-                    zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
+                opening_mask: zk_ext_mask_lc_at::<F, E>(
+                    zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,
                 ),
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
             };
-            verify_suffix::<F, C, T>(
+            verify_suffix::<F, E, T>(
                 &proof.steps,
                 setup,
                 transcript,
@@ -511,7 +509,7 @@ where
         if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
+        let lifted = lift_hiding_witness::<F, E>(&proof.zk_hiding.hiding_witness);
         zk_relations.verify_all(&lifted)?;
     }
 

@@ -78,10 +78,10 @@ pub fn prove_suffix<Cfg, T, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    starting_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
+    starting_state: RecursiveProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -91,7 +91,7 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -123,7 +123,7 @@ where
             MRowLayout::WithDBlock
         };
         let out = if level_d == D {
-            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
+            let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ExtField, T, B, D>(
                 backend,
                 prepared,
                 transcript,
@@ -132,7 +132,7 @@ where
                 level_params,
                 m_row_layout,
             )?;
-            prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
+            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D>(
                 expanded,
                 prefix_slots,
                 backend,
@@ -149,7 +149,7 @@ where
                 let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
                 let level_prefix_slots = SetupPrefixProverRegistry::new();
                 let prepared_fold =
-                    prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, { D_LEVEL }>(
+                    prepare_fold_data::<Cfg::Field, Cfg::ExtField, T, B, { D_LEVEL }>(
                         backend,
                         &level_prepared,
                         transcript,
@@ -158,7 +158,7 @@ where
                         level_params,
                         m_row_layout,
                     )?;
-                prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, { D_LEVEL }>(
+                prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, { D_LEVEL }>(
                     expanded,
                     &level_prefix_slots,
                     backend,
@@ -243,7 +243,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
-    Cfg: CommitmentConfig<Field = F, ChallengeField = L>,
+    Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
     #[cfg(feature = "zk")]
     let mut zk_hiding = prepared_fold.zk_hiding;

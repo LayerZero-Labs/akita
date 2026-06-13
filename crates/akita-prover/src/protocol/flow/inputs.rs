@@ -173,7 +173,7 @@ pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     claims: ProverClaims<
         'a,
-        Cfg::ClaimField,
+        Cfg::ExtField,
         P,
         RingCommitment<Cfg::Field, D>,
         AkitaCommitmentHint<Cfg::Field, D>,
@@ -181,7 +181,7 @@ pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -191,9 +191,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -207,20 +206,17 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
-        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ClaimField, P, D>(
-            expanded.as_ref(),
-            claims,
-        )?
+        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
     };
     let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             &prepared_claims.opening_points,
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             num_vars,
         ) {
             let commit_params =
@@ -248,7 +244,7 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct::<Cfg::Field, Cfg::ChallengeField, D, P>(
+        return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
             &prepared_claims.group_polys,
             &prepared_claims.flat_hints,
         );
@@ -273,24 +269,6 @@ where
     .map(|(proof, _total_levels)| proof)
 }
 
-/// Assemble the 1-fold batched proof when the root level is itself the
-/// terminal fold (no recursive suffix follows).
-pub fn build_terminal_root_batched_proof<F, L>(
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProof<F>,
-    terminal: TerminalLevelProof<F, L>,
-) -> AkitaBatchedProof<F, L>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    AkitaBatchedProof {
-        #[cfg(feature = "zk")]
-        zk_hiding,
-        root: AkitaBatchedRootProof::new_terminal(terminal),
-        steps: Vec::new(),
-    }
-}
-
 /// Prove a folded batched root and assemble the recursive suffix under config
 /// `Cfg`.
 ///
@@ -311,11 +289,11 @@ pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
+    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, usize), AkitaError>
+) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -325,9 +303,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -357,7 +334,7 @@ where
 
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
-        build_zk_hiding_context::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, B, D>(
+        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, B, D>(
             backend,
             prepared,
             schedule,
@@ -371,44 +348,37 @@ where
 
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
-        let terminal = prove_terminal_root_fold_with_params::<
-            Cfg,
-            Cfg::Field,
-            Cfg::ClaimField,
-            Cfg::ChallengeField,
-            T,
-            P,
-            B,
-            D,
-        >(
-            expanded,
-            backend,
-            prepared,
-            transcript,
-            &prepared_claims.flat_polys,
-            &prepared_claims.incidence_summary,
-            &prepared_claims.opening_points,
-            &prepared_claims.commitments_by_point,
-            prepared_claims.flat_hints,
-            &root_scheduled,
-            basis,
-            setup_contribution_mode,
-            #[cfg(feature = "zk")]
-            &mut zk_hiding_state,
-        )?;
+        let terminal =
+            prove_terminal_root_fold_with_params::<Cfg, Cfg::Field, Cfg::ExtField, T, P, B, D>(
+                expanded,
+                backend,
+                prepared,
+                transcript,
+                &prepared_claims.flat_polys,
+                &prepared_claims.incidence_summary,
+                &prepared_claims.opening_points,
+                &prepared_claims.commitments_by_point,
+                prepared_claims.flat_hints,
+                &root_scheduled,
+                basis,
+                setup_contribution_mode,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_state,
+            )?;
         #[cfg(feature = "zk")]
         let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
-            build_terminal_root_batched_proof::<Cfg::Field, Cfg::ChallengeField>(
+            AkitaBatchedProof {
                 #[cfg(feature = "zk")]
-                zk_hiding_proof,
-                terminal,
-            ),
+                zk_hiding: zk_hiding_proof,
+                root: AkitaBatchedRootProof::new_terminal(terminal),
+                steps: Vec::new(),
+            },
             1,
         ));
     }
 
-    let root = prove_root_fold::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, P, B, Cfg, D>(
+    let root = prove_root_fold::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,

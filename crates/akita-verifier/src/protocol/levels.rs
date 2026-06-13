@@ -247,7 +247,7 @@ where
 fn verify_fold_eor<F, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     _y_rings: &[CyclotomicRing<F, D>],
-    challenge_points: &[Vec<C>],
+    challenge_points: &[&[C]],
     openings: &[C],
     row_coefficients: &[C],
     incidence_summary: &ClaimIncidenceSummary,
@@ -307,7 +307,7 @@ where
                 if point.len() > incidence_summary.num_vars() {
                     return Err(AkitaError::InvalidProof);
                 }
-                let mut padded = point.clone();
+                let mut padded = point.to_vec();
                 padded.resize(incidence_summary.num_vars(), C::zero());
                 Ok(padded)
             })
@@ -896,8 +896,8 @@ where
 /// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn verify_root<F, E, C, T, const D: usize>(
-    proof: &AkitaBatchedRootProof<F, C>,
+fn verify_root<F, E, T, const D: usize>(
+    proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -910,13 +910,11 @@ fn verify_root<F, E, C, T, const D: usize>(
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
-) -> Result<Vec<C>, AkitaError>
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
@@ -974,30 +972,15 @@ where
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients =
-        sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
-
-    if extension_opening_reduction.is_some()
-        && <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let challenge_points = claim_points
-        .iter()
-        .map(|point| point.iter().copied().map(C::lift_base).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let openings_lifted = openings
-        .iter()
-        .copied()
-        .map(C::lift_base)
-        .collect::<Vec<_>>();
+        sample_public_row_coefficients::<F, E, T>(incidence_summary, transcript)?;
     #[cfg(feature = "zk")]
     let opening_masks = vec![None; num_claims];
 
-    let root_eor = verify_fold_eor::<F, C, T, D>(
+    let root_eor = verify_fold_eor::<F, E, T, D>(
         extension_opening_reduction,
         &[],
-        &challenge_points,
-        &openings_lifted,
+        claim_points,
+        openings,
         &row_coefficients,
         incidence_summary,
         basis,
@@ -1032,10 +1015,10 @@ where
             }
         }
     }
-    let trace_block_openings: Vec<Vec<C>> = if let Some(rho) = &reduction_check {
+    let trace_block_openings: Vec<Vec<E>> = if let Some(rho) = &reduction_check {
         let protocol_point =
-            ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
-        let b_open = root_trace_block_opening::<C>(
+            ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
+        let b_open = root_trace_block_opening::<E>(
             &protocol_point,
             root_lp,
             root_lp.ring_dimension.trailing_zeros() as usize,
@@ -1050,12 +1033,11 @@ where
                     root_lp,
                     root_lp.ring_dimension.trailing_zeros() as usize,
                 )
-                .map(|b_open| b_open.into_iter().map(C::lift_base).collect())
             })
             .collect::<Result<Vec<_>, _>>()?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings_lifted)?;
+        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, openings)?;
     #[cfg(not(feature = "zk"))]
     let trace_eval_target = eor_trace_final
         .as_ref()
@@ -1068,7 +1050,7 @@ where
         } else {
             (
                 ordinary_trace_eval_target,
-                ZkR1csLinearCombination::<C>::zero(),
+                ZkR1csLinearCombination::<E>::zero(),
             )
         };
     #[cfg(not(feature = "zk"))]
@@ -1173,13 +1155,13 @@ where
         trace_prepared_points: prepared_points,
         trace_block_openings,
         trace_eval_target,
-        trace_eval_scale: C::one(),
+        trace_eval_scale: E::one(),
         #[cfg(feature = "zk")]
         trace_eval_target_mask,
         trace_claim_scales,
         trace_basis: basis,
     };
-    verify_fold::<F, C, T, D>(
+    verify_fold::<F, E, T, D>(
         setup,
         transcript,
         prepared,
