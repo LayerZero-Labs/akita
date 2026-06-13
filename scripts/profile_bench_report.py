@@ -857,6 +857,99 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     return combined
 
 
+@dataclass(frozen=True)
+class ScheduledRun:
+    """One planned execution of a benchmark binary."""
+
+    binary: str
+    summary_dir: pathlib.Path  # root whose summary.json this run's case feeds
+    run_dir: pathlib.Path  # directory for this single execution's output
+    case: BenchmarkCaseSpec
+    kind: str  # "warmup" or "measured"
+    run_index: int  # 0 for warm-ups, 1..runs for measured
+
+
+def plan_case_runs(
+    binary: str,
+    summary_dir: pathlib.Path,
+    case: BenchmarkCaseSpec,
+    runs: int,
+    warmups: int,
+) -> list[ScheduledRun]:
+    """All executions of one case for one binary, in execution order."""
+    case_dir = summary_dir / case.case_id
+    schedule = [
+        ScheduledRun(
+            binary, summary_dir, case_dir / f"warmup-{warmup_index}", case, "warmup", 0
+        )
+        for warmup_index in range(1, warmups + 1)
+    ]
+    for run_index in range(1, runs + 1):
+        run_dir = case_dir if runs == 1 else case_dir / f"run-{run_index}"
+        schedule.append(ScheduledRun(binary, summary_dir, run_dir, case, "measured", run_index))
+    return schedule
+
+
+def execute_schedule(
+    schedule: list[ScheduledRun],
+) -> tuple[list[tuple[ScheduledRun, dict[str, object]]], int]:
+    """Execute runs in order, recording the summaries that feed aggregation.
+
+    Successful warm-up output is discarded. The first failure halts that
+    run's case (rerunning a known-broken case would just repeat the same
+    error) and records its failure summary; remaining cases still run.
+    Returns the recorded (run, summary) pairs and the first non-zero exit
+    code, 0 otherwise.
+    """
+    results: list[tuple[ScheduledRun, dict[str, object]]] = []
+    failed_cases: set[str] = set()
+    overall_return_code = 0
+    for run in schedule:
+        if run.case.case_id in failed_cases:
+            continue
+        summary, return_code = run_benchmark_case(run.binary, run.run_dir, run.case)
+        summary["run_index"] = run.run_index
+        if return_code != 0:
+            failed_cases.add(run.case.case_id)
+            if overall_return_code == 0:
+                overall_return_code = return_code
+            results.append((run, summary))
+        elif run.kind == "measured":
+            results.append((run, summary))
+    return results, overall_return_code
+
+
+def write_aggregate_summaries(
+    summary_dirs: list[pathlib.Path],
+    cases: list[BenchmarkCaseSpec],
+    results: list[tuple[ScheduledRun, dict[str, object]]],
+    warmups: int,
+) -> None:
+    """Aggregate recorded run summaries into summary.json/summary.csv per root."""
+    generated_at = datetime.now(timezone.utc).isoformat()
+    for summary_dir in summary_dirs:
+        aggregate: dict[str, object] = {
+            "schema_version": 2,
+            "generated_at": generated_at,
+            "warmups": warmups,
+            "cases": [],
+        }
+        for case in cases:
+            case_summaries = [
+                summary
+                for run, summary in results
+                if run.summary_dir == summary_dir and run.case.case_id == case.case_id
+            ]
+            if case_summaries:
+                aggregate["cases"].append(combine_case_run_summaries(case_summaries))
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        write_text(
+            summary_dir / "summary.json",
+            json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
+        )
+        write_summary_csv(summary_dir / "summary.csv", aggregate["cases"])
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -866,51 +959,12 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--warmups must be non-negative")
 
     cases = configured_cases(args)
-    aggregate_summary: dict[str, object] = {
-        "schema_version": 2,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "warmups": args.warmups,
-        "cases": [],
-    }
-    overall_return_code = 0
-
+    schedule: list[ScheduledRun] = []
     for case in cases:
-        case_dir = output_dir / case.case_id
-        # Warm-up runs: prime caches, allocator, and lazily-initialized
-        # statics (NTT roots, schedule tables) so the first measured run
-        # is not penalized. Output is discarded on success; on failure we
-        # surface the warm-up's failure summary instead of running the
-        # measured loop (rerunning a known-broken case would just repeat
-        # the same error).
-        run_summaries = []
-        warmup_failure_summary: dict[str, object] | None = None
-        for warmup_index in range(1, args.warmups + 1):
-            warmup_dir = case_dir / f"warmup-{warmup_index}"
-            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
-            if return_code != 0:
-                summary["run_index"] = 0
-                warmup_failure_summary = summary
-                if overall_return_code == 0:
-                    overall_return_code = return_code
-                break
-        if warmup_failure_summary is not None:
-            run_summaries.append(warmup_failure_summary)
-        else:
-            for run_index in range(1, args.runs + 1):
-                run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
-                summary["run_index"] = run_index
-                run_summaries.append(summary)
-                if return_code != 0:
-                    if overall_return_code == 0:
-                        overall_return_code = return_code
-                    break
-        aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
+        schedule.extend(plan_case_runs(args.binary, output_dir, case, args.runs, args.warmups))
 
-    write_text(
-        output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
-    )
-    write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
+    results, overall_return_code = execute_schedule(schedule)
+    write_aggregate_summaries([output_dir], cases, results, args.warmups)
     return overall_return_code
 
 
