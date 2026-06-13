@@ -113,7 +113,7 @@ pub fn trace_weight_layout_from_segment(
 }
 
 /// Build degree-one public trace weights from explicit block-offset terms.
-pub fn trace_public_weights_field_terms<F, E, const D: usize>(
+pub(crate) fn trace_public_weights_field_terms<F, E, const D: usize>(
     terms: &[TraceFieldBlockOpening<F, D>],
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
@@ -131,7 +131,7 @@ where
 }
 
 /// Build extension-valued public trace weights from explicit block-offset terms.
-pub fn trace_public_weights_ring_terms<F, E, const D: usize>(
+pub(crate) fn trace_public_weights_ring_terms<F, E, const D: usize>(
     terms: &[TraceRingBlockOpening<F, D>],
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
@@ -425,7 +425,7 @@ where
 }
 
 /// Materialize the trace-weight table and keep only live witness columns.
-pub fn trace_weight_evals_for_witness<E: FieldCore>(
+pub(crate) fn trace_weight_evals_for_witness<E: FieldCore>(
     layout: &TraceWeightLayout,
     table: &[E],
     live_x_cols: usize,
@@ -458,23 +458,6 @@ pub fn trace_weight_evals_for_witness<E: FieldCore>(
         }
     }
     Ok(out)
-}
-
-/// Build the prover-side compact trace table and scale each live entry.
-pub fn build_trace_stage2_compact_scaled<F, E, const D: usize>(
-    layout: &TraceWeightLayout,
-    public_weights: &TracePublicWeights<F, E, D>,
-    live_x_cols: usize,
-    output_scale: E,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    Ok(
-        build_trace_table_scaled(layout, public_weights, live_x_cols, output_scale)?
-            .materialize_dense(live_x_cols, layout.ring_len()),
-    )
 }
 
 /// Build the typed trace table used by the stage-2 prover.
@@ -617,9 +600,9 @@ mod tests {
         ];
         let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
         let live_x_cols = 5;
-        let dense =
-            build_trace_stage2_compact_scaled(&layout, &public_weights, live_x_cols, F::one())
-                .unwrap();
+        let dense = build_trace_table_scaled(&layout, &public_weights, live_x_cols, F::one())
+            .unwrap()
+            .materialize_dense(live_x_cols, layout.ring_len());
         let sparse = build_trace_table_scaled(&layout, &public_weights, live_x_cols, F::one())
             .unwrap()
             .materialize_dense(live_x_cols, layout.ring_len());
@@ -644,8 +627,9 @@ mod tests {
         let public_weights = trace_public_weights_field_terms::<F, F, D>(&terms).unwrap();
         let dense = build_trace_weight_table_field_terms::<F, F, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual =
-            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, F::one()).unwrap();
+        let actual = build_trace_table_scaled(&layout, &public_weights, 5, F::one())
+            .unwrap()
+            .materialize_dense(5, layout.ring_len());
 
         assert_eq!(actual, expected);
     }
@@ -670,8 +654,9 @@ mod tests {
         let public_weights = trace_public_weights_ring_terms::<F, E, D>(&terms).unwrap();
         let dense = build_trace_weight_table_ring_terms::<F, E, D>(&layout, &terms).unwrap();
         let expected = trace_weight_evals_for_witness(&layout, &dense, 5).unwrap();
-        let actual =
-            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, E::one()).unwrap();
+        let actual = build_trace_table_scaled(&layout, &public_weights, 5, E::one())
+            .unwrap()
+            .materialize_dense(5, layout.ring_len());
 
         assert_eq!(actual, expected);
     }
@@ -701,8 +686,9 @@ mod tests {
             .into_iter()
             .map(|value| output_scale * value)
             .collect::<Vec<_>>();
-        let actual =
-            build_trace_stage2_compact_scaled(&layout, &public_weights, 5, output_scale).unwrap();
+        let actual = build_trace_table_scaled(&layout, &public_weights, 5, output_scale)
+            .unwrap()
+            .materialize_dense(5, layout.ring_len());
 
         assert_eq!(actual, expected);
     }
