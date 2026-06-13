@@ -47,9 +47,10 @@ pub use incidence::{
     PublicOpeningRow,
 };
 pub use levels::{
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
+    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
+    TerminalLevelProof,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

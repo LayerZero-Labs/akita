@@ -19,7 +19,7 @@ use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, SetupContributionMode,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -40,7 +40,7 @@ fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
     let suffix_fold = proof
         .steps
         .iter()
-        .filter(|step| matches!(step, AkitaProofStep::Intermediate(_)))
+        .filter(|step| matches!(step, AkitaLevelProof::Intermediate { .. }))
         .count();
     root_fold + suffix_fold
 }
