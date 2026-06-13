@@ -3,7 +3,12 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::FieldCore;
+use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
+
+use crate::field_reduction::{embed_ring_subfield_scalar, RingSubfieldEncoding};
+
+const BLOCK_EMBED_ERROR: &str = "block opening weight does not embed in the ring-subfield basis";
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -194,4 +199,23 @@ pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
         )));
     }
     Ok(CyclotomicRing::from_slice(&weights))
+}
+
+/// Embed `eq(b_open, j)` as a ring element for each block index `j`.
+pub fn block_rings_at_opening<F, E, const D: usize>(
+    b_open: &[E],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + FieldCore,
+{
+    lagrange_weights(b_open)?
+        .into_iter()
+        .map(|weight| {
+            embed_ring_subfield_scalar::<F, E, D>(
+                weight,
+                AkitaError::InvalidInput(BLOCK_EMBED_ERROR.to_string()),
+            )
+        })
+        .collect()
 }

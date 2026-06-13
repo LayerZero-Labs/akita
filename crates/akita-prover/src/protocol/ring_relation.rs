@@ -33,7 +33,8 @@ use std::time::Instant;
 mod relation_quotient;
 mod repeated_b;
 
-pub use relation_quotient::{compute_relation_quotient, generate_y};
+pub use akita_types::generate_y;
+pub use relation_quotient::compute_relation_quotient;
 
 /// Worst-case `||z||_inf` of the folded witness `z = Σ c_i · s_i`, matching the
 /// planner's folded-witness bound `β` (the input to `num_digits_fold`):
@@ -448,13 +449,9 @@ impl RingRelationProver {
     ///
     /// `opening_points` holds the distinct ring-level opening points used by
     /// the batch; `claim_to_point` maps each flattened claim to its
-    /// opening-point index.  The batched CWSS protocol γ-combines all
-    /// polynomials opened at the same point into one ring element, so
-    /// `y_rings` carries one entry per opening point
-    /// (i.e. `y_rings.len() == opening_points.len()`).  For the trivial
-    /// single-claim case use `opening_points = vec![pt]`,
-    /// `claim_to_point = vec![0]`, `polys = &[poly]`,
-    /// `num_polys_per_point = &[1]`, `gamma = vec![F::one()]`.
+    /// opening-point index.  For the trivial single-claim case use
+    /// `opening_points = vec![pt]`, `claim_to_point = vec![0]`,
+    /// `polys = &[poly]`, `num_polys_per_point = &[1]`, `gamma = vec![F::one()]`.
     ///
     /// # Errors
     ///
@@ -484,7 +481,6 @@ impl RingRelationProver {
         hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
@@ -535,11 +531,8 @@ impl RingRelationProver {
                 "batched prover requires at least one polynomial per opening point".to_string(),
             ));
         }
-        // The batched protocol emits one public y-row per packaged public row,
-        // so `y_rings.len()` must equal `opening_points.len()`.
         if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
-            || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
             || incidence_summary.claim_to_point().len() != num_claims
             || incidence_summary.claim_poly_indices().len() != num_claims
@@ -648,7 +641,7 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
-        // `[consistency | public_outputs | commitment_rows | A-zeros]`.
+        // `[consistency | commitment_rows | A-zeros]` (no D-block).
         let (y_v_slice, n_d_active) = match m_row_layout {
             MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
@@ -656,7 +649,6 @@ impl RingRelationProver {
         let y = generate_y::<F, D>(
             y_v_slice,
             &commitment_rows,
-            y_rings,
             n_d_active,
             lp.effective_commit_rows(),
             lp.b_inner_rows_per_group(),
