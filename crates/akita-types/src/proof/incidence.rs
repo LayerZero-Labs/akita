@@ -6,7 +6,7 @@
 //! multiple points (multipoint opening of a shared commitment).
 
 use super::VerifierClaims;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
@@ -243,8 +243,9 @@ impl ClaimIncidenceSummary {
         }
 
         let mut row_claims = BTreeSet::new();
-        for row in &self.public_rows {
-            if row.point_idx >= num_points
+        for (row_idx, row) in self.public_rows.iter().enumerate() {
+            if row.point_idx != row_idx
+                || row.point_idx >= num_points
                 || row.claim_indices.len() != self.num_polys_per_point[row.point_idx]
             {
                 return Err(AkitaError::InvalidProof);
@@ -599,6 +600,41 @@ where
         ));
     }
     Ok(coeffs)
+}
+
+/// Sum batched public opening claims under per-claim row coefficients.
+pub fn batched_eval_target_from_incidence<E, L>(
+    incidence: &ClaimIncidenceSummary,
+    row_coefficients: &[L],
+    openings: &[E],
+) -> Result<L, AkitaError>
+where
+    E: FieldCore,
+    L: ExtField<E> + MulBase<E> + FieldCore,
+{
+    if row_coefficients.len() != incidence.num_claims() {
+        return Err(AkitaError::InvalidSize {
+            expected: incidence.num_claims(),
+            actual: row_coefficients.len(),
+        });
+    }
+    if openings.len() != incidence.num_claims() {
+        return Err(AkitaError::InvalidSize {
+            expected: incidence.num_claims(),
+            actual: openings.len(),
+        });
+    }
+    incidence
+        .public_rows()
+        .iter()
+        .flat_map(|row| row.claim_indices())
+        .try_fold(L::zero(), |acc, &claim_idx| {
+            let coefficient = *row_coefficients
+                .get(claim_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let opening = *openings.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
+            Ok(acc + coefficient.mul_base(opening))
+        })
 }
 
 #[cfg(test)]

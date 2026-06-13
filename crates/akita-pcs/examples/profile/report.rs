@@ -185,19 +185,12 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let y_rings_size = level.y_ring.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
-    eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(level.y_ring.coeff_len(), D),
-        D,
-    );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
@@ -239,7 +232,6 @@ where
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
@@ -266,8 +258,7 @@ where
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size
@@ -291,7 +282,6 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let y_rings_size = level.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let stage2_sumcheck_size = {
@@ -314,7 +304,7 @@ where
     let total = full - final_witness_size;
 
     // Only the fields structurally present in `TerminalLevelProof` are
-    // emitted: `y_rings`, optional extension-opening reduction, the
+    // emitted: optional extension-opening reduction, the
     // stage-2 sumcheck, and `final_witness`. The intermediate-level
     // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
     // terminal and therefore omitted from the tracing payload; downstream
@@ -324,7 +314,6 @@ where
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
@@ -341,20 +330,13 @@ where
     eprintln!(
         "[{label}]   {header}: total={total} bytes (excl. final_witness={final_witness_size})"
     );
-    eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(level.y_rings.coeff_len(), D),
-        D,
-    );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + stage2_sumcheck_size
             + final_witness_size
@@ -390,7 +372,6 @@ where
         );
         return total;
     };
-    let y_rings_size = fold.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(fold.extension_opening_reduction.as_ref());
     let v_size = fold.v.serialized_size(Compress::No);
@@ -431,7 +412,6 @@ where
         level = 0usize,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
@@ -446,12 +426,6 @@ where
         "proof fold level"
     );
     eprintln!("[{label}]   batched_root: total={total} bytes");
-    eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(fold.y_rings.coeff_len(), D),
-        D,
-    );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
@@ -472,8 +446,7 @@ where
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size

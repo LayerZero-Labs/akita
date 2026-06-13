@@ -87,9 +87,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                 "ring relation opening points do not match public row count".to_string(),
             ));
         }
-        if y.len() < incidence.num_public_rows() {
+        if y.is_empty() {
             return Err(AkitaError::InvalidInput(
-                "ring relation y rows shorter than public row count".to_string(),
+                "ring relation y must contain at least the consistency row".to_string(),
             ));
         }
         Ok(Self {
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_instance_rejects_y_row_mismatch() {
+    fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
         let incidence =
             ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
@@ -462,9 +462,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("missing y row must be rejected");
+        .expect_err("empty y must be rejected");
         assert!(
-            format!("{err:?}").contains("y rows shorter than public row count"),
+            format!("{err:?}")
+                .contains("ring relation y must contain at least the consistency row"),
             "unexpected error: {err:?}"
         );
     }
