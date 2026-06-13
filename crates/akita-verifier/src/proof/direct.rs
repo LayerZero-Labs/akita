@@ -3,20 +3,6 @@
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof};
 
-/// Borrow the field-element payload from a cleartext witness.
-///
-/// # Errors
-///
-/// Returns an error if the witness is not encoded as field elements.
-pub(crate) fn cleartext_witness_field_elements<F: FieldCore>(
-    cleartext_witness: &CleartextWitnessProof<F>,
-) -> Result<&[F], AkitaError> {
-    cleartext_witness
-        .as_field_elements()
-        .map(|witness| witness.coeffs())
-        .ok_or(AkitaError::InvalidProof)
-}
-
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
 /// Zero-fold cleartext witnesses are raw field-element tables. Under
@@ -37,7 +23,10 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let witness = cleartext_witness_field_elements(cleartext_witness)?;
+    let witness = cleartext_witness
+        .as_field_elements()
+        .map(|witness| witness.coeffs())
+        .ok_or(AkitaError::InvalidProof)?;
     if !witness.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
@@ -64,11 +53,6 @@ where
 /// while openings are stored once per claim. Multipoint openings of the same
 /// committed polynomial therefore reuse the same witness through the
 /// claim's `(group_idx, poly_idx)` route.
-///
-/// This is the zero-fold counterpart to incidence-driven schedule lookup:
-/// claim-to-point routing comes from [`ClaimIncidenceSummary`] rather than the
-/// temporary legacy batch-shape adapter.
-///
 /// # Errors
 ///
 /// Returns an error if the incidence summary is inconsistent with the flattened
@@ -137,21 +121,6 @@ mod tests {
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
-
-    #[test]
-    fn cleartext_witness_opening_matches_extension_claim() {
-        let witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
-            F::from_u64(1),
-            F::from_u64(2),
-        ]));
-        let point = [E::new(F::from_u64(3), F::from_u64(4))];
-        let opening = E::new(F::from_u64(4), F::from_u64(4));
-
-        assert!(
-            cleartext_witness_opening_matches(&witness, &point, &opening, BasisMode::Lagrange)
-                .expect("extension-valued direct opening should verify")
-        );
-    }
 
     #[test]
     fn root_direct_openings_accept_incidence_summary() {

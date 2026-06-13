@@ -2,8 +2,8 @@ use akita_field::FieldCore;
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
-    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, LevelParams,
+    Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -167,10 +167,10 @@ where
         .steps
         .iter()
         .map(|step| match step {
-            AkitaProofStep::Intermediate(lp) => {
-                stage3_sumcheck_size(lp.stage3_sumcheck_proof.as_ref())
+            AkitaLevelProof::Intermediate { .. } => {
+                stage3_sumcheck_size(step.stage3_sumcheck_proof())
             }
-            AkitaProofStep::Terminal(_) => 0,
+            AkitaLevelProof::Terminal { .. } => 0,
         })
         .sum();
     root_bytes + step_bytes
@@ -186,19 +186,22 @@ where
     L: FieldCore + AkitaSerialize,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
+        extension_opening_reduction_sizes(level.extension_opening_reduction());
+    let v_size = level.v().serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
+    let stage2_intermediate = level
+        .stage2()
+        .as_intermediate()
+        .expect("Akita level proof must carry intermediate stage-2 proof");
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), D),
+        ring_elem_count(level.v().coeff_len(), D),
         D,
     );
-    let stage1 = &level.stage1;
-    let stage2 = &level.stage2;
+    let stage1 = level.stage1();
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -221,12 +224,20 @@ where
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof
+        .serialized_size(Compress::No);
     #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
-    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof_masked
+        .serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof());
+    let next_w_commitment_size = stage2_intermediate
+        .next_w_commitment
+        .serialized_size(Compress::No);
+    let next_w_eval_size = stage2_intermediate
+        .next_w_eval()
+        .serialized_size(Compress::No);
     tracing::info!(
         label,
         level = level_idx,
@@ -253,7 +264,7 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2.next_w_commitment.coeff_len(),
+        stage2_intermediate.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
@@ -272,31 +283,79 @@ where
     total
 }
 
-fn print_terminal_level_breakdown<FF, L, const D: usize>(
+trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>>;
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L>;
+    fn final_witness(&self) -> &CleartextWitnessProof<FF>;
+}
+
+impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
+    for TerminalLevelProof<FF, L>
+{
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>> {
+        self.extension_opening_reduction.as_ref()
+    }
+
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L> {
+        &self.stage2
+    }
+
+    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
+        self.final_witness()
+    }
+}
+
+impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
+    for AkitaLevelProof<FF, L>
+{
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>> {
+        self.extension_opening_reduction()
+    }
+
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L> {
+        self.stage2()
+    }
+
+    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
+        self.stage2()
+            .final_witness()
+            .expect("terminal Akita level proof must carry final witness")
+    }
+}
+
+fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
     label: &str,
     level_idx: usize,
-    level: &TerminalLevelProof<FF, L>,
+    level: &P,
     root_variant: &'static str,
 ) -> usize
 where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
+    P: TerminalProofView<FF, L>,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+        extension_opening_reduction_sizes(level.extension_opening_reduction());
     let stage2_sumcheck_size = {
         #[cfg(not(feature = "zk"))]
         {
-            level.stage2_sumcheck.serialized_size(Compress::No)
+            level.stage2().sumcheck().serialized_size(Compress::No)
         }
         #[cfg(feature = "zk")]
         {
             level
-                .stage2_sumcheck_proof_masked
+                .stage2()
+                .sumcheck_masked()
                 .serialized_size(Compress::No)
         }
     };
-    let final_witness_size = level.final_witness.serialized_size(Compress::No);
+    let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -353,7 +412,7 @@ where
     L: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
-        return print_terminal_level_breakdown::<FF, L, D>(label, 0, terminal, "terminal");
+        return print_terminal_level_breakdown::<FF, L, _, D>(label, 0, terminal, "terminal");
     }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -377,7 +436,10 @@ where
     let v_size = fold.v.serialized_size(Compress::No);
     let total = fold.serialized_size(Compress::No);
     let stage1 = &fold.stage1;
-    let stage2 = &fold.stage2;
+    let stage2_intermediate = fold
+        .stage2
+        .as_intermediate()
+        .expect("fold root proof must carry intermediate stage-2 proof");
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -400,12 +462,20 @@ where
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof
+        .serialized_size(Compress::No);
     #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof_masked
+        .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
+    let next_w_commitment_size = stage2_intermediate
+        .next_w_commitment
+        .serialized_size(Compress::No);
+    let next_w_eval_size = stage2_intermediate
+        .next_w_eval()
+        .serialized_size(Compress::No);
 
     tracing::info!(
         label,
@@ -441,7 +511,7 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2.next_w_commitment.coeff_len(),
+        stage2_intermediate.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
@@ -529,11 +599,11 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     for (i, step) in proof.steps.iter().enumerate() {
         let level_idx = i + 1;
         match step {
-            AkitaProofStep::Intermediate(lp) => {
-                print_akita_level_breakdown::<FF, L, D>(label, level_idx, lp);
+            AkitaLevelProof::Intermediate { .. } => {
+                print_akita_level_breakdown::<FF, L, D>(label, level_idx, step);
             }
-            AkitaProofStep::Terminal(lp) => {
-                print_terminal_level_breakdown::<FF, L, D>(label, level_idx, lp, "fold");
+            AkitaLevelProof::Terminal { .. } => {
+                print_terminal_level_breakdown::<FF, L, _, D>(label, level_idx, step, "fold");
             }
         }
     }

@@ -141,6 +141,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
+ "cfg-if",
  "ctr",
  "rand_core 0.6.4",
  "rayon",
