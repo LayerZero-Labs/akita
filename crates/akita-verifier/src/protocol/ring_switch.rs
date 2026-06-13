@@ -173,6 +173,9 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) rows: usize,
     pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
     pub(crate) num_polys_per_commitment_group: Vec<usize>,
+    /// Distinct opening-point count driving per-point consistency / A rows.
+    pub(crate) num_opening_points: usize,
+    /// Public-output M-row count (always zero after trace internalization).
     pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
     pub(crate) claim_to_point: Vec<usize>,
@@ -270,7 +273,7 @@ where
     let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
     let claim_to_commitment_group = routing.claim_to_commitment_group();
     let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
-    let num_public_rows = relation.num_public_rows();
+    let _num_public_rows = relation.num_public_rows();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -309,7 +312,9 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    let num_groups = num_polys_per_commitment_group.len();
+    let num_opening_points = opening_points.len();
+    let m_rows = lp.m_row_count_for(num_groups, num_opening_points, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -378,7 +383,7 @@ where
         routing.claim_to_commitment_group(),
         routing.claim_poly_in_commitment_group(),
         replay.row_coefficients,
-        relation.num_public_rows(),
+        0,
         relation.m_row_layout(),
         relation.opening_points().len(),
         relation.ring_multiplier_points(),
@@ -416,10 +421,14 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let num_points = num_polys_per_commitment_group.len();
+    let num_groups = num_polys_per_commitment_group.len();
+    let num_opening_points = opening_points_len;
+    if num_opening_points == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
     for claim_idx in 0..num_claims {
         let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_points
+        if group_idx >= num_groups
             || claim_poly_in_commitment_group[claim_idx]
                 >= num_polys_per_commitment_group[group_idx]
         {
@@ -469,7 +478,7 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_points
+    let b_blinding_segment_len = num_opening_points
         .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
@@ -526,19 +535,22 @@ where
             "B-key column width is too small for verifier layout".to_string(),
         ));
     }
-    if opening_points_len != num_points {
+    if opening_points_len != num_opening_points {
         return Err(AkitaError::InvalidProof);
     }
     if claim_to_point
         .iter()
-        .any(|&point_idx| point_idx >= num_points)
+        .any(|&point_idx| point_idx >= num_opening_points)
     {
         return Err(AkitaError::InvalidProof);
     }
     if ring_multiplier_points.len() != opening_points_len {
         return Err(AkitaError::InvalidProof);
     }
-    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    if num_public_rows != 0 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let rows = lp.m_row_count_for(num_groups, num_opening_points, m_row_layout)?;
 
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
@@ -614,11 +626,12 @@ where
         n_b,
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
-        num_points,
+        num_points: num_groups,
         rows,
         claim_to_commitment_group_poly,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        num_public_rows,
+        num_opening_points,
+        num_public_rows: 0,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
         witness_segment_layout,
@@ -663,6 +676,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             m_row_layout: self.m_row_layout,
             n_b: self.n_b,
             num_points: self.num_points,
+            num_opening_points: self.num_opening_points,
             rows: self.rows,
             num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
             num_public_rows: self.num_public_rows,
@@ -698,9 +712,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Witness-layout offsets ----------------------------------------
         let layout = self.segment_layout()?;
         validate_log_basis(self.log_basis)?;
-        if opening_points.len() != self.num_points {
+        if opening_points.len() != self.num_opening_points {
             return Err(AkitaError::InvalidSize {
-                expected: self.num_points,
+                expected: self.num_opening_points,
                 actual: opening_points.len(),
             });
         }
@@ -769,7 +783,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // in its own point's plane so a slot shared across points is never
         // summed on the per-point A-block.
         let mut challenge_block_summaries_by_point_t_vector =
-            vec![[E::zero(), E::zero()]; self.num_public_rows * self.num_t_vectors];
+            vec![[E::zero(), E::zero()]; self.num_opening_points * self.num_t_vectors];
         // Per-commitment-group t-vector starting indices.
         let t_vector_offsets: Vec<usize> = self
             .num_polys_per_commitment_group
@@ -838,21 +852,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     )
                 })
                 .collect::<Result<_, _>>()?;
-            // Per-point row layout: fold-consistency rows occupy `0..P`, public
-            // eval rows occupy `P..2P`. A claim's ê fold column lands on its
-            // point's consistency row `claim_to_point` and its point's public
-            // row `num_public_rows + claim_to_point`.
-            let public_row_weights_by_claim: Vec<E> = self
-                .claim_to_point
-                .iter()
-                .map(|&point_idx| {
-                    self.num_public_rows
-                        .checked_add(point_idx)
-                        .and_then(|idx| self.eq_tau1.get(idx))
-                        .copied()
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect::<Result<_, _>>()?;
+            let public_row_weights_by_claim = vec![E::zero(); self.num_claims];
             let challenge_row_weights_by_claim: Vec<E> = self
                 .claim_to_point
                 .iter()
@@ -887,10 +887,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         } else {
             0
         };
-        // Per-point layout: consistency (P) | public (P) | D | COMMIT (per group)
+        // Per-point layout: consistency (P) | D | COMMIT (per group)
         // | B_inner (per group) | A (P · n_a, per point).
-        let a_start = self.num_public_rows
-            + self.num_public_rows
+        let a_start = self.num_opening_points
             + self.n_d_active()
             + (commit_rows_pg + b_inner_rows_pg) * self.num_points;
 
@@ -903,7 +902,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 gadget_vector: &g1_open,
                 challenge_block_summaries: &challenge_block_summaries_by_point_t_vector,
                 num_t_vectors: self.num_t_vectors,
-                num_points: self.num_public_rows,
+                num_points: self.num_opening_points,
                 n_a: self.n_a,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
             }
@@ -947,7 +946,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let _span = tracing::info_span!("z_structured").entered();
             let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
             // Per-point fold-consistency row weights (rows `0..P`).
-            let consistency_weights = &self.eq_tau1[0..self.num_public_rows];
+            let consistency_weights = &self.eq_tau1[0..self.num_opening_points];
             if self.block_len.is_power_of_two() {
                 let z_offset_low = layout.offset_z & (self.block_len - 1);
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
@@ -1007,7 +1006,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // columns), weighted by the B_inner row eq. Zero for single-tier.
         let u_recompose_contribution = if self.tier_split > 1 {
             let n_d_active = self.n_d_active();
-            let f_start = self.num_public_rows + self.num_public_rows + n_d_active;
+            let f_start = self.num_opening_points + n_d_active;
             let b_inner_start = f_start + commit_rows_pg * self.num_points;
             let n_b_small = self.n_b;
             let inner_rows_pg = self.tier_split * n_b_small;

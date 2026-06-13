@@ -27,9 +27,8 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    // Per-point layout: consistency (P) | public (P) | D | COMMIT. The COMMIT
-    // (B) block starts after both per-point blocks and the D block.
-    let b_start = prepared.num_public_rows + prepared.num_public_rows + prepared.n_d_active();
+    // Per-point layout: consistency (P) | D | COMMIT (per group G).
+    let b_start = prepared.num_opening_points + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group. The
@@ -84,9 +83,8 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    // Per-point layout: consistency (P) | public (P) | D. The D block starts
-    // after both per-point blocks.
-    let d_start = prepared.num_public_rows + prepared.num_public_rows;
+    // Per-point layout: consistency (P) | D.
+    let d_start = prepared.num_opening_points;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let d_zk_view = setup
@@ -174,12 +172,11 @@ mod tests {
         let n_d = 2usize;
         let n_b = 2usize;
         let num_polys_per_point = vec![2usize, 1usize];
-        let num_public_rows = 2usize;
+        let num_opening_points = 2usize;
         let num_points = num_polys_per_point.len();
         let total_blocks = num_blocks * num_claims;
-        // Per-point layout: consistency (P) | public (P) | D | COMMIT (per group)
-        // | A (P · n_a, per point). Here `num_groups == num_points`.
-        let rows = num_public_rows + num_public_rows + n_d + n_b * num_points + n_a * num_points;
+        // Per-point layout: consistency (P) | D | COMMIT (per group G) | A (P · n_a).
+        let rows = num_opening_points + n_d + n_b * num_points + n_a * num_opening_points;
 
         let w_len = depth_open * total_blocks;
         let b_blinding_digit_planes_per_point =
@@ -273,10 +270,11 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             num_points,
+            num_opening_points,
             rows,
             claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
             num_polys_per_commitment_group: num_polys_per_point,
-            num_public_rows,
+            num_public_rows: 0,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
             witness_segment_layout,
@@ -297,7 +295,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let b_start = p.num_public_rows + p.num_public_rows + p.n_d;
+        let b_start = p.num_opening_points + p.n_d;
         let b_offset = p.segment_layout().unwrap().b_blinding_offset;
         let b_zk_view = fx
             .setup
@@ -331,7 +329,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let d_start = p.num_public_rows + p.num_public_rows;
+        let d_start = p.num_opening_points;
         let d_offset = p.segment_layout().unwrap().d_blinding_offset;
         let d_zk_view = fx
             .setup

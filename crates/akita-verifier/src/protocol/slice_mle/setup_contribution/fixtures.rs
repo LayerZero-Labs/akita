@@ -46,7 +46,8 @@ pub(crate) struct SetupContributionShape {
     pub n_d: usize,
     pub n_b: usize,
     pub num_polys_per_point: Vec<usize>,
-    pub num_public_rows: usize,
+    /// Opening-point count `P` driving consistency / A rows.
+    pub num_opening_points: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
     pub claim_to_point_poly: Vec<(usize, usize)>,
@@ -71,7 +72,7 @@ impl SetupContributionShape {
             n_d: 1,
             n_b: 2,
             num_polys_per_point: vec![1],
-            num_public_rows: 1,
+            num_opening_points: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 0)],
@@ -106,7 +107,7 @@ impl SetupContributionShape {
             n_d: 2,
             n_b: 2,
             num_polys_per_point: vec![2, 1],
-            num_public_rows: 2,
+            num_opening_points: 2,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
@@ -158,14 +159,15 @@ impl SetupContributionShape {
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
         let num_points = shape.num_polys_per_point.len();
+        let num_opening_points = shape.num_opening_points;
         let num_t_vectors = shape.num_polys_per_point.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
         let tiered = shape.tier_split > 1;
-        // Canonical M-row layout: consistency | public | D | COMMIT | B_inner | A.
-        // COMMIT is the `F` block when tiered (`n_f` rows/point), else the full
-        // `B` block (`n_b` rows/point); B_inner (`tier_split·n_b` rows/point) is
+        // Canonical M-row layout: consistency (P) | D | COMMIT | B_inner | A.
+        // COMMIT is the `F` block when tiered (`n_f` rows/group), else the full
+        // `B` block (`n_b` rows/group); B_inner (`tier_split·n_b` rows/group) is
         // tiered-only.
         let commit_rows = if tiered { shape.n_f } else { shape.n_b } * num_points;
         let b_inner_rows = if tiered {
@@ -173,16 +175,11 @@ impl SetupContributionFixture {
         } else {
             0
         };
-        // Per-point layout: consistency (P) | public (P) | D | COMMIT | B_inner
-        // | A (P · n_a). `commit_rows`/`b_inner_rows` already fold in their
-        // per-group `num_points` factor; the point axis here is `num_points`
-        // (= `num_public_rows`, one public row per opening point).
-        let rows = num_points
-            + num_points
+        let rows = num_opening_points
             + shape.n_d
             + commit_rows
             + b_inner_rows
-            + shape.n_a * num_points;
+            + shape.n_a * num_opening_points;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
@@ -201,7 +198,7 @@ impl SetupContributionFixture {
 
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
-        let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
+        let z_len = shape.depth_fold * shape.depth_commit * num_opening_points * shape.block_len;
         // û_concat witness segment (tiered only): `num_points · f_stride` planes
         // placed between `t` and `z`. For single-tier `u_len == 0` and the layout
         // is unchanged.
@@ -293,10 +290,11 @@ impl SetupContributionFixture {
             tier_split: shape.tier_split,
             n_f: shape.n_f,
             num_points,
+            num_opening_points,
             rows,
             claim_to_commitment_group_poly: shape.claim_to_point_poly.clone(),
             num_polys_per_commitment_group: shape.num_polys_per_point.clone(),
-            num_public_rows: shape.num_public_rows,
+            num_public_rows: 0,
             gamma: vec![TestField::one(); shape.num_claims],
             claim_to_point: shape.claim_to_point.clone(),
             witness_segment_layout: RingRelationSegmentLayout {

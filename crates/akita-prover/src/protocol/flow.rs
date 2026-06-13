@@ -43,33 +43,33 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    batched_eval_target_from_incidence, build_trace_table_scaled,
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
+    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape, prepare_opening_point,
+    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    stage2_trace_coeff, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, AkitaStage2Proof,
-    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
-    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    tensor_row_partials_from_columns, terminal_witness_segment_layout,
+    trace_public_weights_recursive, trace_public_weights_root_terms,
+    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, CleartextWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    PackedDigits, PreparedOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingRelationSegmentLayout, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
-use cfg_if::cfg_if;
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
-#[cfg(feature = "zk")]
-use std::array::from_fn;
 use std::sync::Arc;
 
 mod inputs;
@@ -93,6 +93,72 @@ pub(in crate::protocol::flow) use suffix::{
 };
 pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedFold};
 
+fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    col_bits: usize,
+    ring_bits: usize,
+    num_trace_blocks: usize,
+) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
+    let segment = instance.segment_layout(lp)?;
+    let layout =
+        trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
+    Ok((segment, layout))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_recursive_stage2_trace_table<F, E, const D: usize>(
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    prepared: &PreparedOpeningPoint<F, E, D>,
+    trace_scale: E,
+    output_scale: E,
+    col_bits: usize,
+    ring_bits: usize,
+    live_x_cols: usize,
+) -> Result<TraceTable<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
+    let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
+    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_root_stage2_trace_table<F, E, const D: usize>(
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    prepared_points: &[PreparedOpeningPoint<F, E, D>],
+    row_coefficients: &[E],
+    trace_claim_scales: Option<&[E]>,
+    output_scale: E,
+    col_bits: usize,
+    ring_bits: usize,
+    live_x_cols: usize,
+) -> Result<TraceTable<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    let num_trace_blocks = instance
+        .incidence()
+        .num_claims()
+        .checked_mul(lp.num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+    let (_, layout) =
+        trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
+    let public_weights = trace_public_weights_root_terms::<F, E, D>(
+        lp,
+        instance.incidence(),
+        prepared_points,
+        row_coefficients,
+        trace_claim_scales,
+    )?;
+    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+}
+
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     /// Current committed recursive witness representation.
@@ -109,6 +175,9 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub sumcheck_challenges: Vec<L>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
     pub opening: L,
+    /// Transcript-visible masked handle for `opening`.
+    #[cfg(feature = "zk")]
+    pub opening_public: L,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -167,13 +236,6 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         L: ExtField<F>,
     {
         Ok(L::from_base_slice(self.take_values(L::EXT_DEGREE)?))
-    }
-
-    fn take_ring<const D: usize>(&mut self) -> Result<(usize, CyclotomicRing<F, D>), AkitaError> {
-        let start = self.cursor;
-        let coeffs = self.take_values(D)?;
-        let ring = CyclotomicRing::from_coefficients(from_fn(|idx| coeffs[idx]));
-        Ok((start, ring))
     }
 
     fn into_proof(self, commitment: ZkHidingCommitment<F>) -> Result<ZkHidingProof<F>, AkitaError> {
@@ -282,6 +344,27 @@ impl<F: FieldCore> ZkHidingProverState<F> {
     }
 }
 
+#[cfg(feature = "zk")]
+fn masked_sumcheck_final_claim<E: FieldCore>(
+    input_claim: E,
+    proof: &SumcheckProofMasked<E>,
+    challenges: &[E],
+) -> Result<E, AkitaError> {
+    if proof.masked_round_polys.len() != challenges.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: challenges.len(),
+            actual: proof.masked_round_polys.len(),
+        });
+    }
+    Ok(proof
+        .masked_round_polys
+        .iter()
+        .zip(challenges)
+        .fold(input_claim, |claim, (poly, r)| {
+            poly.eval_from_hint(&claim, r)
+        }))
+}
+
 /// Output from a single prove level, used to extend proof wire data and state.
 pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     /// Fold proof produced at this level.
@@ -309,64 +392,8 @@ pub(in crate::protocol::flow) type Stage2ProveResult<L> =
 pub(in crate::protocol::flow) type Stage2ProveResult<L> =
     (SumcheckProofMasked<L>, Vec<L>, AkitaStage2Prover<L>);
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::flow) fn prove_stage2<F, L, T>(
-    transcript: &mut T,
-    batching_coeff: L,
-    rs: RingSwitchOutput<L>,
-    stage1_point: &[L],
-    s_claim: L,
-    relation_claim: L,
-    #[cfg(feature = "zk")] relation_claim_public: L,
-    #[cfg(feature = "zk")] stage1_s_claim: L,
-    #[cfg(feature = "zk")] stage2_round_pads: Vec<CompressedUniPoly<L>>,
-) -> Result<Stage2ProveResult<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-    let mut stage2_prover = AkitaStage2Prover::new(
-        batching_coeff,
-        rs.w_evals_compact,
-        stage1_point,
-        s_claim,
-        rs.b,
-        rs.alpha_evals_y,
-        rs.m_evals_x,
-        rs.live_x_cols,
-        rs.col_bits,
-        rs.ring_bits,
-        relation_claim,
-    )?;
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let stage2_public_input = batching_coeff * stage1_s_claim + relation_claim_public;
-            let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-                .prove_zk::<F, T, _>(
-                    stage2_public_input,
-                    transcript,
-                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                    stage2_round_pads,
-                )?;
-            Ok((
-                stage2_sumcheck_proof_masked,
-                sumcheck_challenges,
-                stage2_prover,
-            ))
-        } else {
-            let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
-                .prove::<F, T, _>(transcript, |tr| {
-                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-                })?;
-            Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
-        }
-    }
-}
-
-fn root_claim_opening_from_y_ring<F, E, L, const D: usize>(
-    y_ring: &CyclotomicRing<F, D>,
+fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
+    folded_ring: &CyclotomicRing<F, D>,
     prepared_point: &PreparedOpeningPoint<F, L, D>,
     inner_opening_point: &[E],
     basis: BasisMode,
@@ -377,12 +404,12 @@ where
     L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*y_ring * prepared_point.inner_reduction.sigma_m1())
+        return (*folded_ring * prepared_point.packed_inner_point.sigma_m1())
             .coefficients()
             .first()
             .copied()
             .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty root y-ring".to_string()));
+            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
     }
     if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
@@ -407,13 +434,13 @@ where
         inner_opening_point[..inner_opening_point.len().min(packed_inner_bits)].to_vec();
     point.resize(packed_inner_bits, E::zero());
     let weights = basis_weights(&point, basis)?;
-    let inner_reduction = embed_ring_subfield_vector::<F, E, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, E, D>(
         &weights,
         AkitaError::InvalidInput(
             "root opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
-    recover_ring_subfield_inner_product::<F, E, D>(y_ring, &inner_reduction)
+    recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
 }
 
 fn row_coefficient_rings<F, L, const D: usize>(
@@ -435,44 +462,6 @@ where
             )
         })
         .collect()
-}
-
-fn combine_root_y_rings<F, const D: usize>(
-    per_claim_y_rings: &[CyclotomicRing<F, D>],
-    incidence: &ClaimIncidenceSummary,
-    row_coefficient_rings: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if per_claim_y_rings.len() != incidence.num_claims()
-        || row_coefficient_rings.len() != incidence.num_claims()
-        || incidence.claim_to_point().len() != incidence.num_claims()
-    {
-        return Err(AkitaError::InvalidInput(
-            "root y-ring batching input lengths do not match".to_string(),
-        ));
-    }
-
-    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); incidence.num_public_rows()];
-    for (row_idx, row) in incidence.public_rows().iter().enumerate() {
-        if row.claim_indices().is_empty() || row.point_idx() >= incidence.num_points() {
-            return Err(AkitaError::InvalidInput(
-                "root y-ring public-row incidence is invalid".to_string(),
-            ));
-        }
-        for &claim_idx in row.claim_indices() {
-            if claim_idx >= per_claim_y_rings.len()
-                || incidence.claim_to_point()[claim_idx] != row.point_idx()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "root y-ring public-row term is inconsistent".to_string(),
-                ));
-            }
-            y_rings[row_idx] += row_coefficient_rings[claim_idx] * per_claim_y_rings[claim_idx];
-        }
-    }
-    Ok(y_rings)
 }
 
 /// Config-free flattened view of batched prover claims.
@@ -574,7 +563,7 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     root_commit_params: &LevelParams,
     num_vars: usize,
     num_claims: usize,
-    num_root_points: usize,
+    _num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -602,9 +591,6 @@ where
             &mut rng,
         );
     }
-    // Root-level ring masks: one D-coefficient ring per requested opening point.
-    // Later added to `y_rings` before the root ring-switch / sumcheck flow.
-    hiding_witness.extend((0..num_root_points * D).map(|_| F::random(&mut rng)));
     if let Some(root_step) = fold_steps.first() {
         // Terminal folds skip Stage 1 and consume only Stage 2 pads.
         let root_has_stage1 = fold_steps.len() > 1;
@@ -633,9 +619,6 @@ where
                     &mut rng,
                 );
             }
-            // Recursive-level ring mask: added to that level's `y_ring` before
-            // ring-switching so the current ring-relation value is hidden.
-            hiding_witness.extend((0..D).map(|_| F::random(&mut rng)));
             // Terminal recursive folds skip Stage 1 and consume only Stage 2 pads.
             let include_stage1 = step_idx + 1 < fold_steps.len();
             append_zk_level_pad_slots::<F, L>(

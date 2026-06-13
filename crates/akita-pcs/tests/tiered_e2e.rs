@@ -225,9 +225,13 @@ fn tiered_onehot_batch_nv14() {
 }
 
 #[test]
-fn tiered_onehot_singleton_nv29() {
-    // Smallest shipped-table singleton whose root fold tiers (f_key present).
-    run_tiered_singleton(29, SetupContributionMode::Direct);
+fn tiered_onehot_singleton_nv27() {
+    // Smallest singleton whose root fold both tiers (f_key present) and folds
+    // (so the recursive variant exercises the tiered stage-3 setup sumcheck)
+    // under the trace-internalized schedules. Tiering vs nv is non-monotonic
+    // (it also holds at nv=12, but nv=12 is too small to fold); the next
+    // tiering points are nv=31, 33, 35-38.
+    run_tiered_singleton(27, SetupContributionMode::Direct);
 }
 
 /// Same tiered instances under [`SetupContributionMode::Recursive`]: the root
@@ -242,6 +246,6 @@ fn tiered_onehot_batch_nv14_recursive() {
 }
 
 #[test]
-fn tiered_onehot_singleton_nv29_recursive() {
-    run_tiered_singleton(29, SetupContributionMode::Recursive);
+fn tiered_onehot_singleton_nv27_recursive() {
+    run_tiered_singleton(27, SetupContributionMode::Recursive);
 }

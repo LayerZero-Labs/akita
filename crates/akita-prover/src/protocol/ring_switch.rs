@@ -27,10 +27,9 @@ use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 
 mod coeffs;

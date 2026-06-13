@@ -339,10 +339,10 @@ impl LevelParams {
 
     // ---- Canonical M-row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (num_public_outputs) |
-    //   public (num_public_outputs) | D (n_d_active) |
+    // Row layout: consistency (num_opening_points) | D (n_d_active) |
     //   COMMIT (effective_commit_rows · nc) |
-    //   B_inner (b_inner_rows_per_group · nc) | A (n_a · num_public_outputs).
+    //   B_inner (b_inner_rows_per_group · nc) | A (n_a · num_opening_points).
+    // Public openings bind through the fused trace term, not M rows.
     //
     // `COMMIT` is the sent-commitment block (the second-tier `F` rows when
     // tiered, the first-tier `B` rows otherwise); `B_inner` is the inner
@@ -405,22 +405,15 @@ impl LevelParams {
     }
 
     /// Per-point fold/consistency row count: one fold row per opening point.
-    ///
-    /// Equal to `num_public_outputs` (both are the opening-point count `P`):
-    /// the layout carries one fold-consistency row and one public eval row per
-    /// distinct opening point. Kept as a named helper so the per-point intent is
-    /// explicit at every offset site rather than a bare literal.
     #[inline]
-    pub fn consistency_rows(num_public_outputs: usize) -> usize {
-        num_public_outputs
+    pub fn consistency_rows(num_opening_points: usize) -> usize {
+        num_opening_points
     }
 
-    /// Absolute start row of the D block (after consistency + public rows).
+    /// Absolute start row of the D block (after per-point consistency rows).
     #[inline]
-    pub fn d_start(&self, num_public_outputs: usize) -> Result<usize, AkitaError> {
-        Self::consistency_rows(num_public_outputs)
-            .checked_add(num_public_outputs)
-            .ok_or_else(Self::m_row_overflow)
+    pub fn d_start(&self, num_opening_points: usize) -> Result<usize, AkitaError> {
+        Ok(Self::consistency_rows(num_opening_points))
     }
 
     /// Absolute start row of the COMMIT block (the `F` block when tiered, the
@@ -472,14 +465,12 @@ impl LevelParams {
     }
 
     /// Row count with `num_commitments` explicit commitment vectors and
-    /// `num_public_outputs` public y-rows.
+    /// `num_opening_points` distinct opening points.
     ///
-    /// Row layout: consistency (num_public_outputs) | public (num_public_outputs)
-    /// | D (n_d) | COMMIT (effective_commit_rows · num_commitments) |
-    /// B_inner (b_inner_rows_per_group · num_commitments) | A (num_public_outputs · n_a).
-    /// The batched CWSS protocol materialises one fold-consistency row and one
-    /// public y-row per distinct opening point, and one `n_a`-wide A-block per
-    /// opening point, so the point axis is never silently summed.
+    /// Row layout: consistency (num_opening_points) | D (n_d) |
+    /// COMMIT (effective_commit_rows · num_commitments) |
+    /// B_inner (b_inner_rows_per_group · num_commitments) |
+    /// A (num_opening_points · n_a).
     #[inline]
     pub fn m_row_count(
         &self,
@@ -759,15 +750,14 @@ mod tests {
     fn m_row_count_values() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        // Per-point layout: consistency (np) | public (np) | D (n_d=3) |
-        // COMMIT (n_b=4 · nc) | A (np · n_a=2). At np=1 this collapses to the
-        // historical single-point layout (byte-identical).
-        assert_eq!(lp.m_row_count(1, 1).unwrap(), 1 + 1 + 3 + 4 + 2);
-        assert_eq!(lp.m_row_count(2, 5).unwrap(), 5 + 5 + 3 + 4 * 2 + 5 * 2);
-        assert_eq!(lp.m_row_count(4, 4).unwrap(), 4 + 4 + 3 + 4 * 4 + 4 * 2);
+        // Per-point layout: consistency (np) | D (n_d=3) |
+        // COMMIT (n_b=4 · nc) | A (np · n_a=2).
+        assert_eq!(lp.m_row_count(1, 1).unwrap(), 1 + 3 + 4 + 2);
+        assert_eq!(lp.m_row_count(2, 5).unwrap(), 5 + 3 + 4 * 2 + 5 * 2);
+        assert_eq!(lp.m_row_count(4, 4).unwrap(), 4 + 3 + 4 * 4 + 4 * 2);
         assert_eq!(
             lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
-            5 + 5 + 4 * 2 + 5 * 2
+            5 + 4 * 2 + 5 * 2
         );
     }
 
@@ -790,9 +780,8 @@ mod tests {
                     MRowLayout::WithDBlock => n_d,
                     MRowLayout::WithoutDBlock => 0,
                 };
-                // Per-point offsets: consistency (np) | public (np) | D | B |
-                // A (np · n_a).
-                let d_start = np + np;
+                // Per-point offsets: consistency (np) | D | B | A (np · n_a).
+                let d_start = np;
                 let b_start = d_start + n_d_active;
                 let a_start = b_start + n_b * nc;
 

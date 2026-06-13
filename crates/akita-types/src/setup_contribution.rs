@@ -32,9 +32,13 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub n_d: usize,
     pub m_row_layout: MRowLayout,
     pub n_b: usize,
+    /// Commitment-group count `G` (COMMIT / B_inner row replication).
     pub num_points: usize,
+    /// Opening-point count `P` (consistency / A rows).
+    pub num_opening_points: usize,
     pub rows: usize,
     pub num_polys_per_commitment_group: Vec<usize>,
+    /// Public-output M-row count (always zero after trace internalization).
     pub num_public_rows: usize,
     /// Tiered split factor `f` (`1` = single-tier). When `> 1`, `n_b` is the
     /// stored first-tier `B'` rank, the stored `B'` width is `n_cols_t /
@@ -438,17 +442,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: inputs.num_polys_per_commitment_group.len(),
             });
         }
-        // This evaluator indexes the per-point families (consistency / public /
-        // A) by `num_points` rather than `num_public_rows`. That is only correct
-        // when the commitment-group axis coincides with the opening-point axis
-        // (`G == P`), which the batched front-end enforces structurally
-        // (`CommitmentRouting::check_matches_incidence`). Reject any input that
-        // would violate it so a future `G != P` unlock fails loudly here instead
-        // of silently sizing the consistency/A blocks on the wrong axis.
-        if inputs.num_points != inputs.num_public_rows {
+        if inputs.num_opening_points == 0 {
             return Err(AkitaError::InvalidSetup(
-                "setup contribution requires commitment groups to equal opening points (G == P)"
-                    .into(),
+                "setup contribution requires at least one opening point".into(),
             ));
         }
 
@@ -506,13 +502,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             MRowLayout::WithDBlock => inputs.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
-        // COMMIT (F when tiered, else B; per group G) | B_inner (tiered; per
-        // group G) | A (P · n_a; per point). The per-point axis P uses
-        // `num_points` here, valid only under the `G == P` invariant enforced
-        // above, matching the prover M-eval `eq_tau1` layout (consistency
-        // `eq_tau1[0..P]`, public `eq_tau1[P..2P]`).
-        let d_start = checked_add(inputs.num_points, inputs.num_points, "D row start")?;
+        // Canonical row layout: consistency (P) | D (n_d_active) | COMMIT
+        // (F when tiered, else B; per group G) | B_inner (tiered; per group G)
+        // | A (P · n_a; per point).
+        let d_start = inputs.num_opening_points;
         // COMMIT block start (the F block when tiered, the B block otherwise).
         let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
         let commit_rows_pg = if tiered { inputs.n_f } else { inputs.n_b };
@@ -526,8 +519,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let b_inner_rows_total =
             checked_mul(b_inner_rows_pg, inputs.num_points, "B_inner row count")?;
         let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
-        // Per-point A-block: `num_points` weight rows of `n_a` each.
-        let a_weight_rows = checked_mul(inputs.num_points, inputs.n_a, "A weight rows")?;
+        let a_weight_rows = checked_mul(inputs.num_opening_points, inputs.n_a, "A weight rows")?;
         let a_end = checked_add(a_start, a_weight_rows, "A row end")?;
         // Non-tiered alias used by the packed B scan.
         let b_start = f_start;
@@ -686,14 +678,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let z_block_mask = inputs.block_len.wrapping_sub(1);
             let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
             let num_q_z = checked_mul(
-                checked_mul(inputs.num_points, inputs.depth_fold, "Z high-eq width")?,
+                checked_mul(
+                    inputs.num_opening_points,
+                    inputs.depth_fold,
+                    "Z high-eq width",
+                )?,
                 inputs.depth_commit,
                 "Z high-eq width",
             )?;
             let eq_hi_z_table: Vec<E> = (0..=num_q_z)
                 .map(|k| eq_eval_at_index(z_high_challenges, z_offset_high + k))
                 .collect();
-            (0..inputs.num_points)
+            (0..inputs.num_opening_points)
                 .map(|pt| {
                     let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..inputs.depth_commit)
                         .map(|dc| {
@@ -704,8 +700,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     fold_gadget.iter().enumerate().take(inputs.depth_fold)
                                 {
                                     let k = pt
-                                        + inputs.num_points * df
-                                        + inputs.num_points * inputs.depth_fold * dc
+                                        + inputs.num_opening_points * df
+                                        + inputs.num_opening_points * inputs.depth_fold * dc
                                         + carry_slot;
                                     acc += eq_hi_z_table[k].mul_base(fg);
                                 }
@@ -730,8 +726,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 })
                 .collect()
         } else {
-            let z_total_blocks_dense =
-                checked_mul(inputs.block_len, inputs.num_points, "dense Z block width")?;
+            let z_total_blocks_dense = checked_mul(
+                inputs.block_len,
+                inputs.num_opening_points,
+                "dense Z block width",
+            )?;
             let z_len_dense = checked_mul(
                 checked_mul(inputs.depth_fold, inputs.depth_commit, "dense Z length")?,
                 z_total_blocks_dense,
@@ -765,7 +764,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
                 .collect();
 
-            (0..inputs.num_points)
+            (0..inputs.num_opening_points)
                 .map(|pt| {
                     (0..z_range)
                         .map(|c| {
@@ -776,8 +775,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             {
                                 let x = blk
                                     + inputs.block_len * pt
-                                    + inputs.block_len * inputs.num_points * df
-                                    + inputs.block_len * inputs.num_points * inputs.depth_fold * dc;
+                                    + inputs.block_len * inputs.num_opening_points * df
+                                    + inputs.block_len
+                                        * inputs.num_opening_points
+                                        * inputs.depth_fold
+                                        * dc;
                                 let sum = offset_z_dense_low + x;
                                 let low_idx = sum & mask;
                                 // `eq_high_z_dense` starts at `offset_z_dense_high`,
@@ -801,7 +803,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let a_row = idx / z_range;
                 let col = idx % z_range;
                 let mut acc = E::zero();
-                for pt in 0..inputs.num_points {
+                for pt in 0..inputs.num_opening_points {
                     let weight = a_weights_full[pt * inputs.n_a + a_row];
                     if !weight.is_zero() {
                         acc += weight * z_eq_per_point[pt][col];
@@ -1284,10 +1286,11 @@ mod tests {
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
             num_points,
-            // Per-point layout: consistency (P=1) | public (P=1) | A (P·n_a=1).
-            rows: 3,
+            num_opening_points: num_points,
+            // Per-point layout: consistency (P=1) | A (P·n_a=1).
+            rows: 2,
             num_polys_per_commitment_group: vec![0],
-            num_public_rows: 1,
+            num_public_rows: 0,
             tier_split: 1,
             n_f: 0,
         };

@@ -3,7 +3,6 @@ use super::repeated_b::repeated_b_commitment_rows;
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
-use std::iter::repeat_n;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -269,7 +268,6 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     num_polys_per_commitment_group: &[usize],
-    num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
@@ -309,23 +307,20 @@ where
         }
         poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
     }
-    if num_public_outputs == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    if ring_multiplier_points.len() != num_public_outputs
+    let num_opening_points = ring_multiplier_points.len();
+    if num_opening_points == 0
         || claim_to_point.len().checked_mul(blocks_per_claim) != Some(e_folded.len())
         || row_coefficient_rings.len() != claim_to_point.len()
         || claim_to_commitment_group.len() != claim_to_point.len()
         || claim_poly_in_commitment_group.len() != claim_to_point.len()
         || claim_to_point
             .iter()
-            .any(|&point_idx| point_idx >= num_public_outputs)
+            .any(|&point_idx| point_idx >= num_opening_points)
     {
         return Err(AkitaError::InvalidProof);
     }
     // `num_groups` (G) drives the per-commitment-group COMMIT / B_inner blocks;
-    // `num_public_outputs` (P) drives the per-opening-point consistency / public
-    // / A blocks. They coincide only when each group is opened at one point.
+    // `num_opening_points` (P) drives the per-opening-point consistency / A blocks.
     let num_groups = num_polys_per_commitment_group.len();
     let expected_inner_rows = total_poly_slots
         .checked_mul(blocks_per_claim)
@@ -381,21 +376,21 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_groups)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count_for(num_groups, num_public_outputs, m_row_layout)?;
+    let num_rows = lp.m_row_count_for(num_groups, num_opening_points, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
+    // Canonical row layout: consistency (P) | D (n_d_active) |
     //   COMMIT (F when tiered, else B; per group) | B_inner (tiered; per group) |
-    //   A (P · n_a; per point).
-    let d_start = lp.d_start(num_public_outputs)?;
-    let f_start = lp.f_start(num_public_outputs, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(num_groups, num_public_outputs, m_row_layout)?;
-    let a_start = lp.a_start(num_groups, num_public_outputs, m_row_layout)?;
+    //   A (P · n_a; per point). Public openings bind via the fused trace term.
+    let d_start = lp.d_start(num_opening_points)?;
+    let f_start = lp.f_start(num_opening_points, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(num_groups, num_opening_points, m_row_layout)?;
+    let a_start = lp.a_start(num_groups, num_opening_points, m_row_layout)?;
 
     if inner_width == 0
         || z_folded_centered.len()
-            != num_public_outputs
+            != num_opening_points
                 .checked_mul(inner_width)
                 .ok_or(AkitaError::InvalidProof)?
     {
@@ -436,7 +431,7 @@ where
     // Point 0 comes from the fused relation-rows call; points 1.. from the
     // per-segment quotient calls below.
     let mut a_quotients_per_point: Vec<Vec<CyclotomicRing<F, D>>> =
-        Vec::with_capacity(num_public_outputs);
+        Vec::with_capacity(num_opening_points);
     a_quotients_per_point.push(relation_rows.a_quotients);
     let b_cyclic = relation_rows.b_cyclic;
     #[cfg(feature = "zk")]
@@ -465,7 +460,7 @@ where
         }
         a_quotients_per_point.push(segment_rows);
     }
-    if a_quotients_per_point.len() != num_public_outputs {
+    if a_quotients_per_point.len() != num_opening_points {
         return Err(AkitaError::InvalidProof);
     }
     let commitment_cyclic_rows = if tiered {
@@ -570,9 +565,9 @@ where
         // Degree-one openings embed scalar weights as constant rings. Cyclic
         // and negacyclic multiplication by a constant agree, so the quotient
         // row is identically zero.
-        vec![CyclotomicRing::<F, D>::zero(); num_public_outputs]
+        vec![CyclotomicRing::<F, D>::zero(); num_opening_points]
     } else {
-        (0..num_public_outputs)
+        (0..num_opening_points)
             .map(|point_idx| -> Result<CyclotomicRing<F, D>, AkitaError> {
                 let segment =
                     &z_folded_centered[point_idx * inner_width..(point_idx + 1) * inner_width];
@@ -601,7 +596,7 @@ where
     let mut other_time = 0.0f64;
 
     for row_idx in 0..num_rows {
-        if row_idx < num_public_outputs {
+        if row_idx < num_opening_points {
             let t_row = Instant::now();
             let _span = tracing::info_span!("challenge_fold_row").entered();
             // Per-point consistency row `p`: Σ_{p(ℓ)=p} c_ℓ · e_folded[ℓ] on the
@@ -627,7 +622,7 @@ where
                 // negacyclic products, so this row contributes no quotient.
                 result.push(CyclotomicRing::<F, D>::zero());
             } else {
-                let point_idx = row_idx - num_public_outputs;
+                let point_idx = row_idx - num_opening_points;
                 let cyclic = cyclic_public_row_product::<F, D>(
                     e_folded,
                     ring_multiplier_points,
@@ -712,78 +707,4 @@ where
         .map(|(_, _, _, digits)| digits)
         .unwrap_or_default();
     Ok((result, u_concat_digits))
-}
-
-/// Build the RHS vector `y` matching the canonical M row layout:
-/// consistency (P zeros) | public outputs (P) | D (`v`) |
-/// COMMIT (`commitment_rows`) | B_inner (zeros) | A (P · n_a zeros).
-/// `P = public_outputs.len()` is the opening-point count.
-///
-/// `commit_rows_per_group` is the sent-commitment row count per group
-/// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
-/// `b_inner_rows_per_group` is the inner-consistency block size per group
-/// (`0` for single-tier). The number of commitment groups is inferred from
-/// `commitment_rows.len() / commit_rows_per_group`.
-///
-/// # Errors
-///
-/// Returns an error if the supplied row slices do not match the expected row
-/// counts for the level layout.
-pub fn generate_y<F, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    commitment_rows: &[CyclotomicRing<F, D>],
-    public_outputs: &[CyclotomicRing<F, D>],
-    n_d: usize,
-    commit_rows_per_group: usize,
-    b_inner_rows_per_group: usize,
-    n_a: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore,
-{
-    if v.len() != n_d {
-        return Err(AkitaError::InvalidSize {
-            expected: n_d,
-            actual: v.len(),
-        });
-    }
-    if commit_rows_per_group == 0
-        || commitment_rows.is_empty()
-        || !commitment_rows.len().is_multiple_of(commit_rows_per_group)
-    {
-        return Err(AkitaError::InvalidSize {
-            expected: commit_rows_per_group,
-            actual: commitment_rows.len(),
-        });
-    }
-    if public_outputs.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "generate_y requires at least one public output".to_string(),
-        ));
-    }
-    let num_commitments = commitment_rows.len() / commit_rows_per_group;
-    let b_inner_total = b_inner_rows_per_group
-        .checked_mul(num_commitments)
-        .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
-    // Per-point layout: one fold-consistency zero per point and one n_a A-block
-    // per point (P = number of opening points = public_outputs.len()).
-    let num_points = public_outputs.len();
-    let a_block_total = num_points
-        .checked_mul(n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("generate_y A-block overflow".to_string()))?;
-    let mut out = Vec::with_capacity(
-        num_points
-            + public_outputs.len()
-            + n_d
-            + commitment_rows.len()
-            + b_inner_total
-            + a_block_total,
-    );
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), num_points));
-    out.extend_from_slice(public_outputs);
-    out.extend_from_slice(v);
-    out.extend_from_slice(commitment_rows);
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), a_block_total));
-    Ok(out)
 }

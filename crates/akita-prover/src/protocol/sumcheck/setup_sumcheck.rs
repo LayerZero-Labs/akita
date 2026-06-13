@@ -272,14 +272,15 @@ where
     let routing = relation.commitment_routing();
     let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
     let num_claims = relation.claim_to_point().len();
-    let num_points = num_polys_per_commitment_group.len();
-    if relation.opening_points().len() != num_points {
+    let num_groups = num_polys_per_commitment_group.len();
+    let num_opening_points = relation.opening_points().len();
+    if num_opening_points == 0 {
         return Err(AkitaError::InvalidProof);
     }
     if relation
         .claim_to_point()
         .iter()
-        .any(|&point_idx| point_idx >= num_points)
+        .any(|&point_idx| point_idx >= num_opening_points)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -341,8 +342,9 @@ where
     }
 
     let m_row_layout = relation.m_row_layout();
-    let num_public_rows = relation.num_public_rows();
-    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    // Public-output M rows are enforced by the fused trace term, not M itself.
+    let num_public_m_rows = 0usize;
+    let rows = lp.m_row_count_for(num_groups, num_opening_points, m_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -365,10 +367,11 @@ where
         n_d: lp.d_key.row_len(),
         m_row_layout,
         n_b: lp.b_key.row_len(),
-        num_points,
+        num_points: num_groups,
+        num_opening_points,
         rows,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        num_public_rows,
+        num_public_rows: num_public_m_rows,
         // Stage-3 (recursive setup-contribution mode) tiered support is a
         // follow-up; the default Direct verifier path uses `eval_at_point`.
         tier_split: lp.tier_split,

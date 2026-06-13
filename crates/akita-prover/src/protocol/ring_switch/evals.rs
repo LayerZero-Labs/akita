@@ -46,8 +46,9 @@ pub fn build_w_evals_compact(
 /// `opening_points` holds the distinct ring-level opening points used by the
 /// batch, `claim_to_point` maps each flattened claim index to its opening-point
 /// index, and `gamma` provides the per-claim random linear-combination
-/// coefficients. The matrix carries one public y-row per distinct opening
-/// point (`num_public_rows = opening_points.len()`).
+/// coefficients. `num_public_rows` is the count of public-output M rows (zero
+/// after y-ring trace internalization; public openings bind via the fused trace
+/// term instead).
 ///
 /// # Errors
 ///
@@ -68,7 +69,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     num_polys_per_commitment_group: &[usize],
     claim_to_commitment_group: &[usize],
     claim_poly_in_commitment_group: &[usize],
-    gamma: &[E],
+    _gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
@@ -101,15 +102,19 @@ where
         ));
     }
     // `num_groups` (G) drives the per-commitment-group COMMIT / B_inner / û
-    // blocks; `num_points` (P) drives the per-opening-point consistency / public
-    // / A blocks. These coincide only when every group is opened at one point
-    // (`from_root_incidence`); the genuine shared-slot case has G != P, so the
-    // two counts must stay distinct (this used to be a single shadowed name).
+    // blocks; `num_points` (P) drives the per-opening-point consistency / A blocks.
+    // These coincide only when every group is opened at one point (`from_root_incidence`);
+    // the genuine shared-slot case has G != P, so the two counts must stay distinct.
+    if num_public_rows != 0 {
+        return Err(AkitaError::InvalidInput(
+            "public-output M rows are enforced by the fused trace term".to_string(),
+        ));
+    }
     let num_groups = num_polys_per_commitment_group.len();
     let num_points = opening_points.len();
-    if num_points != num_public_rows {
+    if num_points == 0 {
         return Err(AkitaError::InvalidInput(
-            "batched prover opening-point count does not match public-row count".to_string(),
+            "batched prover requires at least one opening point".to_string(),
         ));
     }
     for claim_idx in 0..num_claims {
@@ -203,7 +208,7 @@ where
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count_for(num_groups, num_public_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(num_groups, num_points, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
     // Tiered `û_concat` segment column count (flat, after `t̂`); `0` single-tier.
     let u_seg_len = if lp.f_key.is_some() {
@@ -327,15 +332,13 @@ where
         Vec::new()
     };
 
-    // Canonical row layout: consistency (P) | public (P) | D (n_d_active) |
+    // Canonical row layout: consistency (P) | D (n_d_active) |
     //   COMMIT (F when tiered, else B; per group) | B_inner (tiered; per group) |
-    //   A (P · n_a; per point). The consistency/public/A blocks are per opening
-    //   point (P); the COMMIT/B_inner blocks are per commitment group (G).
+    //   A (P · n_a; per point). Public openings bind via the fused trace term.
     let commit_rows_pg = if tiered { n_f } else { n_b };
     let b_inner_rows_pg = if tiered { tier_split * n_b } else { 0 };
     let consistency_weights = &eq_tau1[0..num_points];
-    let public_weights = &eq_tau1[num_points..(2 * num_points)];
-    let d_start = 2 * num_points;
+    let d_start = num_points;
     let f_start = d_start + n_d_active;
     let b_inner_start = f_start + commit_rows_pg * num_groups;
     let a_start = b_inner_start + b_inner_rows_pg * num_groups;
@@ -346,63 +349,17 @@ where
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
 
-    let uses_ring_multipliers = ring_multiplier_points
-        .iter()
-        .any(|point| point.as_base().is_none());
-    let row_coefficient_rings = if uses_ring_multipliers {
-        Some(
-            gamma
-                .iter()
-                .copied()
-                .map(|coefficient| {
-                    embed_ring_subfield_scalar::<F, E, D>(
-                        coefficient,
-                        AkitaError::InvalidInput(
-                            "public-row coefficient does not encode in the ring-subfield basis"
-                                .to_string(),
-                        ),
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        None
-    };
-    let public_b_evals = (0..num_claims)
-        .map(|claim_idx| {
-            let point_idx = claim_to_point[claim_idx];
-            let opening_point = &ring_multiplier_points[point_idx];
-            let coefficient_ring = row_coefficient_rings
-                .as_ref()
-                .map(|rings| &rings[claim_idx]);
-            (0..num_blocks)
-                .map(|block_idx| {
-                    opening_point.eval_b_with_coefficient(
-                        block_idx,
-                        gamma[claim_idx],
-                        coefficient_ring,
-                        alpha_pows,
-                    )
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
     let w_segment: Vec<E> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
             let claim_idx = blk / num_blocks;
-            let block_idx = blk % num_blocks;
+            let _block_idx = blk % num_blocks;
             let d_phys_col = blk * depth_open + dig;
             let point_idx = claim_to_point[claim_idx];
-            let b_eval = public_b_evals[claim_idx][block_idx];
             // The ê fold column for this claim lands on its point's fold row
-            // (consistency_weights[point]) and its point's public eval row
-            // (public_weights[point]); the point axis is never summed.
-            let mut acc = (public_weights[point_idx] * b_eval
-                + consistency_weights[point_idx] * c_alphas[blk])
-                * g1_open[dig];
+            // (consistency_weights[point]); the point axis is never summed.
+            let mut acc = (consistency_weights[point_idx] * c_alphas[blk]) * g1_open[dig];
             // Terminal layout: `n_d_active == 0`, so this loop is empty and
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
