@@ -484,6 +484,8 @@ struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     trace_block_openings: Vec<Vec<E>>,
     trace_eval_target: E,
     trace_eval_scale: E,
+    #[cfg(feature = "zk")]
+    trace_eval_target_mask: ZkR1csLinearCombination<E>,
     trace_claim_scales: Option<Vec<E>>,
     trace_basis: BasisMode,
 }
@@ -577,6 +579,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     ring_opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     trace: Option<TraceClaim<F, E, D>>,
+    #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
@@ -599,8 +602,6 @@ where
             mask: zk_ext_mask_lc_at::<F, E>(stage2_next_w_eval_mask_cursor),
         },
     };
-    #[cfg(feature = "zk")]
-    let trace_claim_mask = ZkR1csLinearCombination::<E>::zero();
     let stage2_verifier = AkitaStage2Verifier::new(
         stage1.batching_coeff,
         stage1.s_claim,
@@ -842,6 +843,14 @@ where
         )?)
     };
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
+    #[cfg(feature = "zk")]
+    let trace_claim_mask = {
+        let mut trace_claim_mask = ZkR1csLinearCombination::<E>::zero();
+        if trace_wire.is_some() {
+            trace_claim_mask.add_scaled(trace_coeff, &prepared.trace_eval_target_mask);
+        }
+        trace_claim_mask
+    };
     let sumcheck_challenges = verify_stage2::<F, E, T, D>(
         transcript,
         setup,
@@ -856,6 +865,8 @@ where
         relation_instance.opening_points(),
         relation_instance.ring_multiplier_points(),
         trace_wire,
+        #[cfg(feature = "zk")]
+        trace_claim_mask,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
@@ -1051,10 +1062,18 @@ where
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
     #[cfg(feature = "zk")]
-    let trace_eval_target = zk_eor_final
-        .as_ref()
-        .map(|(final_claim, _)| final_claim.constant)
-        .unwrap_or(ordinary_trace_eval_target);
+    let (trace_eval_target, trace_eval_target_mask) =
+        if let Some((final_claim, _)) = zk_eor_final.as_ref() {
+            let mut mask = final_claim.clone();
+            let public = mask.constant;
+            mask.constant = C::zero();
+            (public, mask)
+        } else {
+            (
+                ordinary_trace_eval_target,
+                ZkR1csLinearCombination::<C>::zero(),
+            )
+        };
     #[cfg(not(feature = "zk"))]
     let trace_claim_scales = eor_trace_final
         .as_ref()
@@ -1158,6 +1177,8 @@ where
         trace_block_openings,
         trace_eval_target,
         trace_eval_scale: C::one(),
+        #[cfg(feature = "zk")]
+        trace_eval_target_mask,
         trace_claim_scales,
         trace_basis: basis,
     };

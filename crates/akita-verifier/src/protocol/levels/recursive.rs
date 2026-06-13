@@ -67,6 +67,8 @@ where
             reduction_challenges: _,
         #[cfg(not(feature = "zk"))]
             final_relation: eor_trace_final,
+        #[cfg(feature = "zk")]
+            final_relation: zk_eor_final,
         ..
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
@@ -135,7 +137,23 @@ where
         None => (current_state.opening, L::one()),
     };
     #[cfg(feature = "zk")]
-    let (trace_eval_target, trace_eval_scale) = (current_state.opening, L::one());
+    let (trace_eval_target, trace_eval_scale, trace_eval_target_mask) =
+        if let Some((final_claim, factors_by_point)) = zk_eor_final.as_ref() {
+            let mut mask = final_claim.clone();
+            let public = mask.constant;
+            mask.constant = L::zero();
+            (
+                public,
+                *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
+                mask,
+            )
+        } else {
+            (
+                current_state.opening,
+                L::one(),
+                current_state.opening_mask.clone(),
+            )
+        };
 
     Ok(PreparedFoldReplay {
         lp,
@@ -157,6 +175,8 @@ where
         trace_block_openings: Vec::new(),
         trace_eval_target,
         trace_eval_scale,
+        #[cfg(feature = "zk")]
+        trace_eval_target_mask,
         trace_claim_scales: None,
         trace_basis: current_state.basis,
     })
