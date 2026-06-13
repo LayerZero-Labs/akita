@@ -304,7 +304,7 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (y_ring, e_folded) = poly.evaluate_and_fold_ring(
+        let (_, e_folded) = poly.evaluate_and_fold_ring(
             ring_multiplier_point
                 .b_rings()
                 .expect("nonconstant test point has ring b weights"),
@@ -319,7 +319,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
@@ -335,7 +334,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -355,7 +353,7 @@ mod tests {
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count(1, 1).expect("valid row count");
+        let rows = lp.m_row_count(1, 0).expect("valid row count");
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
         for row in 0..rows {
@@ -382,19 +380,14 @@ mod tests {
                 &[0usize],
                 &[0usize],
                 &[F::one()],
-                1,
+                0,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected = relation_claim_from_rows::<F, D>(
-                &tau1,
-                alpha,
-                &instance.v,
-                &commitment.u,
-                std::slice::from_ref(&y_ring),
-            )
-            .expect("relation claim");
+            let expected =
+                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u)
+                    .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
     }
@@ -444,7 +437,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) =
+        let (_, e_folded) =
             poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
@@ -452,7 +445,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
@@ -468,7 +460,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -488,7 +479,7 @@ mod tests {
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count(1, 1).unwrap();
+        let rows = lp.m_row_count(1, 0).unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
         for row in 0..rows {
@@ -515,19 +506,13 @@ mod tests {
                 &[0usize],
                 &[0usize],
                 &[F::one()],
-                1,
+                0,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected = relation_claim_from_rows::<F, D>(
-                &tau1,
-                alpha,
-                &instance.v,
-                &commitment.u,
-                std::slice::from_ref(&y_ring),
-            )
-            .unwrap();
+            let expected =
+                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u).unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }
@@ -613,7 +598,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, e_folded) = poly.evaluate_and_fold(
+        let (_, e_folded) = poly.evaluate_and_fold(
             &ring_opening_point.b,
             &ring_opening_point.a,
             level_params.block_len,
@@ -624,7 +609,6 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
@@ -640,7 +624,6 @@ mod tests {
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -657,7 +640,7 @@ mod tests {
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = level_params.m_row_count(1, 1).unwrap();
+        let rows = level_params.m_row_count(1, 0).unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -677,7 +660,7 @@ mod tests {
             &[0usize],
             &[0usize],
             &[F::one()],
-            1,
+            0,
             MRowLayout::WithDBlock,
         )
         .expect("m evals (materialized)");

@@ -426,7 +426,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "level": level,
                 "d": int(kvs["d"]),
                 "total_bytes": int(kvs["total_bytes"]),
-                "y_ring_bytes": int(kvs.get("y_ring_bytes", "0")),
                 "v_bytes": int(kvs.get("v_bytes", "0")),
                 "stage1_sumcheck_bytes": int(kvs.get("stage1_sumcheck_bytes", "0")),
                 "stage1_interstage_claims_bytes": int(
@@ -1065,14 +1064,14 @@ def render_proof_levels(levels: list[dict[str, object]]) -> None:
     print("<summary>Per-level proof-size breakdown</summary>")
     print()
     print(
-        "| L | total | y_ring | v | stage1 sc | interstage | s_claim | "
+        "| L | total | v | stage1 sc | interstage | s_claim | "
         "stage2 sc | next_w_commit | next_w_eval |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for level in levels:
         print(
             f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
-            f"{fmt_bytes(float(level['y_ring_bytes']))} | {fmt_bytes(float(level['v_bytes']))} | "
+            f"{fmt_bytes(float(level['v_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "

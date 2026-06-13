@@ -120,7 +120,6 @@ fn batched_proof_shape_validation_recurses_into_witness_shapes() {
 #[test]
 fn level_shape_validation_checks_extension_opening_reduction() {
     let oversized = LevelProofShape {
-        y_ring_coeffs: 1,
         extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
             DEFAULT_MAX_SEQUENCE_LEN + 1,
             1,
@@ -153,7 +152,6 @@ fn level_shape_validation_checks_extension_opening_reduction() {
 #[test]
 fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     let mut bytes = Vec::new();
-    0usize.serialize_compressed(&mut bytes).unwrap(); // y_ring_coeffs
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
     0usize.serialize_compressed(&mut bytes).unwrap(); // v_coeffs
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
@@ -171,7 +169,6 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
 #[test]
 fn terminal_shape_deserialization_validates_shape() {
     let mut bytes = Vec::new();
-    0usize.serialize_compressed(&mut bytes).unwrap(); // y_rings_coeffs
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
@@ -231,7 +228,6 @@ fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
 fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     const D: usize = 8;
     let without_reduction = AkitaLevelProof::new::<D>(
-        CyclotomicRing::<F, D>::zero(),
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
         tiny_stage2::<D>(),
@@ -254,14 +250,21 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert!(decoded.extension_opening_reduction.is_none());
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = AkitaLevelProof {
-        y_ring: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        extension_opening_reduction: Some(tiny_reduction()),
-        v: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        stage1: tiny_stage1(),
-        stage2: tiny_stage2::<D>(),
-        stage3_sumcheck_proof: None,
-    };
+    let with_reduction = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+        Some(tiny_reduction()),
+        vec![CyclotomicRing::<F, D>::zero()],
+        tiny_stage1(),
+        #[cfg(not(feature = "zk"))]
+        SumcheckProof {
+            round_polys: Vec::new(),
+        },
+        #[cfg(feature = "zk")]
+        SumcheckProofMasked {
+            masked_round_polys: Vec::new(),
+        },
+        FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        F::zero(),
+    );
     let reduction_bytes = extension_opening_reduction_serialized_size(
         with_reduction.extension_opening_reduction.as_ref(),
         Compress::No,
@@ -301,13 +304,11 @@ fn tiny_terminal_stage2_masked() -> SumcheckProofMasked<F> {
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    const D: usize = 8;
     let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
     );
 
-    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-        vec![CyclotomicRing::<F, D>::zero()],
+    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         None,
         #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),
@@ -332,8 +333,7 @@ fn terminal_level_proof_serde_round_trip() {
             .expect("deserialize terminal proof without extension-opening reduction");
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-        vec![CyclotomicRing::<F, D>::zero()],
+    let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
         #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),

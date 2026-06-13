@@ -63,7 +63,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs_signed::<E>(&mut rel, w0_i64, dw_i64, p0, p1);
+                        self.accumulate_fused_relation_trace_signed(
+                            &mut rel,
+                            w0_i64,
+                            dw_i64,
+                            2 * j,
+                            2 * j + 1,
+                            p0,
+                            p1,
+                        );
                     }
 
                     let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
@@ -132,7 +140,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs_signed::<E>(&mut rel, w0_i64, dw_i64, p0, p1);
+                        self.accumulate_fused_relation_trace_signed(
+                            &mut rel,
+                            w0_i64,
+                            dw_i64,
+                            2 * j,
+                            2 * j + 1,
+                            p0,
+                            p1,
+                        );
                     }
 
                     let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
@@ -212,7 +228,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                        self.accumulate_fused_relation_trace(
+                            &mut rel,
+                            w0,
+                            dw,
+                            2 * j,
+                            2 * j + 1,
+                            p0,
+                            p1,
+                        );
                     }
 
                     let e_out = e_second[j_high];
@@ -268,7 +292,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                        self.accumulate_fused_relation_trace(
+                            &mut rel,
+                            w0,
+                            dw,
+                            2 * j,
+                            2 * j + 1,
+                            p0,
+                            p1,
+                        );
                     }
 
                     let e_out = e_second[j_high];
