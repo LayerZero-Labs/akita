@@ -502,23 +502,30 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         mode: SetupContributionMode,
         next_fold_level_params: Option<&'a LevelParams>,
     ) -> Result<Option<(&'a SetupSumcheckProof<L>, &'a LevelParams)>, AkitaError> {
-        match (mode, self.stage3_sumcheck_proof()) {
-            (SetupContributionMode::Direct, None) => Ok(None),
-            (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
-                "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
-            )),
-            (SetupContributionMode::Recursive, Some(proof)) => {
-                let next_fold_level_params = next_fold_level_params.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive setup-contribution mode is missing next-level params"
-                            .to_string(),
-                    )
-                })?;
-                Ok(Some((proof, next_fold_level_params)))
-            }
-            (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
-                "recursive setup-contribution mode is missing stage3_sumcheck_proof".to_string(),
-            )),
+        match self {
+            Self::Terminal { .. } => Ok(None),
+            Self::Intermediate {
+                stage3_sumcheck_proof,
+                ..
+            } => match (mode, stage3_sumcheck_proof.as_ref()) {
+                (SetupContributionMode::Direct, None) => Ok(None),
+                (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
+                    "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
+                )),
+                (SetupContributionMode::Recursive, Some(proof)) => {
+                    let next_fold_level_params = next_fold_level_params.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "recursive setup-contribution mode is missing next-level params"
+                                .to_string(),
+                        )
+                    })?;
+                    Ok(Some((proof, next_fold_level_params)))
+                }
+                (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
+                    "recursive setup-contribution mode is missing stage3_sumcheck_proof"
+                        .to_string(),
+                )),
+            },
         }
     }
 
