@@ -137,6 +137,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 };
                 let y_len = self.alpha_compact.len();
                 let alpha_round2 = Self::fold_alpha_to_round2(&self.alpha_compact, r0, r);
+                if let Some(trace) = self.trace_table.as_mut() {
+                    trace.fold_y2(self.live_x_cols, y_len, r0, r);
+                }
+                // fold_y2 is the two-round handoff; not routed through fold_trace_for_round.
                 let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
                     WTable::Compact(w_compact) => {
@@ -145,6 +149,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                                 .fuse_compact_to_round2_and_compute_round(
                                     &w_compact,
                                     &alpha_round2,
+                                    self.trace_table.as_ref(),
                                     r0,
                                     r,
                                 );
@@ -193,24 +198,31 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         self.split_eq.bind(r);
         let folding_x_round = !self.in_y_round();
         let use_prefix_x_round = self.use_prefix_x_round();
+        let use_prefix_y_round = self.use_prefix_y_round();
+        let in_y_round = self.in_y_round();
         let fuse_next_full_prefix_x =
             use_prefix_x_round && self.next_use_prefix_x_round_after_current();
         let y_len = self.alpha_compact.len();
+        let live_x_cols = self.live_x_cols;
         let mut fused_full_prefix_x = false;
 
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
             WTable::Compact(w_compact) => {
                 let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
                 let w_full = if folding_x_round && use_prefix_x_round {
-                    Self::fold_compact_prefix_x(&w_compact, self.live_x_cols, y_len, &fold_lut)
+                    Self::fold_compact_prefix_x(&w_compact, live_x_cols, y_len, &fold_lut)
                 } else {
                     Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
+                self.fold_trace_for_round(r, folding_x_round);
                 WTable::Full(w_full)
             }
             WTable::Full(w_full) => {
                 if folding_x_round && use_prefix_x_round {
                     if fuse_next_full_prefix_x {
+                        // Fold trace before the fused kernel so relation terms use the same
+                        // post-fold table as `compute_round_full_prefix_x_terms`.
+                        self.fold_trace_for_round(r, folding_x_round);
                         let (next_w_full, next_m_compact, virt_terms, rel_coeffs) =
                             self.fuse_full_prefix_x_and_compute_round(&w_full, r);
                         self.m_compact = next_m_compact;
@@ -218,20 +230,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         fused_full_prefix_x = true;
                         WTable::Full(next_w_full)
                     } else {
-                        let next_w_full =
-                            Self::fold_full_prefix_x(&w_full, self.live_x_cols, y_len, r);
+                        let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
+                        self.fold_trace_for_round(r, folding_x_round);
                         WTable::Full(next_w_full)
                     }
-                } else if self.in_y_round() && self.use_prefix_y_round() {
-                    WTable::Full(Self::fold_full_prefix_y(
-                        &w_full,
-                        self.live_x_cols,
-                        y_len,
-                        r,
-                    ))
+                } else if in_y_round && use_prefix_y_round {
+                    self.fold_trace_for_round(r, folding_x_round);
+                    WTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
                 } else {
                     let mut w_full = w_full;
                     fold_evals_in_place(&mut w_full, r);
+                    self.fold_trace_for_round(r, folding_x_round);
                     WTable::Full(w_full)
                 }
             }

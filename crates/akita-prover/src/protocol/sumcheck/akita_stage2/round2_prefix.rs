@@ -138,6 +138,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
+    #[inline]
+    fn add_trace_pair_to_relation_factor(
+        trace_table: Option<&TraceTable<E>>,
+        x: usize,
+        left: usize,
+        y_len: usize,
+        p0: &mut E,
+        p1: &mut E,
+    ) {
+        if let Some(trace_table) = trace_table {
+            *p0 += trace_table.get(x, left, y_len);
+            *p1 += trace_table.get(x, left + 1, y_len);
+        }
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "AkitaStage2Prover::fuse_compact_to_round2_and_compute_round"
@@ -146,6 +161,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         &self,
         w_compact: &[i8],
         alpha_round2: &[E],
+        trace_round2: Option<&TraceTable<E>>,
         r0: E,
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
@@ -212,8 +228,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let p0 = alpha_round2[left] * m;
-                            let p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * m;
+                            let mut p1 = alpha_round2[left + 1] * m;
+                            Self::add_trace_pair_to_relation_factor(
+                                trace_round2,
+                                x,
+                                left,
+                                next_y_len,
+                                &mut p0,
+                                &mut p1,
+                            );
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -274,8 +298,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let p0 = alpha_round2[left] * m;
-                            let p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * m;
+                            let mut p1 = alpha_round2[left + 1] * m;
+                            Self::add_trace_pair_to_relation_factor(
+                                trace_round2,
+                                x,
+                                left,
+                                next_y_len,
+                                &mut p0,
+                                &mut p1,
+                            );
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -330,8 +362,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let p0 = alpha_round2[left] * m;
-                            let p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * m;
+                            let mut p1 = alpha_round2[left + 1] * m;
+                            Self::add_trace_pair_to_relation_factor(
+                                trace_round2,
+                                x,
+                                left,
+                                next_y_len,
+                                &mut p0,
+                                &mut p1,
+                            );
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -395,8 +435,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let p0 = alpha_round2[left] * m;
-                            let p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * m;
+                            let mut p1 = alpha_round2[left + 1] * m;
+                            Self::add_trace_pair_to_relation_factor(
+                                trace_round2,
+                                x,
+                                left,
+                                next_y_len,
+                                &mut p0,
+                                &mut p1,
+                            );
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
