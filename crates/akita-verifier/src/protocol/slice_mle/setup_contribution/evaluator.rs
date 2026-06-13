@@ -19,7 +19,7 @@ pub(crate) enum SetupEvaluation<E> {
     Recursive(E),
 }
 
-pub struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
+pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     inputs: &'a SetupContributionPlanInputs<E>,
     full_vec_randomness: &'a [E],
     eq_low: Option<&'a [E]>,
@@ -38,7 +38,7 @@ where
     E: ExtField<F>,
 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         inputs: &'a SetupContributionPlanInputs<E>,
         full_vec_randomness: &'a [E],
         eq_low: Option<&'a [E]>,
@@ -88,7 +88,7 @@ where
         }
     }
 
-    pub fn prepare(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
+    pub(crate) fn prepare(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
         SetupContributionPlan::prepare(
             self.inputs,
             self.full_vec_randomness,

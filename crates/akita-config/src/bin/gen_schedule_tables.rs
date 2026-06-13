@@ -10,11 +10,18 @@
 //! live in `akita_config::generated_families::ALL_GENERATED_FAMILIES`,
 //! which the drift-guard test also consumes — adding a new generated
 //! family in one place picks it up in both the emitter and the guard.
+//!
+//! After writing the per-family table modules, the emitter also refreshes
+//! the `// @generated schedule module wiring` block in `mod.rs` and the
+//! matching import list in `resolve.rs`, sorted the same way `rustfmt`
+//! orders module declarations. It then runs `cargo fmt` on `akita-planner`
+//! and `akita-config` so emitted artifacts and this emitter stay fmt-clean.
 
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_planner::generated::GeneratedScheduleKey;
@@ -173,6 +180,234 @@ fn emit_module(family: &GeneratedFamily) -> Result<String, String> {
     Ok(out)
 }
 
+const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
+const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+const RESOLVE_CFG_IMPORTS_BEGIN: &str = "// @generated schedule table cfg imports begin";
+const RESOLVE_CFG_IMPORTS_END: &str = "// @generated schedule table cfg imports end";
+const RESOLVE_IMPORTS_BEGIN: &str = "// @generated schedule table imports begin";
+const RESOLVE_IMPORTS_END: &str = "// @generated schedule table imports end";
+
+fn sorted_families() -> Vec<&'static GeneratedFamily> {
+    let mut families: Vec<&'static GeneratedFamily> = ALL_GENERATED_FAMILIES.iter().collect();
+    families.sort_by_key(|family| family.module_name);
+    families
+}
+
+fn sis_family_for_module(module_name: &str) -> Result<&'static str, String> {
+    match module_name.split('_').next() {
+        Some("fp128") => Ok("SisModulusFamily::Q128"),
+        Some("fp64") => Ok("SisModulusFamily::Q64"),
+        Some("fp32") => Ok("SisModulusFamily::Q32"),
+        _ => Err(format!(
+            "unsupported generated schedule module prefix: {module_name}"
+        )),
+    }
+}
+
+fn zk_const_name(const_name: &str) -> Result<&str, String> {
+    const_name.strip_suffix("_SCHEDULES").ok_or_else(|| {
+        format!("generated schedule const name should end in _SCHEDULES: {const_name}")
+    })
+}
+
+fn table_fn_name(module_name: &str) -> String {
+    format!("{module_name}_table")
+}
+
+fn is_tiered_only_family(module_name: &str) -> bool {
+    module_name == "fp128_d64_onehot_tiered"
+}
+
+fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
+    writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+    writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn emit_tiered_table_accessor() -> String {
+    concat!(
+        "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
+        "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
+        "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
+        "/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n",
+        "#[cfg(not(feature = \"zk\"))]\n",
+        "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
+        "    GeneratedScheduleTable {\n",
+        "        sis_family: SisModulusFamily::Q128,\n",
+        "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
+        "    }\n",
+        "}\n",
+    )
+    .to_string()
+}
+
+fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = String::new();
+    let mut tiered_wired = false;
+    for family in families {
+        let module_name = family.module_name;
+        if is_tiered_only_family(module_name) {
+            emit_tiered_module_declaration(&mut out)?;
+            tiered_wired = true;
+            continue;
+        }
+        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+        writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
+        writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
+        writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
+    }
+    if !tiered_wired {
+        emit_tiered_module_declaration(&mut out)?;
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
+    if is_tiered_only_family(family.module_name) {
+        return Ok(emit_tiered_table_accessor());
+    }
+    let fn_name = table_fn_name(family.module_name);
+    let sis_family = sis_family_for_module(family.module_name)?;
+    let module_name = family.module_name;
+    let zk_module = format!("{module_name}_zk");
+    let const_name = family.const_name;
+    let zk_const_base = zk_const_name(family.const_name)?;
+    let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
+    Ok(format!(
+        "pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n    }}\n}}\n"
+    ))
+}
+
+fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = emit_module_declarations(families)?;
+    let mut tiered_wired = false;
+    for family in families {
+        if is_tiered_only_family(family.module_name) {
+            tiered_wired = true;
+        }
+        out.push_str(&emit_table_accessor(family)?);
+        out.push('\n');
+    }
+    if !tiered_wired {
+        out.push_str(&emit_tiered_table_accessor());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn emit_resolve_cfg_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = String::new();
+    let mut tiered_wired = false;
+    for family in families {
+        if is_tiered_only_family(family.module_name) {
+            tiered_wired = true;
+            writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+            writeln!(
+                out,
+                "use crate::generated::{};",
+                table_fn_name(family.module_name)
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    if !tiered_wired {
+        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
+        writeln!(out, "use crate::generated::fp128_d64_onehot_tiered_table;")
+            .map_err(|e| e.to_string())?;
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn emit_resolve_imports(families: &[&GeneratedFamily]) -> Result<String, String> {
+    let mut out = String::new();
+    for family in families {
+        if family.module_name == "fp128_d64_onehot_tiered" {
+            continue;
+        }
+        writeln!(out, "{},", table_fn_name(family.module_name)).map_err(|e| e.to_string())?;
+    }
+    writeln!(out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn replace_between_markers(
+    content: &str,
+    begin: &str,
+    end: &str,
+    replacement: &str,
+) -> Result<String, String> {
+    let start = content
+        .find(begin)
+        .ok_or_else(|| format!("missing generated marker `{begin}`"))?
+        + begin.len();
+    let end_pos = content
+        .find(end)
+        .ok_or_else(|| format!("missing generated marker `{end}`"))?;
+    if end_pos < start {
+        return Err(format!(
+            "generated markers `{begin}` and `{end}` are out of order"
+        ));
+    }
+    let mut out = String::new();
+    out.push_str(&content[..start]);
+    out.push('\n');
+    out.push_str(replacement.trim_end());
+    out.push('\n');
+    out.push_str(&content[end_pos..]);
+    Ok(out)
+}
+
+fn refresh_generated_wiring(base_dir: &Path) -> Result<(), String> {
+    let families = sorted_families();
+    let mod_path = base_dir.join("mod.rs");
+    let mod_src =
+        fs::read_to_string(&mod_path).map_err(|e| format!("read {}: {e}", mod_path.display()))?;
+    let mod_wiring = emit_mod_wiring(&families)?;
+    let mod_src = replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?;
+    fs::write(&mod_path, mod_src).map_err(|e| format!("write {}: {e}", mod_path.display()))?;
+    println!("updated {}", mod_path.display());
+
+    let resolve_path = base_dir
+        .parent()
+        .ok_or_else(|| "generated schedule dir has no parent".to_string())?
+        .join("resolve.rs");
+    let resolve_src = fs::read_to_string(&resolve_path)
+        .map_err(|e| format!("read {}: {e}", resolve_path.display()))?;
+    let cfg_imports = emit_resolve_cfg_imports(&families)?;
+    let resolve_src = replace_between_markers(
+        &resolve_src,
+        RESOLVE_CFG_IMPORTS_BEGIN,
+        RESOLVE_CFG_IMPORTS_END,
+        &cfg_imports,
+    )?;
+    let imports = emit_resolve_imports(&families)?;
+    let resolve_src = replace_between_markers(
+        &resolve_src,
+        RESOLVE_IMPORTS_BEGIN,
+        RESOLVE_IMPORTS_END,
+        &imports,
+    )?;
+    fs::write(&resolve_path, resolve_src)
+        .map_err(|e| format!("write {}: {e}", resolve_path.display()))?;
+    println!("updated {}", resolve_path.display());
+    Ok(())
+}
+
+fn run_regen_fmt() -> Result<(), String> {
+    for package in ["akita-planner", "akita-config"] {
+        let status = Command::new("cargo")
+            .args(["fmt", "-p", package])
+            .status()
+            .map_err(|e| format!("spawn cargo fmt: {e}"))?;
+        if !status.success() {
+            return Err(format!("cargo fmt -p {package} failed with {status}"));
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
@@ -203,5 +438,7 @@ fn main() -> Result<(), String> {
         println!("wrote {}", dest.display());
     }
 
+    refresh_generated_wiring(&base_dir)?;
+    run_regen_fmt()?;
     Ok(())
 }

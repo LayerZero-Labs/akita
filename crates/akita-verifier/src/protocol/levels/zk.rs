@@ -1,39 +1,8 @@
 use crate::protocol::batched::{
-    append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
-    mat_vec_mul_i8_plain, zk_b_blinding_rows,
+    direct_decomposed_inner_rows, field_evals_to_rings, mat_vec_mul_i8_plain, zk_b_blinding_rows,
 };
-use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_r1cs::{zk_masked_linear_value_lc, ZkR1csLinearCombination};
-use akita_types::{
-    recover_ring_subfield_inner_product, AkitaVerifierSetup, LevelParams, RingSubfieldEncoding,
-    ZkHidingProof,
-};
-
-pub(super) fn zk_recovered_y_ring_lc<F, E, const D: usize>(
-    y_ring: &CyclotomicRing<F, D>,
-    y_masks: &[ZkR1csLinearCombination<E>],
-    inner_reduction: &CyclotomicRing<F, D>,
-) -> Result<ZkR1csLinearCombination<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
-{
-    if y_masks.len() != D {
-        return Err(AkitaError::InvalidProof);
-    }
-    let masked_opening = recover_ring_subfield_inner_product::<F, E, D>(y_ring, inner_reduction)?;
-    let mut mask_coeffs = Vec::with_capacity(D);
-    for coeff_idx in 0..D {
-        let mut basis_y = CyclotomicRing::<F, D>::zero();
-        basis_y.coeffs[coeff_idx] = F::one();
-        mask_coeffs.push(recover_ring_subfield_inner_product::<F, E, D>(
-            &basis_y,
-            inner_reduction,
-        )?);
-    }
-    zk_masked_linear_value_lc(masked_opening, y_masks, &mask_coeffs)
-}
+use akita_types::{AkitaVerifierSetup, LevelParams, ZkHidingProof};
 
 pub(super) fn verify_zk_hiding_commitment<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
@@ -72,7 +41,6 @@ where
     )?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
     let b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
-    append_direct_blinding::<F, D>(&proof.b_blinding_digits, &hiding_params)?;
     let shared_matrix = setup.expanded.shared_matrix();
     let b_required = hiding_params
         .b_key
@@ -89,12 +57,8 @@ where
         shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), b_input_digits.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let mut expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
-    let blinding_rows = zk_b_blinding_rows::<F, D>(
-        setup,
-        hiding_params.b_key.row_len(),
-        proof.b_blinding_digits.len() / D,
-        &proof.b_blinding_digits,
-    )?;
+    let blinding_rows =
+        zk_b_blinding_rows::<F, D>(setup, &hiding_params, &proof.b_blinding_digits)?;
     for (row, blinding) in expected_u_blind_rings.iter_mut().zip(blinding_rows) {
         *row += blinding;
     }

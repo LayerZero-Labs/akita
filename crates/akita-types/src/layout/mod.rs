@@ -16,8 +16,9 @@ pub mod proof_size;
 pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
-    basis_weights, lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, BasisMode, BlockOrder, RingOpeningPoint,
+    basis_weights, block_rings_at_opening, lagrange_weights, monomial_weights,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    RingOpeningPoint,
 };
 pub use params::{AjtaiKeyParams, LevelParams, MRowLayout, SisModulusFamily};
 pub use proof_size::{

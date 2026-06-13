@@ -34,44 +34,6 @@ mod tensor_challenges;
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
-    const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
-    let marker_id = marker_id_str.as_ptr() as usize as u32;
-    let marker_len = marker_id_str.len() as u32;
-    unsafe {
-        core::arch::asm!(
-            ".insn i 0x5B, 2, x0, x0, 0",
-            in("x10") JOLT_CYCLE_TRACK_CALL_ID,
-            in("x11") marker_id,
-            in("x12") marker_len,
-            in("x13") event_type,
-            options(nostack, preserves_flags)
-        );
-    }
-}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_start_cycle_tracking(marker_id: &str) {
-    jolt_cycle_marker(marker_id, 1);
-}
-
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-fn jolt_start_cycle_tracking(_marker_id: &str) {}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_end_cycle_tracking(marker_id: &str) {
-    jolt_cycle_marker(marker_id, 2);
-}
-
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-fn jolt_end_cycle_tracking(_marker_id: &str) {}
-
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
@@ -270,7 +232,7 @@ where
     let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
     let claim_to_commitment_group = routing.claim_to_commitment_group();
     let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
-    let num_public_rows = relation.num_public_rows();
+    let _num_public_rows = relation.num_public_rows();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -309,7 +271,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    let m_rows = lp.m_row_count_for(num_points, 0, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -378,7 +340,7 @@ where
         routing.claim_to_commitment_group(),
         routing.claim_poly_in_commitment_group(),
         replay.row_coefficients,
-        relation.num_public_rows(),
+        0,
         relation.m_row_layout(),
         relation.opening_points().len(),
         relation.ring_multiplier_points(),
@@ -618,7 +580,7 @@ where
         rows,
         claim_to_commitment_group_poly,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        num_public_rows,
+        num_public_rows: 0,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
         witness_segment_layout,
@@ -833,17 +795,20 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     )
                 })
                 .collect::<Result<_, _>>()?;
-            let public_row_weights_by_claim: Vec<E> = self
-                .claim_to_point
-                .iter()
-                .map(|&point_idx| {
-                    point_idx
-                        .checked_add(1)
-                        .and_then(|idx| self.eq_tau1.get(idx))
-                        .copied()
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect::<Result<_, _>>()?;
+            let public_row_weights_by_claim: Vec<E> = if self.num_public_rows == 0 {
+                vec![E::zero(); self.num_claims]
+            } else {
+                self.claim_to_point
+                    .iter()
+                    .map(|&point_idx| {
+                        point_idx
+                            .checked_add(1)
+                            .and_then(|idx| self.eq_tau1.get(idx))
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)
+                    })
+                    .collect::<Result<_, _>>()?
+            };
             EStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: layout.offset_e >> offset_low_bits,
@@ -889,7 +854,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
-            jolt_start_cycle_tracking("setup_contribution");
             let result = if let Some(claim) = setup_claim {
                 Ok(claim)
             } else {
@@ -914,7 +878,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     )),
                 }
             };
-            jolt_end_cycle_tracking("setup_contribution");
             result?
         };
 

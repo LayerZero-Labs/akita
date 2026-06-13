@@ -4,7 +4,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
-    pub fn new(
+    pub(crate) fn new(
         batching_coeff: E,
         w_evals_compact: Vec<i8>,
         stage1_point: &[E],
@@ -16,6 +16,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
+        trace_table: Option<TraceTable<E>>,
+        trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
@@ -68,20 +70,27 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: m_evals_x.len(),
             });
         }
+        if let Some(trace) = &trace_table {
+            trace.validate_len(witness_len)?;
+        }
+
+        let relation_trace_claim = relation_claim + trace_opening_claim;
+        let input_claim = batching_coeff * s_claim + relation_trace_claim;
 
         Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
             b,
             batching_coeff,
             s_claim,
-            input_claim: batching_coeff * s_claim + relation_claim,
+            input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
+            trace_table,
             live_x_cols,
             col_bits,
             num_vars,
-            relation_claim,
+            relation_trace_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
             prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
@@ -247,6 +256,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 w_compact,
                 &self.alpha_compact,
                 &self.m_compact,
+                self.trace_table.as_ref(),
                 &stage1_point,
                 self.b,
                 self.live_x_cols,
@@ -258,7 +268,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 &proof,
                 &stage1_point,
                 self.s_claim,
-                self.relation_claim,
+                self.relation_trace_claim,
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");

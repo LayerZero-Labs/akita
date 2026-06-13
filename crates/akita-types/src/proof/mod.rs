@@ -41,16 +41,18 @@ pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSlice
 pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
-    append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
-    verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentRouting, IncidenceClaim, PublicOpeningRow,
+    append_claim_incidence_shape_to_transcript, batched_eval_target_from_incidence,
+    sample_public_row_coefficients, verifier_claims_to_incidence, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentRouting, IncidenceClaim,
+    PublicOpeningRow,
 };
 pub use levels::{
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
+    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
+    TerminalLevelProof,
 };
-pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
     ring_column_z_first, ring_relation_segment_layout_for_opening_shape, RingRelationInstance,
     RingRelationSegmentLayout,

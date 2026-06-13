@@ -360,11 +360,7 @@ fn assert_zk_tensor_root_proof_shape(proof: &AkitaBatchedProof<F, F>) {
         "ZK tensor root must carry masked stage-1 sumcheck rounds"
     );
     assert!(
-        !root
-            .stage2
-            .sumcheck_proof_masked
-            .masked_round_polys
-            .is_empty(),
+        !root.stage2.sumcheck_masked().masked_round_polys.is_empty(),
         "ZK tensor root must carry masked stage-2 sumcheck rounds"
     );
 }
@@ -396,8 +392,17 @@ fn assert_zk_tensor_root_hiding(
         "ZK tensor root should re-randomize masked stage-1 rounds"
     );
     assert_ne!(
-        root.stage2.sumcheck_proof_masked.masked_round_polys,
-        second_root.stage2.sumcheck_proof_masked.masked_round_polys,
+        root.stage2
+            .as_intermediate()
+            .expect("fold root proof must carry intermediate stage-2 proof")
+            .sumcheck_proof_masked
+            .masked_round_polys,
+        second_root
+            .stage2
+            .as_intermediate()
+            .expect("fold root proof must carry intermediate stage-2 proof")
+            .sumcheck_proof_masked
+            .masked_round_polys,
         "ZK tensor root should re-randomize masked stage-2 rounds"
     );
 }
