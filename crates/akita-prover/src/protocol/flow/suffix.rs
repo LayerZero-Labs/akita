@@ -900,7 +900,7 @@ where
 /// verifier re-derives the same relation through the fused stage-2 term.
 fn compute_trace_target<F, L, const D: usize>(
     reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
-    y_rings: &[CyclotomicRing<F, D>],
+    folded_rings: &[CyclotomicRing<F, D>],
     prepared_points: &[PreparedOpeningPoint<F, L, D>],
     expected_opening: L,
 ) -> Result<(L, L), AkitaError>
@@ -913,10 +913,10 @@ where
         match reduction {
             Some(reduction) => Ok((reduction.final_claim, reduction.final_factor)),
             None => {
-                let y_ring = y_rings.first().ok_or(AkitaError::InvalidProof)?;
+                let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
                 let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
                 let opening = recover_ring_subfield_inner_product::<F, L, D>(
-                    y_ring,
+                    folded_ring,
                     &prepared_point.packed_inner_point,
                 )?;
                 if opening != expected_opening {
@@ -930,12 +930,12 @@ where
     }
     #[cfg(feature = "zk")]
     {
-        let internal_claims = y_rings
+        let internal_claims = folded_rings
             .iter()
             .zip(prepared_points.iter())
-            .map(|(y_ring, prepared_point)| {
+            .map(|(folded_ring, prepared_point)| {
                 recover_ring_subfield_inner_product::<F, L, D>(
-                    y_ring,
+                    folded_ring,
                     &prepared_point.packed_inner_point,
                 )
             })
@@ -1071,7 +1071,7 @@ where
     let recursive_polys = [&witness_view];
     let claim_to_point = vec![0usize];
 
-    let (y_rings, e_folded_by_claim) = evaluate_claims_at_prepared_points(
+    let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_points(
         &recursive_polys,
         &claim_to_point,
         &prepared_points,
@@ -1085,7 +1085,7 @@ where
 
     let (trace_eval_target, trace_scale) = compute_trace_target::<F, L, D>(
         &reduction,
-        &y_rings,
+        &folded_rings,
         &prepared_points,
         current_state.opening,
     )?;

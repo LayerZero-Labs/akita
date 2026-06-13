@@ -10,15 +10,14 @@ use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, Transcrip
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{AkitaPolyOps, AkitaProverSetup};
+use akita_prover::{AkitaProverSetup};
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
-use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode,
     RingCommitment,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
@@ -28,6 +27,9 @@ use rand::{Rng, SeedableRng};
 use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
+
+mod common;
+use common::opening_from_poly;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
@@ -298,43 +300,6 @@ fn purge_setup_cache(max_num_vars: usize) {
             }
         }
     }
-}
-
-fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FField, D>>(
-    poly: &P,
-    point: &[FField],
-    layout: &LevelParams,
-) -> FField {
-    let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
-    assert!(
-        point.len() <= target_num_vars,
-        "opening point length {} exceeds target root arity {}",
-        point.len(),
-        target_num_vars
-    );
-    let mut padded_point = point.to_vec();
-    padded_point.resize(target_num_vars, FField::zero());
-
-    let inner_point = &padded_point[..alpha_bits];
-    let reduced_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-        BlockOrder::RowMajor,
-    )
-    .expect("opening point shape should match layout");
-
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
-    let v = reduce_inner_opening_to_ring_element::<FField, D>(inner_point, BasisMode::Lagrange)
-        .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
 #[cfg(not(feature = "zk"))]

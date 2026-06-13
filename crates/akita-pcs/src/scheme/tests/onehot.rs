@@ -24,7 +24,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
-        .map(|poly| debug_opening_from_poly(poly, &point, &layout))
+        .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
     let setup =

@@ -906,8 +906,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                     ));
                 }
                 // Headerless validity cannot infer the ring dimension from
-                // `y_ring`: multipoint levels store one D-sized ring per
-                // public row. Schedule-shaped deserialization and verifier
+                // `v` alone. Schedule-shaped deserialization and verifier
                 // replay own the cross-level dimension checks.
             }
             AkitaBatchedRootProof::Terminal(_) => {

@@ -298,7 +298,7 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
     OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
 }
 
-fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
+fn opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
     poly: &P,
     point: &[OneHotF],
     layout: &LevelParams,
@@ -315,15 +315,15 @@ fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
         BasisMode::Lagrange,
         BlockOrder::RowMajor,
     )
-    .expect("debug opening point");
+    .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
+    let (folded_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v =
+    let packed_inner =
         reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(inner_point, BasisMode::Lagrange)
-            .expect("debug inner opening point");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+            .expect("inner opening point should match ring dimension");
+    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }

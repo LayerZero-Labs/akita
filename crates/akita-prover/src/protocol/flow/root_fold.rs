@@ -21,26 +21,26 @@ pub(in crate::protocol::flow) fn evaluate_claims_at_prepared_points<F, C, P, con
     claim_to_point: &[usize],
     prepared_points: &[PreparedOpeningPoint<F, C, D>],
     block_len: usize,
-) -> Result<RootClaimEvaluations<F, D>, AkitaError>
+) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: FieldCore,
     C: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
     let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
-    let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-    let mut e_folded_by_poly = Vec::with_capacity(polys.len());
+    let mut folded_rings = Vec::with_capacity(polys.len());
+    let mut folded_blocks = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
         let prepared_point = &prepared_points[point_idx];
-        let (y_ring, e_folded) = evaluate_poly_at_multiplier_point(
+        let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
         )?;
-        per_claim_y_rings.push(y_ring);
-        e_folded_by_poly.push(e_folded);
+        folded_rings.push(folded_ring);
+        folded_blocks.push(folded_block);
     }
-    Ok((per_claim_y_rings, e_folded_by_poly))
+    Ok((folded_rings, folded_blocks))
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
@@ -278,7 +278,7 @@ where
         )?;
         let prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
 
-        let (_per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
+        let (_folded_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -342,7 +342,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
+    let (folded_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -367,12 +367,12 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let openings: Vec<E> = per_claim_y_rings
+    let openings: Vec<E> = folded_rings
         .iter()
         .zip(claim_to_point.iter())
-        .map(|(y_ring, &point_idx)| {
-            root_claim_opening_from_y_ring::<F, E, C, D>(
-                y_ring,
+        .map(|(folded_ring, &point_idx)| {
+            scalar_opening_from_folded_ring::<F, E, C, D>(
+                folded_ring,
                 &prepared_points[point_idx],
                 &inner_claim_points[point_idx],
                 basis,

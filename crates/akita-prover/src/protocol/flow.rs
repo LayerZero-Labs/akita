@@ -392,8 +392,8 @@ pub(in crate::protocol::flow) type Stage2ProveResult<L> =
 pub(in crate::protocol::flow) type Stage2ProveResult<L> =
     (SumcheckProofMasked<L>, Vec<L>, AkitaStage2Prover<L>);
 
-fn root_claim_opening_from_y_ring<F, E, L, const D: usize>(
-    y_ring: &CyclotomicRing<F, D>,
+fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
+    folded_ring: &CyclotomicRing<F, D>,
     prepared_point: &PreparedOpeningPoint<F, L, D>,
     inner_opening_point: &[E],
     basis: BasisMode,
@@ -404,12 +404,12 @@ where
     L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*y_ring * prepared_point.packed_inner_point.sigma_m1())
+        return (*folded_ring * prepared_point.packed_inner_point.sigma_m1())
             .coefficients()
             .first()
             .copied()
             .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty root y-ring".to_string()));
+            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
     }
     if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
@@ -440,7 +440,7 @@ where
             "root opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
-    recover_ring_subfield_inner_product::<F, E, D>(y_ring, &packed_inner_point)
+    recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
 }
 
 fn row_coefficient_rings<F, L, const D: usize>(
