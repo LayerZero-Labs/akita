@@ -751,7 +751,7 @@ where
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
             let params = Cfg::get_params_for_batched_commitment(incidence_summary)
                 .map_err(|_| AkitaError::InvalidProof)?;
-            verify_root_direct_commitments_with_params::<F, D>(
+            verify_rootverify_rootverify_root_direct_commitments_with_params::<F, D>(
                 witnesses, setup, commitments, incidence_summary,
                 &params, direct_commitment_payload,
             )

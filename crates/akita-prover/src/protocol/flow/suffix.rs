@@ -204,11 +204,13 @@ where
     #[cfg(feature = "zk")]
     let (terminal, zk_hiding) = terminal_result;
 
-    let mut steps = intermediate_levels
-        .into_iter()
-        .map(AkitaProofStep::Intermediate)
-        .collect::<Vec<_>>();
-    steps.push(AkitaProofStep::Terminal(terminal));
+    let mut steps = intermediate_levels;
+    let final_w_len = terminal.final_witness().num_elems();
+    steps.push(AkitaLevelProof::Terminal {
+        extension_opening_reduction: terminal.extension_opening_reduction,
+        stage2: terminal.stage2,
+        final_w_len,
+    });
 
     Ok(RecursiveSuffixOutcome {
         steps,
@@ -496,19 +498,23 @@ where
             AkitaError::InvalidInput("intermediate fold did not bind a next commitment".to_string())
         })?;
         let w_commitment_proof = committed_commitment.clone();
-        let mut level_proof =
-            AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-                prepared_fold.extension_opening_reduction,
-                prepared_fold.instance.v,
-                stage1_proof,
+        let level_proof = AkitaLevelProof::Intermediate {
+            extension_opening_reduction: prepared_fold.extension_opening_reduction,
+            v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            stage1: stage1_proof,
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
-                stage2_sumcheck_proof,
+                sumcheck_proof: stage2_sumcheck_proof,
                 #[cfg(feature = "zk")]
-                stage2_sumcheck_proof,
-                w_commitment_proof,
-                proof_w_eval,
-            );
-        level_proof.stage3_sumcheck_proof = stage3_sumcheck_proof;
+                sumcheck_proof_masked: stage2_sumcheck_proof,
+                next_w_commitment: w_commitment_proof.into_compact(),
+                #[cfg(not(feature = "zk"))]
+                next_w_eval: proof_w_eval,
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: proof_w_eval,
+            }),
+            stage3_sumcheck_proof,
+        };
 
         let (committed_witness, logical_w) = match packed_witness {
             Some(packed_witness) => (packed_witness, Some(logical_w)),
