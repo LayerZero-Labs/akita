@@ -41,11 +41,11 @@ fn assert_stage1_roundtrip(
 
     let verifier = AkitaStage1Verifier::new(tau0, b);
     let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let verified_r = verifier
+    let verified_point = verifier
         .verify(&proof, &mut verifier_transcript)
         .expect("stage1 verification should succeed");
 
-    assert_eq!(stage1_point, verified_r);
+    assert_eq!(stage1_point, verified_point);
     assert_eq!(proof.stages.len(), expected_child_claim_counts.len());
     for (stage, &expected_child_claims) in proof.stages.iter().zip(expected_child_claim_counts) {
         assert_eq!(stage.child_claims.len(), expected_child_claims);
@@ -53,52 +53,7 @@ fn assert_stage1_roundtrip(
 }
 
 #[test]
-fn stage1_tree_prove_verify_roundtrip_b16() {
-    assert_stage1_roundtrip(
-        16,
-        6,
-        vec![
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(9),
-        ],
-        &[2, 0],
-    );
-}
-
-#[test]
-fn stage1_tree_prove_verify_roundtrip_b32() {
-    assert_stage1_roundtrip(
-        32,
-        5,
-        vec![
-            F::from_u64(11),
-            F::from_u64(13),
-            F::from_u64(17),
-            F::from_u64(19),
-        ],
-        &[4, 0],
-    );
-}
-
-#[test]
-fn stage1_tree_prove_verify_roundtrip_b64() {
-    assert_stage1_roundtrip(
-        64,
-        5,
-        vec![
-            F::from_u64(23),
-            F::from_u64(29),
-            F::from_u64(31),
-            F::from_u64(37),
-        ],
-        &[2, 8, 0],
-    );
-}
-
-#[test]
-fn stage1_tree_prove_verify_roundtrip_b4() {
+fn stage1_prover_verifier_roundtrip_covers_compact_and_tree_bases() {
     assert_stage1_roundtrip(
         4,
         5,
@@ -110,10 +65,6 @@ fn stage1_tree_prove_verify_roundtrip_b4() {
         ],
         &[0],
     );
-}
-
-#[test]
-fn stage1_tree_prove_verify_roundtrip_b8() {
     assert_stage1_roundtrip(
         8,
         5,
@@ -124,5 +75,38 @@ fn stage1_tree_prove_verify_roundtrip_b8() {
             F::from_u64(19),
         ],
         &[0],
+    );
+    assert_stage1_roundtrip(
+        16,
+        6,
+        vec![
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(9),
+        ],
+        &[2, 0],
+    );
+    assert_stage1_roundtrip(
+        32,
+        5,
+        vec![
+            F::from_u64(11),
+            F::from_u64(13),
+            F::from_u64(17),
+            F::from_u64(19),
+        ],
+        &[4, 0],
+    );
+    assert_stage1_roundtrip(
+        64,
+        5,
+        vec![
+            F::from_u64(23),
+            F::from_u64(29),
+            F::from_u64(31),
+            F::from_u64(37),
+        ],
+        &[2, 8, 0],
     );
 }
