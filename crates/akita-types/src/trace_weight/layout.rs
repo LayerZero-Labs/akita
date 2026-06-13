@@ -60,4 +60,20 @@ impl TraceWeightLayout {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_trace_term_block_range(
+        &self,
+        block_offset: usize,
+        block_span: usize,
+    ) -> Result<(), AkitaError> {
+        let end = block_offset.checked_add(block_span).ok_or_else(|| {
+            AkitaError::InvalidInput("trace term block range overflow".to_string())
+        })?;
+        if end > self.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "trace term exceeds layout block count".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }

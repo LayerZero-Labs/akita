@@ -126,17 +126,7 @@ where
     let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
 
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_weights.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "field trace term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
         let inner_coeffs = term.inner_opening_ring.coefficients();
         for (local_block, block_weight) in term.block_weights.iter().enumerate() {
             let block_weight_e = E::lift_base(*block_weight);
@@ -177,17 +167,7 @@ where
     let mut columns = Vec::new();
 
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_weights.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "field trace term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
         let inner_coeffs = term.inner_opening_ring.coefficients();
         for (local_block, block_weight) in term.block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
@@ -253,17 +233,7 @@ where
     let mut block_rows = vec![E::zero(); layout.num_blocks * ring_len];
 
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_rings.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "ring trace term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
         for (local_block, block_ring) in term.block_rings.iter().enumerate() {
             let row = trace_open_ring_row::<F, E, D>(
                 block_ring,
@@ -309,17 +279,7 @@ where
     let mut compact = vec![E::zero(); out_len];
 
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_rings.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "ring trace term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
         for (local_block, block_ring) in term.block_rings.iter().enumerate() {
             let block = term.block_offset + local_block;
             if !block_has_live_opening_digit(layout, block, live_x_cols) {

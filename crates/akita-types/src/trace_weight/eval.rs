@@ -130,18 +130,7 @@ where
     let mut out = E::zero();
 
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_weights.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "field opening term exceeds layout block count".to_string(),
-            ));
-        }
-
+        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
         let mut col_factor = E::zero();
         for (local_block, &block_weight) in term.block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
@@ -187,17 +176,7 @@ where
     let ring_eq = lagrange_weights(ring_point)?;
     let mut out = E::zero();
     for term in terms {
-        let end = term
-            .block_offset
-            .checked_add(term.block_rings.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block range overflow".to_string())
-            })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "ring opening term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;
         // The trace-open pipeline is E-linear in the fold-block ring, so fold
         // every block of this term into one ring element first (weighted by its
         // column factor) and take a single `Tr_H` of one ring product, instead
@@ -451,14 +430,7 @@ where
         let block_span = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
-        let end = term.block_offset.checked_add(block_span).ok_or_else(|| {
-            AkitaError::InvalidInput("trace term block range overflow".to_string())
-        })?;
-        if end > layout.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "trace term exceeds layout block count".to_string(),
-            ));
-        }
+        layout.validate_trace_term_block_range(term.block_offset, block_span)?;
         let base = layout
             .opening_digit_offset
             .checked_add(term.block_offset)
