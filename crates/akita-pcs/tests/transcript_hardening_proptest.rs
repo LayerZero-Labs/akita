@@ -106,6 +106,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         &mut verifier_transcript,
         verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
         basis_mode,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 

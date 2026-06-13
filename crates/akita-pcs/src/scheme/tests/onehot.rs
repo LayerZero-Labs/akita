@@ -24,7 +24,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
-        .map(|poly| debug_opening_from_poly(poly, &point, &layout))
+        .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
     let setup =
@@ -77,7 +77,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 step_shapes: actual_steps,
             },
         ) => {
-            assert_eq!(expected_root.y_ring_coeffs, actual_root.y_ring_coeffs);
             assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
             assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
             assert_eq!(

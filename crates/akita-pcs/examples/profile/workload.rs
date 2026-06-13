@@ -289,14 +289,14 @@ where
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
+    let (folded_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
+    let packed_inner = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
 fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(

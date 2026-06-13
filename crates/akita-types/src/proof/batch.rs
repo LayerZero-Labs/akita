@@ -22,8 +22,9 @@ pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    /// Inner ring-slot reduction.
-    pub inner_reduction: CyclotomicRing<F, D>,
+    /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
+    /// Public fixed weight in `TraceOpen(Y) = recover_ring_subfield_inner_product(Y, packed_inner_point)`.
+    pub packed_inner_point: CyclotomicRing<F, D>,
 }
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
@@ -451,12 +452,12 @@ where
             block_order,
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
+        let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         return Ok(PreparedOpeningPoint {
             padded_point,
             ring_opening_point,
             ring_multiplier_point,
-            inner_reduction,
+            packed_inner_point,
         });
     }
 
@@ -477,7 +478,7 @@ where
         ));
     }
     let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis)?;
-    let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, L, D>(
         &trace_inner_weights,
         AkitaError::InvalidInput(
             "recursive opening point does not encode in the ring-subfield basis".to_string(),
@@ -503,7 +504,7 @@ where
         padded_point,
         ring_opening_point,
         ring_multiplier_point,
-        inner_reduction,
+        packed_inner_point,
     })
 }
 

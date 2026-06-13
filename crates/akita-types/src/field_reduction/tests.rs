@@ -211,8 +211,9 @@ fn trace_h_k_one_matches_inner_opening_reduction_shortcut() {
     let inner_point = [F::from_u64(3), F::from_u64(5), F::from_u64(7)];
 
     for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
-        let v = reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
-        let product = y_ring * v.sigma_m1();
+        let packed_inner =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
+        let product = y_ring * packed_inner.sigma_m1();
         let trace = trace_h(params, &product);
         let coeffs = trace.coefficients();
         let current_shortcut = F::from_u64(D as u64) * product.coefficients()[0];
@@ -617,7 +618,7 @@ fn flatten_subfield_fp_ext4_vector<const D: usize>(
 }
 
 /// Verify the trace inner-product relation
-/// `Tr_H(psi(s) * sigma_{-1}(psi(v))) = (D / k) * embed_subfield(<s, v>)`
+/// `Tr_H(psi(s) * sigma_{-1}(psi(r_in))) = (D / k) * embed_subfield(<s, s>)`
 /// for the typed `k = 4` ring-subfield representation.
 fn assert_psi_trace_inner_product_identity_fp_ext4<const D: usize>() {
     let params = SubfieldParams::<D, 4>::new().unwrap();
@@ -716,8 +717,9 @@ fn check_trace_inner_product_k_one_accepts_correct_opening() {
     let inner_point = [F::from_u64(3), F::from_u64(5), F::from_u64(7)];
 
     for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
-        let v = reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
-        let product = y_ring * v.sigma_m1();
+        let packed_inner =
+            reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
+        let product = y_ring * packed_inner.sigma_m1();
         let opening = product.coefficients()[0];
 
         assert!(check_trace_inner_product::<F, D, 1>(
