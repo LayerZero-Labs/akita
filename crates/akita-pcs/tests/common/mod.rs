@@ -150,10 +150,18 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     basis_mode: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    assert!(
+        point.len() <= target_num_vars,
+        "opening point length {} exceeds target root arity {}",
+        point.len(),
+        target_num_vars
+    );
+    let mut padded_point = point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
 
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
         layout.r_vars,
@@ -163,14 +171,14 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
+    let (folded_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
+    let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {

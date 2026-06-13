@@ -327,10 +327,10 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         let fold = oversized_proof
             .root
             .as_fold_mut()
-            .expect("oversized-y-rings test expects a fold-rooted batched proof");
-        let mut oversized_y_coeffs = fold.y_rings.coeffs().to_vec();
-        oversized_y_coeffs.extend(vec![F::zero(); D]);
-        fold.y_rings = FlatRingVec::from_coeffs(oversized_y_coeffs);
+            .expect("oversized-v test expects a fold-rooted batched proof");
+        let mut oversized_v_coeffs = fold.v.coeffs().to_vec();
+        oversized_v_coeffs.extend(vec![F::zero(); D]);
+        fold.v = FlatRingVec::from_coeffs(oversized_v_coeffs);
     }
 
     let mut oversized_openings = openings.to_vec();
