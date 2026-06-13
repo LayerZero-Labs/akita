@@ -72,8 +72,8 @@ Each names the test, benchmark, or protocol relation that protects it.
 
 - Not changing the soundness, equations, or proof semantics of any existing Akita protocol.
   This is a structural refactor; the pilot reproduces stage 2 exactly.
-- Not implementing y-ring trace internalization, L2 certificate sumchecks, or setup-claim offloading in this spec.
-  The protocol-plan abstraction is fully designed to *absorb* them, but they remain separate PRs.
+- Not inventing new protocol semantics for L2 certificate sumchecks or setup-claim offloading in this spec.
+  The pilot reproduces current `main` stage 2 exactly, including the fused trace term from y-ring internalization (already merged); the protocol-plan abstraction forward-maps L2/offload, but those remain separate PRs.
 - Not implementing the polyops/witness-source cutover.
   This spec consumes whatever witness/polynomial sources exist; the descriptor's openings resolve through them.
 - Not migrating stage 1 (range tree, eq-factored), the extension-opening reduction, or the setup product sumcheck in the pilot.
@@ -448,10 +448,11 @@ Stage-2 pilot, end-to-end on both sides:
 
 1. Overhaul `akita-sumcheck` into the generic lower layer: add the descriptor algebra (`Source`/`Term`/`Expr`/`SubClaim`/`Summand`/`SumcheckInstanceDescriptor`/`InstanceKind`, generic over identifier types), fold the existing `traits.rs`/`drivers/` pairs and the two proof formats (`types.rs`) into the descriptor + engine model, promote `batched_sumcheck.rs` to the Tier-A kernel, and add the `SumcheckFastPath` trait and proof-sink abstraction.
 2. Scaffold `akita-protocol` with the concrete identifier types (`AkitaOpeningId`/`AkitaPublicId`/`AkitaChallengeId`) and a stub `plan_level` that returns the current stage-2 schedule by composing `akita-sumcheck` building blocks.
-3. Define the stage-2 descriptor as a regular instance, degree 3 over the boolean hypercube, input claim `batching_coeff * s_claim + relation_claim`. Sources: `eq` (eq at the stage-1 point), `W` (witness opening), `alpha`, `m` (relation row). Summand: two sub-claims at intermediate levels, one at terminal.
+3. Define the stage-2 descriptor as a regular instance, degree 3 over the boolean hypercube, input claim `batching_coeff * s_claim + relation_claim + trace_opening_claim` (the fused trace term is mandatory on current `main`). Sources: `eq` (eq at the stage-1 point), `W` (witness opening), `alpha`, `m` (relation row), `TraceWeight` (transparent trace MLE). Summand: three sub-claims at intermediate levels, two at terminal (virtual omitted structurally).
    - *Virtual* sub-claim: protocol equation `batching_coeff * eq * W * (W + 1)`, encoded as `SubClaim { weight: Some(batching_coeff), body: eq*W*W + eq*W }` (algebraic expansion of `W*(W+1)` into repeated-`W` monomials).
    - *Relation* sub-claim: body `W * alpha * m`, unweighted.
-   At terminal levels the virtual sub-claim is omitted from the summand structurally (relation-only), not zeroed via `batching_coeff = 0`.
+   - *Trace* sub-claim: body `W * TraceWeight`, weighted by `trace_coeff` from `BatchingScheme` (`batching_coeff²` at intermediate levels, `trace_gamma²` at terminal folds via `stage2_trace_coeff`). The trace opening claim `trace_coeff * trace_eval_target` is folded into `input_claim`.
+   At terminal levels the virtual sub-claim is omitted from the summand structurally (relation + trace only), not zeroed via `batching_coeff = 0`.
 4. Verifier: replace `expected_output_claim` and the ZK final-relation formula with descriptor-driven evaluation/lowering; keep opening discharge.
 5. Prover: build the descriptor, run the Tier-A generic kernel; add the compact-integer scan as a `SumcheckFastPath`; wire the proof sink.
 6. Add the fast-path equivalence test and the proof byte-equality fixture.
@@ -461,8 +462,8 @@ Migration order after the pilot (separate PRs): stage-1 (eq-factored, range tree
 
 Stacking with other work:
 
-- This spec is intended as the base of the stack: it is the shared abstraction the y-ring, L2, and setup-offloading work target, and they become declarative additions on top.
-- The final order (this strictly first vs y-ring landing first and rebasing) is still open, but the protocol plan is designed so y-ring can land either before or after by adding the trace sub-claim gated by `trace=true`.
+- This spec is intended as the base of the stack: it is the shared abstraction the L2 and setup-offloading work target.
+- The fused trace term is already on `main`; the pilot descriptor-izes it rather than omitting it. L2/offload land as declarative additions gated by `ProtocolGates`.
 
 Risks to resolve first:
 
