@@ -105,10 +105,11 @@ pub use schedule::{
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
-    build_trace_table_scaled, ensure_trace_stage2_supported, eval_trace_terms_closed,
-    root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
-    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
+    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
+    eval_trace_terms_closed, root_trace_block_opening, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_terms_recursive, trace_terms_root,
+    trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening, TraceOpeningAtPoint,
+    TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable, TraceTerm,
+    TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;

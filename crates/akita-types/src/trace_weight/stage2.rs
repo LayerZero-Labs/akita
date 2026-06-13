@@ -173,6 +173,73 @@ where
     Ok(weights.iter().map(|&weight| weight * scale).collect())
 }
 
+struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
+    lp: &'a LevelParams,
+    incidence: &'a ClaimIncidenceSummary,
+    prepared_points: &'a [PreparedOpeningPoint<F, E, D>],
+    row_coefficients: &'a [E],
+    claim_scales: Option<&'a [E]>,
+}
+
+struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
+    prepared: &'a PreparedOpeningPoint<F, E, D>,
+    point_idx: usize,
+    scaled_coefficient: E,
+    block_offset: usize,
+}
+
+fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
+    inputs: &RootTraceClaimInputs<'_, F, E, D>,
+) -> Result<(), AkitaError> {
+    if inputs.row_coefficients.len() != inputs.incidence.num_claims() {
+        return Err(AkitaError::InvalidSize {
+            expected: inputs.incidence.num_claims(),
+            actual: inputs.row_coefficients.len(),
+        });
+    }
+    if let Some(scales) = inputs.claim_scales {
+        if scales.len() != inputs.incidence.num_claims() {
+            return Err(AkitaError::InvalidSize {
+                expected: inputs.incidence.num_claims(),
+                actual: scales.len(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize>(
+    inputs: &'a RootTraceClaimInputs<'a, F, E, D>,
+) -> Result<Vec<RootTraceClaimItem<'a, F, E, D>>, AkitaError> {
+    validate_root_trace_claim_inputs(inputs)?;
+    let mut items = Vec::with_capacity(inputs.incidence.num_claims());
+    for (claim_idx, &coefficient) in inputs.row_coefficients.iter().enumerate() {
+        let scale = inputs
+            .claim_scales
+            .and_then(|scales| scales.get(claim_idx).copied())
+            .unwrap_or_else(E::one);
+        let point_idx = *inputs
+            .incidence
+            .claim_to_point()
+            .get(claim_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let prepared = inputs
+            .prepared_points
+            .get(point_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let block_offset = claim_idx
+            .checked_mul(inputs.lp.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
+        items.push(RootTraceClaimItem {
+            prepared,
+            point_idx,
+            scaled_coefficient: coefficient * scale,
+            block_offset,
+        });
+    }
+    Ok(items)
+}
+
 /// Build public trace weights for a root incidence, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
@@ -186,73 +253,48 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
-    if row_coefficients.len() != incidence.num_claims() {
-        return Err(AkitaError::InvalidSize {
-            expected: incidence.num_claims(),
-            actual: row_coefficients.len(),
-        });
-    }
-    if let Some(scales) = claim_scales {
-        if scales.len() != incidence.num_claims() {
-            return Err(AkitaError::InvalidSize {
-                expected: incidence.num_claims(),
-                actual: scales.len(),
-            });
-        }
-    }
-
+    let inputs = RootTraceClaimInputs {
+        lp,
+        incidence,
+        prepared_points,
+        row_coefficients,
+        claim_scales,
+    };
+    let items = collect_root_trace_claim_items(&inputs)?;
     if E::EXT_DEGREE == 1 {
-        let mut terms = Vec::with_capacity(incidence.num_claims());
-        for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
-            let scale = claim_scales
-                .and_then(|scales| scales.get(claim_idx).copied())
-                .unwrap_or_else(E::one);
-            let coefficient = coefficient * scale;
-            let point_idx = *incidence
-                .claim_to_point()
-                .get(claim_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            let prepared = prepared_points
-                .get(point_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            let block_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                AkitaError::InvalidSetup("trace block offset overflow".to_string())
-            })?;
+        let mut terms = Vec::with_capacity(items.len());
+        for item in items {
             terms.push(TraceFieldBlockOpening {
-                block_offset,
-                block_weights: scaled_base_weights(&prepared.ring_opening_point.b, coefficient)?,
-                inner_opening_ring: prepared.packed_inner_point,
+                block_offset: item.block_offset,
+                block_weights: scaled_base_weights(
+                    &item.prepared.ring_opening_point.b,
+                    item.scaled_coefficient,
+                )?,
+                inner_opening_ring: item.prepared.packed_inner_point,
             });
         }
         trace_public_weights_field_terms(&terms)
     } else {
-        let mut terms = Vec::with_capacity(incidence.num_claims());
-        for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
-            let scale = claim_scales
-                .and_then(|scales| scales.get(claim_idx).copied())
-                .unwrap_or_else(E::one);
-            let coefficient = coefficient * scale;
-            let point_idx = *incidence
-                .claim_to_point()
-                .get(claim_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            let prepared = prepared_points
-                .get(point_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            let block_rings = prepared.ring_multiplier_point.b_rings().ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "extension trace opening point is missing ring block weights".to_string(),
-                )
-            })?;
-            let block_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                AkitaError::InvalidSetup("trace block offset overflow".to_string())
-            })?;
-            terms.push(TraceRingBlockOpening {
-                block_offset,
-                block_rings: scaled_ring_weights(block_rings, coefficient)?,
-                packed_inner_point: prepared.packed_inner_point,
-            });
-        }
+        let terms = items
+            .into_iter()
+            .map(|item| {
+                let block_rings =
+                    item.prepared
+                        .ring_multiplier_point
+                        .b_rings()
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "extension trace opening point is missing ring block weights"
+                                    .to_string(),
+                            )
+                        })?;
+                Ok(TraceRingBlockOpening {
+                    block_offset: item.block_offset,
+                    block_rings: scaled_ring_weights(block_rings, item.scaled_coefficient)?,
+                    packed_inner_point: item.prepared.packed_inner_point,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         trace_public_weights_ring_terms(&terms)
     }
 }
@@ -338,55 +380,69 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
-    if row_coefficients.len() != incidence.num_claims() {
-        return Err(AkitaError::InvalidSize {
-            expected: incidence.num_claims(),
-            actual: row_coefficients.len(),
-        });
-    }
     if b_opens_per_point.len() != incidence.num_points() {
         return Err(AkitaError::InvalidSize {
             expected: incidence.num_points(),
             actual: b_opens_per_point.len(),
         });
     }
-    if let Some(scales) = claim_scales {
-        if scales.len() != incidence.num_claims() {
-            return Err(AkitaError::InvalidSize {
-                expected: incidence.num_claims(),
-                actual: scales.len(),
-            });
-        }
-    }
-
-    let mut terms = Vec::with_capacity(incidence.num_claims());
-    for (claim_idx, &coefficient) in row_coefficients.iter().enumerate() {
-        let scale = claim_scales
-            .and_then(|scales| scales.get(claim_idx).copied())
-            .unwrap_or_else(E::one);
-        let point_idx = *incidence
-            .claim_to_point()
-            .get(claim_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let prepared = prepared_points
-            .get(point_idx)
-            .ok_or(AkitaError::InvalidProof)?;
+    let inputs = RootTraceClaimInputs {
+        lp,
+        incidence,
+        prepared_points,
+        row_coefficients,
+        claim_scales,
+    };
+    let items = collect_root_trace_claim_items(&inputs)?;
+    let mut terms = Vec::with_capacity(items.len());
+    for item in items {
         let b_open = b_opens_per_point
-            .get(point_idx)
+            .get(item.point_idx)
             .ok_or(AkitaError::InvalidProof)?
             .clone();
-        let block_offset = claim_idx
-            .checked_mul(lp.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
         terms.push(TraceTerm {
-            block_offset,
+            block_offset: item.block_offset,
             b_open,
             basis,
-            packed_inner_point: prepared.packed_inner_point,
-            coefficient: coefficient * scale,
+            packed_inner_point: item.prepared.packed_inner_point,
+            coefficient: item.scaled_coefficient,
         });
     }
     Ok(terms)
+}
+
+/// Build the verifier's short closed-form root trace claim.
+#[allow(clippy::too_many_arguments)]
+pub fn build_trace_claim_root<F, E, const D: usize>(
+    layout: TraceWeightLayout,
+    lp: &LevelParams,
+    incidence: &ClaimIncidenceSummary,
+    prepared_points: &[PreparedOpeningPoint<F, E, D>],
+    b_opens_per_point: &[Vec<E>],
+    basis: BasisMode,
+    row_coefficients: &[E],
+    trace_coeff: E,
+    trace_eval_target: E,
+    claim_scales: Option<&[E]>,
+) -> Result<TraceClaim<F, E, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    Ok(TraceClaim {
+        layout,
+        trace_coeff,
+        trace_opening_claim: trace_coeff * trace_eval_target,
+        trace_terms: trace_terms_root(
+            lp,
+            incidence,
+            prepared_points,
+            b_opens_per_point,
+            basis,
+            row_coefficients,
+            claim_scales,
+        )?,
+    })
 }
 
 /// Build the verifier's short closed-form trace term for a recursive singleton
@@ -423,6 +479,7 @@ where
 }
 
 /// Materialize the trace-weight table and keep only live witness columns.
+#[cfg(test)]
 pub(crate) fn trace_weight_evals_for_witness<E: FieldCore>(
     layout: &TraceWeightLayout,
     table: &[E],

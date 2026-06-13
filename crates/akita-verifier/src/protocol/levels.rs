@@ -63,8 +63,8 @@ use akita_types::{
     TerminalWitnessTranscriptParts,
 };
 use akita_types::{
-    ensure_trace_stage2_supported, root_trace_block_opening, trace_terms_root,
-    trace_weight_layout_from_segment, TraceClaim,
+    build_trace_claim_root, ensure_trace_stage2_supported, root_trace_block_opening,
+    trace_weight_layout_from_segment,
 };
 #[cfg(not(feature = "zk"))]
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
@@ -906,20 +906,18 @@ where
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
-        Some(TraceClaim {
+        Some(build_trace_claim_root::<F, C, D>(
             layout,
+            batched_lp,
+            incidence_summary,
+            &prepared_points,
+            &trace_block_openings,
+            basis,
+            &row_coefficients,
             trace_coeff,
-            trace_opening_claim: trace_coeff * trace_eval_target,
-            trace_terms: trace_terms_root(
-                batched_lp,
-                incidence_summary,
-                &prepared_points,
-                &trace_block_openings,
-                basis,
-                &row_coefficients,
-                trace_claim_scales.as_deref(),
-            )?,
-        })
+            trace_eval_target,
+            trace_claim_scales.as_deref(),
+        )?)
     };
     #[cfg(feature = "zk")]
     let mut trace_claim_mask = ZkR1csLinearCombination::<C>::zero();
