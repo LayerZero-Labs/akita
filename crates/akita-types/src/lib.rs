@@ -6,6 +6,7 @@
 
 pub mod config;
 pub(crate) mod descriptor_bytes;
+pub mod dispatch;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod instance_descriptor;
@@ -75,11 +76,11 @@ pub use proof::{
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed, verifier_claims_to_incidence,
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,
-    AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
-    AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, CleartextWitnessShape,
-    CommitmentRouting, CommitmentVerifier, CommittedOpenings, DummyProof,
+    AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, CommitmentRouting, CommitmentVerifier, CommittedOpenings, DummyProof,
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits,
     PreparedOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
