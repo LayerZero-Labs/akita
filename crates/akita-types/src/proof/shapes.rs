@@ -75,8 +75,6 @@ impl Valid for ExtensionOpeningReductionShape {
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProofShape {
-    /// Number of field coefficients in `y_rings`.
-    pub y_rings_coeffs: usize,
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Stage-2 sumcheck shape: one compact coefficient count per round.
@@ -88,8 +86,6 @@ pub struct TerminalLevelProofShape {
 /// Shape descriptor for deserializing a [`AkitaLevelProof`] without headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
-    /// Number of field coefficients in `y_ring`.
-    pub y_ring_coeffs: usize,
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Number of field coefficients in `v`.
@@ -178,7 +174,6 @@ fn eq_factored_sumcheck_proof_masked_shape<F: FieldCore>(
 }
 
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
-    y_coeffs: usize,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
     v: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<L>,
@@ -189,7 +184,6 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
         .as_intermediate()
         .expect("level proof shape requires intermediate stage-2 proof");
     LevelProofShape {
-        y_ring_coeffs: y_coeffs,
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),
         v_coeffs: v.coeff_len(),
@@ -308,7 +302,6 @@ impl AkitaDeserialize for AkitaStage1StageShape {
 
 impl Valid for LevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
-        checked_shape_len(self.y_ring_coeffs)?;
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
@@ -333,8 +326,6 @@ impl AkitaSerialize for LevelProofShape {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_ring_coeffs
-            .serialize_with_mode(&mut writer, compress)?;
         self.extension_opening_reduction
             .is_some()
             .serialize_with_mode(&mut writer, compress)?;
@@ -373,8 +364,7 @@ impl AkitaSerialize for LevelProofShape {
                     reduction.partials.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
-        self.y_ring_coeffs.serialized_size(compress)
-            + reduction_size
+        reduction_size
             + self.v_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
@@ -395,7 +385,6 @@ impl AkitaDeserialize for LevelProofShape {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let y_ring_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let has_extension_opening_reduction =
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
@@ -420,7 +409,6 @@ impl AkitaDeserialize for LevelProofShape {
         let next_commit_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
-            y_ring_coeffs,
             extension_opening_reduction,
             v_coeffs,
             stage1_stages,
@@ -518,7 +506,6 @@ impl AkitaDeserialize for CleartextWitnessShape {
 
 impl Valid for TerminalLevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
-        checked_shape_len(self.y_rings_coeffs)?;
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
@@ -537,8 +524,6 @@ impl AkitaSerialize for TerminalLevelProofShape {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_rings_coeffs
-            .serialize_with_mode(&mut writer, compress)?;
         self.extension_opening_reduction
             .is_some()
             .serialize_with_mode(&mut writer, compress)?;
@@ -566,8 +551,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                     reduction.partials.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
-        self.y_rings_coeffs.serialized_size(compress)
-            + reduction_size
+        reduction_size
             + self.stage2_sumcheck.serialized_size(compress)
             + self.final_witness.serialized_size(compress)
     }
@@ -581,7 +565,6 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let y_rings_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let has_extension_opening_reduction =
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
@@ -595,7 +578,6 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         let final_witness =
             CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
-            y_rings_coeffs,
             extension_opening_reduction,
             stage2_sumcheck,
             final_witness,

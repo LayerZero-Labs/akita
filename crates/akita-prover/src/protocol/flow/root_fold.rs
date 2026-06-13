@@ -1,30 +1,46 @@
 use super::*;
 
+fn root_trace_claim_scales<C: Copy>(
+    incidence_summary: &ClaimIncidenceSummary,
+    factors_by_point: &[C],
+) -> Result<Vec<C>, AkitaError> {
+    incidence_summary
+        .claim_to_point()
+        .iter()
+        .map(|&point_idx| {
+            factors_by_point
+                .get(point_idx)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
+        })
+        .collect()
+}
+
 pub(in crate::protocol::flow) fn evaluate_claims_at_prepared_points<F, C, P, const D: usize>(
     polys: &[&P],
     claim_to_point: &[usize],
     prepared_points: &[PreparedOpeningPoint<F, C, D>],
     block_len: usize,
-) -> Result<RootClaimEvaluations<F, D>, AkitaError>
+) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: FieldCore,
     C: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
     let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
-    let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-    let mut e_folded_by_poly = Vec::with_capacity(polys.len());
+    let mut folded_rings = Vec::with_capacity(polys.len());
+    let mut folded_blocks = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
         let prepared_point = &prepared_points[point_idx];
-        let (y_ring, e_folded) = evaluate_poly_at_multiplier_point(
+        let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
         )?;
-        per_claim_y_rings.push(y_ring);
-        e_folded_by_poly.push(e_folded);
+        folded_rings.push(folded_ring);
+        folded_blocks.push(folded_block);
     }
-    Ok((per_claim_y_rings, e_folded_by_poly))
+    Ok((folded_rings, folded_blocks))
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
@@ -99,13 +115,16 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
+    m_row_layout: MRowLayout,
     prepared_points: &[PreparedOpeningPoint<F, C, D>],
-    per_claim_y_rings: &[CyclotomicRing<F, D>],
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+    trace_eval_target: C,
+    #[cfg(feature = "zk")] trace_eval_target_public: C,
+    trace_claim_scales: Option<Vec<C>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_reduction: Option<RootExtensionOpeningReduction<C>>,
-    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     expected_w_len: usize,
 ) -> Result<PreparedFold<F, C, D>, AkitaError>
 where
@@ -120,48 +139,7 @@ where
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
 {
-    let y_rings =
-        combine_root_y_rings::<F, D>(per_claim_y_rings, incidence_summary, &row_coefficient_rings)?;
-    #[cfg(feature = "zk")]
-    let y_rings_masked = {
-        let mut masked = y_rings.clone();
-        for y_ring in &mut masked {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-            *y_ring += y_garbage;
-        }
-        masked
-    };
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-
-    let extension_opening_reduction = if let Some(reduction) = extension_reduction {
-        let internal_claims = y_rings
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .map(|(y_ring, row)| {
-                recover_ring_subfield_inner_product::<F, C, D>(
-                    y_ring,
-                    &prepared_points[row.point_idx()].inner_reduction,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let final_opening = internal_claims
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx()]
-            });
-        check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
-        Some(reduction.proof)
-    } else {
-        None
-    };
+    let extension_opening_reduction = extension_reduction.map(|reduction| reduction.proof);
 
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -200,9 +178,8 @@ where
         hints,
         transcript,
         commitments,
-        &y_rings,
         row_coefficient_rings,
-        MRowLayout::WithDBlock,
+        m_row_layout,
     )?;
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
@@ -219,16 +196,18 @@ where
         instance,
         witness,
         extension_opening_reduction,
-        y_rings,
+        trace_eval_target,
         #[cfg(feature = "zk")]
-        y_rings_masked,
+        trace_eval_target_public,
+        trace_prepared_points: prepared_points.to_vec(),
+        trace_claim_scales,
+        trace_scale: C::one(),
         #[cfg(feature = "zk")]
         zk_hiding,
         expected_w_len: Some(expected_w_len),
         row_coefficients: Some(row_coefficients),
     })
 }
-
 #[allow(clippy::too_many_arguments)]
 fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
     backend: &B,
@@ -240,6 +219,7 @@ fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
+    m_row_layout: MRowLayout,
     expected_w_len: usize,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
@@ -298,12 +278,19 @@ where
         )?;
         let prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
 
-        let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
+        let (_folded_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
             root_params.block_len,
         )?;
+        let trace_eval_target = reduction.final_claim;
+        #[cfg(feature = "zk")]
+        let trace_eval_target_public = reduction.final_claim_public;
+        let trace_claim_scales = Some(root_trace_claim_scales(
+            incidence_summary,
+            &reduction.factors_by_point,
+        )?);
         return prepare_root_fold_from_evaluated_claims::<
             F,
             C,
@@ -320,9 +307,13 @@ where
             commitments,
             hints,
             root_params,
+            m_row_layout,
             &prepared_points,
-            &per_claim_y_rings,
             e_folded_by_poly,
+            trace_eval_target,
+            #[cfg(feature = "zk")]
+            trace_eval_target_public,
+            trace_claim_scales,
             row_coefficients,
             row_coefficient_rings,
             Some(reduction),
@@ -351,7 +342,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
+    let (folded_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -376,12 +367,12 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let openings: Vec<E> = per_claim_y_rings
+    let openings: Vec<E> = folded_rings
         .iter()
         .zip(claim_to_point.iter())
-        .map(|(y_ring, &point_idx)| {
-            root_claim_opening_from_y_ring::<F, E, C, D>(
-                y_ring,
+        .map(|(folded_ring, &point_idx)| {
+            scalar_opening_from_folded_ring::<F, E, C, D>(
+                folded_ring,
                 &prepared_points[point_idx],
                 &inner_claim_points[point_idx],
                 basis,
@@ -392,6 +383,10 @@ where
     let row_coefficients =
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
+    let trace_eval_target =
+        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
+    #[cfg(feature = "zk")]
+    let trace_eval_target_public = trace_eval_target;
 
     prepare_root_fold_from_evaluated_claims::<F, C, T, P, B, D>(
         backend,
@@ -402,9 +397,13 @@ where
         commitments,
         hints,
         root_params,
+        m_row_layout,
         &prepared_points,
-        &per_claim_y_rings,
         e_folded_by_poly,
+        trace_eval_target,
+        #[cfg(feature = "zk")]
+        trace_eval_target_public,
+        None,
         row_coefficients,
         row_coefficient_rings,
         None,
@@ -509,6 +508,7 @@ where
         commitments,
         hints,
         root_params,
+        MRowLayout::WithDBlock,
         expected_w_len,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -542,8 +542,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if claim-incidence/transcript setup fails, the
-/// extension-opening reduction proof construction fails, or the inner
+/// Returns an error if claim-incidence setup, EOR construction, or the inner
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -617,412 +616,24 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
-    let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
-    let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars());
-
-    if needs_extension_reduction {
-        let (reduction, row_coefficients) =
-            prove_root_extension_opening_reduction::<F, E, C, T, P, D>(
-                polys,
-                incidence_summary,
-                claim_points,
-                transcript,
-                #[cfg(feature = "zk")]
-                zk_hiding,
-            )?;
-        let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
-        let protocol_point = {
-            let _span = tracing::info_span!("root_extension_protocol_point").entered();
-            ring_subfield_packed_extension_opening_point::<F, C, D>(
-                reduction.rho.len(),
-                &reduction.rho,
-            )?
-        };
-        let prepared_protocol_point = {
-            let _span = tracing::info_span!("root_extension_prepare_protocol_point").entered();
-            prepare_opening_point::<F, C, D>(
-                &protocol_point,
-                basis,
-                root_params,
-                alpha_bits,
-                BlockOrder::RowMajor,
-            )?
-        };
-        let prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = {
-            let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
-            polys
-                .iter()
-                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
-                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
-        };
-        let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
-
-        let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
-            &transformed_refs,
-            claim_to_point,
-            &prepared_points,
-            root_params.block_len,
-        )?;
-        let y_rings = combine_root_y_rings::<F, D>(
-            &per_claim_y_rings,
-            incidence_summary,
-            &row_coefficient_rings,
-        )?;
-        #[cfg(feature = "zk")]
-        let y_rings_masked = {
-            let mut masked = y_rings.clone();
-            for y_ring in &mut masked {
-                let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-                *y_ring += y_garbage;
-            }
-            masked
-        };
-        #[cfg(not(feature = "zk"))]
-        for y_ring in &y_rings {
-            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-        }
-        #[cfg(feature = "zk")]
-        for y_ring in &y_rings_masked {
-            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-        }
-        let internal_claims = y_rings
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .map(|(y_ring, row)| {
-                recover_ring_subfield_inner_product::<F, C, D>(
-                    y_ring,
-                    &prepared_points[row.point_idx()].inner_reduction,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let final_opening = internal_claims
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx()]
-            });
-        check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
-        let extension_opening_reduction = Some(reduction.proof);
-
-        return finish_terminal_root_fold_with_prepared_openings::<
-            Cfg,
-            F,
-            C,
-            T,
-            RootTensorProjectionPoly<F, D>,
-            B,
-            D,
-        >(
-            expanded,
-            backend,
-            prepared,
-            transcript,
-            &transformed_refs,
-            incidence_summary,
-            commitments,
-            hints,
-            root_params,
-            expected_w_len,
-            final_log_basis,
-            prepared_points,
-            e_folded_by_poly,
-            y_rings,
-            #[cfg(feature = "zk")]
-            y_rings_masked,
-            row_coefficients,
-            row_coefficient_rings,
-            extension_opening_reduction,
-            setup_contribution_mode,
-            #[cfg(feature = "zk")]
-            zk_hiding,
-        );
-    }
-
-    validate_non_eor_root_opening_shape::<F, E, C, D>(alpha_bits)?;
-    let prepared_points = claim_points
-        .iter()
-        .map(|opening_point| {
-            let challenge_point = opening_point
-                .iter()
-                .copied()
-                .map(C::lift_base)
-                .collect::<Vec<_>>();
-            prepare_opening_point::<F, C, D>(
-                &challenge_point,
-                basis,
-                root_params,
-                alpha_bits,
-                BlockOrder::RowMajor,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
-        polys,
-        claim_to_point,
-        &prepared_points,
-        root_params.block_len,
-    )?;
-
-    let target_num_vars = root_params
-        .m_vars
-        .checked_add(root_params.r_vars)
-        .and_then(|n| n.checked_add(alpha_bits))
-        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
-    let inner_claim_points = claim_points
-        .iter()
-        .map(|point| {
-            if point.len() > target_num_vars {
-                return Err(AkitaError::InvalidPointDimension {
-                    expected: target_num_vars,
-                    actual: point.len(),
-                });
-            }
-            Ok(point[..point.len().min(alpha_bits)].to_vec())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let openings: Vec<E> = per_claim_y_rings
-        .iter()
-        .zip(claim_to_point.iter())
-        .map(|(y_ring, &point_idx)| {
-            root_claim_opening_from_y_ring::<F, E, C, D>(
-                y_ring,
-                &prepared_points[point_idx],
-                &inner_claim_points[point_idx],
-                basis,
-            )
-        })
-        .collect::<Result<_, _>>()?;
-    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-    let row_coefficients =
-        sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
-    let row_coefficient_rings = row_coefficient_rings::<F, C, D>(&row_coefficients)?;
-
-    let y_rings = combine_root_y_rings::<F, D>(
-        &per_claim_y_rings,
-        incidence_summary,
-        &row_coefficient_rings,
-    )?;
-    #[cfg(feature = "zk")]
-    let y_rings_masked = {
-        let mut masked = y_rings.clone();
-        for y_ring in &mut masked {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-            *y_ring += y_garbage;
-        }
-        masked
-    };
-    #[cfg(not(feature = "zk"))]
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(feature = "zk")]
-    for y_ring in &y_rings_masked {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-
-    let ring_opening_points = incidence_summary
-        .public_rows()
-        .iter()
-        .map(|row| {
-            prepared_points
-                .get(row.point_idx())
-                .map(|prepared_point| prepared_point.ring_opening_point.clone())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("public row point index out of range".to_string())
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let ring_multiplier_points = incidence_summary
-        .public_rows()
-        .iter()
-        .map(|row| {
-            prepared_points
-                .get(row.point_idx())
-                .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("public row point index out of range".to_string())
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-        backend,
-        prepared,
-        ring_opening_points,
-        ring_multiplier_points,
-        incidence_summary.claim_to_point().to_vec(),
-        polys,
-        e_folded_by_poly,
-        incidence_summary,
-        root_params.clone(),
-        hints,
-        transcript,
-        commitments,
-        &y_rings,
-        row_coefficient_rings,
-        MRowLayout::WithoutDBlock,
-    )?;
-
-    let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
-        None
-    } else {
-        Some(flatten_batched_commitment_rows(commitments))
-    };
-    let commitment_rows: &[CyclotomicRing<F, D>] = match &commitment_rows_owned {
-        Some(v) => v.as_slice(),
-        None => commitments[0].u.as_slice(),
-    };
-
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = PreparedFold {
-        commitment: FlatRingVec::from_ring_elems(commitment_rows),
-        instance,
-        witness,
-        extension_opening_reduction: None,
-        y_rings,
-        #[cfg(feature = "zk")]
-        y_rings_masked,
-        #[cfg(feature = "zk")]
-        zk_hiding: owned_zk_hiding,
-        expected_w_len: Some(expected_w_len),
-        row_coefficients: Some(row_coefficients),
-    };
-    let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, C, T, B, Cfg, D>(
-        expanded,
-        &prefix_slots,
+    let prepared_fold = prepare_root_fold_data::<F, E, C, T, P, B, D>(
         backend,
         prepared,
         transcript,
-        0,
+        polys,
+        incidence_summary,
+        claim_points,
+        commitments,
+        hints,
         root_params,
-        None,
-        prepared_fold,
-        setup_contribution_mode,
-        true,
-        Some(final_log_basis),
-    )?
-    .get_terminal()?;
-
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(terminal_result)
-    }
-    #[cfg(feature = "zk")]
-    {
-        let (terminal, returned_zk_hiding) = terminal_result;
-        *zk_hiding = returned_zk_hiding;
-        Ok(terminal)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_terminal_root_fold_with_prepared_openings<Cfg, F, C, T, P, B, const D: usize>(
-    expanded: &Arc<AkitaExpandedSetup<F>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    transcript: &mut T,
-    polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
-    commitments: &[RingCommitment<F, D>],
-    hints: Vec<AkitaCommitmentHint<F, D>>,
-    root_params: &LevelParams,
-    expected_w_len: usize,
-    final_log_basis: u32,
-    prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
-    e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
-    row_coefficients: Vec<C>,
-    row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
-    extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
-    setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
-) -> Result<TerminalLevelProof<F, C>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
-    C: ExtField<F>
-        + RingSubfieldEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
-    Cfg: CommitmentConfig<Field = F, ChallengeField = C>,
-{
-    let ring_opening_points = incidence_summary
-        .public_rows()
-        .iter()
-        .map(|row| {
-            prepared_points
-                .get(row.point_idx())
-                .map(|prepared_point| prepared_point.ring_opening_point.clone())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("public row point index out of range".to_string())
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let ring_multiplier_points = incidence_summary
-        .public_rows()
-        .iter()
-        .map(|row| {
-            prepared_points
-                .get(row.point_idx())
-                .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("public row point index out of range".to_string())
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-        backend,
-        prepared,
-        ring_opening_points,
-        ring_multiplier_points,
-        incidence_summary.claim_to_point().to_vec(),
-        polys,
-        e_folded_by_poly,
-        incidence_summary,
-        root_params.clone(),
-        hints,
-        transcript,
-        commitments,
-        &y_rings,
-        row_coefficient_rings,
         MRowLayout::WithoutDBlock,
+        expected_w_len,
+        #[cfg(feature = "zk")]
+        owned_zk_hiding,
+        basis,
     )?;
-
-    let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
-        None
-    } else {
-        Some(flatten_batched_commitment_rows(commitments))
-    };
-    let commitment_rows: &[CyclotomicRing<F, D>] = match &commitment_rows_owned {
-        Some(v) => v.as_slice(),
-        None => commitments[0].u.as_slice(),
-    };
-
-    #[cfg(feature = "zk")]
-    let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = PreparedFold {
-        commitment: FlatRingVec::from_ring_elems(commitment_rows),
-        instance,
-        witness,
-        extension_opening_reduction,
-        y_rings,
-        #[cfg(feature = "zk")]
-        y_rings_masked,
-        #[cfg(feature = "zk")]
-        zk_hiding: owned_zk_hiding,
-        expected_w_len: Some(expected_w_len),
-        row_coefficients: Some(row_coefficients),
-    };
     let prefix_slots = SetupPrefixProverRegistry::new();
     let terminal_result = prove_fold::<F, C, T, B, Cfg, D>(
         expanded,

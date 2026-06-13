@@ -16,6 +16,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
+pub mod trace_weight;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
@@ -46,10 +47,10 @@ pub use instance_descriptor::{
     ProtocolFeatureSet, SetupSection,
 };
 pub use layout::{
-    basis_weights, direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
-    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    basis_weights, block_rings_at_opening, direct_witness_bytes,
+    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
+    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
+    proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     root_extension_opening_partials, sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix,
     LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
 };
@@ -64,10 +65,10 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
-    append_claim_values_to_transcript, checked_total_claims, derive_public_matrix_flat,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape, i8_digits_to_bytes,
-    padded_setup_prefix_len, prepare_opening_point, relation_claim_from_rows,
-    relation_claim_from_rows_extension, ring_column_z_first,
+    append_claim_values_to_transcript, batched_eval_target_from_incidence, checked_total_claims,
+    derive_public_matrix_flat, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    generate_y, i8_digits_to_bytes, padded_setup_prefix_len, prepare_opening_point,
+    relation_claim_from_rows, relation_claim_from_rows_extension, ring_column_z_first,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
@@ -104,4 +105,12 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
+pub use trace_weight::{
+    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
+    eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
+    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
+    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
+    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
+    TraceTerm, TraceWeightLayout,
+};
 pub use transcript::AppendToTranscript;

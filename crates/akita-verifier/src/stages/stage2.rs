@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
@@ -9,8 +9,11 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    AkitaExpandedSetup, CleartextWitnessProof, RingMultiplierOpeningPoint, RingSubfieldEncoding,
+    eval_trace_terms_closed, relation_claim_from_rows_extension, AkitaExpandedSetup,
+    CleartextWitnessProof, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    TraceClaim,
 };
+use std::marker::PhantomData;
 
 fn witness_eval_by_index<E, V>(
     witness_len: usize,
@@ -123,17 +126,22 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     s_claim_mask: ZkR1csLinearCombination<E>,
     #[cfg(feature = "zk")]
     relation_claim_mask: ZkR1csLinearCombination<E>,
+    #[cfg(feature = "zk")]
+    trace_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
-    alpha_evals_y: &'a [E],
-    prepared_row_eval: &'a RingSwitchDeferredRowEval<E>,
+    alpha_evals_y: Vec<E>,
+    prepared_row_eval: RingSwitchDeferredRowEval<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
+    opening_points: &'a [RingOpeningPoint<F>],
     ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
+    trace: Option<TraceClaim<F, E, D>>,
+    _marker: PhantomData<([F; D], E)>,
 }
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
@@ -150,17 +158,20 @@ where
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
-        alpha_evals_y: &'a [E],
-        prepared_row_eval: &'a RingSwitchDeferredRowEval<E>,
+        alpha_evals_y: Vec<E>,
+        prepared_row_eval: RingSwitchDeferredRowEval<E>,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         relation_claim: E,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
+        trace: Option<TraceClaim<F, E, D>>,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -192,20 +203,143 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
             witness_oracle,
             stage1_point,
             alpha_evals_y,
             prepared_row_eval,
             setup_claim,
             setup,
+            opening_points,
             ring_multiplier_points,
             alpha,
             col_bits,
             ring_bits,
             relation_claim,
+            trace,
+            _marker: PhantomData,
         })
     }
 
+    /// Construct a verifier that evaluates the final cleartext witness locally.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_cleartext_witness")]
+    pub(crate) fn new_with_cleartext_witness(
+        batching_coeff: E,
+        s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
+        cleartext_witness: &'a CleartextWitnessProof<F>,
+        physical_w_len: usize,
+        stage1_point: Vec<E>,
+        alpha_evals_y: Vec<E>,
+        prepared_row_eval: RingSwitchDeferredRowEval<E>,
+        setup_claim: Option<E>,
+        setup: &'a AkitaExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+        tau1: &[E],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
+        alpha: E,
+        col_bits: usize,
+        ring_bits: usize,
+        trace: Option<TraceClaim<F, E, D>>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            batching_coeff,
+            s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
+            Stage2WitnessOracle::Cleartext {
+                witness: cleartext_witness,
+                physical_w_len,
+            },
+            stage1_point,
+            alpha_evals_y,
+            prepared_row_eval,
+            setup_claim,
+            setup,
+            opening_points,
+            ring_multiplier_points,
+            match relation_claim_override {
+                Some(claim) => claim,
+                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
+            },
+            alpha,
+            col_bits,
+            ring_bits,
+            trace,
+        )
+    }
+
+    /// Construct a verifier that consumes an already claimed next-witness eval.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
+    pub(crate) fn new_with_claimed_w_eval(
+        batching_coeff: E,
+        s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
+        w_eval: E,
+        #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
+        stage1_point: Vec<E>,
+        alpha_evals_y: Vec<E>,
+        prepared_row_eval: RingSwitchDeferredRowEval<E>,
+        setup_claim: Option<E>,
+        setup: &'a AkitaExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+        tau1: &[E],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
+        alpha: E,
+        col_bits: usize,
+        ring_bits: usize,
+        trace: Option<TraceClaim<F, E, D>>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            batching_coeff,
+            s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
+            #[cfg(feature = "zk")]
+            trace_claim_mask,
+            Stage2WitnessOracle::ClaimedEval {
+                eval: w_eval,
+                #[cfg(feature = "zk")]
+                mask: w_eval_mask,
+            },
+            stage1_point,
+            alpha_evals_y,
+            prepared_row_eval,
+            setup_claim,
+            setup,
+            opening_points,
+            ring_multiplier_points,
+            match relation_claim_override {
+                Some(claim) => claim,
+                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
+            },
+            alpha,
+            col_bits,
+            ring_bits,
+            trace,
+        )
+    }
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Cleartext {
@@ -226,6 +360,7 @@ where
         self.prepared_row_eval.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
+            self.opening_points,
             self.ring_multiplier_points,
             self.alpha,
             self.setup_claim,
@@ -247,7 +382,11 @@ where
     }
 
     fn input_claim(&self) -> E {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        let mut claim = self.batching_coeff * self.s_claim + self.relation_claim;
+        if let Some(trace) = &self.trace {
+            claim += trace.trace_opening_claim;
+        }
+        claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -258,22 +397,33 @@ where
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(self.alpha_evals_y, y_challenges)?;
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = {
             let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
             self.row_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * row_val;
+        let trace_oracle = if let Some(trace) = &self.trace {
+            let trace_weight = eval_trace_terms_closed::<F, E, D>(
+                &trace.layout,
+                y_challenges,
+                x_challenges,
+                &trace.trace_terms,
+            )?;
+            trace.trace_coeff * w_eval * trace_weight
+        } else {
+            E::zero()
+        };
 
         // Terminal levels run with `batching_coeff = 0`, which zeros the
         // virtual half regardless of `stage1_point` / `w_eval`. Skip the
         // EqPolynomial eval and the `w * (w + 1)` round in that case.
         if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle);
+            return Ok(relation_oracle + trace_oracle);
         }
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
     }
 }
 
@@ -292,6 +442,7 @@ where
         let mut input_mask = ZkR1csLinearCombination::zero();
         input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
         input_mask.add_scaled(E::one(), &self.relation_claim_mask);
+        input_mask.add_scaled(E::one(), &self.trace_claim_mask);
         Ok(input_mask)
     }
 
@@ -316,8 +467,19 @@ where
     ) -> Result<(), AkitaError> {
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(self.alpha_evals_y, y_challenges)?;
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = self.row_eval(x_challenges)?;
+        let trace_val = if let Some(trace) = &self.trace {
+            let trace_weight = eval_trace_terms_closed::<F, E, D>(
+                &trace.layout,
+                y_challenges,
+                x_challenges,
+                &trace.trace_terms,
+            )?;
+            trace.trace_coeff * trace_weight
+        } else {
+            E::zero()
+        };
 
         // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
         //
@@ -342,7 +504,7 @@ where
         };
         let mut scaled_virtual = ZkR1csLinearCombination::zero();
         scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_lc);
-        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val;
+        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val + trace_val;
         relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim)?;
         Ok(())
     }

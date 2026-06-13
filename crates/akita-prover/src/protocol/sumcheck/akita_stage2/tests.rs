@@ -1,12 +1,15 @@
+mod trace_prefix;
+
 use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
+use akita_types::{TraceSparseColumn, TraceTable};
 
 type F = Prime128Offset275;
 
 #[derive(Clone, Copy)]
-struct Stage2Params<'a> {
+pub(super) struct Stage2Params<'a> {
     stage1_point: &'a [F],
     b: usize,
     live_x_cols: usize,
@@ -52,6 +55,24 @@ fn relation_claim_from_compact_rows(
     claim
 }
 
+fn trace_claim_from_compact_rows(
+    w_compact: &[i8],
+    trace_compact: &[F],
+    params: &Stage2Params<'_>,
+) -> F {
+    let mut claim = F::zero();
+    let y_len = 1usize << params.ring_bits;
+    assert_eq!(trace_compact.len(), params.live_x_cols * y_len);
+    for x in 0..params.live_x_cols {
+        let column = &w_compact[x * y_len..(x + 1) * y_len];
+        let trace_column = &trace_compact[x * y_len..(x + 1) * y_len];
+        for (w, trace) in column.iter().zip(trace_column.iter()) {
+            claim += F::from_i64(*w as i64) * *trace;
+        }
+    }
+    claim
+}
+
 fn new_stage2_test_prover(
     batching_coeff: F,
     w_compact: Vec<i8>,
@@ -74,8 +95,89 @@ fn new_stage2_test_prover(
         params.col_bits,
         params.ring_bits,
         relation_claim,
+        None,
+        F::zero(),
     )
     .unwrap()
+}
+
+pub(super) fn new_stage2_test_prover_with_trace(
+    batching_coeff: F,
+    w_compact: Vec<i8>,
+    alpha_evals_y: Vec<F>,
+    m_evals_x: Vec<F>,
+    trace_compact: Vec<F>,
+    params: Stage2Params<'_>,
+) -> AkitaStage2Prover<F> {
+    let s_claim = s_claim_from_compact_rows(&w_compact, &params);
+    let relation_claim =
+        relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
+    let trace_opening_claim = trace_claim_from_compact_rows(&w_compact, &trace_compact, &params);
+    AkitaStage2Prover::new(
+        batching_coeff,
+        w_compact,
+        params.stage1_point,
+        s_claim,
+        params.b,
+        alpha_evals_y,
+        m_evals_x,
+        params.live_x_cols,
+        params.col_bits,
+        params.ring_bits,
+        relation_claim,
+        Some(TraceTable::ring_dense(trace_compact)),
+        trace_opening_claim,
+    )
+    .unwrap()
+}
+
+pub(super) fn new_stage2_test_prover_with_trace_table(
+    batching_coeff: F,
+    w_compact: Vec<i8>,
+    alpha_evals_y: Vec<F>,
+    m_evals_x: Vec<F>,
+    trace_table: TraceTable<F>,
+    trace_claim_table: &[F],
+    params: Stage2Params<'_>,
+) -> AkitaStage2Prover<F> {
+    let s_claim = s_claim_from_compact_rows(&w_compact, &params);
+    let relation_claim =
+        relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
+    let trace_opening_claim = trace_claim_from_compact_rows(&w_compact, trace_claim_table, &params);
+    AkitaStage2Prover::new(
+        batching_coeff,
+        w_compact,
+        params.stage1_point,
+        s_claim,
+        params.b,
+        alpha_evals_y,
+        m_evals_x,
+        params.live_x_cols,
+        params.col_bits,
+        params.ring_bits,
+        relation_claim,
+        Some(trace_table),
+        trace_opening_claim,
+    )
+    .unwrap()
+}
+
+pub(super) fn pad_trace_compact(
+    trace_compact: &[F],
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+) -> Vec<F> {
+    let y_len = 1usize << ring_bits;
+    let x_len = 1usize << col_bits;
+    assert_eq!(trace_compact.len(), live_x_cols * y_len);
+    let mut padded = vec![F::zero(); x_len * y_len];
+    for x in 0..live_x_cols {
+        let src = x * y_len;
+        let dst = x * y_len;
+        padded[dst..dst + y_len].copy_from_slice(&trace_compact[src..src + y_len]);
+    }
+    padded
 }
 
 fn relation_round_reference(

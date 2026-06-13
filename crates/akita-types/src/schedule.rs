@@ -277,8 +277,8 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
+    // Public-output M rows bind via the fused trace term; omit from r width.
+    let r_rows = lp.m_row_count_for(num_points, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -782,7 +782,6 @@ mod tests {
         let b = 1usize << lp.log_basis;
 
         let proof = AkitaLevelProof {
-            y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
@@ -873,7 +872,6 @@ mod tests {
             ));
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
-                vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 None,
                 #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
@@ -949,33 +947,19 @@ mod tests {
                 next_lp.b_key.row_len()
             ])
             .into_compact();
-            let num_points = 5;
-            let root_proof = AkitaBatchedRootProof::new(AkitaLevelProof {
-                y_ring: FlatRingVec::from_ring_elems(&vec![
-                    CyclotomicRing::<F, D>::zero();
-                    num_points
-                ])
-                .into_compact(),
-                extension_opening_reduction: None,
-                v: FlatRingVec::from_ring_elems(&vec![
-                    CyclotomicRing::<F, D>::zero();
-                    lp.d_key.row_len()
-                ])
-                .into_compact(),
-                stage1: dummy_stage1_proof(rounds, b),
-                stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+            let level_proof =
+                AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+                    None,
+                    vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+                    dummy_stage1_proof(rounds, b),
                     #[cfg(not(feature = "zk"))]
-                    sumcheck_proof: dummy_sumcheck(rounds, 3),
+                    dummy_sumcheck(rounds, 3),
                     #[cfg(feature = "zk")]
-                    sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
-                    next_w_commitment: next_commitment,
-                    #[cfg(not(feature = "zk"))]
-                    next_w_eval: F::zero(),
-                    #[cfg(feature = "zk")]
-                    next_w_eval_masked: F::zero(),
-                }),
-                stage3_sumcheck_proof: None,
-            });
+                    dummy_sumcheck_proof_masked(rounds, 3),
+                    next_commitment,
+                    F::zero(),
+                );
+            let root_proof = AkitaBatchedRootProof::new(level_proof);
 
             assert_eq!(
                 level_proof_bytes(
@@ -984,7 +968,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    num_points,
+                    1,
                     MRowLayout::WithDBlock,
                 ),
                 root_proof.serialized_size(Compress::No),

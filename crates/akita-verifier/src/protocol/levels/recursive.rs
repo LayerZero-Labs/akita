@@ -4,7 +4,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 #[cfg(feature = "zk")]
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
-use akita_types::{dispatch_ring_dim_result, recover_ring_subfield_inner_product};
+use akita_types::dispatch_ring_dim_result;
 use akita_types::{ClaimIncidenceSummary, CommitmentRouting, TerminalLevelProof};
 
 enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
@@ -18,17 +18,74 @@ enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
     },
 }
 
-impl<F: FieldCore, L: FieldCore> RecursiveFoldProofView<'_, F, L> {
-    fn y_rings_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+impl<'a, F: FieldCore, L: FieldCore> RecursiveFoldProofView<'a, F, L> {
+    fn m_row_layout(&self) -> MRowLayout {
         match self {
-            Self::Intermediate { proof, .. } => proof.try_y_rings_typed::<D>(),
-            Self::Terminal { proof, .. } => proof.try_y_rings_typed::<D>(),
+            Self::Intermediate { .. } => MRowLayout::WithDBlock,
+            Self::Terminal { .. } => MRowLayout::WithoutDBlock,
         }
     }
+
+    fn v_typed<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        match self {
+            Self::Intermediate { proof, .. } => proof.v.as_ring_slice::<D>(),
+            Self::Terminal { .. } => Ok(&[]),
+        }
+    }
+
     fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
         match self {
             Self::Intermediate { proof, .. } => proof.extension_opening_reduction.as_ref(),
             Self::Terminal { proof, .. } => proof.extension_opening_reduction.as_ref(),
+        }
+    }
+
+    fn stage1_proof(&self) -> Option<&'a AkitaStage1Proof<L>> {
+        match self {
+            Self::Intermediate { proof, .. } => Some(&proof.stage1),
+            Self::Terminal { .. } => None,
+        }
+    }
+
+    fn next_w_commitment(&self) -> Option<&'a FlatRingVec<F>> {
+        match self {
+            Self::Intermediate { proof, .. } => Some(proof.next_w_commitment()),
+            Self::Terminal { .. } => None,
+        }
+    }
+
+    fn stage3(
+        &self,
+        setup_contribution_mode: SetupContributionMode,
+    ) -> Result<Option<(&'a SetupSumcheckProof<L>, &'a LevelParams)>, AkitaError> {
+        match self {
+            Self::Intermediate {
+                proof,
+                next_fold_level_params,
+            } => match (
+                setup_contribution_mode,
+                proof.stage3_sumcheck_proof.as_ref(),
+            ) {
+                (SetupContributionMode::Direct, None) => Ok(None),
+                (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
+                    "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
+                )),
+                (SetupContributionMode::Recursive, Some(proof)) => {
+                    Ok(Some((proof, *next_fold_level_params)))
+                }
+                (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
+                    "recursive setup-contribution mode is missing stage3_sumcheck_proof"
+                        .to_string(),
+                )),
+            },
+            Self::Terminal { .. } => Ok(None),
+        }
+    }
+
+    fn stage2(&self) -> &'a AkitaStage2Proof<F, L> {
+        match self {
+            Self::Intermediate { proof, .. } => &proof.stage2,
+            Self::Terminal { proof, .. } => &proof.stage2,
         }
     }
 }
@@ -65,15 +122,8 @@ where
     T: Transcript<F>,
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
-    let m_row_layout = match &proof {
-        RecursiveFoldProofView::Intermediate { .. } => MRowLayout::WithDBlock,
-        RecursiveFoldProofView::Terminal { .. } => MRowLayout::WithoutDBlock,
-    };
-    let y_rings = proof.y_rings_typed::<D>()?;
-    let v_typed: &[CyclotomicRing<F, D>] = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => proof.v.as_ring_slice::<D>()?,
-        RecursiveFoldProofView::Terminal { .. } => &[],
-    };
+    let m_row_layout = proof.m_row_layout();
+    let v_typed = proof.v_typed::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -83,10 +133,7 @@ where
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    if y_rings.len() != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_claims = y_rings.len();
+    let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
     let row_coefficients = vec![L::one()];
@@ -97,14 +144,15 @@ where
     let FoldEorReplay {
         prepared_points,
         #[cfg(not(feature = "zk"))]
-            reduction_challenges: reduction_check,
-        #[cfg(feature = "zk")]
             reduction_challenges: _,
         #[cfg(feature = "zk")]
-            final_relation: zk_eor_final,
+            reduction_challenges: _,
+        #[cfg(not(feature = "zk"))]
+            final_relation: eor_trace_final,
+        ..
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
-        &y_rings,
+        &[],
         &challenge_points,
         &openings,
         &row_coefficients,
@@ -129,51 +177,6 @@ where
     let prepared_point = &prepared_points[0];
     for pt in &prepared_point.padded_point {
         append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    // Bind the standalone y-ring wire data before downstream relation-sumcheck
-    // challenges are sampled.
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-    #[cfg(feature = "zk")]
-    let y_masks = zk_base_mask_lcs::<L>(y_rings.len() * D, zk_hiding_cursor);
-
-    #[cfg(not(feature = "zk"))]
-    let internal_claim = recover_ring_subfield_inner_product::<F, L, D>(
-        &y_rings[0],
-        &prepared_point.inner_reduction,
-    )?;
-    #[cfg(feature = "zk")]
-    {
-        let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
-            &y_rings[0],
-            y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
-            &prepared_point.inner_reduction,
-        )?;
-        if let Some((final_claim, factors_by_point)) = &zk_eor_final {
-            let mut residual = final_claim.clone();
-            let factor = factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            residual.add_scaled(-*factor, &y_opening);
-            zk_push_linear_zero(
-                zk_relations,
-                "recursive extension-opening reduction output",
-                residual,
-            )?;
-        } else {
-            let true_opening = ZkRelationAccumulator::unmask_lc(
-                current_state.opening,
-                &current_state.opening_mask,
-            );
-            let mut residual = y_opening;
-            residual.add_scaled(-L::one(), &true_opening);
-            zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
-        }
-    }
-    // When `reduction_check` is `Some`, the non-zk EOR final relation is enforced
-    // inside the sumcheck driver via `expected_output_claim`.
-    #[cfg(not(feature = "zk"))]
-    if reduction_check.is_none() && internal_claim != current_state.opening {
-        return Err(AkitaError::InvalidProof);
     }
 
     let ring_opening_points = vec![prepared_point.ring_opening_point.clone()];
@@ -205,42 +208,24 @@ where
         RecursiveFoldProofView::Intermediate { .. } => None,
     };
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
-    let stage1_proof = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => Some(&proof.stage1),
-        RecursiveFoldProofView::Terminal { .. } => None,
-    };
-    let next_w_commitment = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => Some(
-            &proof
-                .stage2
-                .as_intermediate()
-                .ok_or(AkitaError::InvalidProof)?
-                .next_w_commitment,
+    let stage1_proof = proof.stage1_proof();
+    let next_w_commitment = proof.next_w_commitment();
+    let stage3 = proof.stage3(setup_contribution_mode)?;
+    let stage2 = proof.stage2();
+    #[cfg(not(feature = "zk"))]
+    let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
+        Some((final_claim, factors_by_point)) => (
+            *final_claim,
+            *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
         ),
-        RecursiveFoldProofView::Terminal { .. } => None,
+        None => (current_state.opening, L::one()),
     };
-    let stage3 = match &proof {
-        RecursiveFoldProofView::Intermediate {
-            proof,
-            next_fold_level_params,
-        } => stage3_sumcheck_proof_for_mode(
-            setup_contribution_mode,
-            proof.stage3_sumcheck_proof.as_ref(),
-        )?
-        .map(|proof| (proof, *next_fold_level_params)),
-        RecursiveFoldProofView::Terminal { .. } => None,
-    };
-    let stage2 = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => &proof.stage2,
-        RecursiveFoldProofView::Terminal {
-            proof: terminal_proof,
-            ..
-        } => &terminal_proof.stage2,
-    };
+    #[cfg(feature = "zk")]
+    let (trace_eval_target, trace_eval_scale) = (current_state.opening, L::one());
+
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
-        y_rings,
         v: v_typed.to_vec(),
         commitment_rows: commitment_u,
         row_coefficients,
@@ -254,8 +239,12 @@ where
         next_w_commitment,
         terminal_replay,
         stage3,
-        #[cfg(feature = "zk")]
-        y_masks,
+        trace_prepared_points: vec![prepared_point.clone()],
+        trace_block_openings: Vec::new(),
+        trace_eval_target,
+        trace_eval_scale,
+        trace_claim_scales: None,
+        trace_basis: current_state.basis,
     })
 }
 
@@ -320,7 +309,6 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
                 {
                     return Err(AkitaError::InvalidProof);
@@ -359,18 +347,12 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
-                let computed_next_w_len = w_ring_element_count_with_counts::<F>(
-                    &current_lp,
-                    1,
-                    1,
-                    y_ring_count,
-                    y_ring_count,
-                )?
-                .checked_mul(level_d)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?;
+                let computed_next_w_len =
+                    w_ring_element_count_with_counts::<F>(&current_lp, 1, 1, 1, 1)?
+                        .checked_mul(level_d)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("next witness length overflow".to_string())
+                        })?;
                 if computed_next_w_len != next_w_len {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -388,9 +370,7 @@ where
                 };
             }
             AkitaProofStep::Terminal(terminal_proof) => {
-                if !current_state.commitment.can_decode_vec(level_d)
-                    || !terminal_proof.y_rings.can_decode_vec(level_d)
-                {
+                if !current_state.commitment.can_decode_vec(level_d) {
                     return Err(AkitaError::InvalidProof);
                 }
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {

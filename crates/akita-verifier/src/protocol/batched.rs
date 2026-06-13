@@ -367,7 +367,7 @@ where
 /// Returns an error if the direct witness shape does not match the batch shape,
 /// if witness reconstruction fails, or if any recomputed commitment differs
 /// from the proof commitment.
-pub(crate) fn _direct_commitments_with_params<F, const D: usize>(
+pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     flat_commitments: &[RingCommitment<F, D>],
@@ -517,7 +517,7 @@ where
                 .root
                 .direct_b_blinding_digits()
                 .ok_or(AkitaError::InvalidProof)?;
-            _direct_commitments_with_params::<Cfg::Field, D>(
+            verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
                 &commitments,
