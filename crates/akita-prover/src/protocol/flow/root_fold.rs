@@ -117,7 +117,6 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     prepared_points: &[PreparedOpeningPoint<F, C, D>],
-    _per_claim_y_rings: &[CyclotomicRing<F, D>],
     e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     trace_eval_target: C,
     #[cfg(feature = "zk")] trace_eval_target_public: C,
@@ -279,7 +278,7 @@ where
         )?;
         let prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
 
-        let (per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
+        let (_per_claim_y_rings, e_folded_by_poly) = evaluate_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -310,7 +309,6 @@ where
             root_params,
             m_row_layout,
             &prepared_points,
-            &per_claim_y_rings,
             e_folded_by_poly,
             trace_eval_target,
             #[cfg(feature = "zk")]
@@ -401,7 +399,6 @@ where
         root_params,
         m_row_layout,
         &prepared_points,
-        &per_claim_y_rings,
         e_folded_by_poly,
         trace_eval_target,
         #[cfg(feature = "zk")]
