@@ -118,7 +118,13 @@ struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
     #[cfg(not(feature = "zk"))]
     final_relation: Option<(C, Vec<C>)>,
     #[cfg(feature = "zk")]
-    final_relation: Option<(ZkR1csLinearCombination<C>, Vec<C>)>,
+    final_relation: Option<(ZkMaskedClaim<C>, Vec<C>)>,
+}
+
+#[cfg(feature = "zk")]
+struct ZkMaskedClaim<E: FieldCore> {
+    public: E,
+    mask: ZkR1csLinearCombination<E>,
 }
 
 #[derive(Clone, Copy)]
@@ -192,9 +198,8 @@ fn verify_zk_extension_opening_reduction_sumcheck<F, E, T, S>(
     input_claim_mask: ZkR1csLinearCombination<E>,
     transcript: &mut T,
     mut sample_challenge: S,
-    relations: &mut ZkRelationAccumulator<E>,
     hiding_cursor: &mut usize,
-) -> Result<(ZkR1csLinearCombination<E>, Vec<E>), AkitaError>
+) -> Result<(ZkMaskedClaim<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore + ExtField<F> + AkitaSerialize,
@@ -233,11 +238,10 @@ where
     }
 
     Ok((
-        relations.push_masked_claim_relation(
-            "extension-opening reduction final claim",
-            masked_claim,
-            &claim_mask,
-        ),
+        ZkMaskedClaim {
+            public: masked_claim,
+            mask: claim_mask,
+        },
         challenges,
     ))
 }
@@ -290,7 +294,7 @@ where
     #[cfg(not(feature = "zk"))]
     let mut eor_trace_final: Option<(C, Vec<C>)> = None;
     #[cfg(feature = "zk")]
-    let mut zk_eor_final: Option<(ZkR1csLinearCombination<C>, Vec<C>)> = None;
+    let mut zk_eor_final: Option<(ZkMaskedClaim<C>, Vec<C>)> = None;
     let reduction_check = if let Some(reduction) = extension_opening_reduction {
         if <C as ExtField<F>>::EXT_DEGREE == 1 {
             return Err(AkitaError::InvalidProof);
@@ -418,7 +422,6 @@ where
                     input_claim_mask,
                     transcript,
                     |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                    zk_relations,
                     zk_hiding_cursor,
                 )?;
             let factors_by_point = eor_points
@@ -1064,10 +1067,7 @@ where
     #[cfg(feature = "zk")]
     let (trace_eval_target, trace_eval_target_mask) =
         if let Some((final_claim, _)) = zk_eor_final.as_ref() {
-            let mut mask = final_claim.clone();
-            let public = mask.constant;
-            mask.constant = C::zero();
-            (public, mask)
+            (final_claim.public, final_claim.mask.clone())
         } else {
             (
                 ordinary_trace_eval_target,

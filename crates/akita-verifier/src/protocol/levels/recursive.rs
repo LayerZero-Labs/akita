@@ -139,13 +139,10 @@ where
     #[cfg(feature = "zk")]
     let (trace_eval_target, trace_eval_scale, trace_eval_target_mask) =
         if let Some((final_claim, factors_by_point)) = zk_eor_final.as_ref() {
-            let mut mask = final_claim.clone();
-            let public = mask.constant;
-            mask.constant = L::zero();
             (
-                public,
+                final_claim.public,
                 *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
-                mask,
+                final_claim.mask.clone(),
             )
         } else {
             (
