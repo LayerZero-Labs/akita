@@ -545,6 +545,8 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let challenges = &relation.challenges;
+    validate_level_dispatch::<D>(lp)?;
+    validate_log_basis(lp.log_basis)?;
     validate_opening_points_for_claims(
         relation.opening_points(),
         relation.claim_to_point(),
@@ -570,7 +572,6 @@ where
     let m_row_layout = relation.m_row_layout();
     let claim_to_point = relation.claim_to_point();
 
-    validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = claim_to_point.len();
     if claim_to_commitment_group.len() != num_claims
@@ -597,7 +598,6 @@ where
     }
 
     let log_basis = lp.log_basis;
-    validate_log_basis(log_basis)?;
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
     let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
@@ -894,4 +894,124 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::CyclotomicRing;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_field::Fp32;
+    use akita_types::{
+        ClaimIncidenceSummary, CommitmentRouting, RingOpeningPoint, SisModulusFamily,
+    };
+
+    type F = Fp32<251>;
+    const D: usize = 32;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![1],
+        }
+    }
+
+    fn test_level_params() -> LevelParams {
+        LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
+            .with_decomp(2, 1, 1, 2, 0)
+            .expect("valid test params")
+    }
+
+    fn test_challenges(lp: &LevelParams, num_claims: usize) -> Challenges {
+        let total = lp.num_blocks * num_claims;
+        Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                };
+                total
+            ],
+            lp.num_blocks,
+            num_claims,
+        )
+        .expect("valid challenges")
+    }
+
+    fn test_relation(lp: &LevelParams) -> RingRelationInstance<F, D> {
+        let incidence =
+            ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
+        let routing = CommitmentRouting::copy_incidence(&incidence).expect("valid routing");
+        let opening_points = vec![RingOpeningPoint {
+            a: vec![F::zero(); lp.block_len],
+            b: vec![F::zero(); lp.num_blocks],
+        }];
+        let ring_multiplier_points = opening_points
+            .iter()
+            .map(RingMultiplierOpeningPoint::from_base)
+            .collect();
+        RingRelationInstance::new(
+            MRowLayout::WithDBlock,
+            test_challenges(lp, incidence.num_claims()),
+            opening_points,
+            ring_multiplier_points,
+            incidence,
+            routing,
+            vec![F::one()],
+            vec![CyclotomicRing::one()],
+            vec![CyclotomicRing::zero()],
+            vec![CyclotomicRing::zero(); lp.d_key.row_len()],
+        )
+        .expect("valid relation")
+    }
+
+    fn prepare_with_params(lp: &LevelParams) -> Result<RingSwitchDeferredRowEval<F>, AkitaError> {
+        let relation = test_relation(lp);
+        let row_coefficients = [F::one()];
+        let replay = RingSwitchReplay {
+            relation: &relation,
+            row_coefficients: &row_coefficients,
+            lp,
+        };
+        prepare_ring_switch_row_eval::<F, F, D>(&replay, F::one(), &[F::from_u64(7)])
+    }
+
+    #[test]
+    fn prepare_ring_switch_row_eval_rejects_invalid_log_basis() {
+        let mut lp = test_level_params();
+        lp.log_basis = 0;
+        let err = match prepare_with_params(&lp) {
+            Ok(_) => panic!("invalid log_basis must be rejected"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn prepare_ring_switch_row_eval_rejects_zero_num_blocks() {
+        let mut lp = test_level_params();
+        lp.num_blocks = 0;
+        let err = match prepare_with_params(&lp) {
+            Ok(_) => panic!("zero num_blocks must be rejected"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn multiplier_block_summary_rejects_malformed_shapes() {
+        let eq_low = vec![F::one(); 2];
+
+        let err = summarize_pow2_multiplier_block_carries(&eq_low, 0, 3, |_| Ok(F::one()))
+            .expect_err("non-power-of-two value length must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+
+        let err = summarize_pow2_multiplier_block_carries(&eq_low, 2, 2, |_| Ok(F::one()))
+            .expect_err("out-of-range low offset must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+
+        let err = summarize_pow2_multiplier_block_carries(&eq_low[..1], 0, 2, |_| Ok(F::one()))
+            .expect_err("wrong eq table length must be rejected");
+        assert!(matches!(err, AkitaError::InvalidSize { .. }));
+    }
 }
