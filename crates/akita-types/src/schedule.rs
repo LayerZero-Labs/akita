@@ -631,10 +631,10 @@ mod tests {
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
-        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
+        AkitaBatchedRootProof, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
+        AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
+        ExtensionOpeningReductionProof, FlatRingVec, MRowLayout, PackedDigits, SisModulusFamily,
+        TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -786,7 +786,7 @@ mod tests {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof {
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
@@ -796,7 +796,7 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
-            },
+            }),
             stage3_sumcheck_proof: None,
         };
         Ok(proof.serialized_size(Compress::No))
@@ -963,7 +963,7 @@ mod tests {
                 ])
                 .into_compact(),
                 stage1: dummy_stage1_proof(rounds, b),
-                stage2: AkitaStage2Proof {
+                stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                     #[cfg(not(feature = "zk"))]
                     sumcheck_proof: dummy_sumcheck(rounds, 3),
                     #[cfg(feature = "zk")]
@@ -973,7 +973,7 @@ mod tests {
                     next_w_eval: F::zero(),
                     #[cfg(feature = "zk")]
                     next_w_eval_masked: F::zero(),
-                },
+                }),
                 stage3_sumcheck_proof: None,
             });
 

@@ -252,6 +252,8 @@ fn tamper_first_stage2_round_coeff(proof: &mut AkitaBatchedProof<F, F>) {
         .expect("fixture should use a folded root");
     let round = root
         .stage2
+        .as_intermediate_mut()
+        .expect("fixture should use an intermediate root stage-2 proof")
         .sumcheck_proof_masked
         .masked_round_polys
         .iter_mut()
@@ -666,7 +668,10 @@ fn run_zk_dense_cursor_binding_negatives() {
                 .root
                 .as_fold_mut()
                 .expect("fixture should use a folded root");
-            root.stage2.next_w_eval_masked += F::one();
+            root.stage2
+                .as_intermediate_mut()
+                .expect("fold root proof must carry intermediate stage-2 proof")
+                .next_w_eval_masked += F::one();
         });
     });
 }

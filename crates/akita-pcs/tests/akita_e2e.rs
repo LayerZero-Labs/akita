@@ -1106,7 +1106,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                 fold.stage1.s_claim += F::from_canonical_u128_reduced(1);
             }
             akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
-                match &mut terminal.final_witness {
+                match terminal
+                    .stage2
+                    .final_witness_mut()
+                    .expect("terminal root proof must carry terminal stage-2 proof")
+                {
                     akita_types::CleartextWitnessProof::PackedDigits(packed) => {
                         packed.data[0] ^= 1;
                     }

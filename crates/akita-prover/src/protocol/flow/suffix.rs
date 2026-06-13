@@ -466,7 +466,7 @@ where
             extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
             stage1: stage1_proof,
-            stage2: AkitaStage2Proof {
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck_proof,
                 #[cfg(feature = "zk")]
@@ -476,7 +476,7 @@ where
                 next_w_eval: proof_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: proof_w_eval,
-            },
+            }),
             stage3_sumcheck_proof,
         };
 

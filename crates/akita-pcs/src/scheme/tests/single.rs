@@ -230,7 +230,13 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
         .expect("fixture should use folded root proof");
     assert_base_flat_ring_vec(&root.y_rings);
     assert_base_flat_ring_vec(&root.v);
-    assert_base_flat_ring_vec(&root.stage2.next_w_commitment);
+    assert_base_flat_ring_vec(
+        &root
+            .stage2
+            .as_intermediate()
+            .expect("fold root proof must carry intermediate stage-2 proof")
+            .next_w_commitment,
+    );
 
     for level in proof.fold_levels() {
         assert_base_flat_ring_vec(&level.y_ring);
@@ -249,6 +255,8 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         .as_fold()
         .expect("fixture should use folded root proof")
         .stage2
+        .as_intermediate()
+        .expect("fold root proof must carry intermediate stage-2 proof")
         .sumcheck_proof
         .clone();
     proof

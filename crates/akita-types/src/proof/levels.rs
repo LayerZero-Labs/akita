@@ -3,6 +3,7 @@ use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_proof_masked_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
+use crate::{MRowLayout, SetupContributionMode};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,9 +30,9 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub s_claim: F,
 }
 
-/// Proof payload for stage 2 of a single Akita level.
+/// Intermediate-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
+pub struct AkitaIntermediateStage2Proof<F: FieldCore, L: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     #[cfg(not(feature = "zk"))]
     pub sumcheck_proof: SumcheckProof<L>,
@@ -49,7 +50,7 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     pub next_w_eval_masked: L,
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
+impl<F: FieldCore, L: FieldCore> AkitaIntermediateStage2Proof<F, L> {
     /// Wire value for the next-witness evaluation claim.
     ///
     /// In transparent builds this is the true evaluation; in ZK builds this is
@@ -63,6 +64,110 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
         {
             self.next_w_eval_masked
         }
+    }
+}
+
+/// Terminal-stage payload for stage 2 of a fold level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaTerminalStage2Proof<F: FieldCore, L: FieldCore> {
+    /// Stage-2 fused sumcheck proof.
+    #[cfg(not(feature = "zk"))]
+    pub sumcheck_proof: SumcheckProof<L>,
+    /// ZK plain-opening masked compressed round payload.
+    #[cfg(feature = "zk")]
+    pub sumcheck_proof_masked: SumcheckProofMasked<L>,
+    /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
+    /// `next_w_commitment`.
+    pub final_witness: CleartextWitnessProof<F>,
+}
+
+impl<F: FieldCore, L: FieldCore> AkitaTerminalStage2Proof<F, L> {
+    /// Borrow the terminal cleartext witness.
+    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
+        &self.final_witness
+    }
+}
+
+/// Proof payload for stage 2 of a fold level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AkitaStage2Proof<F: FieldCore, L: FieldCore> {
+    /// Intermediate stage-2 payload with a recursive next-witness claim.
+    Intermediate(AkitaIntermediateStage2Proof<F, L>),
+    /// Terminal stage-2 payload with a cleartext final witness.
+    Terminal(AkitaTerminalStage2Proof<F, L>),
+}
+
+impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
+    /// Borrow the intermediate stage-2 payload.
+    pub fn as_intermediate(&self) -> Option<&AkitaIntermediateStage2Proof<F, L>> {
+        match self {
+            Self::Intermediate(proof) => Some(proof),
+            Self::Terminal(_) => None,
+        }
+    }
+
+    /// Mutably borrow the intermediate stage-2 payload.
+    pub fn as_intermediate_mut(&mut self) -> Option<&mut AkitaIntermediateStage2Proof<F, L>> {
+        match self {
+            Self::Intermediate(proof) => Some(proof),
+            Self::Terminal(_) => None,
+        }
+    }
+
+    /// Borrow the terminal stage-2 payload.
+    pub fn as_terminal(&self) -> Option<&AkitaTerminalStage2Proof<F, L>> {
+        match self {
+            Self::Intermediate(_) => None,
+            Self::Terminal(proof) => Some(proof),
+        }
+    }
+
+    /// Mutably borrow the terminal stage-2 payload.
+    pub fn as_terminal_mut(&mut self) -> Option<&mut AkitaTerminalStage2Proof<F, L>> {
+        match self {
+            Self::Intermediate(_) => None,
+            Self::Terminal(proof) => Some(proof),
+        }
+    }
+
+    /// Borrow the transparent stage-2 sumcheck proof.
+    #[cfg(not(feature = "zk"))]
+    pub fn sumcheck(&self) -> &SumcheckProof<L> {
+        match self {
+            Self::Intermediate(proof) => &proof.sumcheck_proof,
+            Self::Terminal(proof) => &proof.sumcheck_proof,
+        }
+    }
+
+    /// Borrow the masked ZK stage-2 sumcheck proof.
+    #[cfg(feature = "zk")]
+    pub fn sumcheck_masked(&self) -> &SumcheckProofMasked<L> {
+        match self {
+            Self::Intermediate(proof) => &proof.sumcheck_proof_masked,
+            Self::Terminal(proof) => &proof.sumcheck_proof_masked,
+        }
+    }
+
+    /// Wire value for the next-witness evaluation claim on intermediate levels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a terminal stage-2 proof.
+    pub fn next_w_eval(&self) -> L {
+        self.as_intermediate()
+            .expect("next_w_eval() called on terminal stage-2 proof")
+            .next_w_eval()
+    }
+
+    /// Borrow the terminal cleartext witness.
+    pub fn final_witness(&self) -> Option<&CleartextWitnessProof<F>> {
+        self.as_terminal()
+            .map(AkitaTerminalStage2Proof::final_witness)
+    }
+
+    /// Mutably borrow the terminal cleartext witness.
+    pub fn final_witness_mut(&mut self) -> Option<&mut CleartextWitnessProof<F>> {
+        self.as_terminal_mut().map(|proof| &mut proof.final_witness)
     }
 }
 
@@ -222,12 +327,16 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 
     /// Commitment to the next witness `w`.
     pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
-        &self.stage2.next_w_commitment
+        &self
+            .stage2
+            .as_intermediate()
+            .expect("next_w_commitment() called on terminal stage-2 proof")
+            .next_w_commitment
     }
 
     /// Number of stored field coefficients for the next witness commitment.
     pub fn next_w_commitment_coeff_len(&self) -> usize {
-        self.stage2.next_w_commitment.coeff_len()
+        self.next_w_commitment().coeff_len()
     }
 
     /// Reconstruct typed `w_commitment`.
@@ -290,14 +399,8 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub y_rings: FlatRingVec<F>,
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Stage-2 fused sumcheck proof.
-    #[cfg(not(feature = "zk"))]
-    pub stage2_sumcheck: SumcheckProof<L>,
-    #[cfg(feature = "zk")]
-    pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-    /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
-    /// `next_w_commitment`.
-    pub final_witness: CleartextWitnessProof<F>,
+    /// Terminal stage-2 payload.
+    pub stage2: AkitaStage2Proof<F, L>,
 }
 
 impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
@@ -315,12 +418,21 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         Self {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
-            final_witness,
+            stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: stage2_sumcheck,
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
+                final_witness,
+            }),
         }
+    }
+
+    /// Borrow the terminal cleartext witness.
+    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
+        self.stage2
+            .final_witness()
+            .expect("final_witness() called on intermediate stage-2 proof")
     }
 
     /// Reconstruct typed public opening rings.
@@ -346,14 +458,14 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
             stage2_sumcheck: {
                 #[cfg(not(feature = "zk"))]
                 {
-                    sumcheck_shape(&self.stage2_sumcheck)
+                    sumcheck_shape(self.stage2.sumcheck())
                 }
                 #[cfg(feature = "zk")]
                 {
-                    sumcheck_proof_masked_shape(&self.stage2_sumcheck_proof_masked)
+                    sumcheck_proof_masked_shape(self.stage2.sumcheck_masked())
                 }
             },
-            final_witness: self.final_witness.shape(),
+            final_witness: self.final_witness().shape(),
         }
     }
 }
@@ -506,6 +618,97 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         }
     }
 
+    /// Row layout used by the root fold verifier for fold and terminal-root proofs.
+    pub fn fold_m_row_layout(&self) -> Option<MRowLayout> {
+        match self {
+            Self::Fold(_) => Some(MRowLayout::WithDBlock),
+            Self::Terminal(_) => Some(MRowLayout::WithoutDBlock),
+            Self::ZeroFold { .. } => None,
+        }
+    }
+
+    /// Borrow root `y_rings` for fold and terminal-root proofs.
+    pub fn fold_y_rings(&self) -> Option<&FlatRingVec<F>> {
+        match self {
+            Self::Fold(fold) => Some(&fold.y_rings),
+            Self::Terminal(terminal) => Some(&terminal.y_rings),
+            Self::ZeroFold { .. } => None,
+        }
+    }
+
+    /// Borrow the optional root extension-opening reduction payload.
+    pub fn fold_extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
+        match self {
+            Self::Fold(fold) => fold.extension_opening_reduction.as_ref(),
+            Self::Terminal(terminal) => terminal.extension_opening_reduction.as_ref(),
+            Self::ZeroFold { .. } => None,
+        }
+    }
+
+    /// Borrow typed root `v` for fold proofs; terminal roots have no D-block rows.
+    pub fn fold_v<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        match self {
+            Self::Fold(fold) => fold.v.as_ring_slice::<D>(),
+            Self::Terminal(_) => Ok(&[]),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Borrow root stage-1 for fold proofs; terminal roots run relation-only stage 2.
+    pub fn fold_stage1(&self) -> Result<Option<&AkitaStage1Proof<L>>, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(Some(&fold.stage1)),
+            Self::Terminal(_) => Ok(None),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Borrow the root next-witness commitment for fold proofs.
+    pub fn fold_next_w_commitment(&self) -> Result<Option<&FlatRingVec<F>>, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(Some(
+                &fold
+                    .stage2
+                    .as_intermediate()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .next_w_commitment,
+            )),
+            Self::Terminal(_) => Ok(None),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Borrow root stage-2 for fold and terminal-root proofs.
+    pub fn fold_stage2(&self) -> Result<&AkitaStage2Proof<F, L>, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(&fold.stage2),
+            Self::Terminal(terminal) => Ok(&terminal.stage2),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Borrow and validate the optional root stage-3 setup sumcheck proof.
+    pub fn fold_stage3_sumcheck_proof(
+        &self,
+        mode: SetupContributionMode,
+    ) -> Result<Option<&SetupSumcheckProof<L>>, AkitaError> {
+        match self {
+            Self::Fold(fold) => match (mode, fold.stage3_sumcheck_proof.as_ref()) {
+                (SetupContributionMode::Direct, None) => Ok(None),
+                (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
+                    "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
+                )),
+                (SetupContributionMode::Recursive, Some(proof)) => Ok(Some(proof)),
+                (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
+                    "recursive setup-contribution mode is missing stage3_sumcheck_proof"
+                        .to_string(),
+                )),
+            },
+            Self::Terminal(_) => Ok(None),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
     /// Borrow the revealed zero-fold B-blinding payloads.
     #[cfg(feature = "zk")]
     pub fn direct_b_blinding_digits(&self) -> Option<&[Vec<i8>]> {
@@ -561,6 +764,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             .as_fold()
             .expect("next_w_commitment() called on a non-fold root proof")
             .stage2
+            .as_intermediate()
+            .expect("next_w_commitment() called on terminal stage-2 proof")
             .next_w_commitment
     }
 
@@ -618,15 +823,13 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     /// with a terminal step.
     pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
         match &self.root {
-            AkitaBatchedRootProof::Terminal(terminal) => &terminal.final_witness,
-            AkitaBatchedRootProof::Fold(_) => {
-                &self
-                    .steps
-                    .last()
-                    .and_then(AkitaProofStep::as_terminal)
-                    .expect("fold-rooted Akita proof must terminate with a terminal step")
-                    .final_witness
-            }
+            AkitaBatchedRootProof::Terminal(terminal) => terminal.final_witness(),
+            AkitaBatchedRootProof::Fold(_) => self
+                .steps
+                .last()
+                .and_then(AkitaProofStep::as_terminal)
+                .expect("fold-rooted Akita proof must terminate with a terminal step")
+                .final_witness(),
             AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("final_witness() called on a zero-fold batched proof")
             }

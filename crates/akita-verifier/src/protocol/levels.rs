@@ -53,13 +53,13 @@ use akita_types::{
     reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_fold_execution,
     scheduled_next_level_params, terminal_witness_segment_layout, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof,
-    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary,
-    CleartextWitnessProof, CommitmentRouting, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding,
-    Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalLevelProof,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, PreparedOpeningPoint,
+    RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, Step, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
 use akita_types::{tensor_equality_factor_eval_at_point, EXTENSION_OPENING_REDUCTION_DEGREE};
@@ -109,23 +109,6 @@ where
     let parts = final_witness.terminal_transcript_parts(layout)?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(parts)
-}
-
-enum RootLevelProofView<'a, F: FieldCore, C: FieldCore> {
-    Intermediate {
-        y_rings_flat: &'a FlatRingVec<F>,
-        extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<C>>,
-        v_flat: &'a FlatRingVec<F>,
-        stage1: &'a AkitaStage1Proof<C>,
-        stage2: &'a AkitaStage2Proof<F, C>,
-        stage3_sumcheck_proof: Option<&'a SetupSumcheckProof<C>>,
-        setup_contribution_mode: SetupContributionMode,
-        next_fold_level_params: &'a LevelParams,
-    },
-    Terminal {
-        proof: &'a TerminalLevelProof<F, C>,
-        final_w_len: usize,
-    },
 }
 
 struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
@@ -499,52 +482,22 @@ where
     })
 }
 
-enum Stage2ProofReplay<'a, F: FieldCore, E: FieldCore> {
-    Intermediate {
-        next_w_eval: E,
-        #[cfg(not(feature = "zk"))]
-        sumcheck: &'a akita_sumcheck::SumcheckProof<E>,
-        #[cfg(feature = "zk")]
-        sumcheck_masked: &'a akita_sumcheck::SumcheckProofMasked<E>,
-    },
-    Terminal {
-        final_witness: &'a CleartextWitnessProof<F>,
-        physical_w_len: usize,
-        #[cfg(not(feature = "zk"))]
-        sumcheck: &'a akita_sumcheck::SumcheckProof<E>,
-        #[cfg(feature = "zk")]
-        sumcheck_masked: &'a akita_sumcheck::SumcheckProofMasked<E>,
-    },
-}
-
-struct Stage2ReplayInput<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    setup: &'a AkitaVerifierSetup<F>,
-    stage2: Stage2ProofReplay<'a, F, E>,
-    stage1: Stage1Replay<E>,
-    rs: RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    #[cfg(feature = "zk")]
-    relation_claim_mask: ZkR1csLinearCombination<E>,
-    stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-}
-
 struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
     m_row_layout: MRowLayout,
     y_rings: Vec<CyclotomicRing<F, D>>,
     v: Vec<CyclotomicRing<F, D>>,
     commitment_rows: &'a [CyclotomicRing<F, D>],
-    row_coefficients: &'a [E],
+    row_coefficients: Vec<E>,
     incidence: ClaimIncidenceSummary,
     commitment_routing: CommitmentRouting,
     ring_opening_points: Vec<RingOpeningPoint<F>>,
     ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
     w_len: usize,
     stage1: Option<&'a AkitaStage1Proof<E>>,
-    stage2: Stage2ProofReplay<'a, F, E>,
+    stage2: &'a AkitaStage2Proof<F, E>,
     next_w_commitment: Option<&'a FlatRingVec<F>>,
-    terminal_replay: Option<&'a TerminalWitnessTranscriptParts>,
+    terminal_replay: Option<TerminalWitnessTranscriptParts>,
     stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     #[cfg(feature = "zk")]
     y_masks: Vec<ZkR1csLinearCombination<E>>,
@@ -566,123 +519,6 @@ fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
     }
 }
 
-fn verify_stage2_then_stage3<F, E, T, const D: usize>(
-    transcript: &mut T,
-    input: Stage2ReplayInput<'_, F, E, D>,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let Stage2ReplayInput {
-        setup,
-        stage2,
-        stage1,
-        rs,
-        relation_claim,
-        #[cfg(feature = "zk")]
-        relation_claim_mask,
-        stage3,
-        ring_multiplier_points,
-    } = input;
-    let Stage1Replay {
-        batching_coeff,
-        s_claim,
-        stage1_point,
-        #[cfg(feature = "zk")]
-        s_claim_mask,
-    } = stage1;
-    let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
-    #[cfg(feature = "zk")]
-    let stage2_next_w_eval_mask_cursor =
-        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
-    let witness_oracle = match &stage2 {
-        Stage2ProofReplay::Terminal {
-            final_witness,
-            physical_w_len,
-            ..
-        } => Stage2WitnessOracle::Cleartext {
-            witness: final_witness,
-            physical_w_len: *physical_w_len,
-        },
-        Stage2ProofReplay::Intermediate { next_w_eval, .. } => Stage2WitnessOracle::ClaimedEval {
-            eval: *next_w_eval,
-            #[cfg(feature = "zk")]
-            mask: zk_ext_mask_lc_at::<F, E>(stage2_next_w_eval_mask_cursor),
-        },
-    };
-    let stage2_verifier = AkitaStage2Verifier::new(
-        batching_coeff,
-        s_claim,
-        #[cfg(feature = "zk")]
-        s_claim_mask,
-        #[cfg(feature = "zk")]
-        relation_claim_mask,
-        witness_oracle,
-        stage1_point,
-        &rs.alpha_evals_y,
-        &rs.prepared_row_eval,
-        setup_claim,
-        &setup.expanded,
-        ring_multiplier_points,
-        relation_claim,
-        rs.alpha,
-        rs.col_bits,
-        rs.ring_bits,
-    )?;
-
-    let sumcheck_challenges = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        #[cfg(not(feature = "zk"))]
-        {
-            let stage2_sumcheck = match &stage2 {
-                Stage2ProofReplay::Intermediate { sumcheck, .. }
-                | Stage2ProofReplay::Terminal { sumcheck, .. } => *sumcheck,
-            };
-            stage2_verifier.verify::<F, T, _>(stage2_sumcheck, transcript, |tr| {
-                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?
-        }
-        #[cfg(feature = "zk")]
-        {
-            let stage2_sumcheck_masked = match &stage2 {
-                Stage2ProofReplay::Intermediate {
-                    sumcheck_masked, ..
-                }
-                | Stage2ProofReplay::Terminal {
-                    sumcheck_masked, ..
-                } => *sumcheck_masked,
-            };
-            let challenges = stage2_verifier.verify_zk::<F, T, _>(
-                stage2_sumcheck_masked,
-                transcript,
-                zk_relations,
-                zk_hiding_cursor,
-                |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-            )?;
-            if matches!(stage2, Stage2ProofReplay::Intermediate { .. }) {
-                *zk_hiding_cursor += <E as ExtField<F>>::EXT_DEGREE;
-            }
-            challenges
-        }
-    };
-    if let Stage2ProofReplay::Intermediate { next_w_eval, .. } = stage2 {
-        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
-    }
-    if let Some((proof, next_fold_level_params)) = stage3 {
-        let verifier = SetupSumcheckVerifier::new::<F, D>(
-            &rs.prepared_row_eval,
-            &sumcheck_challenges[rs.ring_bits..],
-            rs.alpha,
-        )?;
-        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
-    }
-    Ok(sumcheck_challenges)
-}
-
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
     s_claim: E,
@@ -691,7 +527,7 @@ struct Stage1Replay<E: FieldCore> {
     s_claim_mask: ZkR1csLinearCombination<E>,
 }
 
-fn replay_stage1_or_relation_only<F, E, T>(
+fn verify_stage1<F, E, T>(
     proof: Option<&AkitaStage1Proof<E>>,
     rs: &RingSwitchVerifyOutput<E>,
     transcript: &mut T,
@@ -754,6 +590,112 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+fn verify_stage2<F, E, T, const D: usize>(
+    transcript: &mut T,
+    setup: &AkitaVerifierSetup<F>,
+    stage2: &AkitaStage2Proof<F, E>,
+    physical_w_len: usize,
+    stage1: Stage1Replay<E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    relation_claim: E,
+    #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
+    setup_claim: Option<E>,
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    #[cfg(feature = "zk")]
+    let stage2_next_w_eval_mask_cursor =
+        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
+    let witness_oracle = match stage2 {
+        AkitaStage2Proof::Terminal(proof) => Stage2WitnessOracle::Cleartext {
+            witness: &proof.final_witness,
+            physical_w_len,
+        },
+        AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
+            eval: proof.next_w_eval(),
+            #[cfg(feature = "zk")]
+            mask: zk_ext_mask_lc_at::<F, E>(stage2_next_w_eval_mask_cursor),
+        },
+    };
+    let stage2_verifier = AkitaStage2Verifier::new(
+        stage1.batching_coeff,
+        stage1.s_claim,
+        #[cfg(feature = "zk")]
+        stage1.s_claim_mask,
+        #[cfg(feature = "zk")]
+        relation_claim_mask,
+        witness_oracle,
+        stage1.stage1_point,
+        &rs.alpha_evals_y,
+        &rs.prepared_row_eval,
+        setup_claim,
+        &setup.expanded,
+        ring_multiplier_points,
+        relation_claim,
+        rs.alpha,
+        rs.col_bits,
+        rs.ring_bits,
+    )?;
+
+    let sumcheck_challenges = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        #[cfg(not(feature = "zk"))]
+        {
+            stage2_verifier.verify::<F, T, _>(stage2.sumcheck(), transcript, |tr| {
+                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?
+        }
+        #[cfg(feature = "zk")]
+        {
+            let challenges = stage2_verifier.verify_zk::<F, T, _>(
+                stage2.sumcheck_masked(),
+                transcript,
+                zk_relations,
+                zk_hiding_cursor,
+                |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            if matches!(stage2, AkitaStage2Proof::Intermediate(_)) {
+                *zk_hiding_cursor += <E as ExtField<F>>::EXT_DEGREE;
+            }
+            challenges
+        }
+    };
+    if let AkitaStage2Proof::Intermediate(proof) = stage2 {
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof.next_w_eval());
+    }
+    Ok(sumcheck_challenges)
+}
+
+fn verify_stage3<F, E, T, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    rs: &RingSwitchVerifyOutput<E>,
+    sumcheck_challenges: &[E],
+    stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    if let Some((proof, next_fold_level_params)) = stage3 {
+        let verifier = SetupSumcheckVerifier::new::<F, D>(
+            &rs.prepared_row_eval,
+            &sumcheck_challenges[rs.ring_bits..],
+            rs.alpha,
+        )?;
+        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn verify_fold<F, E, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
@@ -767,69 +709,53 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let PreparedFoldReplay {
-        lp,
-        m_row_layout,
-        y_rings,
-        v,
-        commitment_rows,
-        row_coefficients,
-        incidence,
-        commitment_routing,
-        ring_opening_points,
-        ring_multiplier_points,
-        w_len,
-        stage1,
-        stage2,
-        next_w_commitment,
-        terminal_replay,
-        stage3,
-        #[cfg(feature = "zk")]
-        y_masks,
-    } = prepared;
-
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
-        &v,
-        lp.num_blocks,
-        incidence.num_claims(),
-        lp,
-        m_row_layout,
+        &prepared.v,
+        prepared.lp.num_blocks,
+        prepared.incidence.num_claims(),
+        prepared.lp,
+        prepared.m_row_layout,
     )?;
     let (gamma, row_coefficient_rings) =
-        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(row_coefficients)?;
+        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(
+            &prepared.row_coefficients,
+        )?;
     let relation_instance = RingRelationInstance::new(
-        m_row_layout,
+        prepared.m_row_layout,
         stage1_challenges,
-        ring_opening_points,
-        ring_multiplier_points,
-        incidence,
-        commitment_routing,
+        prepared.ring_opening_points,
+        prepared.ring_multiplier_points,
+        prepared.incidence,
+        prepared.commitment_routing,
         gamma,
         row_coefficient_rings,
-        y_rings,
-        v,
+        prepared.y_rings,
+        prepared.v,
     )?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,
-        row_coefficients,
-        lp,
+        row_coefficients: &prepared.row_coefficients,
+        lp: prepared.lp,
     };
-    let rs = match &stage2 {
-        Stage2ProofReplay::Intermediate { .. } => {
-            let next_w_commitment = next_w_commitment.ok_or(AkitaError::InvalidProof)?;
+    let rs = match prepared.stage2 {
+        AkitaStage2Proof::Intermediate(_) => {
+            let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
             ring_switch_verifier::<F, E, T, D>(
                 &ring_switch_replay,
-                w_len,
+                prepared.w_len,
                 next_w_commitment,
                 transcript,
             )?
         }
-        Stage2ProofReplay::Terminal { .. } => {
-            let replay = terminal_replay.ok_or(AkitaError::InvalidProof)?;
+        AkitaStage2Proof::Terminal(_) => {
+            let replay = prepared
+                .terminal_replay
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?;
             ring_switch_verifier_terminal::<F, E, T, D>(
                 &ring_switch_replay,
-                w_len,
+                prepared.w_len,
                 transcript,
                 replay,
             )?
@@ -839,7 +765,7 @@ where
         &rs.tau1,
         rs.alpha,
         &relation_instance.v,
-        commitment_rows,
+        prepared.commitment_rows,
         relation_instance.y(),
     )?;
     #[cfg(feature = "zk")]
@@ -847,10 +773,10 @@ where
         &rs.tau1,
         rs.alpha,
         relation_instance.y().len(),
-        &y_masks,
+        &prepared.y_masks,
     )?;
-    let stage1_replay = replay_stage1_or_relation_only::<F, E, T>(
-        stage1,
+    let stage1_replay = verify_stage1::<F, E, T>(
+        prepared.stage1,
         &rs,
         transcript,
         #[cfg(feature = "zk")]
@@ -858,25 +784,32 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let stage2_input = Stage2ReplayInput {
+    let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
+    let sumcheck_challenges = verify_stage2::<F, E, T, D>(
+        transcript,
         setup,
-        stage2,
-        stage1: stage1_replay,
-        rs,
+        prepared.stage2,
+        prepared.w_len,
+        stage1_replay,
+        &rs,
         relation_claim,
         #[cfg(feature = "zk")]
         relation_claim_mask,
-        stage3,
-        ring_multiplier_points: relation_instance.ring_multiplier_points(),
-    };
-    verify_stage2_then_stage3::<F, E, T, D>(
-        transcript,
-        stage2_input,
+        setup_claim,
+        relation_instance.ring_multiplier_points(),
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
         zk_relations,
-    )
+    )?;
+    verify_stage3::<F, E, T, D>(
+        setup,
+        transcript,
+        &rs,
+        &sumcheck_challenges,
+        prepared.stage3,
+    )?;
+    Ok(sumcheck_challenges)
 }
 
 /// Verify the folded-root proof payload for either an intermediate root or the
@@ -893,8 +826,8 @@ where
 /// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn verify_root_level<F, E, C, T, const D: usize>(
-    proof: RootLevelProofView<'_, F, C>,
+fn verify_root<F, E, C, T, const D: usize>(
+    proof: &AkitaBatchedRootProof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -903,6 +836,9 @@ fn verify_root_level<F, E, C, T, const D: usize>(
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
     root_lp: &LevelParams,
+    setup_contribution_mode: SetupContributionMode,
+    next_fold_level_params: Option<&LevelParams>,
+    terminal_final_w_len: usize,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
 ) -> Result<Vec<C>, AkitaError>
@@ -918,42 +854,17 @@ where
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
-    let (m_row_layout, y_rings_flat, extension_opening_reduction) = match &proof {
-        RootLevelProofView::Intermediate {
-            y_rings_flat,
-            extension_opening_reduction,
-            ..
-        } => (
-            MRowLayout::WithDBlock,
-            *y_rings_flat,
-            *extension_opening_reduction,
-        ),
-        RootLevelProofView::Terminal { proof, .. } => (
-            MRowLayout::WithoutDBlock,
-            &proof.y_rings,
-            proof.extension_opening_reduction.as_ref(),
-        ),
-    };
+    let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
+    let y_rings_flat = proof.fold_y_rings().ok_or(AkitaError::InvalidProof)?;
+    let extension_opening_reduction = proof.fold_extension_opening_reduction();
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
-    let v_typed: &[CyclotomicRing<F, D>] = match &proof {
-        RootLevelProofView::Intermediate { v_flat, .. } => v_flat.as_ring_slice::<D>()?,
-        RootLevelProofView::Terminal { .. } => &[],
+    let v_typed = proof.fold_v::<D>()?;
+    let next_fold_level_params = match proof {
+        AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
+        AkitaBatchedRootProof::Terminal(_) => root_lp,
+        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
-    let next_fold_level_params = match &proof {
-        RootLevelProofView::Intermediate {
-            next_fold_level_params,
-            ..
-        } => *next_fold_level_params,
-        RootLevelProofView::Terminal { .. } => root_lp,
-    };
-    let stage3_sumcheck_proof = match &proof {
-        RootLevelProofView::Intermediate {
-            stage3_sumcheck_proof,
-            setup_contribution_mode,
-            ..
-        } => stage3_sumcheck_proof_for_mode(*setup_contribution_mode, *stage3_sumcheck_proof)?,
-        RootLevelProofView::Terminal { .. } => None,
-    };
+    let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
     let num_claims = incidence_summary.num_claims();
     let num_points = incidence_summary.num_points();
     if num_points == 0
@@ -1145,9 +1056,9 @@ where
         )?;
     }
 
-    let w_len = match &proof {
-        RootLevelProofView::Terminal { final_w_len, .. } => *final_w_len,
-        RootLevelProofView::Intermediate { .. } => w_ring_element_count_with_counts::<F>(
+    let w_len = match proof {
+        AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
+        AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
             root_lp,
             incidence_summary.num_polys_per_point().len(),
             incidence_summary.num_polys_per_point().iter().sum(),
@@ -1156,9 +1067,10 @@ where
         )?
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
-    let terminal_replay = match &proof {
-        RootLevelProofView::Terminal { proof, .. } => {
+    let terminal_replay = match proof {
+        AkitaBatchedRootProof::Terminal(terminal) => {
             let layout = terminal_witness_segment_layout(
                 root_lp,
                 num_claims,
@@ -1167,12 +1079,13 @@ where
             )?;
             Some(prepare_terminal_witness_replay::<F, T>(
                 transcript,
-                &proof.final_witness,
+                terminal.final_witness(),
                 w_len,
                 layout,
             )?)
         }
-        RootLevelProofView::Intermediate { .. } => None,
+        AkitaBatchedRootProof::Fold(_) => None,
+        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
@@ -1190,47 +1103,25 @@ where
         })
         .collect();
     let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
-    let stage1_proof = match &proof {
-        RootLevelProofView::Intermediate { stage1, .. } => Some(*stage1),
-        RootLevelProofView::Terminal { .. } => None,
-    };
-    let next_w_commitment = match &proof {
-        RootLevelProofView::Intermediate { stage2, .. } => Some(&stage2.next_w_commitment),
-        RootLevelProofView::Terminal { .. } => None,
-    };
-    let stage2_replay = match &proof {
-        RootLevelProofView::Intermediate { stage2, .. } => Stage2ProofReplay::Intermediate {
-            next_w_eval: stage2.next_w_eval(),
-            #[cfg(not(feature = "zk"))]
-            sumcheck: &stage2.sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_masked: &stage2.sumcheck_proof_masked,
-        },
-        RootLevelProofView::Terminal { proof, .. } => Stage2ProofReplay::Terminal {
-            final_witness: &proof.final_witness,
-            physical_w_len: w_len,
-            #[cfg(not(feature = "zk"))]
-            sumcheck: &proof.stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            sumcheck_masked: &proof.stage2_sumcheck_proof_masked,
-        },
-    };
+    let stage1_proof = proof.fold_stage1()?;
+    let next_w_commitment = proof.fold_next_w_commitment()?;
+    let stage2 = proof.fold_stage2()?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,
         y_rings: y_rings.to_vec(),
         v: v_typed.to_vec(),
         commitment_rows,
-        row_coefficients: &row_coefficients,
+        row_coefficients,
         incidence: incidence_summary.clone(),
         commitment_routing,
         ring_opening_points,
         ring_multiplier_points,
         w_len,
         stage1: stage1_proof,
-        stage2: stage2_replay,
+        stage2,
         next_w_commitment,
-        terminal_replay: terminal_replay.as_ref(),
+        terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         #[cfg(feature = "zk")]
         y_masks,

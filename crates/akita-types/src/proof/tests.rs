@@ -193,7 +193,7 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
 }
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
-    AkitaStage2Proof {
+    AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
         #[cfg(not(feature = "zk"))]
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
@@ -208,7 +208,7 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         next_w_eval: F::zero(),
         #[cfg(feature = "zk")]
         next_w_eval_masked: F::zero(),
-    }
+    })
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {

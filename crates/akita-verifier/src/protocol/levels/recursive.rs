@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::{dispatch_ring_dim_result, recover_ring_subfield_inner_product};
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
+use akita_types::{ClaimIncidenceSummary, CommitmentRouting, TerminalLevelProof};
 
 enum RecursiveFoldProofView<'a, F: FieldCore, L: FieldCore> {
     Intermediate {
@@ -33,30 +33,28 @@ impl<F: FieldCore, L: FieldCore> RecursiveFoldProofView<'_, F, L> {
     }
 }
 
-/// Verify one recursive fold level.
+/// Prepare one recursive fold level for relation verification.
 ///
-/// The returned challenges become the opening point for the next level. Terminal
-/// levels absorb the cleartext final witness instead of a next-witness
-/// commitment and run stage-2 in relation-only mode.
+/// Terminal levels absorb the cleartext final witness instead of a
+/// next-witness commitment and run stage-2 in relation-only mode.
 ///
 /// # Errors
 ///
 /// Returns an error if the proof shape is inconsistent, the public trace check
-/// fails, ring-switch replay fails, or a sumcheck verifier rejects.
+/// fails, or the terminal witness replay is malformed.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-#[tracing::instrument(skip_all, name = "verify_recursive_level")]
-fn verify_recursive_level<F, L, T, const D: usize>(
-    proof: RecursiveFoldProofView<'_, F, L>,
-    setup: &AkitaVerifierSetup<F>,
+#[tracing::instrument(skip_all, name = "prepare_fold_data")]
+fn prepare_fold_data<'a, F, L, T, const D: usize>(
+    proof: RecursiveFoldProofView<'a, F, L>,
     transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F, L>,
-    lp: &LevelParams,
+    current_state: &'a RecursiveVerifierState<'a, F, L>,
+    lp: &'a LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
-) -> Result<Vec<L>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
     L: RingSubfieldEncoding<F>
@@ -91,7 +89,7 @@ where
     let num_claims = y_rings.len();
     let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
-    let row_coefficients = [L::one()];
+    let row_coefficients = vec![L::one()];
     let challenge_points = vec![current_state.opening_point.clone()];
     let openings = vec![current_state.opening];
     #[cfg(feature = "zk")]
@@ -190,21 +188,21 @@ where
                 })?
         }
     };
-    let terminal_replay = if let RecursiveFoldProofView::Terminal {
-        proof: terminal_proof,
-        ..
-    } = &proof
-    {
-        let layout =
-            terminal_witness_segment_layout(lp, num_claims, num_claims, F::modulus_bits())?;
-        Some(prepare_terminal_witness_replay::<F, T>(
-            transcript,
-            &terminal_proof.final_witness,
-            w_len,
-            layout,
-        )?)
-    } else {
-        None
+    let terminal_replay = match &proof {
+        RecursiveFoldProofView::Terminal {
+            proof: terminal_proof,
+            ..
+        } => {
+            let layout =
+                terminal_witness_segment_layout(lp, num_claims, num_claims, F::modulus_bits())?;
+            Some(prepare_terminal_witness_replay::<F, T>(
+                transcript,
+                terminal_proof.final_witness(),
+                w_len,
+                layout,
+            )?)
+        }
+        RecursiveFoldProofView::Intermediate { .. } => None,
     };
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
     let stage1_proof = match &proof {
@@ -212,7 +210,13 @@ where
         RecursiveFoldProofView::Terminal { .. } => None,
     };
     let next_w_commitment = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => Some(proof.next_w_commitment()),
+        RecursiveFoldProofView::Intermediate { proof, .. } => Some(
+            &proof
+                .stage2
+                .as_intermediate()
+                .ok_or(AkitaError::InvalidProof)?
+                .next_w_commitment,
+        ),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
     let stage3 = match &proof {
@@ -226,55 +230,33 @@ where
         .map(|proof| (proof, *next_fold_level_params)),
         RecursiveFoldProofView::Terminal { .. } => None,
     };
-    let stage2_replay = match &proof {
-        RecursiveFoldProofView::Intermediate { proof, .. } => Stage2ProofReplay::Intermediate {
-            next_w_eval: proof.stage2.next_w_eval(),
-            #[cfg(not(feature = "zk"))]
-            sumcheck: &proof.stage2.sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_masked: &proof.stage2.sumcheck_proof_masked,
-        },
+    let stage2 = match &proof {
+        RecursiveFoldProofView::Intermediate { proof, .. } => &proof.stage2,
         RecursiveFoldProofView::Terminal {
             proof: terminal_proof,
             ..
-        } => Stage2ProofReplay::Terminal {
-            final_witness: &terminal_proof.final_witness,
-            physical_w_len: w_len,
-            #[cfg(not(feature = "zk"))]
-            sumcheck: &terminal_proof.stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            sumcheck_masked: &terminal_proof.stage2_sumcheck_proof_masked,
-        },
+        } => &terminal_proof.stage2,
     };
-    let prepared = PreparedFoldReplay {
+    Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
         y_rings,
         v: v_typed.to_vec(),
         commitment_rows: commitment_u,
-        row_coefficients: &row_coefficients,
+        row_coefficients,
         incidence,
         commitment_routing,
         ring_opening_points,
         ring_multiplier_points,
         w_len,
         stage1: stage1_proof,
-        stage2: stage2_replay,
+        stage2,
         next_w_commitment,
-        terminal_replay: terminal_replay.as_ref(),
+        terminal_replay,
         stage3,
         #[cfg(feature = "zk")]
         y_masks,
-    };
-    verify_fold::<F, L, T, D>(
-        setup,
-        transcript,
-        prepared,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
+    })
 }
 
 /// Verify all recursive fold levels after the root proof.
@@ -345,17 +327,25 @@ where
                 }
 
                 let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    verify_recursive_level::<F, L, T, D_LEVEL>(
+                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Intermediate {
                             proof: level_proof,
                             next_fold_level_params: &next_params,
                         },
-                        setup,
                         transcript,
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
+                    )?;
+                    verify_fold::<F, L, T, D_LEVEL>(
+                        setup,
+                        transcript,
+                        prepared,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -404,17 +394,25 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    verify_recursive_level::<F, L, T, D_LEVEL>(
+                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         RecursiveFoldProofView::Terminal {
                             proof: terminal_proof,
                             final_w_len: next_w_len,
                         },
-                        setup,
                         transcript,
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
+                    )?;
+                    verify_fold::<F, L, T, D_LEVEL>(
+                        setup,
+                        transcript,
+                        prepared,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -505,14 +503,11 @@ where
             if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
-            if terminal.final_witness.shape() != terminal_direct.witness_shape {
+            if terminal.final_witness().shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root_level::<F, E, C, T, D>(
-                RootLevelProofView::Terminal {
-                    proof: terminal,
-                    final_w_len: root_step.next_w_len,
-                },
+            verify_root::<F, E, C, T, D>(
+                &proof.root,
                 setup,
                 transcript,
                 opening_points,
@@ -521,6 +516,9 @@ where
                 incidence_summary,
                 basis,
                 root_lp,
+                setup_contribution_mode,
+                None,
+                root_step.next_w_len,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -544,23 +542,18 @@ where
                     AkitaProofStep::Intermediate(_) => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;
-            if terminal_step.final_witness.shape() != terminal_direct.witness_shape {
+            if terminal_step.final_witness().shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
 
             let first_recursive_params =
                 scheduled_next_level_params(schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
-            let root_challenges = verify_root_level::<F, E, C, T, D>(
-                RootLevelProofView::Intermediate {
-                    y_rings_flat: &fold_root.y_rings,
-                    extension_opening_reduction: fold_root.extension_opening_reduction.as_ref(),
-                    v_flat: &fold_root.v,
-                    stage1: &fold_root.stage1,
-                    stage2: &fold_root.stage2,
-                    stage3_sumcheck_proof: fold_root.stage3_sumcheck_proof.as_ref(),
-                    setup_contribution_mode,
-                    next_fold_level_params: &first_recursive_params,
-                },
+            let root_stage2 = fold_root
+                .stage2
+                .as_intermediate()
+                .ok_or(AkitaError::InvalidProof)?;
+            let root_challenges = verify_root::<F, E, C, T, D>(
+                &proof.root,
                 setup,
                 transcript,
                 opening_points,
@@ -569,6 +562,9 @@ where
                 incidence_summary,
                 basis,
                 root_lp,
+                setup_contribution_mode,
+                Some(&first_recursive_params),
+                root_step.next_w_len,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -576,22 +572,18 @@ where
             )?;
 
             let first_level_d = first_recursive_params.ring_dimension;
-            if !fold_root
-                .stage2
-                .next_w_commitment
-                .can_decode_vec(first_level_d)
-            {
+            if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
 
             let current_state = RecursiveVerifierState {
                 opening_point: root_challenges,
-                opening: fold_root.stage2.next_w_eval(),
+                opening: root_stage2.next_w_eval(),
                 #[cfg(feature = "zk")]
                 opening_mask: zk_ext_mask_lc_at::<F, C>(
                     zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
                 ),
-                commitment: &fold_root.stage2.next_w_commitment,
+                commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
                 log_basis: first_recursive_params.log_basis,
