@@ -11,6 +11,8 @@ mod stage2;
 mod trace_table;
 
 #[cfg(test)]
+mod stage2_compact;
+#[cfg(test)]
 mod tests;
 
 pub use build::{
