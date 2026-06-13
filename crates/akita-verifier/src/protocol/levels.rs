@@ -64,7 +64,7 @@ use akita_types::{
 };
 use akita_types::{
     build_trace_claim_root, ensure_trace_stage2_supported, root_trace_block_opening,
-    trace_weight_layout_from_segment,
+    stage2_trace_coeff, trace_weight_layout_from_segment,
 };
 #[cfg(not(feature = "zk"))]
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
@@ -841,7 +841,11 @@ where
         _ => return Err(AkitaError::InvalidProof),
     };
     // The fused trace term is the `γ²` addend of the stage-2 batching challenge.
-    let trace_coeff = trace_gamma * trace_gamma;
+    let trace_coeff = stage2_trace_coeff(
+        batching_coeff,
+        trace_gamma,
+        matches!(stage_input, RootStageInput::Terminal { .. }),
+    );
     ensure_trace_stage2_supported(<C as ExtField<F>>::EXT_DEGREE)?;
     // EOR output is bound through `trace_eval_target` and per-claim `claim_scales`,
     // not a standalone on-wire `y_ring`. The stage-2 sumcheck closes the same

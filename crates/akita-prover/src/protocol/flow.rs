@@ -52,7 +52,7 @@ use akita_types::{
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    stage2_trace_coeff, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, terminal_witness_segment_layout,

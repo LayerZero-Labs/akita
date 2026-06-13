@@ -1,7 +1,8 @@
 use super::*;
 use akita_types::{
-    ensure_trace_stage2_supported, trace_terms_recursive, trace_weight_layout_from_segment,
-    PreparedOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, TraceClaim,
+    ensure_trace_stage2_supported, stage2_trace_coeff, trace_terms_recursive,
+    trace_weight_layout_from_segment, PreparedOpeningPoint, RingRelationSegmentLayout,
+    RingSubfieldEncoding, TraceClaim,
 };
 use akita_types::{generate_y, ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
@@ -435,7 +436,11 @@ where
     };
     // The fused trace term is the `γ²` addend of the stage-2 batching challenge
     // `γ` (relation = `γ⁰`, range = `γ¹`), so it adds no dedicated challenge.
-    let trace_coeff = trace_gamma * trace_gamma;
+    let trace_coeff = stage2_trace_coeff(
+        batching_coeff,
+        trace_gamma,
+        matches!(proof, FoldProofView::Terminal(_)),
+    );
     #[cfg(feature = "zk")]
     let mut trace_claim_mask = ZkR1csLinearCombination::<L>::zero();
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
