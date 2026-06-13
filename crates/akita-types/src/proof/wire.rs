@@ -155,7 +155,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_ring.serialize_with_mode(&mut writer, compress)?;
         serialize_extension_opening_reduction(
             self.extension_opening_reduction.as_ref(),
             &mut writer,
@@ -195,12 +194,10 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        let base = self.y_ring.serialized_size(compress)
-            + extension_opening_reduction_serialized_size(
-                self.extension_opening_reduction.as_ref(),
-                compress,
-            )
-            + self.v.serialized_size(compress);
+        let base = extension_opening_reduction_serialized_size(
+            self.extension_opening_reduction.as_ref(),
+            compress,
+        ) + self.v.serialized_size(compress);
         base + self
             .stage1
             .stages
@@ -241,12 +238,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
 
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.y_ring.check()?;
-        if self.y_ring.coeff_len() == 0 {
-            return Err(SerializationError::InvalidData(
-                "Akita level y_ring must contain exactly one ring element".to_string(),
-            ));
-        }
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
             #[cfg(not(feature = "zk"))]
@@ -289,12 +280,6 @@ impl<
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let y_ring = FlatRingVec::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.y_ring_coeffs,
-        )?;
         let extension_opening_reduction = deserialize_extension_opening_reduction(
             &mut reader,
             compress,
@@ -378,7 +363,6 @@ impl<
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let out = Self {
-            y_ring,
             extension_opening_reduction,
             v,
             stage1,
@@ -400,7 +384,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_rings.serialize_with_mode(&mut writer, compress)?;
         serialize_extension_opening_reduction(
             self.extension_opening_reduction.as_ref(),
             &mut writer,
@@ -417,33 +400,24 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.y_rings.serialized_size(compress)
-            + extension_opening_reduction_serialized_size(
-                self.extension_opening_reduction.as_ref(),
-                compress,
-            )
-            + {
-                #[cfg(not(feature = "zk"))]
-                {
-                    self.stage2_sumcheck.serialized_size(compress)
-                }
-                #[cfg(feature = "zk")]
-                {
-                    self.stage2_sumcheck_proof_masked.serialized_size(compress)
-                }
+        extension_opening_reduction_serialized_size(
+            self.extension_opening_reduction.as_ref(),
+            compress,
+        ) + {
+            #[cfg(not(feature = "zk"))]
+            {
+                self.stage2_sumcheck.serialized_size(compress)
             }
-            + self.final_witness.serialized_size(compress)
+            #[cfg(feature = "zk")]
+            {
+                self.stage2_sumcheck_proof_masked.serialized_size(compress)
+            }
+        } + self.final_witness.serialized_size(compress)
     }
 }
 
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.y_rings.check()?;
-        if self.y_rings.coeff_len() == 0 {
-            return Err(SerializationError::InvalidData(
-                "terminal level y_rings must contain at least one ring element".to_string(),
-            ));
-        }
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
             #[cfg(not(feature = "zk"))]
@@ -471,12 +445,6 @@ impl<
         validate: Validate,
         ctx: &TerminalLevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_rings = FlatRingVec::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.y_rings_coeffs,
-        )?;
         let extension_opening_reduction = deserialize_extension_opening_reduction(
             &mut reader,
             compress,
@@ -504,7 +472,6 @@ impl<
             &ctx.final_witness,
         )?;
         let out = Self {
-            y_rings,
             extension_opening_reduction,
             #[cfg(not(feature = "zk"))]
             stage2_sumcheck,
@@ -586,7 +553,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_rings.serialize_with_mode(&mut writer, compress)?;
         serialize_extension_opening_reduction(
             self.extension_opening_reduction.as_ref(),
             &mut writer,
@@ -627,12 +593,10 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.y_rings.serialized_size(compress)
-            + extension_opening_reduction_serialized_size(
-                self.extension_opening_reduction.as_ref(),
-                compress,
-            )
-            + self.v.serialized_size(compress)
+        extension_opening_reduction_serialized_size(
+            self.extension_opening_reduction.as_ref(),
+            compress,
+        ) + self.v.serialized_size(compress)
             + self
                 .stage1
                 .stages
@@ -673,7 +637,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
 
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.y_rings.check()?;
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
             #[cfg(not(feature = "zk"))]
@@ -716,12 +679,6 @@ impl<
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let y_rings = FlatRingVec::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.y_ring_coeffs,
-        )?;
         let extension_opening_reduction = deserialize_extension_opening_reduction(
             &mut reader,
             compress,
@@ -805,7 +762,6 @@ impl<
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let out = Self {
-            y_rings,
             extension_opening_reduction,
             v,
             stage1,
@@ -950,8 +906,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                     ));
                 }
                 // Headerless validity cannot infer the ring dimension from
-                // `y_ring`: multipoint levels store one D-sized ring per
-                // public row. Schedule-shaped deserialization and verifier
+                // `v` alone. Schedule-shaped deserialization and verifier
                 // replay own the cross-level dimension checks.
             }
             AkitaBatchedRootProof::Terminal(_) => {

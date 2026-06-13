@@ -3,7 +3,6 @@ use super::repeated_b::repeated_b_commitment_rows;
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
-use std::iter::repeat_n;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -274,7 +273,6 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     num_polys_per_commitment_group: &[usize],
-    num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
@@ -314,21 +312,22 @@ where
         }
         poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
     }
-    if num_public_outputs == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    if ring_multiplier_points.len() != num_public_outputs
+    let num_z_segments = ring_multiplier_points.len();
+    if num_z_segments == 0
         || claim_to_point.len().checked_mul(blocks_per_claim) != Some(e_folded.len())
         || row_coefficient_rings.len() != claim_to_point.len()
         || claim_to_commitment_group.len() != claim_to_point.len()
         || claim_poly_in_commitment_group.len() != claim_to_point.len()
-        || claim_to_point
-            .iter()
-            .any(|&point_idx| point_idx >= num_public_outputs)
     {
         return Err(AkitaError::InvalidProof);
     }
     let num_points = num_polys_per_commitment_group.len();
+    if claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= num_points)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let expected_inner_rows = total_poly_slots
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
@@ -383,20 +382,23 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout)?;
+    // Public-output M rows are enforced by the fused trace term, not M itself.
+    const NUM_PUBLIC_M_ROWS: usize = 0;
+    let num_rows = lp.m_row_count_for(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | public (num_public_outputs) |
-    //   D (n_d_active) | COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-    let d_start = lp.d_start(num_public_outputs)?;
-    let f_start = lp.f_start(num_public_outputs, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(num_points, num_public_outputs, m_row_layout)?;
-    let a_start = lp.a_start(num_points, num_public_outputs, m_row_layout)?;
+    // Canonical row layout: consistency (1) | D (n_d_active) |
+    //   COMMIT (F when tiered, else B) | B_inner (tiered) | A.
+    // Public openings bind through the fused trace term, not M rows.
+    let d_start = lp.d_start(NUM_PUBLIC_M_ROWS)?;
+    let f_start = lp.f_start(NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let a_start = lp.a_start(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
 
     if inner_width == 0
         || z_folded_centered.len()
-            != num_public_outputs
+            != num_z_segments
                 .checked_mul(inner_width)
                 .ok_or(AkitaError::InvalidProof)?
     {
@@ -678,66 +680,4 @@ where
         .map(|(_, _, _, digits)| digits)
         .unwrap_or_default();
     Ok((result, u_concat_digits))
-}
-
-/// Build the RHS vector `y` matching the canonical M row layout:
-/// consistency (zero) | public outputs | D (`v`) | COMMIT (`commitment_rows`) |
-/// B_inner (zeros) | A (zeros).
-///
-/// `commit_rows_per_group` is the sent-commitment row count per group
-/// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
-/// `b_inner_rows_per_group` is the inner-consistency block size per group
-/// (`0` for single-tier). The number of commitment groups is inferred from
-/// `commitment_rows.len() / commit_rows_per_group`.
-///
-/// # Errors
-///
-/// Returns an error if the supplied row slices do not match the expected row
-/// counts for the level layout.
-pub fn generate_y<F, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    commitment_rows: &[CyclotomicRing<F, D>],
-    public_outputs: &[CyclotomicRing<F, D>],
-    n_d: usize,
-    commit_rows_per_group: usize,
-    b_inner_rows_per_group: usize,
-    n_a: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore,
-{
-    if v.len() != n_d {
-        return Err(AkitaError::InvalidSize {
-            expected: n_d,
-            actual: v.len(),
-        });
-    }
-    if commit_rows_per_group == 0
-        || commitment_rows.is_empty()
-        || !commitment_rows.len().is_multiple_of(commit_rows_per_group)
-    {
-        return Err(AkitaError::InvalidSize {
-            expected: commit_rows_per_group,
-            actual: commitment_rows.len(),
-        });
-    }
-    if public_outputs.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "generate_y requires at least one public output".to_string(),
-        ));
-    }
-    let num_commitments = commitment_rows.len() / commit_rows_per_group;
-    let b_inner_total = b_inner_rows_per_group
-        .checked_mul(num_commitments)
-        .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
-    let mut out = Vec::with_capacity(
-        1 + public_outputs.len() + n_d + commitment_rows.len() + b_inner_total + n_a,
-    );
-    out.push(CyclotomicRing::<F, D>::zero());
-    out.extend_from_slice(public_outputs);
-    out.extend_from_slice(v);
-    out.extend_from_slice(commitment_rows);
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
-    Ok(out)
 }
