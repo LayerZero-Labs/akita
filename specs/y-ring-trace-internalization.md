@@ -4,8 +4,8 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-05                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Status      | in review                      |
+| PR          | #154                           |
 
 ## Summary
 
@@ -334,7 +334,7 @@ Planner: the proof-size optimum may shift slightly (every level is cheaper); re-
 
 Affected surfaces:
 
-- `akita-types`: proof structs and shapes (`src/proof/levels.rs`, `src/proof/shapes.rs`, `src/proof/relation.rs`), the RHS layout helpers, `src/proof_size.rs` and `src/layout/proof_size.rs`. The trace primitives in `src/field_reduction.rs` are reused to derive the `y`-weighting (no new primitive; the conjugate set comes from `SubfieldParams::h_exponents`).
+- `akita-types`: proof structs and shapes (`src/proof/levels.rs`, `src/proof/shapes.rs`, `src/proof/relation.rs`), the RHS layout helpers, `src/proof_size.rs` and `src/layout/proof_size.rs`. New `src/trace_weight/` (`layout`, `build`, `eval`, `stage2`, `trace_table`) owns the public `TraceWeight` table, prover `TraceTable`, and verifier closed-form `eval_trace_terms_closed`. `batched_eval_target_from_incidence` lives in `src/proof/incidence.rs`. The trace primitives in `src/field_reduction.rs` remain the algebraic anchor for `Tr_H` / `TraceOpen`.
 - `akita-prover`: `src/protocol/ring_relation.rs` + `ring_relation/relation_quotient.rs` (drop the public-output row and its quotient contribution), the stage-2 prover (`src/protocol/sumcheck/akita_stage2/`) to add the `γ²`-batched trace term and `trace_weight` table, and `src/protocol/ring_switch/finalize.rs` for the claim assembly.
 - `akita-verifier`: `src/protocol/levels.rs` and `levels/recursive.rs` (drop the `y_ring` absorb + external trace check, derive `trace_coeff = γ²` after witness binding, feed the trace term), `src/stages/stage2.rs` (`expected_output_claim`, `input_claim`, and the ZK final relation gain the trace addend), `src/protocol/ring_switch.rs` (relation-claim assembly without the public-output row).
 - `akita-planner` / `akita-config`: re-score and regenerate shipped schedule tables.
@@ -412,10 +412,16 @@ and commitment `\mathbf{v}`.
 
 | Role | Rust |
 |------|------|
-| Public block weights + inner packed points for `TraceWeight` | `TracePublicWeights`, `TraceClaim` |
+| `trace_weight` module | `akita-types/src/trace_weight/{layout,build,eval,stage2,trace_table}.rs` |
+| Prover trace table (`K=1` sparse, `K>1` dense) | `TraceTable`, `build_trace_table_scaled` |
+| Public block weights + verifier closed terms | `TracePublicWeights`, `TraceTerm`, `TraceClaim` |
 | Scalar bound by the fused trace term | `trace_eval_target` (equals `opening` on ordinary paths, `final_claim` on EOR) |
-| `trace_coeff` (`γ²`) times the trace target | `trace_opening_claim` via `trace_input_claim(trace_coeff, eval_target)` |
-| Batched root eval target from incidence | `batched_eval_target_from_incidence` |
+| Fused trace coefficient | `stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal)` |
+| `trace_coeff` (`γ²`) times the trace target | `trace_opening_claim = trace_coeff * trace_eval_target` |
+| Verifier final-point trace MLE | `eval_trace_terms_closed` |
+| Root / recursive trace claim assembly | `build_trace_claim_root`, `build_trace_claim_recursive` |
+| Batched root eval target from incidence | `batched_eval_target_from_incidence` in `proof/incidence.rs` |
+| Per-claim root incidence iteration | shared driver for `trace_public_weights_root_terms` and `trace_terms_root` |
 
 ## References
 
@@ -428,7 +434,6 @@ and commitment `\mathbf{v}`.
 - Fold producing `y_ring = sum_j b_j · e_folded_j`, `e_folded_j = <a, block_j>`: `crates/akita-prover/src/backend/recursive_witness.rs:179-211`.
 - Plane-major `e_hat` column layout (`col = offset_e + h · num_blocks + j`): `crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`; `z_first`: `crates/akita-types/src/proof/ring_relation.rs:17-19`.
 - Gadget powers `g_open[h] = base^h`: `crates/akita-types/src/layout/digit_math.rs:17-26`.
-- Verifier level + external trace check: `crates/akita-verifier/src/protocol/levels/recursive.rs:313-357`.
-- Stage-2 fused oracle: `crates/akita-verifier/src/stages/stage2.rs:433-461,464-533`.
+- Verifier level + fused trace claim: `crates/akita-verifier/src/protocol/levels.rs`, `levels/recursive.rs`; stage-2 oracle: `crates/akita-verifier/src/stages/stage2.rs`.
 - Proof sizing: `crates/akita-types/src/proof_size.rs:72-104`.
 - Notation: `specs/w-to-e-notation.md`; trace cutover lineage: `specs/extension-field-trace-cutover.md`, `specs/extension-field-opening-batching.md`.
