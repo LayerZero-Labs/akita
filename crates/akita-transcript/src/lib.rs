@@ -14,6 +14,15 @@ pub use label::Label;
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
 pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 
+/// Preview-only transcript access for prover-side Fiat-Shamir grinding.
+pub trait GrindTranscript<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Derive challenge bytes after a hypothetical absorb, without mutating replay state.
+    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8>;
+}
+
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for

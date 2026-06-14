@@ -1,7 +1,7 @@
 //! Spongefish-backed Akita transcript substrate.
 
 use crate::Label;
-use crate::Transcript;
+use crate::{GrindTranscript, Transcript};
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
 use spongefish::{
@@ -221,6 +221,35 @@ where
         }
         out
     }
+
+    /// Preview squeeze output after hypothetically absorbing `absorb_payload`,
+    /// without advancing the live transcript (prover-side fold grind probing).
+    pub fn preview_challenge_bytes_after_absorb(
+        &self,
+        absorb_payload: &[u8],
+        len: usize,
+    ) -> Vec<u8> {
+        let TranscriptState::Prover(state) = self
+            .state
+            .as_ref()
+            .expect("AkitaTranscript must be instance-bound before use")
+        else {
+            panic!("preview_challenge_bytes_after_absorb requires a prover transcript");
+        };
+        let mut sponge = state.duplex_sponge_state.clone();
+        let framed = FramedBytes {
+            bytes: absorb_payload,
+        };
+        sponge.absorb(framed.encode().as_ref());
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let mut chunk = [0u8; SQUEEZE_CHUNK_LEN];
+            sponge.squeeze(chunk.as_mut());
+            let take = (len - out.len()).min(chunk.len());
+            out.extend_from_slice(&chunk[..take]);
+        }
+        out
+    }
 }
 
 impl<F, S> Transcript<F> for AkitaTranscript<F, S>
@@ -258,6 +287,15 @@ where
 
     fn challenge_bytes(&mut self, _label: &[u8], len: usize) -> Vec<u8> {
         self.squeeze_bytes(crate::label!("compat_squeeze_bytes"), len)
+    }
+}
+
+impl<F> GrindTranscript<F> for AkitaTranscript<F, TranscriptSponge>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
+        AkitaTranscript::preview_challenge_bytes_after_absorb(self, absorb_payload, len)
     }
 }
 

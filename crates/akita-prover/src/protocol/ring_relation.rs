@@ -12,9 +12,10 @@ use crate::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_folding_challenges, stage1_fold_challenge_labels, Challenges, IntegerChallenge,
-    SparseChallenge,
+    preview_folding_challenges, sample_folding_challenges, stage1_fold_challenge_labels,
+    Challenges, IntegerChallenge, SparseChallenge,
 };
+use akita_transcript::GrindTranscript;
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
@@ -92,7 +93,7 @@ fn sample_fold_decompose_witness<F, P, T, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     P: AkitaPolyOps<F, D>,
-    T: Transcript<F>,
+    T: Transcript<F> + GrindTranscript<F>,
 {
     let threshold = fold_linf_inf_threshold(lp, num_claims)?;
     let max_nonce = match lp.fold_linf_threshold_policy() {
@@ -101,7 +102,7 @@ where
     };
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     for nonce in 0..max_nonce {
-        let challenges = sample_folding_challenges::<F, T, D>(
+        let challenges = preview_folding_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
             num_claims,
@@ -117,6 +118,15 @@ where
             lp,
         )?;
         if u128::from(witness.centered_inf_norm) <= threshold {
+            let challenges = sample_folding_challenges::<F, T, D>(
+                transcript,
+                lp.num_blocks,
+                num_claims,
+                &lp.stage1_config,
+                &lp.fold_challenge_shape,
+                stage1_fold_challenge_labels(),
+                nonce,
+            )?;
             return Ok((witness, challenges, nonce));
         }
     }
@@ -493,7 +503,7 @@ impl RingRelationProver {
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField,
-        T: Transcript<F>,
+        T: Transcript<F> + GrindTranscript<F>,
         P: AkitaPolyOps<F, D>,
         B: DigitRowsComputeBackend<F>,
     {
