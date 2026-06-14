@@ -95,6 +95,22 @@ impl ChallengeShape {
             Self::Tensor => cap.saturating_mul(cap),
         }
     }
+
+    /// Effective per-logical-block challenge energy `ρ2` for this shape.
+    ///
+    /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use the
+    /// family's [`SparseChallengeConfig::challenge_energy_rho2`]; tensor folds
+    /// expose `ρ2(α)·ρ2(β)` for future descriptor binding. The first fold-linf
+    /// digit-count cutover sizes only flat certified families from `ρ2` directly.
+    #[inline]
+    #[must_use]
+    pub fn effective_energy_rho2(&self, cfg: &SparseChallengeConfig) -> u128 {
+        let rho2 = cfg.challenge_energy_rho2();
+        match self {
+            Self::Flat => rho2,
+            Self::Tensor => rho2.saturating_mul(rho2),
+        }
+    }
 }
 
 /// Factored tensor sparse challenges for one folding round.

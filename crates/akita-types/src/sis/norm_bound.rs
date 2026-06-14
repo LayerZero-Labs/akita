@@ -249,6 +249,163 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
+/// Whether [`num_digits_fold`] sizes `K` from the rigorous sub-Gaussian `t*`
+/// (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoldLinfThresholdPolicy {
+    /// Flat `ExactShell` at `D = 64` or `Uniform{[-1,1]}` at `D ∈ {128, 256}`.
+    CertifiedFlat,
+    /// Tensor folds, `BoundedL1Norm`, and uncertified flat presets.
+    DeterministicBetaInf,
+}
+
+/// Select the fold-linf threshold policy for a stage-1 sparse family at ring
+/// degree `ring_dimension` with the given fold-challenge shape.
+#[inline]
+#[must_use]
+pub fn fold_linf_threshold_policy(
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    ring_dimension: usize,
+) -> FoldLinfThresholdPolicy {
+    if !matches!(fold_shape, TensorChallengeShape::Flat) {
+        return FoldLinfThresholdPolicy::DeterministicBetaInf;
+    }
+    match stage1_config {
+        SparseChallengeConfig::ExactShell { .. } if ring_dimension == 64 => {
+            FoldLinfThresholdPolicy::CertifiedFlat
+        }
+        SparseChallengeConfig::Uniform { nonzero_coeffs, .. }
+            if (ring_dimension == 128 || ring_dimension == 256)
+                && nonzero_coeffs.iter().all(|c| c.unsigned_abs() == 1) =>
+        {
+            FoldLinfThresholdPolicy::CertifiedFlat
+        }
+        _ => FoldLinfThresholdPolicy::DeterministicBetaInf,
+    }
+}
+
+/// Rational ceiling for `ln(2)` used to bound natural logarithms without floats.
+const LN2_CEIL_NUM: u128 = 71;
+const LN2_CEIL_DEN: u128 = 100;
+
+/// Conservative integer ceiling for `ln(x)` with `x >= 1`, via
+/// `ln(x) <= ceil(log2 x) · ln(2)`.
+#[inline]
+fn ceil_natural_log(x: u128) -> u128 {
+    if x <= 1 {
+        return 0;
+    }
+    let ceil_log2 = 128u32.saturating_sub((x - 1).leading_zeros()) as u128;
+    ceil_log2
+        .saturating_mul(LN2_CEIL_NUM)
+        .div_ceil(LN2_CEIL_DEN)
+}
+
+/// Conservative integer for `ln(4·n_level) + t_level·ln(1/p)` with
+/// `p = p_num / p_den` the operator-norm acceptance probability (`p = 1` when
+/// the cap does not bind).
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `n_level == 0`, `p_den == 0`, or
+/// `p_num > p_den`.
+pub fn fold_linf_ln_term(
+    n_level: u128,
+    t_level: u128,
+    p_num: u128,
+    p_den: u128,
+) -> Result<u128, AkitaError> {
+    if n_level == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_linf_ln_term: n_level must be positive".to_string(),
+        ));
+    }
+    if p_den == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_linf_ln_term: p_den must be positive".to_string(),
+        ));
+    }
+    if p_num > p_den {
+        return Err(AkitaError::InvalidSetup(
+            "fold_linf_ln_term: acceptance probability exceeds 1".to_string(),
+        ));
+    }
+    let ln_4n = ceil_natural_log(4u128.saturating_mul(n_level));
+    let ln_inv_p = if p_num >= p_den {
+        0
+    } else {
+        let ratio = p_den.div_ceil(p_num);
+        t_level.saturating_mul(ceil_natural_log(ratio))
+    };
+    Ok(ln_4n.saturating_add(ln_inv_p))
+}
+
+/// Squared sub-Gaussian fold-response threshold `t*²` from the rigorous bound in
+/// `specs/fold-linf-rejection.md`:
+///
+/// ```text
+/// t*² = 2 · T_level · ρ2 · σ_inf² · ln_term
+/// ```
+///
+/// `ln_term` is a conservative integer for `ln(4·N_level) + T_level·ln(1/p)`.
+/// The real square root is taken only at digit-sizing boundaries.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when any argument is zero or the product
+/// overflows `u128`.
+pub fn fold_response_linf_threshold_sq(
+    t_level: u128,
+    rho2: u128,
+    sigma_inf_sq: u128,
+    ln_term: u128,
+) -> Result<u128, AkitaError> {
+    if t_level == 0 || rho2 == 0 || sigma_inf_sq == 0 || ln_term == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_response_linf_threshold_sq: arguments must be positive".to_string(),
+        ));
+    }
+    let two = 2u128;
+    two.checked_mul(t_level)
+        .and_then(|v| v.checked_mul(rho2))
+        .and_then(|v| v.checked_mul(sigma_inf_sq))
+        .and_then(|v| v.checked_mul(ln_term))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "fold_response_linf_threshold_sq: t*² overflows u128".to_string(),
+            )
+        })
+}
+
+/// Integer ceiling `⌈√x⌉` for `x > 0` without floating point.
+#[inline]
+pub fn isqrt_ceil(x: u128) -> u128 {
+    if x <= 1 {
+        return 1;
+    }
+    let root = integer_sqrt(x);
+    if root.saturating_mul(root) < x {
+        root.saturating_add(1)
+    } else {
+        root
+    }
+}
+
+#[inline]
+fn integer_sqrt(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    let mut x0 = n / 2;
+    let mut x1 = (x0 + n / x0) / 2;
+    while x1 < x0 {
+        x0 = x1;
+        x1 = (x0 + n / x0) / 2;
+    }
+    x0
+}
+
 // --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------
 //
 // A-role table lookup uses Lemma 7 plus [`l2_sq_from_linf`] (see
@@ -340,5 +497,77 @@ mod tests {
             envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
             "derived bucket ceilings L∞ before squaring",
         );
+    }
+
+    #[test]
+    fn fold_response_linf_threshold_sq_monotone_and_clamped_inputs() {
+        let base = fold_response_linf_threshold_sq(16, 78, 1, 24).unwrap();
+        assert!(fold_response_linf_threshold_sq(32, 78, 1, 24).unwrap() >= base);
+        assert!(fold_response_linf_threshold_sq(16, 78, 4, 24).unwrap() >= base);
+        assert!(fold_response_linf_threshold_sq(0, 78, 1, 24).is_err());
+    }
+
+    #[test]
+    fn fold_linf_threshold_policy_certifies_production_flat_families() {
+        use akita_challenges::TensorChallengeShape;
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
+        assert_eq!(
+            fold_linf_threshold_policy(&shell, TensorChallengeShape::Flat, 64),
+            FoldLinfThresholdPolicy::CertifiedFlat,
+        );
+        let uni = SparseChallengeConfig::Uniform {
+            weight: 31,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert_eq!(
+            fold_linf_threshold_policy(&uni, TensorChallengeShape::Flat, 128),
+            FoldLinfThresholdPolicy::CertifiedFlat,
+        );
+        assert_eq!(
+            fold_linf_threshold_policy(&uni, TensorChallengeShape::Tensor, 128),
+            FoldLinfThresholdPolicy::DeterministicBetaInf,
+        );
+        assert_eq!(
+            fold_linf_threshold_policy(
+                &SparseChallengeConfig::BoundedL1Norm,
+                TensorChallengeShape::Flat,
+                32
+            ),
+            FoldLinfThresholdPolicy::DeterministicBetaInf,
+        );
+    }
+
+    #[test]
+    fn fold_linf_ln_term_p_one_matches_ln_4n() {
+        let term_16 = fold_linf_ln_term(1 << 16, 16, 1, 1).unwrap();
+        assert!((13..=15).contains(&term_16));
+        let term_max = fold_linf_ln_term(1u128 << 32, 16, 1, 1).unwrap();
+        assert!((24..=26).contains(&term_max));
+    }
+
+    #[test]
+    fn threshold_t_star_is_below_omega_envelope_at_production_shell() {
+        let challenge = FoldChallengeNorms {
+            infinity_norm: 2,
+            l1_norm: 54,
+        };
+        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let tight_beta = fold_witness_beta(4, 1, challenge, witness).unwrap();
+        let omega_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
+        assert!(tight_beta < omega_envelope);
+        let ln_term = fold_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
+        let t_sq = fold_response_linf_threshold_sq(16, 78, 1, ln_term).unwrap();
+        let t = isqrt_ceil(t_sq);
+        assert!(
+            t < omega_envelope,
+            "t* = {t} omega-envelope = {omega_envelope}"
+        );
+        // Digit sizing will use `min(tight_beta, t*)`; here `t*` exceeds the tight bound.
+        assert_eq!(t.min(tight_beta), tight_beta);
     }
 }
