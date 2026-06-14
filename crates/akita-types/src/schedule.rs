@@ -15,6 +15,60 @@ pub struct AkitaScheduleInputs {
     pub current_w_len: usize,
 }
 
+/// Schedule facts for one fold level.
+#[derive(Debug, Clone)]
+pub struct ExecutionSchedule {
+    /// Fold level, where `0` is the root.
+    pub level: usize,
+    /// Witness length expected before this fold runs.
+    pub current_w_len: usize,
+    /// Active level parameters for this fold.
+    pub params: LevelParams,
+    /// Successor parameters for the next committed level, or a log-basis stub
+    /// for the terminal direct witness.
+    pub next_params: LevelParams,
+    /// Witness length expected after this fold's ring-switch relation builds
+    /// the next `w`.
+    pub next_w_len: usize,
+    /// Whether this fold hands off to the terminal direct witness.
+    pub is_terminal: bool,
+}
+
+impl ExecutionSchedule {
+    /// Validate the witness length entering this fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime witness length does not match the
+    /// planner schedule.
+    pub fn validate_current_w_len(&self, actual_current_w_len: usize) -> Result<(), AkitaError> {
+        if actual_current_w_len != self.current_w_len {
+            return Err(AkitaError::InvalidSetup(format!(
+                "scheduled fold level {} did not match runtime state: \
+                 expected_w_len={}, actual_w_len={}",
+                self.level, self.current_w_len, actual_current_w_len
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate the next witness length produced by this fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the post-ring-switch witness length does not match
+    /// the planner schedule.
+    pub fn validate_next_w_len(&self, actual_next_w_len: usize) -> Result<(), AkitaError> {
+        if actual_next_w_len != self.next_w_len {
+            return Err(AkitaError::InvalidSetup(format!(
+                "scheduled fold level {} produced unexpected next-w length: expected={}, actual={actual_next_w_len}",
+                self.level, self.next_w_len
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Validate ring-switch opening-point routing against a level layout.
 ///
 /// # Errors
@@ -417,6 +471,30 @@ impl Schedule {
         self.fold_steps().count()
     }
 
+    /// Resolve one fold's execution schedule from the static schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `level` is not a fold step or if the scheduled
+    /// successor step cannot provide next-level params.
+    pub fn get_execution_schedule(&self, level: usize) -> Result<ExecutionSchedule, AkitaError> {
+        let Some(Step::Fold(step)) = self.steps.get(level) else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule is missing fold step at level {level}"
+            )));
+        };
+        let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
+        let next_level_params = scheduled_next_level_params(self, level + 1)?;
+        Ok(ExecutionSchedule {
+            level,
+            current_w_len: step.current_w_len,
+            params: step.params.clone(),
+            next_params: next_level_params,
+            next_w_len: step.next_w_len,
+            is_terminal,
+        })
+    }
+
     /// Witness length (field elements) entering the first step, or `None`
     /// when the schedule has no steps.
     pub fn initial_w_len(&self) -> Option<usize> {
@@ -592,37 +670,6 @@ pub fn scheduled_next_level_params(
             "schedule is missing successor step".to_string(),
         )),
     }
-}
-
-/// Resolve the current fold params and successor params for a scheduled fold.
-///
-/// This validates that the runtime witness length and log-basis agree with the
-/// selected planner schedule before deriving the next level params.
-///
-/// # Errors
-///
-/// Returns an error if `level` is not a fold step or if the runtime state does
-/// not match the scheduled fold.
-pub fn scheduled_fold_execution(
-    schedule: &Schedule,
-    level: usize,
-    inputs: AkitaScheduleInputs,
-    current_log_basis: u32,
-) -> Result<(LevelParams, LevelParams), AkitaError> {
-    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(AkitaError::InvalidSetup(format!(
-            "schedule is missing fold step at level {level}"
-        )));
-    };
-    if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(AkitaError::InvalidSetup(format!(
-            "scheduled recursive level {level} did not match runtime state: \
-             expected_w_len={}, actual_w_len={}, expected_log_basis={}, actual_log_basis={}",
-            step.current_w_len, inputs.current_w_len, step.params.log_basis, current_log_basis
-        )));
-    }
-    let next_level_params = scheduled_next_level_params(schedule, level + 1)?;
-    Ok((step.params.clone(), next_level_params))
 }
 
 #[cfg(test)]

@@ -21,10 +21,9 @@ use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
 #[tracing::instrument(skip_all, name = "prepare_fold_data")]
 fn prepare_fold_data<'a, F, L, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, L>,
-    next_fold_level_params: Option<&'a LevelParams>,
     transcript: &mut T,
     current_state: &'a RecursiveVerifierState<'a, F, L>,
-    lp: &'a LevelParams,
+    scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -39,6 +38,8 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
+    let lp = &scheduled.params;
+    let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
     let v_typed = proof.v_as_ring_slice::<D>()?;
@@ -197,7 +198,6 @@ fn verify_suffix<'a, F, L, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    num_vars: usize,
     mut current_state: RecursiveVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
@@ -214,30 +214,17 @@ where
 {
     for (offset, step) in steps.iter().enumerate() {
         let level_index = offset + 1;
-        let Some(Step::Fold(scheduled_step)) = schedule.steps.get(level_index) else {
-            return Err(AkitaError::InvalidSetup(format!(
-                "schedule is missing fold step at level {level_index}"
-            )));
-        };
-        let next_w_len = scheduled_step.next_w_len;
-        let schedule_inputs = AkitaScheduleInputs {
-            num_vars,
-            level: level_index,
-            current_w_len: current_state.w_len,
-        };
-        let (current_lp, next_params) = scheduled_fold_execution(
-            schedule,
-            level_index,
-            schedule_inputs,
-            current_state.log_basis,
-        )?;
-        let successor_is_fold = matches!(schedule.steps.get(level_index + 1), Some(Step::Fold(_)));
+        let scheduled = schedule.get_execution_schedule(level_index)?;
+        scheduled.validate_current_w_len(current_state.w_len)?;
+        let current_lp = &scheduled.params;
+        let next_params = &scheduled.next_params;
+        let next_w_len = scheduled.next_w_len;
         let level_d = current_lp.ring_dimension;
 
         match step {
             AkitaLevelProof::Intermediate { .. } => {
                 let level_proof = step;
-                if !successor_is_fold {
+                if scheduled.is_terminal {
                     return Err(AkitaError::InvalidProof);
                 }
                 if !current_state.commitment.can_decode_vec(level_d)
@@ -249,10 +236,9 @@ where
                 let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                     let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         level_proof,
-                        Some(&next_params),
                         transcript,
                         &current_state,
-                        &current_lp,
+                        &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -278,14 +264,12 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 let computed_next_w_len =
-                    w_ring_element_count_with_counts::<F>(&current_lp, 1, 1, 1, 1)?
+                    w_ring_element_count_with_counts::<F>(current_lp, 1, 1, 1, 1)?
                         .checked_mul(level_d)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("next witness length overflow".to_string())
                         })?;
-                if computed_next_w_len != next_w_len {
-                    return Err(AkitaError::InvalidProof);
-                }
+                scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = RecursiveVerifierState {
                     opening_point: challenges,
                     opening: level_proof.next_w_eval(),
@@ -296,7 +280,6 @@ where
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
-                    log_basis: next_params.log_basis,
                 };
             }
             AkitaLevelProof::Terminal { .. } => {
@@ -314,10 +297,9 @@ where
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                     let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         terminal_proof,
-                        None,
                         transcript,
                         &current_state,
-                        &current_lp,
+                        &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                         #[cfg(feature = "zk")]
@@ -335,10 +317,9 @@ where
                         zk_relations,
                     )
                 })?;
-                // Invariant: a terminal step implies the scheduled successor is
-                // a Direct step. The trailing-Direct witness shape is already
-                // validated in `verify_folded_batched_proof` before this loop.
-                if successor_is_fold {
+                // The trailing-Direct witness shape is already validated in
+                // `verify_folded_batched_proof` before this loop.
+                if !scheduled.is_terminal {
                     return Err(AkitaError::InvalidProof);
                 }
             }
@@ -508,14 +489,12 @@ where
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
-                log_basis: first_recursive_params.log_basis,
             };
             verify_suffix::<F, C, T>(
                 &proof.steps,
                 setup,
                 transcript,
                 schedule,
-                incidence_summary.num_vars(),
                 current_state,
                 setup_contribution_mode,
                 #[cfg(feature = "zk")]
