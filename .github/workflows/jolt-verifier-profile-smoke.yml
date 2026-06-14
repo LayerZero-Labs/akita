@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   jolt-verifier-profile-smoke:
-    name: Glue blob format + artifact/host compile (no Jolt trace)
+    name: check
     runs-on: ubuntu-latest
     defaults:
       run:
