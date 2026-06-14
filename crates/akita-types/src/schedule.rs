@@ -113,10 +113,12 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 
 /// Public runtime key that selects a concrete root schedule context.
 ///
-/// This is intentionally narrower than a full schedule table entry: it records
-/// only the public inputs that pick a root plan, not the resulting plan data.
+/// Intentionally narrower than a full schedule table entry: only the public
+/// inputs that pick a root plan, not the resulting plan data.
 ///
-/// Opening batches always use one shared point and one commitment group.
+/// Opening batches use one shared evaluation point. The folded production path
+/// currently assumes one commitment group (one `CommittedOpenings` / one
+/// `CommittedPolynomials` entry bundling `N` polynomials).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
@@ -155,14 +157,18 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Build a schedule lookup key from normalized opening opening_batch.
+    /// Build a schedule lookup key from a validated [`OpeningBatch`].
     ///
-    /// Each opening point cites exactly one commitment, so the planner-facing
-    /// projection carries only the per-point arities.
+    /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
+    /// `num_claims`. Assumes the batch was already validated at the claims
+    /// boundary (`OpeningBatchInput::validate` or an infallible constructor).
+    ///
+    /// Folded schedule lookup currently treats every batch as one commitment
+    /// group; see `akita_planner::generated_schedule_lookup_key`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the opening-batch routing tables are malformed.
+    /// Returns an error if a projected count does not fit the lookup key.
     pub fn new_from_opening_batch(opening_batch: &OpeningBatch) -> Result<Self, AkitaError> {
         let num_t_vectors = opening_batch.num_polynomials();
         Ok(Self::new(

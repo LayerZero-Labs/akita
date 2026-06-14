@@ -1,9 +1,18 @@
 //! Normalized single-point opening batches.
 //!
-//! A public batch has one shared opening point, padded by the layout when the
-//! protocol prepares a fold. Each claimed polynomial opening is represented by
-//! an [`OpeningClaimSlot`]. Multiple slots at that one point are combined with
-//! the existing gamma batching row sampled by [`sample_public_row_coefficients`].
+//! # Protocol contract
+//!
+//! A batched prove/verify call uses exactly **one shared opening point** for all
+//! claims. Multipoint incidence (different evaluation points within one batch)
+//! is removed; callers must issue separate proofs or batch at a single point.
+//!
+//! Each claimed polynomial opening is an [`OpeningClaimSlot`]. Slots at that
+//! point are gamma-batched via [`sample_public_row_coefficients`]. The
+//! production folded path expects **one commitment object** bundling `N`
+//! polynomials (`OpeningBatch::same_point`); multiple commitment objects at the
+//! same point are not yet supported on folded recursion.
+//!
+//! Layout preparation may pad the shared point to the root fold arity.
 
 use super::VerifierClaims;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};

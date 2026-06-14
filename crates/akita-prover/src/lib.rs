@@ -47,11 +47,11 @@ pub use protocol::{
     RingSwitchOutput,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
-/// One commitment plus the polynomials it bundles, opened at one point.
+/// One PCS commitment and the polynomials it bundles, all opened at the batch's
+/// shared opening point.
 ///
-/// `polynomials` is the exact bundle committed together by the prover
-/// commitment API; `commitment` and `hint` are the corresponding outputs for
-/// that bundle. Each opening point cites exactly one `CommittedPolynomials`.
+/// `polynomials` is the exact bundle committed by the prover commitment API;
+/// `commitment` and `hint` are the corresponding outputs for that bundle.
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
     /// Polynomials addressable by claim `poly_idx` values at this point.
@@ -69,7 +69,10 @@ impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
     }
 }
 
-/// Batched prover input: one shared opening point plus committed bundles.
+/// Batched prover input: one shared opening point plus commitment bundles.
+///
+/// Mirror of [`akita_types::VerifierClaims`]: `(shared_point, Vec<CommittedPolynomials>)`.
+/// See `akita_types::proof::scheme` for the single-point batching contract.
 pub type ProverClaims<'a, F, P, C, H> =
     (OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>);
 

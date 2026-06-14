@@ -107,13 +107,13 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
         &'a self,
         openings: &'a [F; 1],
     ) -> VerifierClaims<'a, F, RingCommitment<F, D>> {
-        vec![(
+        (
             &self.opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &self.commitment,
-            },
-        )]
+            }],
+        )
     }
 
     fn validate_blob_header_bounds(
@@ -571,7 +571,6 @@ mod tests {
         let seed = AkitaSetupSeed {
             max_num_vars: 8,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: TEST_D,
             max_setup_len: 2,
             public_matrix_seed,

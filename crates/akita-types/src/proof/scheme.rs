@@ -7,20 +7,35 @@ use akita_transcript::Transcript;
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = &'a [F];
 
-/// Commitment plus its claimed openings at one opening point.
+/// One PCS commitment and the claimed openings of its bundled polynomials.
 ///
-/// Every opening point cites exactly one commitment. The commitment may bundle
-/// multiple polynomials, and `openings[i]` is the claimed evaluation of the
-/// i-th polynomial in that bundle at the opening point.
+/// `openings[i]` is the claimed evaluation of `polynomials[i]` at the batch's
+/// shared opening point. A batched call may cite multiple `CommittedOpenings`
+/// entries (multiple commitment objects), but every slot opens at the same
+/// point; multipoint openings (different points per claim) are not supported.
 #[derive(Debug, Clone)]
 pub struct CommittedOpenings<'a, F, C> {
-    /// Claimed openings for the bundled polynomials.
+    /// Claimed evaluations for the bundled polynomials at the shared point.
     pub openings: &'a [F],
-    /// Commitment for `openings`.
+    /// Commitment covering `openings`.
     pub commitment: &'a C,
 }
 
-/// Batched verifier input: one shared opening point plus committed bundles.
+/// Batched verifier input: one shared opening point plus commitment bundles.
+///
+/// Shape: `(shared_point, vec![CommittedOpenings, ...])`.
+///
+/// # Protocol contract
+///
+/// - **Single opening point.** All claims in the batch share `shared_point`.
+///   To open the same polynomials at different points, run separate prove/verify
+///   calls.
+/// - **Folded batched prove/verify (production path).** One commitment object
+///   bundling `N` polynomials (`vec![CommittedOpenings { openings: N, .. }]`
+///   with `N > 1` or multiple slots in one bundle). This is the shape exercised
+///   by E2E tests and shipped planner tables.
+/// - **Multiple commitment objects at one point** are representable in this
+///   type but not yet supported on the folded recursion path (future work).
 pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>);
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
@@ -48,7 +63,8 @@ where
 
     /// Verify a fused batched opening proof at one shared opening point.
     ///
-    /// The root layout is derived deterministically from the opening points.
+    /// The root layout and Fiat-Shamir batching are derived from the normalized
+    /// [`OpeningBatch`] built from `claims` (single shared point, no multipoint).
     ///
     /// # Errors
     ///
