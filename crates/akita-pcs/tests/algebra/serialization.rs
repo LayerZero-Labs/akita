@@ -49,7 +49,6 @@ fn serialization_round_trip_ext() {
 #[test]
 fn serialization_round_trip_fp_ext4() {
     type F = Fp32<251>;
-    type F2 = FpExt2<F, NR>;
     type F4 = FpExt4<F>;
 
     let val = F4::new([

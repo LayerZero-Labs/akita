@@ -2,7 +2,7 @@ use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_field::{
-    CanonicalField, FieldCore, Fp32, FpExt2, FpExt2Config, Invertible, PseudoMersenneField,
+    CanonicalField, FieldCore, Fp32, FpExt2Config, Invertible, PseudoMersenneField,
 };
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
