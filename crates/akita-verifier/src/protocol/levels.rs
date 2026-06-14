@@ -12,7 +12,9 @@ mod zk;
 use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage1::{
+    derive_stage1_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
+};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
@@ -420,6 +422,7 @@ where
 struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
     m_row_layout: MRowLayout,
+    fold_grind_nonce: u32,
     v: Vec<CyclotomicRing<F, D>>,
     commitment_rows: &'a [CyclotomicRing<F, D>],
     row_coefficients: Vec<E>,
@@ -644,6 +647,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    validate_fold_grind_nonce(prepared.lp, prepared.fold_grind_nonce)?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         &prepared.v,
@@ -651,7 +655,7 @@ where
         prepared.opening_batch.num_claims(),
         prepared.lp,
         prepared.m_row_layout,
-        0,
+        prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(

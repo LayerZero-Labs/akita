@@ -26,6 +26,7 @@ use akita_types::eval_poly;
 use akita_types::{
     combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
     stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    sis::{FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS},
     AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
 };
 
@@ -34,6 +35,29 @@ type Stage1VerifyOutput<E> = (Vec<E>, ZkR1csLinearCombination<E>);
 
 #[cfg(not(feature = "zk"))]
 type Stage1VerifyOutput<E> = Vec<E>;
+
+/// Reject malformed fold grind nonces before challenge replay.
+///
+/// Deterministic `β_inf` policies forbid reroll (`nonce = 0` only). Certified-flat
+/// policies accept `nonce < MAX_FOLD_GRIND_ATTEMPTS`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
+pub(crate) fn validate_fold_grind_nonce(
+    lp: &LevelParams,
+    fold_grind_nonce: u32,
+) -> Result<(), AkitaError> {
+    match lp.fold_linf_threshold_policy() {
+        FoldLinfThresholdPolicy::DeterministicBetaInf if fold_grind_nonce != 0 => {
+            Err(AkitaError::InvalidProof)
+        }
+        FoldLinfThresholdPolicy::CertifiedFlat if fold_grind_nonce >= MAX_FOLD_GRIND_ATTEMPTS => {
+            Err(AkitaError::InvalidProof)
+        }
+        _ => Ok(()),
+    }
+}
 
 /// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
 /// returned [`Challenges`] is either `Flat` (per-block sparse) or

@@ -162,9 +162,11 @@ where
             )
         };
 
+    let fold_grind_nonce = proof.fold_grind_nonce();
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
+        fold_grind_nonce,
         v: v_typed.to_vec(),
         commitment_rows: commitment_u,
         row_coefficients,
