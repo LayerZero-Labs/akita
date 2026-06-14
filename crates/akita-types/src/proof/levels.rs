@@ -779,8 +779,10 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// Optional extension-opening reduction payload. `None` until the
     /// extension-opening reduction cutover is wired into the root path.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Aggregated `v = Σ_ell D_ell · e_hat_ell`.
+    /// Aggregated `v = D · ŵ`.
     pub v: FlatRingVec<F>,
+    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+    pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
@@ -824,10 +826,10 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         let AkitaLevelProof::Intermediate {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,
-            ..
         } = root
         else {
             panic!("AkitaBatchedRootProof::new called with terminal level proof");
@@ -835,6 +837,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         Self::Fold(AkitaBatchedFoldRoot {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,

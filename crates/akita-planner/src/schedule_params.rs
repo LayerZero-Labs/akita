@@ -1007,7 +1007,7 @@ pub fn find_schedule(
                     next_w_len,
                     z_vectors,
                     MRowLayout::WithDBlock,
-                    false,
+                    true,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {

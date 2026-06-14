@@ -249,6 +249,9 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
+/// Maximum Fiat-Shamir rerolls per committed fold level under certified-flat policy.
+pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
+
 /// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -985,7 +985,7 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
-                    false,
+                    true,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"

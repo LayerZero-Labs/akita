@@ -645,6 +645,8 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             compress,
         )?;
         self.v.serialize_with_mode(&mut writer, compress)?;
+        self.fold_grind_nonce
+            .serialize_with_mode(&mut writer, compress)?;
         for stage in &self.stage1.stages {
             #[cfg(not(feature = "zk"))]
             stage
@@ -687,6 +689,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             self.extension_opening_reduction.as_ref(),
             compress,
         ) + self.v.serialized_size(compress)
+            + self.fold_grind_nonce.serialized_size(compress)
             + self
                 .stage1
                 .stages
@@ -781,6 +784,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let fold_grind_nonce =
+            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -859,6 +864,7 @@ impl<
         let out = Self {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,
