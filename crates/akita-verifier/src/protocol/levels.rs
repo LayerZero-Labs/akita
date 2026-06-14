@@ -55,12 +55,12 @@ use akita_types::{
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
     trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CommitmentRouting,
-    ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout,
-    OpeningBatch, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding,
-    Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, TraceClaim,
+    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, OpeningBatch,
+    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, Step, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -442,7 +442,6 @@ struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     commitment_rows: &'a [CyclotomicRing<F, D>],
     row_coefficients: Vec<E>,
     opening_batch: OpeningBatch,
-    commitment_routing: CommitmentRouting,
     ring_opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     w_len: usize,
@@ -697,7 +696,6 @@ where
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
         prepared.opening_batch,
-        prepared.commitment_routing,
         gamma,
         row_coefficient_rings,
         relation_y,
@@ -1036,7 +1034,6 @@ where
     };
 
     let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
-    let commitment_routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
@@ -1047,7 +1044,6 @@ where
         commitment_rows: &commitment_rows,
         row_coefficients,
         opening_batch,
-        commitment_routing,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,

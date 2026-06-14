@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::{CommitmentRouting, OpeningBatch};
+use super::OpeningBatch;
 use crate::RingSubfieldEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
@@ -46,7 +46,6 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     opening_batch: OpeningBatch,
-    commitment_routing: CommitmentRouting,
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     y: Vec<CyclotomicRing<F, D>>,
@@ -64,15 +63,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         opening_batch: OpeningBatch,
-        commitment_routing: CommitmentRouting,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
-        let commitment_routing = commitment_routing.check(opening_batch.num_claims())?;
-        commitment_routing.check_matches_opening_batch(&opening_batch)?;
         if gamma.len() != opening_batch.num_claims()
             || row_coefficient_rings.len() != opening_batch.num_claims()
         {
@@ -91,7 +87,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             opening_point,
             ring_multiplier_point,
             opening_batch,
-            commitment_routing,
             gamma,
             row_coefficient_rings,
             y,
@@ -105,10 +100,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
 
     pub fn opening_batch(&self) -> &OpeningBatch {
         &self.opening_batch
-    }
-
-    pub fn commitment_routing(&self) -> &CommitmentRouting {
-        &self.commitment_routing
     }
 
     pub fn opening_point(&self) -> &RingOpeningPoint<F> {
@@ -187,7 +178,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
         let num_t_vectors = self
-            .commitment_routing
+            .opening_batch
             .num_polys_per_commitment_group()
             .iter()
             .try_fold(0usize, |acc, &count| {
@@ -307,7 +298,6 @@ pub fn ring_relation_segment_layout_for_opening_shape<
     num_polys: usize,
 ) -> Result<RingRelationSegmentLayout, AkitaError> {
     let opening_batch = OpeningBatch::same_point(32, num_polys)?;
-    let routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
     let opening_point = RingOpeningPoint {
         a: vec![F::zero(); lp.block_len],
         b: vec![F::zero(); lp.num_blocks],
@@ -326,7 +316,6 @@ pub fn ring_relation_segment_layout_for_opening_shape<
         opening_point,
         ring_multiplier_point,
         opening_batch,
-        routing,
         vec![F::zero(); num_claims],
         vec![CyclotomicRing::<F, D>::zero(); num_claims],
         vec![CyclotomicRing::<F, D>::zero(); num_claims],
@@ -381,37 +370,9 @@ mod tests {
     }
 
     #[test]
-    fn relation_instance_rejects_split_commitment_routing() {
-        let lp = test_level_params();
-        let opening_batch = OpeningBatch::same_point(2, 2).expect("valid batch");
-        let routing = CommitmentRouting::from_recursive_opening_batch(opening_batch.num_claims())
-            .expect("routing");
-        let opening_point = opening_point(&lp);
-        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let err = RingRelationInstance::<F, D>::new(
-            MRowLayout::WithoutDBlock,
-            test_challenges(&lp, opening_batch.num_claims()),
-            opening_point,
-            ring_multiplier_point,
-            opening_batch,
-            routing,
-            vec![F::one(); 2],
-            vec![CyclotomicRing::one(); 2],
-            vec![CyclotomicRing::zero(); 2],
-            Vec::new(),
-        )
-        .expect_err("split routing must be rejected");
-        assert!(
-            format!("{err:?}").contains("split opening/commitment routing is not supported"),
-            "unexpected error: {err:?}"
-        );
-    }
-
-    #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
         let opening_batch = OpeningBatch::same_point(2, 1).expect("valid opening batch");
-        let routing = CommitmentRouting::copy_opening_batch(&opening_batch).expect("routing");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
@@ -420,7 +381,6 @@ mod tests {
             opening_point,
             ring_multiplier_point,
             opening_batch,
-            routing,
             vec![F::one()],
             vec![CyclotomicRing::one()],
             Vec::new(),
@@ -438,7 +398,6 @@ mod tests {
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
         let opening_batch = OpeningBatch::same_point(2, 3).expect("valid batch");
-        let routing = CommitmentRouting::copy_opening_batch(&opening_batch).expect("routing");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
@@ -447,7 +406,6 @@ mod tests {
             opening_point,
             ring_multiplier_point,
             opening_batch,
-            routing,
             vec![F::one(); 3],
             vec![CyclotomicRing::one(); 3],
             vec![CyclotomicRing::zero(); 2],
@@ -459,7 +417,7 @@ mod tests {
         assert!(ring_column_z_first(&lp));
         assert_eq!(layout.offset_z, 0);
         let num_t_vectors = instance
-            .commitment_routing()
+            .opening_batch()
             .num_polys_per_commitment_group()
             .iter()
             .sum::<usize>();

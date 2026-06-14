@@ -44,8 +44,8 @@ where
     };
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let routing = instance.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let opening_batch = instance.opening_batch();
+    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
     let num_commitment_groups = num_polys_per_commitment_group.len();
     let num_public_m_rows = 0usize;
 
@@ -75,8 +75,8 @@ where
     let ring_alpha_evals_y = scalar_powers(alpha, D);
     let alpha_evals_y = scalar_powers(alpha, D);
 
-    let claim_to_commitment_group = routing.claim_to_commitment_group();
-    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
+    let claim_to_commitment_group = opening_batch.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = opening_batch.claim_poly_indices();
     let challenges = &instance.challenges;
     if gamma.len() != instance.opening_batch().num_claims() {
         return Err(AkitaError::InvalidInput(

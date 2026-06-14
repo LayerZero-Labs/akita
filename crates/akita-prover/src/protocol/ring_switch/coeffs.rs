@@ -54,7 +54,7 @@ where
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
-    let routing = instance.commitment_routing();
+    let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
         backend,
@@ -70,13 +70,13 @@ where
         &recomposed_inner_rows,
         &e_folded,
         instance.ring_multiplier_point(),
-        routing.claim_to_commitment_group(),
-        routing.claim_poly_in_commitment_group(),
+        opening_batch.claim_to_commitment_group(),
+        opening_batch.claim_poly_indices(),
         instance.row_coefficient_rings(),
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,
         instance.y(),
-        routing.num_polys_per_commitment_group(),
+        opening_batch.num_polys_per_commitment_group(),
         lp.num_blocks,
         lp.inner_width(),
         instance.m_row_layout(),

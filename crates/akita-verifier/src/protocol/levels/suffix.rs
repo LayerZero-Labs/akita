@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{CommitmentRouting, OpeningBatch};
+use akita_types::OpeningBatch;
 
 /// Prepare one recursive fold level for relation verification.
 ///
@@ -121,7 +121,6 @@ where
     } else {
         None
     };
-    let commitment_routing = CommitmentRouting::from_recursive_opening_batch(num_claims)?;
     let stage1_proof = proof.stage1_proof();
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(setup_contribution_mode, next_fold_level_params)?;
@@ -157,7 +156,6 @@ where
         commitment_rows: commitment_u,
         row_coefficients,
         opening_batch,
-        commitment_routing,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,

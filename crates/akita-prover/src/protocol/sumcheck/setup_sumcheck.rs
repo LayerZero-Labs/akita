@@ -231,7 +231,7 @@ where
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let num_t_vectors = relation
-        .commitment_routing()
+        .opening_batch()
         .num_polys_per_commitment_group()
         .iter()
         .try_fold(0usize, |acc, &count| {
@@ -269,8 +269,8 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore,
 {
-    let routing = relation.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let opening_batch = relation.opening_batch();
+    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
     let num_claims = relation.opening_batch().num_claims();
     let num_commitment_groups = num_polys_per_commitment_group.len();
     if num_commitment_groups != 1 {

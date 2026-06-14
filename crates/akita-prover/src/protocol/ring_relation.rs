@@ -24,7 +24,7 @@ use akita_types::{
     gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
 };
-use akita_types::{CommitmentRouting, LevelParams, OpeningBatch, RingRelationInstance};
+use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::ring_relation_witness::RingRelationWitness;
@@ -588,14 +588,12 @@ impl RingRelationProver {
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
-        let commitment_routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
         let instance = RingRelationInstance::new(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
             opening_batch,
-            commitment_routing,
             gamma,
             row_coefficient_rings,
             y,

@@ -220,10 +220,10 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
-    let routing = relation.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
-    let claim_to_commitment_group = routing.claim_to_commitment_group();
-    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
+    let opening_batch = relation.opening_batch();
+    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
+    let claim_to_commitment_group = opening_batch.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = opening_batch.claim_poly_indices();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -326,15 +326,15 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let witness_segment_layout = relation.segment_layout(lp)?;
-    let routing = relation.commitment_routing();
+    let opening_batch = relation.opening_batch();
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
         alpha,
         lp,
         tau1,
-        routing.num_polys_per_commitment_group(),
-        routing.claim_to_commitment_group(),
-        routing.claim_poly_in_commitment_group(),
+        opening_batch.num_polys_per_commitment_group(),
+        opening_batch.claim_to_commitment_group(),
+        opening_batch.claim_poly_indices(),
         replay.row_coefficients,
         relation.m_row_layout(),
         witness_segment_layout,
