@@ -125,7 +125,6 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_reduction: Option<RootExtensionOpeningReduction<C>>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
-    expected_w_len: usize,
 ) -> Result<PreparedFold<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
@@ -204,7 +203,6 @@ where
         trace_scale: C::one(),
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_w_len: Some(expected_w_len),
         row_coefficients: Some(row_coefficients),
     })
 }
@@ -220,7 +218,6 @@ fn prepare_root_fold_data<F, E, C, T, P, B, const D: usize>(
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
-    expected_w_len: usize,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, C, D>, AkitaError>
@@ -319,7 +316,6 @@ where
             Some(reduction),
             #[cfg(feature = "zk")]
             zk_hiding,
-            expected_w_len,
         );
     }
 
@@ -409,17 +405,16 @@ where
         None,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_w_len,
     )
 }
 
 /// Prove the folded root level using already-selected root and next-level
 /// parameters.
 ///
-/// The caller owns schedule/config selection and passes the expected next
-/// recursive witness length and next-level commitment params. This function
-/// owns root polynomial folding, public root transcript setup, root
-/// ring-relation construction, and the folded-root prover mechanics.
+/// The caller owns schedule/config selection and passes the validated schedule
+/// execution for level 0. This function owns root polynomial folding, public
+/// root transcript setup, root ring-relation construction, and the folded-root
+/// prover mechanics.
 ///
 /// # Errors
 ///
@@ -438,9 +433,7 @@ pub fn prove_root_fold<F, E, C, T, P, B, Cfg, const D: usize>(
     claim_points: &[&[E]],
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
-    root_params: &LevelParams,
-    expected_w_len: usize,
-    next_level_params: &LevelParams,
+    scheduled: &ExecutionSchedule,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -462,6 +455,7 @@ where
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
+    let root_params = &scheduled.params;
 
     if claim_points.is_empty()
         || claim_points.len() != incidence_summary.num_points()
@@ -509,7 +503,6 @@ where
         hints,
         root_params,
         MRowLayout::WithDBlock,
-        expected_w_len,
         #[cfg(feature = "zk")]
         zk_hiding,
         basis,
@@ -522,12 +515,10 @@ where
         prepared,
         transcript,
         0,
-        root_params,
-        Some(next_level_params),
+        scheduled,
         prepared_fold,
         setup_contribution_mode,
         false,
-        None,
     )?
     .get_intermediate()
 }
@@ -556,9 +547,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, C, T, P, B, const D: usiz
     claim_points: &[&[E]],
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
-    root_params: &LevelParams,
-    expected_w_len: usize,
-    final_log_basis: u32,
+    scheduled: &ExecutionSchedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -580,6 +569,7 @@ where
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
+    let root_params = &scheduled.params;
 
     if claim_points.is_empty()
         || claim_points.len() != incidence_summary.num_points()
@@ -629,7 +619,6 @@ where
         hints,
         root_params,
         MRowLayout::WithoutDBlock,
-        expected_w_len,
         #[cfg(feature = "zk")]
         owned_zk_hiding,
         basis,
@@ -642,12 +631,10 @@ where
         prepared,
         transcript,
         0,
-        root_params,
-        None,
+        scheduled,
         prepared_fold,
         setup_contribution_mode,
         true,
-        Some(final_log_basis),
     )?
     .get_terminal()?;
 
