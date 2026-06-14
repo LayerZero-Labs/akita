@@ -9,7 +9,7 @@
 
 ## Summary
 
-The fold response `z = Σ c_i · s_i` enters the next recursive level only through
+The folded witness sum `z = Σ c_i · s_i` enters the next recursive level only through
 its balanced base-`b` digit planes `z_hat`, and the plane count
 `K = num_digits_fold` fixes the next level's width (Ajtai columns, sum-check
 variables) and therefore a large slice of proof size. Today `K` is sized so the
@@ -17,8 +17,8 @@ structural per-coordinate bound `balanced_digit_max(lb, K)` covers the
 **worst-case** coordinate envelope `β_inf = num_fold_blocks · ω · witness_linf`,
 which assumes all `num_fold_blocks · ω` challenge-coefficient products align in
 sign at one output position, an alignment the honest fold never attains. This
-spec replaces that worst case with a **concentration tail bound** `t* < β_inf`
-(sub-Gaussian argument) and a single **challenge reroll** step (Fiat–Shamir grind)
+spec replaces that worst case with a **sub-Gaussian tail bound** `t* < β_inf`
+(sub-Gaussian concentration inequality) and a single **challenge reroll** step (Fiat–Shamir grind)
 on certified flat fold challenges, so a level commits the smallest `K` with
 `balanced_digit_max(lb, K) >= min(β_inf, t*)`. The prover expects **≤ 2**
 rerolls per committed fold level (hard-capped). The verifier reads the `‖z‖_inf`
@@ -31,16 +31,16 @@ only replays the accepted Fiat–Shamir challenge stream.
 |--------|---------|
 | `ω` | challenge L1 mass `‖c‖_1` |
 | `β_inf` | worst-case fold coordinate envelope (today's digit sizing) |
-| `t*` | tighter cap from the concentration tail bound (new sizing when certified) |
+| `t*` | tighter `‖z‖_inf` cap from the sub-Gaussian tail bound (new sizing when certified) |
 | `K` | `num_digits_fold` (digit planes for `z_hat`) |
-| `c_l2_sq_max` | family worst-case `max ‖c‖_2²` (per logical block) |
+| `challenge_l2_sq_max` | family worst-case `max ‖c‖_2²` (per logical block); math shorthand `c_l2_sq_max` |
 
 This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
 binding rank** (operator norm + Euclidean MSIS); this spec tightens the **fold
 digit count** that sizes the **next-level width**. The two never touch the same
 quantity.
 
-The concentration argument for the approved flat-family cutover is reproduced in
+The sub-Gaussian tail argument for the approved flat-family cutover is reproduced in
 the Design section below. This spec is self-contained and consistent with the
 "Folded-Witness ∞-Norm Rejection" section of
 [`specs/l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md).
@@ -50,7 +50,7 @@ the Design section below. This spec is self-contained and consistent with the
 ### Goal
 
 Size `num_digits_fold` for sign-certified flat committed fold levels from a
-concentration tail bound on `‖z‖_inf` instead of the worst-case envelope
+sub-Gaussian tail bound on `‖z‖_inf` instead of the worst-case envelope
 `β_inf`, and add a transcript-bound challenge reroll that re-derives the fold
 challenge until the realized `‖z‖_inf <= t*`.
 The first approved implementation covers the flat challenge families whose
@@ -61,11 +61,11 @@ sizing until separate proofs pin their tail constants.
 
 The feature introduces or modifies:
 
-- A per-family **worst-case squared ℓ₂ norm** `c_l2_sq_max = max ‖c‖_2²`
+- A per-family **worst-case squared ℓ₂ norm** `challenge_l2_sq_max = max ‖c‖_2²`
   (`SparseChallengeConfig::challenge_l2_sq_max`), the only new family-level
   quantity. Exact integer for every shipping family.
 - A pure **tail-bound primitive**
-  `fold_linf_tail_bound_sq(num_fold_blocks, c_l2_sq_max, witness_linf_sq, ln_term)` in
+  `fold_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term)` in
   `akita-types::sis::norm_bound` (squared domain, no floats on the
   verifier-reachable path).
 - A **digit-sizing path** `num_digits_fold` that takes `K` from
@@ -113,7 +113,7 @@ The feature introduces or modifies:
    `SerializationError`. Protected by: verifier no-panic audit + shape
    deserialization tests.
 6. **Descriptor binding.** The active threshold policy (formula identity,
-   certified-family set, per-family `c_l2_sq_max`, attempt cap, grind-nonce
+   certified-family set, per-family `challenge_l2_sq_max`, attempt cap, grind-nonce
    presence) is bound into `AkitaInstanceDescriptor`; a proof produced under the
    rejection policy must not verify under the legacy `β_inf` policy. Protected by:
    pinned descriptor-bytes test.
@@ -172,7 +172,7 @@ e2e batched/recursive/zk suites, transcript tests.
 New tests:
 
 - `akita-challenges`: `challenge_l2_sq_max` per-family values; tensor
-  `effective_l2_sq_max` (flat = `c_l2_sq_max`, tensor = factor product) for future
+  `effective_l2_sq_max` (flat = `challenge_l2_sq_max`, tensor = factor product) for future
   policy binding, while the first digit-sizing cutover enables only flat shapes.
 - `akita-types::sis`: tail-bound monotonicity, overflow/no-panic,
   `min(β_inf, t*)` sizing table; `fold_linf_ln_term` reference checks for the
@@ -210,7 +210,7 @@ The change sits across the four existing layers, mirroring how the worst-case
 abort:
 
 ```text
-SparseChallengeConfig.challenge_l2_sq_max (c_l2_sq_max)    [akita-challenges]
+SparseChallengeConfig.challenge_l2_sq_max                         [akita-challenges]
         │
         ▼
 LevelParams (witness_linf via fold_witness_norms, num_fold_blocks,
@@ -286,7 +286,7 @@ integer square root of `fold_linf_tail_bound_sq(...)`. Digit sizing uses
 `min(β_inf, t*)` so a loose raw `t*` never widens `K` beyond the existing
 worst-case bound.
 
-### Proof sketch (concentration)
+### Proof sketch (sub-Gaussian tail)
 
 **Requirement (sign structure).** Each challenge `c`'s nonzero coefficients carry
 **conditionally independent, symmetric (mean-zero) signs** given the support and
@@ -303,8 +303,8 @@ second-moment upper bound on the sum is
 
 ```text
 V_r = Σ Σ m² s²  ≤  witness_linf² · Σ_{(l,i)} ‖c_{l,i}‖_2²
-       ≤ witness_linf² · num_fold_blocks · c_l2_sq_max  =:  V,
-       c_l2_sq_max := max over the family of ‖c‖_2² (per block).
+       ≤ witness_linf² · num_fold_blocks · challenge_l2_sq_max  =:  V,
+       challenge_l2_sq_max := max over the family of ‖c‖_2² (per block).
 ```
 
 Hoeffding's inequality for independent ±1 signs gives
@@ -327,20 +327,20 @@ Pr[‖z‖_inf > t | all num_fold_blocks accepted] ≤ (2·num_fold_coeffs / p^{
 so
 
 ```text
-t* = sqrt( 2·num_fold_blocks·c_l2_sq_max·witness_linf² · ( ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p) ) )
+t* = sqrt( 2·num_fold_blocks·challenge_l2_sq_max·witness_linf² · ( ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p) ) )
 ```
 
 makes the conditional miss probability `<= 1/2`: rerolls take `<= 2` attempts in
 expectation. At `p = 1` this is
-`t* = sqrt(2·num_fold_blocks·c_l2_sq_max·witness_linf²·ln 4·num_fold_coeffs)`;
+`t* = sqrt(2·num_fold_blocks·challenge_l2_sq_max·witness_linf²·ln 4·num_fold_coeffs)`;
 against the ω-envelope `β_inf = num_fold_blocks·ω·witness_linf`, the gain ratio is
-`t*/β_inf ≈ sqrt(2·c_l2_sq_max·ln 4·num_fold_coeffs)/(ω·sqrt(num_fold_blocks))`.
-For `(c_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.41, 0.29, 0.20,
+`t*/β_inf ≈ sqrt(2·challenge_l2_sq_max·ln 4·num_fold_coeffs)/(ω·sqrt(num_fold_blocks))`.
+For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.41, 0.29, 0.20,
 0.14` at `num_fold_blocks = 4, 8, 16, 32`.
 
-**Per-family `c_l2_sq_max` (all exact integers).**
+**Per-family `challenge_l2_sq_max` (all exact integers).**
 
-| family                      | `c_l2_sq_max = max ‖c‖_2²` | note                                            |
+| family                      | `challenge_l2_sq_max = max ‖c‖_2²` | note                                            |
 |-----------------------------|----------------------------|-------------------------------------------------|
 | `ExactShell{k1, k2}`        | `k1 + 4·k2`                | identical for every member; `(30,12) → 78`      |
 | `Uniform{w, [-1,1]}`        | `w`                        | each nonzero `±1`; `d=128 → 31`, `d=256 → 23`   |
@@ -364,8 +364,8 @@ For `(c_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.41, 0.29,
 
 **Tensor folds.** A tensor fold materializes the product `c = α_p · β_q`; the
 signs are products `ε^α·ε^β` and are no longer independent across `(p,q)`. The
-clean concentration argument does not apply directly. The code may expose
-`effective_l2_sq_max = c_l2_sq_max(α)·c_l2_sq_max(β)` for future descriptor
+clean sub-Gaussian tail argument does not apply directly. The code may expose
+`effective_l2_sq_max = challenge_l2_sq_max(α)·challenge_l2_sq_max(β)` for future descriptor
 binding, matching the shape of `effective_operator_norm_cap`, but the first
 digit-count cutover treats tensor as unsupported and returns deterministic
 `β_inf`. A future tensor threshold needs its own dependency-aware tail proof
@@ -403,7 +403,7 @@ worst-case path is generalized in place):
   `SparseChallengeConfig` (table above). Pure; mirrors the existing `l1_norm` /
   `operator_norm_cap` accessors.
 - `src/tensor.rs`: add `pub fn effective_l2_sq_max(&self, cfg) -> u128` to
-  `ChallengeShape` (`Flat → c_l2_sq_max`, `Tensor → product`), mirroring
+  `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → product`), mirroring
   `effective_operator_norm_cap`.
 - `src/sampler/mod.rs`: extend `sample_folding_challenges` (and the inner
   `sample_sparse_challenges`) with a `grind_nonce: u32` that is folded into
@@ -414,7 +414,7 @@ worst-case path is generalized in place):
 **`akita-types`**
 
 - `src/sis/norm_bound.rs`: add
-  `fold_linf_tail_bound_sq(num_fold_blocks, c_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
+  `fold_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
   returning `t*²` (squared domain, exact `u128`, saturating/no-panic). The only
   irrational input is `ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p)`; pass it
   as a conservative integer `ln_term` via `fold_linf_ln_term(num_fold_coeffs,
@@ -422,7 +422,7 @@ worst-case path is generalized in place):
   `ln 4·num_fold_coeffs <= 24`). Document that the real sqrt is taken only at
   the digit-sizing boundary.
 - `src/sis/decomposition_digits.rs`: `num_digits_fold` gains the tail-bound inputs
-  (`c_l2_sq_max`, `num_fold_coeffs`, `p`, `policy`) and sizes `K` from
+  (`challenge_l2_sq_max`, `num_fold_coeffs`, `p`, `policy`) and sizes `K` from
   `min(β_inf, isqrt_ceil(t*²))` only for certified flat policies. Keep the
   degenerate guards and return `β_inf` for deterministic policies.
 - `src/sis/mod.rs`: re-export the new primitive.
@@ -440,7 +440,7 @@ worst-case path is generalized in place):
 
 **`akita-planner`**
 
-- `src/schedule_params.rs` + `src/generated/expand.rs`: thread `c_l2_sq_max` /
+- `src/schedule_params.rs` + `src/generated/expand.rs`: thread `challenge_l2_sq_max` /
   `num_fold_coeffs` / `p` / policy into the DP's `num_digits_fold` call so a
   lowered `K` is searched only for certified flat levels.
 - Regenerate `src/generated/*.rs` (plain + zk) via the existing
@@ -466,7 +466,7 @@ worst-case path is generalized in place):
 **`akita-config`**
 
 - Instance-descriptor binding: add the threshold-policy identity (formula tag,
-  certified-family set, deterministic-policy set, per-family `c_l2_sq_max`,
+  certified-family set, deterministic-policy set, per-family `challenge_l2_sq_max`,
   attempt cap, nonce presence, and `12L` entropy-budget rule) to
   `bind_transcript_instance_descriptor`; pin the bytes.
 
@@ -483,7 +483,7 @@ worst-case path is generalized in place):
 - **Witness-independent threshold (no nonce on the wire).** Impossible: `‖z‖_inf`
   depends on the secret `s`, so the verifier cannot replay which challenge passed.
   The nonce is the minimal wire cost (one `u32` per level).
-- **Tensor: exact expanded-product `c_l2_sq_max`** instead of the factor product
+- **Tensor: exact expanded-product `challenge_l2_sq_max`** instead of the factor product
   bound. Tighter but requires modeling the dependent product signs. Deferred until
   a tensor-specific tail proof exists; first cut leaves tensor at `β_inf`.
 - **BoundedL1 threshold with an empirical/inflated constant.** Rejected for the
@@ -498,10 +498,10 @@ worst-case path is generalized in place):
   at this spec, mark flat `ExactShell`/`Uniform{[-1,1]}` as certified, and mark
   tensor/`BoundedL1Norm` as deterministic `β_inf` pending separate proofs.
 - Crate docs on `num_digits_fold` and the tail-bound primitive, stating the
-  per-family `c_l2_sq_max` table and the sign-symmetry requirement inline.
+  per-family `challenge_l2_sq_max` table and the sign-symmetry requirement inline.
 - Public security-model docs: extend the challenge-distribution / norm-bound
   description with the rigorous `‖z‖_inf` reroll threshold and the per-family
-  `c_l2_sq_max` table from this spec.
+  `challenge_l2_sq_max` table from this spec.
 
 ## Execution
 

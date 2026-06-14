@@ -99,16 +99,16 @@ impl ChallengeShape {
     /// Effective per-logical-block `max ‖c‖_2²` for this fold-challenge shape.
     ///
     /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use
-    /// [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds expose the
+    /// [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds use the
     /// product bound for future descriptor binding. The first fold-linf digit-count
     /// cutover sizes only flat certified families from the flat value directly.
     #[inline]
     #[must_use]
     pub fn effective_l2_sq_max(&self, cfg: &SparseChallengeConfig) -> u128 {
-        let c_l2_sq_max = cfg.challenge_l2_sq_max();
+        let challenge_l2_sq_max = cfg.challenge_l2_sq_max();
         match self {
-            Self::Flat => c_l2_sq_max,
-            Self::Tensor => c_l2_sq_max.saturating_mul(c_l2_sq_max),
+            Self::Flat => challenge_l2_sq_max,
+            Self::Tensor => challenge_l2_sq_max.saturating_mul(challenge_l2_sq_max),
         }
     }
 }

@@ -620,6 +620,8 @@ fn compute_root_direct_level_params(
             policy.ring_subfield_norm_bound,
             fold_challenge,
             fold_witness,
+            &stage1_config,
+            TensorChallengeShape::Flat,
             decomp.log_commit_bound,
             log_basis,
             num_vars - alpha,

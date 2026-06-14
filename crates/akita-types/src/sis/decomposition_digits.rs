@@ -34,7 +34,7 @@
 use akita_field::AkitaError;
 
 use super::norm_bound::{
-    fold_linf_applied_cap, fold_witness_beta, FoldChallengeNorms, FoldLinfDigitSizing,
+    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldLinfDigitSizing,
     FoldWitnessNorms,
 };
 use crate::DecompositionParams;
@@ -199,7 +199,7 @@ pub fn num_digits_fold(
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
-    let cap = fold_linf_applied_cap(
+    let cap = fold_witness_linf_cap(
         beta,
         num_fold_blocks,
         witness_linf_sq,
@@ -207,7 +207,7 @@ pub fn num_digits_fold(
     )?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
-            "num_digits_fold: applied fold cap is zero".to_string(),
+            "num_digits_fold: fold witness L∞ cap is zero".to_string(),
         ));
     }
     // `cap` bounds `|v|`, so `+cap` itself must be representable: add one bit

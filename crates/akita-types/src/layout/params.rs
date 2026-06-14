@@ -206,7 +206,7 @@ impl LevelParams {
             .effective_infinity_norm(&self.stage1_config)
     }
 
-    /// Effective fold-round challenge L2 energy cap `c_l2_sq_max` at this level.
+    /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
     #[inline]
     pub fn challenge_l2_sq_max(&self) -> u128 {
         self.fold_challenge_shape
@@ -219,7 +219,7 @@ impl LevelParams {
         (self.inner_width() as u128).saturating_mul(self.ring_dimension as u128)
     }
 
-    /// Fold block count `num_claims · 2^r_vars` for concentration sizing.
+    /// Fold block count `num_claims · 2^r_vars` used in the tail-bound formula.
     ///
     /// # Errors
     ///
@@ -255,17 +255,15 @@ impl LevelParams {
     /// Inputs threaded into [`crate::sis::num_digits_fold`] for tail-aware sizing.
     #[inline]
     pub fn fold_linf_digit_sizing(&self) -> crate::sis::FoldLinfDigitSizing {
-        let (p_num, p_den) = self.op_norm_acceptance_p();
-        crate::sis::FoldLinfDigitSizing {
-            policy: self.fold_linf_threshold_policy(),
-            c_l2_sq_max: self.challenge_l2_sq_max(),
-            num_fold_coeffs: self.num_fold_coeffs(),
-            op_norm_accept_p_num: p_num,
-            op_norm_accept_p_den: p_den,
-        }
+        crate::sis::FoldLinfDigitSizing::for_fold_level(
+            &self.stage1_config,
+            self.fold_challenge_shape,
+            self.ring_dimension,
+            self.inner_width(),
+        )
     }
 
-    /// Squared fold-response `∞`-norm tail bound `t*²` for certified-flat levels.
+    /// Squared `‖z‖_inf` tail bound `t*²` for certified-flat levels.
     ///
     /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
     /// digit sizing and acceptance use the same value (invariant 4).
@@ -273,7 +271,7 @@ impl LevelParams {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
-    /// `num_fold_coeffs`, or overflow in the concentration formula.
+    /// `num_fold_coeffs`, or overflow in the tail-bound formula.
     pub fn fold_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let sizing = self.fold_linf_digit_sizing();
         if sizing.policy != crate::sis::FoldLinfThresholdPolicy::CertifiedFlat {
@@ -297,7 +295,7 @@ impl LevelParams {
         )?;
         crate::sis::fold_linf_tail_bound_sq(
             num_fold_blocks,
-            sizing.c_l2_sq_max,
+            sizing.challenge_l2_sq_max,
             witness_linf_sq,
             ln_term,
         )

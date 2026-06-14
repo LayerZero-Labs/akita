@@ -6,11 +6,12 @@
 //! the gadget row scalars and the `(m, r)`-split search, which *compose* those
 //! primitives but contain no SIS formula of their own.
 
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
     committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
-    FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
+    FoldChallengeNorms, FoldLinfDigitSizing, FoldWitnessNorms, SisModulusFamily,
 };
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
@@ -81,6 +82,8 @@ pub fn optimal_m_r_split(
     ring_subfield_norm_bound: u32,
     fold_challenge: FoldChallengeNorms,
     fold_witness: FoldWitnessNorms,
+    stage1_config: &SparseChallengeConfig,
+    fold_challenge_shape: TensorChallengeShape,
     log_commit_bound: u32,
     log_basis: u32,
     reduced_vars: usize,
@@ -130,9 +133,14 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r and num_claims: num_digits_fold derives
-        // β = num_claims · 2^r · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
-        // An overflowing/degenerate β makes this `r` infeasible — skip it.
+        // δ_fold grows with r and num_claims; certified-flat presets may size K
+        // from min(β_inf, t*) rather than β_inf alone.
+        let linf_sizing = FoldLinfDigitSizing::for_fold_level(
+            stage1_config,
+            fold_challenge_shape,
+            d as usize,
+            inner_width,
+        );
         let Ok(delta_fold) = num_digits_fold(
             r,
             num_claims,
@@ -140,7 +148,7 @@ pub fn optimal_m_r_split(
             log_basis,
             fold_challenge,
             fold_witness,
-            crate::sis::FoldLinfDigitSizing::deterministic(),
+            linf_sizing,
         ) else {
             continue;
         };
@@ -170,10 +178,16 @@ pub fn optimal_m_r_split(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
     use crate::sis::FoldWitnessNorms;
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+        let stage1_config = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
         let fold_challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
@@ -186,6 +200,8 @@ mod tests {
             1,
             fold_challenge,
             fold_witness,
+            &stage1_config,
+            TensorChallengeShape::Flat,
             128,
             3,
             20,
@@ -199,6 +215,8 @@ mod tests {
             1,
             fold_challenge,
             fold_witness,
+            &stage1_config,
+            TensorChallengeShape::Flat,
             128,
             3,
             20,

@@ -67,7 +67,7 @@ impl FoldWitnessNorms {
     }
 
     /// Per-block committed witness `s` (`(||s||_inf, ||s||_1)`), used to derive
-    /// the fold-response envelope `β_inf` on `z = Σ c_i·s_i`.
+    /// the worst-case `‖z‖_inf` envelope `β_inf` on the fold sum `z = Σ c_i·s_i`.
     ///
     /// `||s||_inf` is `1` for one-hot or `b/2 = 2^(log_basis-1)` for dense
     /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
@@ -99,7 +99,7 @@ impl FoldWitnessNorms {
 
 /// A-role committed-level per-ring-row squared Euclidean collision bucket.
 ///
-/// Prices the **fold response** `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
+/// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
 /// gives `‖z_A‖_2 ≤ 8 · op_norm(c) · ‖z‖_2 · ν` on the extracted kernel; until
 /// a realized `‖z‖_2` certificate ships (S6+), the deterministic envelope is
 /// `‖z‖_inf ≤ β_inf` with `β_inf =` [`fold_witness_beta`], then
@@ -115,7 +115,7 @@ impl FoldWitnessNorms {
 /// ```
 ///
 /// Operator-norm rejection (`gamma(c) <= Gamma`) is separate; sizing uses `ω`
-/// from the accepted challenge distribution. `β_inf` is the same fold-response
+/// from the accepted challenge distribution. `β_inf` is the same `‖z‖_inf`
 /// envelope as [`fold_witness_beta`] / `num_digits_fold`, not `‖s‖_2`.
 ///
 /// Returns `None` on overflow or when the collision exceeds every audited bucket
@@ -214,7 +214,7 @@ pub fn rounded_up_collision_norm_tiered_commitment(
     rounded_up_collision_norm_t(sis_family, d, log_basis)
 }
 
-/// Deterministic coefficient-`L∞` envelope on the fold response
+/// Deterministic coefficient-`L∞` envelope on the folded witness sum
 /// `z = Σ c_i·s_i` (written `β_inf` in specs):
 ///
 /// ```text
@@ -249,8 +249,8 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-/// Whether [`crate::sis::num_digits_fold`] sizes `K` from the concentration tail bound `t*`
-/// (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
+/// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
+/// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLinfThresholdPolicy {
     /// Flat `ExactShell` at `D = 64` or `Uniform{[-1,1]}` at `D ∈ {128, 256}`.
@@ -346,11 +346,11 @@ pub fn fold_linf_ln_term(
     Ok(ln_4n.saturating_add(ln_inv_p))
 }
 
-/// Squared fold-response `∞`-norm tail bound `t*²` from the concentration
-/// argument in `specs/fold-linf-rejection.md`:
+/// Squared `‖z‖_inf` tail bound `t*²` from the sub-Gaussian argument in
+/// `specs/fold-linf-rejection.md`:
 ///
 /// ```text
-/// t*² = 2 · num_fold_blocks · c_l2_sq_max · witness_linf² · ln_term
+/// t*² = 2 · num_fold_blocks · challenge_l2_sq_max · witness_linf² · ln_term
 /// ```
 ///
 /// `ln_term` is a conservative integer for
@@ -363,18 +363,18 @@ pub fn fold_linf_ln_term(
 /// overflows `u128`.
 pub fn fold_linf_tail_bound_sq(
     num_fold_blocks: u128,
-    c_l2_sq_max: u128,
+    challenge_l2_sq_max: u128,
     witness_linf_sq: u128,
     ln_term: u128,
 ) -> Result<u128, AkitaError> {
-    if num_fold_blocks == 0 || c_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
+    if num_fold_blocks == 0 || challenge_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_linf_tail_bound_sq: arguments must be positive".to_string(),
         ));
     }
     let two = 2u128;
     two.checked_mul(num_fold_blocks)
-        .and_then(|v| v.checked_mul(c_l2_sq_max))
+        .and_then(|v| v.checked_mul(challenge_l2_sq_max))
         .and_then(|v| v.checked_mul(witness_linf_sq))
         .and_then(|v| v.checked_mul(ln_term))
         .ok_or_else(|| {
@@ -389,7 +389,9 @@ pub fn fold_linf_tail_bound_sq(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldLinfDigitSizing {
     pub policy: FoldLinfThresholdPolicy,
-    pub c_l2_sq_max: u128,
+    /// Family worst-case `max ‖c‖_2²` (per logical block); see
+    /// [`SparseChallengeConfig::challenge_l2_sq_max`].
+    pub challenge_l2_sq_max: u128,
     pub num_fold_coeffs: u128,
     pub op_norm_accept_p_num: u128,
     pub op_norm_accept_p_den: u128,
@@ -401,21 +403,43 @@ impl FoldLinfDigitSizing {
     pub const fn deterministic() -> Self {
         Self {
             policy: FoldLinfThresholdPolicy::DeterministicBetaInf,
-            c_l2_sq_max: 0,
+            challenge_l2_sq_max: 0,
             num_fold_coeffs: 0,
+            op_norm_accept_p_num: 1,
+            op_norm_accept_p_den: 1,
+        }
+    }
+
+    /// Tail-aware sizing inputs for a fold level from its sparse family, shape,
+    /// ring degree, and inner A-matrix width (`block_len · δ_commit`).
+    #[inline]
+    pub fn for_fold_level(
+        stage1_config: &SparseChallengeConfig,
+        fold_challenge_shape: TensorChallengeShape,
+        ring_dimension: usize,
+        inner_width: usize,
+    ) -> Self {
+        Self {
+            policy: fold_linf_threshold_policy(
+                stage1_config,
+                fold_challenge_shape,
+                ring_dimension,
+            ),
+            challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
+            num_fold_coeffs: (inner_width as u128).saturating_mul(ring_dimension as u128),
             op_norm_accept_p_num: 1,
             op_norm_accept_p_den: 1,
         }
     }
 }
 
-/// Applied fold-response `∞`-norm cap for digit sizing: `β_inf` or
-/// `min(β_inf, ⌈√(t*²)⌉)` under the certified-flat policy.
+/// `‖z‖_inf` cap used for fold digit sizing: `β_inf` or `min(β_inf, ⌈√(t*²)⌉)`
+/// under the certified-flat policy.
 ///
 /// # Errors
 ///
 /// Propagates [`fold_linf_ln_term`] / [`fold_linf_tail_bound_sq`] rejections.
-pub fn fold_linf_applied_cap(
+pub fn fold_witness_linf_cap(
     beta: u128,
     num_fold_blocks: u128,
     witness_linf_sq: u128,
@@ -432,7 +456,7 @@ pub fn fold_linf_applied_cap(
             )?;
             let t_sq = fold_linf_tail_bound_sq(
                 num_fold_blocks,
-                sizing.c_l2_sq_max,
+                sizing.challenge_l2_sq_max,
                 witness_linf_sq,
                 ln_term,
             )?;
@@ -619,21 +643,21 @@ mod tests {
     }
 
     #[test]
-    fn threshold_t_star_is_below_omega_envelope_at_production_shell() {
+    fn threshold_t_star_below_pessimistic_linf_envelope_at_production_shell() {
         let challenge = FoldChallengeNorms {
             infinity_norm: 2,
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let tight_beta = fold_witness_beta(4, 1, challenge, witness).unwrap();
-        let omega_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
-        assert!(tight_beta < omega_envelope);
+        let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
+        assert!(tight_beta < pessimistic_linf_envelope);
         let ln_term = fold_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
         let t_sq = fold_linf_tail_bound_sq(16, 78, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(
-            t < omega_envelope,
-            "t* = {t} omega-envelope = {omega_envelope}"
+            t < pessimistic_linf_envelope,
+            "t* = {t} pessimistic envelope = {pessimistic_linf_envelope}"
         );
         // Digit sizing will use `min(tight_beta, t*)`; here `t*` exceeds the tight bound.
         assert_eq!(t.min(tight_beta), tight_beta);
