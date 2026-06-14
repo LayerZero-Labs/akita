@@ -11,7 +11,7 @@ use akita_prover::{
     ProverComputeBackend,
 };
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::Transcript;
+use akita_transcript::{GrindTranscript, Transcript};
 use akita_types::AkitaVerifierSetup;
 use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
@@ -121,7 +121,7 @@ where
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
-        T: Transcript<F>,
+        T: Transcript<F> + GrindTranscript<F>,
         P: AkitaPolyOps<F, D>,
         B: ProverComputeBackend<F>,
     {

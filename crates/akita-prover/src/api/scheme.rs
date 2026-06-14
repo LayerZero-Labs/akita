@@ -3,7 +3,7 @@
 use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::Transcript;
+use akita_transcript::{GrindTranscript, Transcript};
 use akita_types::{BasisMode, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
@@ -112,7 +112,7 @@ where
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
-        T: Transcript<F>,
+        T: Transcript<F> + GrindTranscript<F>,
         P: AkitaPolyOps<F, D>,
         B: ProverComputeBackend<F>;
 }

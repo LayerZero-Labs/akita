@@ -505,3 +505,52 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         }
     }
 }
+
+#[cfg(test)]
+mod fold_grind_nonce_tests {
+    use super::*;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+    use akita_types::SisModulusFamily;
+
+    fn sample_level_params(fold_shape: TensorChallengeShape) -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+                operator_norm_threshold: 0,
+            },
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("level params")
+        .with_fold_challenge_shape(fold_shape)
+    }
+
+    #[test]
+    fn deterministic_policy_rejects_nonzero_nonce() {
+        let lp = sample_level_params(TensorChallengeShape::Tensor);
+        assert_eq!(
+            lp.fold_linf_threshold_policy(),
+            FoldLinfThresholdPolicy::DeterministicBetaInf
+        );
+        assert!(validate_fold_grind_nonce(&lp, 0).is_ok());
+        assert!(validate_fold_grind_nonce(&lp, 1).is_err());
+    }
+
+    #[test]
+    fn certified_flat_accepts_nonce_below_cap() {
+        let lp = sample_level_params(TensorChallengeShape::Flat);
+        assert_eq!(
+            lp.fold_linf_threshold_policy(),
+            FoldLinfThresholdPolicy::CertifiedFlat
+        );
+        assert!(validate_fold_grind_nonce(&lp, 0).is_ok());
+        assert!(validate_fold_grind_nonce(&lp, MAX_FOLD_GRIND_ATTEMPTS - 1).is_ok());
+        assert!(validate_fold_grind_nonce(&lp, MAX_FOLD_GRIND_ATTEMPTS).is_err());
+    }
+}
