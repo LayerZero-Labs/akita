@@ -8,7 +8,7 @@ fn verify_passes_for_consistent_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -37,14 +37,14 @@ fn verify_passes_for_consistent_opening() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -56,13 +56,13 @@ fn verify_passes_for_consistent_opening() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -78,7 +78,7 @@ fn verify_rejects_wrong_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -105,14 +105,14 @@ fn verify_rejects_wrong_opening() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -127,13 +127,13 @@ fn verify_rejects_wrong_opening() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: wrong_opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -166,13 +166,13 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            vec![(
+            (
                 &opening_point[..],
-                CommittedOpenings {
+                vec![CommittedOpenings {
                     openings: opening_groups[0],
                     commitment: &commitments[0],
-                },
-            )],
+                }],
+            ),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
@@ -205,13 +205,13 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -273,13 +273,13 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -297,7 +297,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
     let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -327,14 +327,14 @@ fn monomial_basis_prove_verify_round_trip() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Monomial,
         akita_types::SetupContributionMode::Direct,
@@ -346,13 +346,13 @@ fn monomial_basis_prove_verify_round_trip() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Monomial,
         akita_types::SetupContributionMode::Direct,
     );
@@ -378,8 +378,8 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let opening_point = vec![DirectF::zero(); num_vars];
     let opening = evals[0];
 
-    let setup = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1)
-        .unwrap();
+    let setup =
+        <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
@@ -401,14 +401,14 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -435,13 +435,13 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )

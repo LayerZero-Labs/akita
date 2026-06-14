@@ -1,57 +1,66 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 
-struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
-    points: Vec<&'a [E]>,
-    point_payloads:
-        Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
-    summary: ClaimIncidenceSummary,
+struct ProverPreparedOpeningBatch<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
+    point: &'a [E],
+    payloads: Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
+    summary: OpeningBatch,
 }
 
-fn prover_claims_to_incidence<'a, F, E, P, const D: usize>(
+fn prover_claims_to_opening_batch<'a, F, E, P, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-) -> Result<ProverPreparedIncidence<'a, F, E, P, D>, AkitaError>
+) -> Result<ProverPreparedOpeningBatch<'a, F, E, P, D>, AkitaError>
 where
     F: FieldCore,
     E: FieldCore,
+    P: AkitaPolyOps<F, D>,
 {
-    let points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let mut point_payloads: Vec<
-        CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-    > = Vec::with_capacity(claims.len());
-    let mut incidence_claims = Vec::new();
-
-    for (point_idx, (_, payload)) in claims.into_iter().enumerate() {
-        let poly_count = payload.poly_count();
-        incidence_claims.extend((0..poly_count).map(|poly_idx| IncidenceClaim {
-            point_idx,
-            poly_idx,
-            // Prover inputs do not contain claimed evaluations. The shared
-            // incidence validator ignores this field, so zero is only a
-            // structural placeholder.
-            claimed_eval: E::zero(),
-        }));
-        point_payloads.push(payload);
+    let (point, payloads) = claims;
+    let slots = payloads
+        .iter()
+        .enumerate()
+        .flat_map(|(commitment_group, payload)| {
+            payload
+                .polynomials
+                .iter()
+                .enumerate()
+                .map(move |(poly_idx, poly)| OpeningClaimSlot {
+                    commitment_group,
+                    poly_idx,
+                    // Prover inputs do not contain claimed evaluations. The shared
+                    // validator ignores this field, so zero is only a structural
+                    // placeholder.
+                    claimed_eval: E::zero(),
+                    natural_num_vars: poly.num_vars(),
+                    kind: OpeningClaimKind::Polynomial,
+                })
+        })
+        .collect::<Vec<_>>();
+    let total_polys = payloads
+        .iter()
+        .try_fold(0usize, |acc, payload| acc.checked_add(payload.poly_count()))
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("batched_prove polynomial count overflow".to_string())
+        })?;
+    if slots.len() != total_polys {
+        return Err(AkitaError::InvalidInput(
+            "batched_prove polynomial slot count mismatch".to_string(),
+        ));
     }
 
-    let incidence = ClaimIncidence {
-        points: points.clone(),
-        claims: incidence_claims,
-    };
-    let summary = incidence.validate(ClaimIncidenceLimits {
+    let batch = OpeningBatchInput { point, slots };
+    let summary = batch.validate(OpeningBatchLimits {
         max_num_vars: expanded.seed.max_num_vars,
-        max_num_points: expanded.seed.max_num_points,
         max_num_claims: expanded.seed.max_num_batched_polys,
     })?;
 
-    Ok(ProverPreparedIncidence {
-        points,
-        point_payloads,
+    Ok(ProverPreparedOpeningBatch {
+        point,
+        payloads,
         summary,
     })
 }
-
 /// Validate and flatten batched prover claims into the root proof shape.
 ///
 /// # Errors
@@ -65,43 +74,46 @@ pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
+    P: AkitaPolyOps<F, D>,
 {
-    validate_batched_inputs(expanded, &claims, |payload| payload.polynomials.len(), true)?;
+    validate_batched_inputs(
+        expanded,
+        &claims,
+        |payloads| {
+            payloads
+                .iter()
+                .map(|payload| payload.polynomials.len())
+                .sum()
+        },
+        true,
+    )?;
 
-    let prepared_incidence = prover_claims_to_incidence(expanded, claims)?;
-    let opening_points = prepared_incidence.points;
-    let commitments_by_point: Vec<RingCommitment<F, D>> = prepared_incidence
-        .point_payloads
+    let prepared_batch = prover_claims_to_opening_batch(expanded, claims)?;
+    let opening_point = prepared_batch.point;
+    let commitments = prepared_batch
+        .payloads
         .iter()
         .map(|payload| payload.commitment.clone())
-        .collect();
-    let incidence_summary = prepared_incidence.summary;
-    let flat_polys: Vec<&P> = incidence_summary
-        .claim_to_point()
+        .collect::<Vec<_>>();
+    let opening_batch = prepared_batch.summary;
+    let flat_polys: Vec<&P> = opening_batch
+        .claim_to_commitment_group()
         .iter()
-        .zip(incidence_summary.claim_poly_indices().iter())
-        .map(|(&point_idx, &poly_idx)| {
-            &prepared_incidence.point_payloads[point_idx].polynomials[poly_idx]
-        })
+        .zip(opening_batch.claim_poly_indices().iter())
+        .map(|(&group_idx, &poly_idx)| &prepared_batch.payloads[group_idx].polynomials[poly_idx])
         .collect();
-    let group_polys: Vec<&P> = prepared_incidence
-        .point_payloads
-        .iter()
-        .flat_map(|payload| payload.polynomials.iter())
-        .collect();
-    let flat_hints: Vec<AkitaCommitmentHint<F, D>> = prepared_incidence
-        .point_payloads
+    let commitment_hints = prepared_batch
+        .payloads
         .into_iter()
         .map(|payload| payload.hint)
         .collect();
 
     Ok(PreparedBatchedProveInputs {
-        opening_points,
-        commitments_by_point,
-        incidence_summary,
+        opening_point,
+        commitments,
+        opening_batch,
         flat_polys,
-        group_polys,
-        flat_hints,
+        commitment_hints,
     })
 }
 
@@ -173,7 +185,7 @@ pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     claims: ProverClaims<
         'a,
-        Cfg::ClaimField,
+        Cfg::ExtField,
         P,
         RingCommitment<Cfg::Field, D>,
         AkitaCommitmentHint<Cfg::Field, D>,
@@ -181,7 +193,7 @@ pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
+) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -191,9 +203,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -207,24 +218,21 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
-        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ClaimField, P, D>(
-            expanded.as_ref(),
-            claims,
-        )?
+        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
     };
-    let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
+    let num_vars = prepared_claims.opening_batch.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
-            &prepared_claims.opening_points,
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
+            std::slice::from_ref(&prepared_claims.opening_point),
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             num_vars,
         ) {
             let commit_params =
-                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
+                Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -235,22 +243,22 @@ where
     }
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
-        &prepared_claims.group_polys,
+        &prepared_claims.flat_polys,
         root_commit_params,
     )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
-        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_batch,
         &schedule,
         basis,
         transcript,
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct::<Cfg::Field, Cfg::ChallengeField, D, P>(
-            &prepared_claims.group_polys,
-            &prepared_claims.flat_hints,
+        return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
+            &prepared_claims.flat_polys,
+            &prepared_claims.commitment_hints,
         );
     }
 
@@ -273,24 +281,6 @@ where
     .map(|(proof, _total_levels)| proof)
 }
 
-/// Assemble the 1-fold batched proof when the root level is itself the
-/// terminal fold (no recursive suffix follows).
-pub fn build_terminal_root_batched_proof<F, L>(
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProof<F>,
-    terminal: TerminalLevelProof<F, L>,
-) -> AkitaBatchedProof<F, L>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    AkitaBatchedProof {
-        #[cfg(feature = "zk")]
-        zk_hiding,
-        root: AkitaBatchedRootProof::new_terminal(terminal),
-        steps: Vec::new(),
-    }
-}
-
 /// Prove a folded batched root and assemble the recursive suffix under config
 /// `Cfg`.
 ///
@@ -311,11 +301,11 @@ pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ClaimField, P, D>,
+    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, usize), AkitaError>
+) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore
@@ -325,9 +315,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ClaimField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ChallengeField: RingSubfieldEncoding<Cfg::Field>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -343,7 +332,7 @@ where
     let root_scheduled = schedule.get_execution_schedule(0)?;
 
     if prepared_claims
-        .commitments_by_point
+        .commitments
         .iter()
         .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
     {
@@ -357,68 +346,69 @@ where
 
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
-        build_zk_hiding_context::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, B, D>(
+        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, B, D>(
             backend,
             prepared,
             schedule,
             &root_scheduled.params,
-            prepared_claims.incidence_summary.num_vars(),
-            prepared_claims.incidence_summary.num_claims(),
-            prepared_claims.incidence_summary.num_points(),
+            prepared_claims.opening_batch.num_vars(),
+            prepared_claims.opening_batch.num_claims(),
+            1,
         )?;
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
+    let PreparedBatchedProveInputs {
+        opening_point,
+        commitments,
+        opening_batch,
+        flat_polys,
+        commitment_hints,
+    } = prepared_claims;
+
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
-        let terminal = prove_terminal_root_fold_with_params::<
-            Cfg,
-            Cfg::Field,
-            Cfg::ClaimField,
-            Cfg::ChallengeField,
-            T,
-            P,
-            B,
-            D,
-        >(
-            expanded,
-            backend,
-            prepared,
-            transcript,
-            &prepared_claims.flat_polys,
-            &prepared_claims.incidence_summary,
-            &prepared_claims.opening_points,
-            &prepared_claims.commitments_by_point,
-            prepared_claims.flat_hints,
-            &root_scheduled,
-            basis,
-            setup_contribution_mode,
-            #[cfg(feature = "zk")]
-            &mut zk_hiding_state,
-        )?;
+        let terminal =
+            prove_terminal_root_fold_with_params::<Cfg, Cfg::Field, Cfg::ExtField, T, P, B, D>(
+                expanded,
+                backend,
+                prepared,
+                transcript,
+                &flat_polys,
+                opening_batch,
+                opening_point,
+                &commitments,
+                commitment_hints,
+                &root_scheduled,
+                basis,
+                setup_contribution_mode,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_state,
+            )?;
         #[cfg(feature = "zk")]
         let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
-            build_terminal_root_batched_proof::<Cfg::Field, Cfg::ChallengeField>(
+            AkitaBatchedProof {
                 #[cfg(feature = "zk")]
-                zk_hiding_proof,
-                terminal,
-            ),
+                zk_hiding: zk_hiding_proof,
+                root: AkitaBatchedRootProof::new_terminal(terminal),
+                steps: Vec::new(),
+            },
             1,
         ));
     }
 
-    let root = prove_root_fold::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, P, B, Cfg, D>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,
         prepared,
         transcript,
-        &prepared_claims.flat_polys,
-        &prepared_claims.incidence_summary,
-        &prepared_claims.opening_points,
-        &prepared_claims.commitments_by_point,
-        prepared_claims.flat_hints,
+        &flat_polys,
+        opening_batch,
+        opening_point,
+        &commitments,
+        commitment_hints,
         &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,

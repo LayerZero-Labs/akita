@@ -41,17 +41,17 @@ pub use compute::{
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs,
-    prove_folded_batched, prove_root_direct, prove_root_fold, prove_suffix,
-    prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
-    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
+    batched_prove, commit_next_w, prepare_batched_prove_inputs, prove_folded_batched, prove_root,
+    prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
+    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, RingSwitchOutput,
+    SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
-/// One commitment plus the polynomials it bundles, opened at one point.
+/// One PCS commitment and the polynomials it bundles, all opened at the batch's
+/// shared opening point.
 ///
-/// `polynomials` is the exact bundle committed together by the prover
-/// commitment API; `commitment` and `hint` are the corresponding outputs for
-/// that bundle. Each opening point cites exactly one `CommittedPolynomials`.
+/// `polynomials` is the exact bundle committed by the prover commitment API;
+/// `commitment` and `hint` are the corresponding outputs for that bundle.
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
     /// Polynomials addressable by claim `poly_idx` values at this point.
@@ -63,15 +63,18 @@ pub struct CommittedPolynomials<'a, P, C, H> {
 }
 
 impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
-    /// Number of polynomials addressable by incidence claims at this point.
+    /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
 }
 
-/// Batched prover input: one commitment plus its polynomials per point.
+/// Batched prover input: one shared opening point plus commitment bundles.
+///
+/// Mirror of [`akita_types::VerifierClaims`]: `(shared_point, Vec<CommittedPolynomials>)`.
+/// See `akita_types::proof::scheme` for the single-point batching contract.
 pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
+    (OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>);
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +501,10 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
+    }
+
+    fn num_vars(&self) -> usize {
+        <P as AkitaPolyOps<F, D>>::num_vars(*self)
     }
 
     fn onehot_chunk_size(&self) -> Option<usize> {

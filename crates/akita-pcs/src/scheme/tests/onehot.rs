@@ -27,9 +27,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
-    let setup =
-        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1)
-            .unwrap();
+    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE)
+        .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
@@ -48,14 +47,14 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -112,13 +111,13 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )

@@ -45,19 +45,19 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
     let n_a = 2usize;
     let n_b = 2usize;
     let n_d = 2usize;
-    let num_polys_per_point = vec![2usize, 1usize];
-    let num_points = num_polys_per_point.len();
+    let num_polys_per_commitment_group = vec![2usize, 1usize];
+    let num_points = num_polys_per_commitment_group.len();
     let num_claims = 3usize;
     let num_public_rows = num_points;
     let total_blocks = num_blocks * num_claims;
     let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
     let inner_width = block_len * depth_commit;
-    let num_t_vectors = num_polys_per_point.iter().sum();
+    let num_t_vectors = num_polys_per_commitment_group.iter().sum();
 
     let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<
         FixtureField,
         FIXTURE_D,
-    >(&fixture_lp(), MRowLayout::WithDBlock, &num_polys_per_point)
+    >(&fixture_lp(), MRowLayout::WithDBlock, &num_polys_per_commitment_group)
     .expect("witness segment layout");
 
     #[cfg(feature = "zk")]
@@ -99,12 +99,12 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
         num_points,
         rows,
         claim_to_t_vector: vec![1, 2, 0],
-        num_polys_per_commitment_group: num_polys_per_point,
+        num_polys_per_commitment_group: num_polys_per_commitment_group,
         num_public_rows,
         gamma: (0..num_claims)
             .map(|idx| scalar(5_000 + idx as u128))
             .collect(),
-        claim_to_point: vec![1, 0, 1],
+        claim_to_commitment_group: vec![1, 0, 1],
         witness_segment_layout,
     }
 }

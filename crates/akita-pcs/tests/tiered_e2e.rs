@@ -48,9 +48,9 @@ fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
 fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let incidence =
-            akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence");
-        let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch =
+            akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch");
+        let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} singleton"
@@ -60,7 +60,7 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
         let pt = random_point(nv, 0x7115_0000 + nv as u64);
         let opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, 1, 1).unwrap();
+        let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
@@ -134,9 +134,9 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
 fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, num_polys)
-            .expect("same-point incidence");
-        let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch =
+            akita_types::OpeningBatch::same_point(nv, num_polys).expect("same-point opening_batch");
+        let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} batch={num_polys}"
@@ -152,7 +152,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, num_polys, 1).unwrap();
+        let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, num_polys).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,

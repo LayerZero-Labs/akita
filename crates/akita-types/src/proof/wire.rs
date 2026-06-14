@@ -574,6 +574,7 @@ impl<
         validate: Validate,
         ctx: &TerminalLevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let extension_opening_reduction = deserialize_extension_opening_reduction(
             &mut reader,
             compress,

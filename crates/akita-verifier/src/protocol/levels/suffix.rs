@@ -5,9 +5,26 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
+use akita_types::OpeningBatch;
 
-/// Prepare one recursive fold level for relation verification.
+/// Verifier state carried between suffix fold levels.
+struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
+    /// Current opening point for the committed suffix witness.
+    pub opening_point: Vec<L>,
+    /// Claimed opening value for the current commitment.
+    pub opening: L,
+    /// Hidden mask added to `opening` in the public proof.
+    #[cfg(feature = "zk")]
+    pub opening_mask: ZkR1csLinearCombination<L>,
+    /// Current suffix witness commitment.
+    pub commitment: &'a FlatRingVec<F>,
+    /// Basis used to interpret the current opening point.
+    pub basis: BasisMode,
+    /// Current suffix witness length in field elements.
+    pub w_len: usize,
+}
+
+/// Prepare one suffix fold level for relation verification.
 ///
 /// Terminal levels absorb the cleartext final witness instead of a
 /// next-witness commitment and run stage-2 in relation-only mode.
@@ -22,7 +39,7 @@ use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
 fn prepare_fold_data<'a, F, L, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, L>,
     transcript: &mut T,
-    current_state: &'a RecursiveVerifierState<'a, F, L>,
+    current_state: &'a SuffixVerifierState<'a, F, L>,
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
@@ -54,9 +71,8 @@ where
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
+    let opening_batch = OpeningBatch::same_point(num_vars, num_claims)?;
     let row_coefficients = vec![L::one()];
-    let challenge_points = vec![current_state.opening_point.clone()];
     let openings = vec![current_state.opening];
     #[cfg(feature = "zk")]
     let opening_masks = vec![Some(&current_state.opening_mask)];
@@ -74,10 +90,10 @@ where
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
         &[],
-        &challenge_points,
+        current_state.opening_point.as_slice(),
         &openings,
         &row_coefficients,
-        &incidence,
+        &opening_batch,
         current_state.basis,
         lp,
         block_order,
@@ -86,7 +102,7 @@ where
         #[cfg(feature = "zk")]
         &opening_masks,
         #[cfg(feature = "zk")]
-        "recursive extension-opening partial claim",
+        "suffix extension-opening partial claim",
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
@@ -100,8 +116,6 @@ where
         append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
 
-    let ring_opening_points = vec![prepared_point.ring_opening_point.clone()];
-    let ring_multiplier_points = vec![prepared_point.ring_multiplier_point.clone()];
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
         None => w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
@@ -124,7 +138,6 @@ where
     } else {
         None
     };
-    let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
     let stage1_proof = proof.stage1_proof();
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(setup_contribution_mode, next_fold_level_params)?;
@@ -159,18 +172,17 @@ where
         v: v_typed.to_vec(),
         commitment_rows: commitment_u,
         row_coefficients,
-        incidence,
-        commitment_routing,
-        ring_opening_points,
-        ring_multiplier_points,
+        opening_batch,
+        ring_opening_point: prepared_point.ring_opening_point.clone(),
+        ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
         terminal_replay,
         stage3,
-        trace_prepared_points: vec![prepared_point.clone()],
-        trace_block_openings: Vec::new(),
+        trace_prepared_point: Some(prepared_point.clone()),
+        trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,
         #[cfg(feature = "zk")]
@@ -180,25 +192,25 @@ where
     })
 }
 
-/// Verify all recursive fold levels after the root proof.
+/// Verify all suffix fold levels after the root proof.
 ///
 /// The supplied `schedule` is the already-selected public schedule for this
 /// proof shape. This function checks that each proof level matches that
 /// schedule, dispatches to the corresponding ring dimension, and threads the
-/// verifier state to the next recursive commitment.
+/// verifier state to the next suffix commitment.
 ///
 /// # Errors
 ///
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
-/// the recursive witness handoff has the wrong shape.
+/// the suffix witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
 fn verify_suffix<'a, F, L, T>(
     steps: &'a [AkitaLevelProof<F, L>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    mut current_state: RecursiveVerifierState<'a, F, L>,
+    mut current_state: SuffixVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
@@ -270,7 +282,7 @@ where
                             AkitaError::InvalidSetup("next witness length overflow".to_string())
                         })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
-                current_state = RecursiveVerifierState {
+                current_state = SuffixVerifierState {
                     opening_point: challenges,
                     opening: level_proof.next_w_eval(),
                     #[cfg(feature = "zk")]
@@ -332,33 +344,30 @@ where
 /// Verify the folded-root branch of a batched opening proof.
 ///
 /// The caller owns config-backed schedule selection and passes the derived
-/// root verifier layout plus the first recursive-level params. This function
+/// root verifier layout plus the first suffix-level params. This function
 /// owns the fold-root proof-shape checks, root opening preparation, root
-/// transcript replay, and recursive suffix handoff.
+/// transcript replay, and suffix handoff.
 ///
 /// # Errors
 ///
 /// Returns an error if the proof is not a folded-root proof, the schedule does
-/// not match the proof shape, the root proof rejects, or a recursive suffix
-/// level rejects.
+/// not match the proof shape, the root proof rejects, or a suffix level rejects.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_folded_batched_proof<F, E, C, T, const D: usize>(
-    proof: &AkitaBatchedProof<F, C>,
+pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
+    proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    opening_points: &[&[E]],
+    opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: OpeningBatch,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
+    E: RingSubfieldEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
@@ -395,22 +404,25 @@ where
     match &proof.root {
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
-            // 1-fold case: the root itself is the terminal fold. No recursive
-            // suffix follows.
+            // 1-fold case: the root itself is the terminal fold. No suffix follows.
             if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
-            if terminal.final_witness().shape() != terminal_direct.witness_shape {
+            let final_witness = terminal
+                .stage2
+                .final_witness()
+                .ok_or(AkitaError::InvalidProof)?;
+            if final_witness.shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root::<F, E, C, T, D>(
+            verify_root::<F, E, T, D>(
                 &proof.root,
                 setup,
                 transcript,
-                opening_points,
+                opening_point,
                 openings,
                 commitments,
-                incidence_summary,
+                opening_batch,
                 basis,
                 root_lp,
                 setup_contribution_mode,
@@ -455,14 +467,14 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, C, T, D>(
+            let root_challenges = verify_root::<F, E, T, D>(
                 &proof.root,
                 setup,
                 transcript,
-                opening_points,
+                opening_point,
                 openings,
                 commitments,
-                incidence_summary,
+                opening_batch,
                 basis,
                 root_lp,
                 setup_contribution_mode,
@@ -479,18 +491,18 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
-            let current_state = RecursiveVerifierState {
+            let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
                 opening: root_stage2.next_w_eval(),
                 #[cfg(feature = "zk")]
-                opening_mask: zk_ext_mask_lc_at::<F, C>(
-                    zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
+                opening_mask: zk_ext_mask_lc_at::<F, E>(
+                    zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,
                 ),
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
             };
-            verify_suffix::<F, C, T>(
+            verify_suffix::<F, E, T>(
                 &proof.steps,
                 setup,
                 transcript,
@@ -511,7 +523,7 @@ where
         if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
+        let lifted = lift_hiding_witness::<F, E>(&proof.zk_hiding.hiding_witness);
         zk_relations.verify_all(&lifted)?;
     }
 

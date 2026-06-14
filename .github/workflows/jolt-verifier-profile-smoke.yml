@@ -1,0 +1,58 @@
+# Smoke compile/test for profile/akita-recursion: the standalone sub-workspace
+# that packages the Akita PCS verifier for execution inside a Jolt zkVM guest.
+#
+# This job does NOT run Jolt prove/trace (that needs the Jolt CLI, zeroos musl,
+# and minutes of emulator time). It catches API drift between the main crates
+# and the recursion glue, artifact (prover → verifier-input blob), and host
+# (Jolt driver) binaries before someone runs the manual runbook in
+# profile/akita-recursion/README.md.
+
+name: Akita verifier in Jolt (profile smoke)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/**
+      - profile/akita-recursion/**
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - crates/**
+      - profile/akita-recursion/**
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  jolt-verifier-profile-smoke:
+    name: check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: profile/akita-recursion
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          toolchain: 1.95
+          targets: riscv32imac-unknown-none-elf,riscv64imac-unknown-none-elf
+          cache: false
+      - name: Cache profile/akita-recursion build
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: profile/akita-recursion
+          shared-key: ci-jolt-verifier-profile-smoke
+          cache-on-failure: true
+      - name: Test AkitaJoltInputs blob encode/decode (akita-recursion-glue)
+        run: cargo test -p akita-recursion-glue
+      - name: Compile akita-recursion-artifact and akita-recursion-host (release)
+        run: cargo check --release

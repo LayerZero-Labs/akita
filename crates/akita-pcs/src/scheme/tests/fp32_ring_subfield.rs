@@ -146,36 +146,20 @@ where
 
 /// Total-claim limit shared by both fp32 ring-subfield fixtures.
 ///
-/// Setup sizing is driven by the maximum number of claims a single batched
-/// opening can carry, which is bounded by `max_num_batched_polys` (each
-/// point opens at most every committed polynomial). `max_num_points` may
-/// not exceed `max_num_batched_polys` for these fixtures.
-fn fp32_ring_subfield_max_claims(
-    max_num_batched_polys: usize,
-    max_num_points: usize,
-) -> Result<usize, AkitaError> {
+/// Setup sizing is driven by the maximum number of claims a single shared
+/// opening can carry, bounded by `max_num_batched_polys`.
+fn fp32_ring_subfield_max_claims(max_num_batched_polys: usize) -> Result<usize, AkitaError> {
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
-    }
-    if max_num_points == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_points must be at least 1".to_string(),
-        ));
-    }
-    if max_num_points > max_num_batched_polys {
-        return Err(AkitaError::InvalidSetup(format!(
-            "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
-        )));
     }
     Ok(max_num_batched_polys)
 }
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
-    type ChallengeField = Self::ClaimField;
+    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -203,10 +187,9 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys)?;
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -215,15 +198,15 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 
     fn get_params_for_prove(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            incidence.num_points(),
-            incidence.num_polynomials(),
-            incidence.num_claims(),
-            incidence.num_public_rows(),
+            1,
+            opening_batch.num_polynomials(),
+            opening_batch.num_claims(),
+            1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
         let compact_w_len = w_ring * Self::D;
@@ -260,8 +243,7 @@ impl Fp32RingSubfieldOuterFallbackCfg {
 
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
-    type ClaimField = akita_field::RingSubfieldFpExt4<Self::Field>;
-    type ChallengeField = Self::ClaimField;
+    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -289,10 +271,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys)?;
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -301,9 +282,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     }
 
     fn get_params_for_prove(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
@@ -311,10 +292,10 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         // length.
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            incidence.num_points(),
-            incidence.num_polynomials(),
-            incidence.num_claims(),
-            incidence.num_public_rows(),
+            1,
+            opening_batch.num_polynomials(),
+            opening_batch.num_claims(),
+            1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
@@ -344,22 +325,16 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
 
 #[test]
 fn fp32_ring_subfield_setup_sizing_uses_total_claim_limit() {
-    let one_point = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 1).unwrap();
-    let two_points = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 2).unwrap();
+    let one_point = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2).unwrap();
+    let two_points = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2).unwrap();
     assert_eq!(one_point.max_setup_len, two_points.max_setup_len);
-}
-
-#[test]
-fn fp32_ring_subfield_setup_rejects_more_points_than_claims() {
-    assert!(Fp32RingSubfieldRootFoldCfg::max_setup_matrix_size(5, 1, 2).is_err());
-    assert!(Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 1, 2).is_err());
 }
 
 #[test]
 fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     type SmallCfg = Fp32RingSubfieldRootFoldCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 1;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -388,7 +363,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         });
 
     let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
@@ -407,14 +382,14 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -446,17 +421,54 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
+
+    let mut malformed_stage2 = proof.clone();
+    let terminal = match &mut malformed_stage2.root {
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal,
+        akita_types::AkitaBatchedRootProof::Fold(_) => {
+            panic!("NUM_VARS=1 fixture should be terminal-rooted")
+        }
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
+            panic!("NUM_VARS=1 fixture should not be root-direct")
+        }
+    };
+    let sumcheck_proof = terminal.stage2.sumcheck().clone();
+    terminal.stage2 =
+        akita_types::AkitaStage2Proof::Intermediate(akita_types::AkitaIntermediateStage2Proof {
+            sumcheck_proof,
+            next_w_commitment: akita_types::FlatRingVec::from_coeffs(Vec::<SmallF>::new()),
+            next_w_eval: SmallE::zero(),
+        });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut verifier_transcript =
+            AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+            &malformed_stage2,
+            &verifier_setup,
+            &mut verifier_transcript,
+            (
+                &point[..],
+                vec![CommittedOpenings {
+                    openings: &openings[..],
+                    commitment: &commitments[0],
+                }],
+            ),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+    }));
+    assert!(matches!(result, Ok(Err(AkitaError::InvalidProof))));
 
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
@@ -465,13 +477,13 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -484,13 +496,13 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &wrong_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -501,7 +513,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -540,7 +552,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         });
 
     let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
@@ -560,14 +572,14 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -596,13 +608,13 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -615,13 +627,13 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -632,8 +644,8 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
-    type SmallL = <SmallCfg as CommitmentConfig>::ChallengeField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
+    type SmallL = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -672,7 +684,7 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
         });
 
     let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
@@ -692,14 +704,14 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -728,13 +740,13 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -745,10 +757,10 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
 }
 
 #[test]
-fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
+fn fp32_ring_subfield_batched_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
@@ -768,16 +780,6 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             ])
         })
         .collect::<Vec<_>>();
-    let point_b = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 11) as u64),
-                SmallF::from_u64((idx + 13) as u64),
-                SmallF::from_u64((idx + 17) as u64),
-                SmallF::from_u64((idx + 19) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
     let opening_at = |point: &[SmallE]| {
         let weights = lagrange_weights(point).unwrap();
         evals
@@ -788,13 +790,13 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             })
     };
     let opening_a = opening_at(&point_a);
-    let opening_b = opening_at(&point_b);
 
     let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 2).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let poly_refs = [&poly];
+    let polys = [poly.clone(), poly];
+    let poly_refs = [&polys[0], &polys[1]];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
         &CpuBackend,
@@ -803,33 +805,22 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     )
     .unwrap();
     let commitments = [commitment];
-    let openings_a = [opening_a];
-    let openings_b = [opening_b];
+    let openings = [opening_a, opening_a];
 
     let mut prover_transcript =
-        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         &CpuBackend,
         &prepared,
-        vec![
-            (
-                &point_a[..],
-                CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint: hint.clone(),
-                },
-            ),
-            (
-                &point_b[..],
-                CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint,
-                },
-            ),
-        ],
+        (
+            &point_a[..],
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -853,60 +844,42 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     );
 
     let mut verifier_transcript =
-        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![
-            (
-                &point_a[..],
-                CommittedOpenings {
-                    openings: &openings_a[..],
-                    commitment: &commitments[0],
-                },
-            ),
-            (
-                &point_b[..],
-                CommittedOpenings {
-                    openings: &openings_b[..],
-                    commitment: &commitments[0],
-                },
-            ),
-        ],
+        (
+            &point_a[..],
+            vec![CommittedOpenings {
+                openings: &openings[..],
+                commitment: &commitments[0],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
-    let wrong_openings_b = [opening_b + SmallE::one()];
+    let wrong_openings = [opening_a, opening_a + SmallE::one()];
     let mut verifier_transcript =
-        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![
-            (
-                &point_a[..],
-                CommittedOpenings {
-                    openings: &openings_a[..],
-                    commitment: &commitments[0],
-                },
-            ),
-            (
-                &point_b[..],
-                CommittedOpenings {
-                    openings: &wrong_openings_b[..],
-                    commitment: &commitments[0],
-                },
-            ),
-        ],
+        (
+            &point_a[..],
+            vec![CommittedOpenings {
+                openings: &wrong_openings[..],
+                commitment: &commitments[0],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
     assert!(
         result.is_err(),
-        "root tensor projection must reject a wrong claim at any point"
+        "root tensor projection must reject a wrong batched claim"
     );
 }

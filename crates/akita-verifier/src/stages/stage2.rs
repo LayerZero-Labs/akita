@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
@@ -9,9 +9,8 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_terms_closed, relation_claim_from_rows_extension, AkitaExpandedSetup,
-    CleartextWitnessProof, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
-    TraceClaim,
+    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingSubfieldEncoding, TraceClaim,
 };
 use std::marker::PhantomData;
 
@@ -134,8 +133,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     prepared_row_eval: RingSwitchDeferredRowEval<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
-    opening_points: &'a [RingOpeningPoint<F>],
-    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+    opening_point: &'a RingOpeningPoint<F>,
+    ring_multiplier_point: &'a RingMultiplierOpeningPoint<F, D>,
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -165,8 +164,8 @@ where
         prepared_row_eval: RingSwitchDeferredRowEval<E>,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+        opening_point: &'a RingOpeningPoint<F>,
+        ring_multiplier_point: &'a RingMultiplierOpeningPoint<F, D>,
         relation_claim: E,
         alpha: E,
         col_bits: usize,
@@ -211,8 +210,8 @@ where
             prepared_row_eval,
             setup_claim,
             setup,
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             alpha,
             col_bits,
             ring_bits,
@@ -222,124 +221,6 @@ where
         })
     }
 
-    /// Construct a verifier that evaluates the final cleartext witness locally.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_cleartext_witness")]
-    pub(crate) fn new_with_cleartext_witness(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
-        cleartext_witness: &'a CleartextWitnessProof<F>,
-        physical_w_len: usize,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
-        setup_claim: Option<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            #[cfg(feature = "zk")]
-            trace_claim_mask,
-            Stage2WitnessOracle::Cleartext {
-                witness: cleartext_witness,
-                physical_w_len,
-            },
-            stage1_point,
-            alpha_evals_y,
-            prepared_row_eval,
-            setup_claim,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            match relation_claim_override {
-                Some(claim) => claim,
-                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
-            },
-            alpha,
-            col_bits,
-            ring_bits,
-            trace,
-        )
-    }
-
-    /// Construct a verifier that consumes an already claimed next-witness eval.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
-    pub(crate) fn new_with_claimed_w_eval(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
-        w_eval: E,
-        #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
-        setup_claim: Option<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            #[cfg(feature = "zk")]
-            trace_claim_mask,
-            Stage2WitnessOracle::ClaimedEval {
-                eval: w_eval,
-                #[cfg(feature = "zk")]
-                mask: w_eval_mask,
-            },
-            stage1_point,
-            alpha_evals_y,
-            prepared_row_eval,
-            setup_claim,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            match relation_claim_override {
-                Some(claim) => claim,
-                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
-            },
-            alpha,
-            col_bits,
-            ring_bits,
-            trace,
-        )
-    }
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Cleartext {
@@ -360,8 +241,8 @@ where
         self.prepared_row_eval.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
-            self.opening_points,
-            self.ring_multiplier_points,
+            self.opening_point,
+            self.ring_multiplier_point,
             self.alpha,
             self.setup_claim,
         )

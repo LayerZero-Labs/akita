@@ -753,15 +753,14 @@ pub fn find_schedule(
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = key.num_z_vectors;
-    let num_points = key.num_points;
-    if num_points == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    if t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
         return Err(AkitaError::InvalidSetup(
             "schedule key planner dimensions must be at least 1".into(),
         ));
     }
-    if num_points > t_vectors || num_points > w_vectors {
+    if z_vectors != 1 {
         return Err(AkitaError::InvalidSetup(
-            "schedule key opening-point count cannot exceed t or w vector counts".into(),
+            "schedule key must describe one shared opening point and one public row".into(),
         ));
     }
 
@@ -923,7 +922,7 @@ pub fn find_schedule(
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    key.num_points,
+                    1,
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,

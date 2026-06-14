@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
-    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, OpeningBatch,
+    Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -26,7 +26,7 @@ pub mod test_support;
 mod transcript_binding;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
-    worst_case_grouped_incidence_for_shape,
+    worst_case_grouped_opening_batch_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -44,8 +44,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-        claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
-        chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
+        claim_ext_degree: Cfg::EXT_DEGREE,
+        chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
@@ -54,63 +54,48 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
-/// Three field roles, all extending `Field`:
+/// Two field roles, both extending `Field`:
 /// - `Field` — base ring / SIS scalar.
-/// - `ClaimField` — public opening points + claimed evaluations (proof bytes).
-/// - `ChallengeField` — Fiat-Shamir scalars.
+/// - `ExtField` — public opening points, claimed evaluations, proof scalars,
+///   and Fiat-Shamir challenges.
 ///
-/// `ChallengeField: ExtField<ClaimField>` so batching by a challenge always
-/// lifts the claim. The degree-one specialization
-/// `Field = ClaimField = ChallengeField` is the production fp128 path.
+/// The degree-one specialization `Field = ExtField` is the production fp128
+/// path. For fp32/fp64 presets, extension-opening reduction still aligns the
+/// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
     type Field: CanonicalField + FieldCore;
 
-    /// Field used by public opening points and claimed evaluations.
-    type ClaimField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
+    /// Field used by public openings and all proof scalars.
+    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
 
-    /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
-    type ChallengeField: ExtField<Self::Field>
-        + ExtField<Self::ClaimField>
-        + MulBaseUnreduced<Self::Field>;
-
-    /// Extension degree `K = [ClaimField : Field]`.
+    /// Extension degree `K = [ExtField : Field]`.
     ///
     /// This is the `K` consumed by [`field_reduction::psi_embed`] and
     /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
     /// validates `SubfieldParams<D, K>`. Default body delegates to
-    /// `<ClaimField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// `<ExtField as ExtField<Field>>::EXT_DEGREE`; presets should not
     /// override unless they have a reason to disagree with that.
     ///
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
-    const CLAIM_EXT_DEGREE: usize = <Self::ClaimField as ExtField<Self::Field>>::EXT_DEGREE;
-
-    /// Extension degree `[ChallengeField : Field]`.
-    ///
-    /// Default body delegates to
-    /// `<ChallengeField as ExtField<Field>>::EXT_DEGREE`. Combined with
-    /// [`Self::CLAIM_EXT_DEGREE`], the relative degree is
-    /// `[ChallengeField : ClaimField] = CHAL_EXT_DEGREE / CLAIM_EXT_DEGREE`,
-    /// which equals `<ChallengeField as ExtField<ClaimField>>::EXT_DEGREE` by
-    /// construction.
-    const CHAL_EXT_DEGREE: usize = <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
+    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
 
     /// Absorb a claim-field element into a base-field transcript.
     fn append_claim_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
-        x: &Self::ClaimField,
+        x: &Self::ExtField,
     ) {
-        append_ext_field::<Self::Field, Self::ClaimField, T>(transcript, label, x);
+        append_ext_field::<Self::Field, Self::ExtField, T>(transcript, label, x);
     }
 
     /// Squeeze a challenge-field element from a base-field transcript.
     fn sample_challenge_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
-    ) -> Self::ChallengeField {
-        sample_ext_challenge::<Self::Field, Self::ChallengeField, T>(transcript, label)
+    ) -> Self::ExtField {
+        sample_ext_challenge::<Self::Field, Self::ExtField, T>(transcript, label)
     }
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
@@ -167,7 +152,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// coefficient can contribute through paired ring lanes, so SIS A-role
     /// collision pricing uses a conservative factor of two.
     fn ring_subfield_embedding_norm_bound() -> u32 {
-        if Self::CLAIM_EXT_DEGREE == 1 {
+        if Self::EXT_DEGREE == 1 {
             1
         } else {
             2
@@ -183,7 +168,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range.
@@ -240,13 +224,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `incidence`.
-    fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+    /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
+    fn get_params_for_prove(opening_batch: &OpeningBatch) -> Result<Schedule, AkitaError> {
+        let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
         Self::runtime_schedule(key)
     }
 
-    /// Root commit layout the `batched_prove` flow uses for `incidence`,
+    /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
     /// read off the runtime schedule's first step (the root Fold params or
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
@@ -261,9 +245,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(incidence)?;
+        let schedule = Self::get_params_for_prove(opening_batch)?;
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
             Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
@@ -281,22 +265,20 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, TowerBasisFpExt4, UnitNr};
+    use akita_field::{Fp32, NegOneNr, TowerBasisFpExt4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
-    type BaseFpExt2 = FpExt2<Base, NegOneNr>;
-    type BaseTowerBasisFpExt4 = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
+    type BaseExt = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
 
     #[derive(Clone)]
-    struct ExtensionRoleConfig;
+    struct SingleExtensionConfig;
 
-    impl CommitmentConfig for ExtensionRoleConfig {
+    impl CommitmentConfig for SingleExtensionConfig {
         type Field = Base;
-        type ClaimField = BaseFpExt2;
-        type ChallengeField = BaseTowerBasisFpExt4;
+        type ExtField = BaseExt;
 
         const D: usize = 8;
 
@@ -311,7 +293,7 @@ mod tests {
         fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
             if d != Self::D {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "unsupported D={d} for ExtensionRoleConfig (expected {})",
+                    "unsupported D={d} for SingleExtensionConfig (expected {})",
                     Self::D
                 )));
             }
@@ -328,7 +310,6 @@ mod tests {
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-            _max_num_points: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
             Ok(SetupMatrixEnvelope {
                 max_setup_len: 1,
@@ -345,73 +326,43 @@ mod tests {
     }
 
     #[test]
-    fn config_samples_extension_challenge_role() {
+    fn config_samples_extension_challenge() {
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let c1 =
-            ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
-        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
-            &mut t2,
-            labels::CHALLENGE_RING_SWITCH,
-        );
+            SingleExtensionConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
+        let c2 = sample_ext_challenge::<Base, BaseExt, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
         assert_eq!(c1, c2);
     }
 
     #[test]
-    fn claim_ext_degree_default_matches_claim_field_ext_degree() {
+    fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
-            ExtensionRoleConfig::CLAIM_EXT_DEGREE,
-            <BaseFpExt2 as ExtField<Base>>::EXT_DEGREE
+            SingleExtensionConfig::EXT_DEGREE,
+            <BaseExt as ExtField<Base>>::EXT_DEGREE
         );
-        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+        assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
     }
 
     #[test]
-    fn chal_ext_degree_default_matches_challenge_field_ext_degree() {
-        assert_eq!(
-            ExtensionRoleConfig::CHAL_EXT_DEGREE,
-            <BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE
-        );
-        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
-    }
-
-    #[test]
-    fn chal_over_claim_degree_matches_quotient_of_absolute_degrees() {
-        assert_eq!(
-            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
-            ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
-        );
-    }
-
-    #[test]
-    fn extension_role_config_exercises_true_field_tower() {
-        assert_eq!(<BaseFpExt2 as ExtField<Base>>::EXT_DEGREE, 2);
-        assert_eq!(
-            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
-            2
-        );
-        assert_eq!(<BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE, 4);
-        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
-        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
-
-        let claim = BaseFpExt2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
-        let lifted = BaseTowerBasisFpExt4::lift_base(claim);
-        assert_eq!(
-            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::to_base_vec(&lifted),
-            vec![claim, BaseFpExt2::zero()]
-        );
-    }
-
-    #[test]
-    fn config_appends_extension_claim_role() {
-        let claim = BaseFpExt2::new(Base::from_u64(9), Base::from_u64(10));
+    fn config_appends_extension_opening() {
+        let opening = BaseExt::from_base_slice(&[
+            Base::from_u64(9),
+            Base::from_u64(10),
+            Base::from_u64(11),
+            Base::from_u64(12),
+        ]);
 
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-        ExtensionRoleConfig::append_claim_field(&mut t1, labels::ABSORB_EVALUATION_CLAIMS, &claim);
-        append_ext_field::<Base, BaseFpExt2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
+        SingleExtensionConfig::append_claim_field(
+            &mut t1,
+            labels::ABSORB_EVALUATION_CLAIMS,
+            &opening,
+        );
+        append_ext_field::<Base, BaseExt, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &opening);
 
         let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -581,8 +532,9 @@ mod fp128_policy_tests {
             2
         );
 
-        let incidence = ClaimIncidenceSummary::same_point(20, 1).expect("singleton incidence");
-        let schedule = SmallCfg::get_params_for_prove(&incidence).expect("small-field schedule");
+        let opening_batch = OpeningBatch::same_point(20, 1).expect("singleton opening batch");
+        let schedule =
+            SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
             panic!("small-field schedule should start with a root fold");
         };

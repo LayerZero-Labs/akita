@@ -5,11 +5,11 @@ use akita_config::tensor_verifier;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
+use akita_field::TranscriptChallenge;
 use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField,
     RandomSampling,
 };
-use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
@@ -30,10 +30,7 @@ fn fp128_prime_label() -> String {
     }
 }
 
-fn run_dense_mode<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     title: &str,
     nv: usize,
@@ -63,46 +60,39 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF, D>,
-            ClaimField = Cfg::ClaimField,
+            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
             FF,
             D,
-            ClaimField = Cfg::ClaimField,
+            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
 {
-    let (protocol_nv, num_points, num_t_vectors, num_w_vectors, num_z_vectors) =
-        if Cfg::CLAIM_EXT_DEGREE > 1 {
-            let split_bits = Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize;
-            let width = 1usize << split_bits;
-            (
-                nv.checked_sub(split_bits)
-                    .expect("Frobenius split must not exceed dense arity")
-                    + split_bits,
-                1,
-                1,
-                width,
-                width,
-            )
-        } else {
-            (nv, 1, 1, 1, 1)
-        };
+    let (protocol_nv, num_t_vectors, num_w_vectors, num_z_vectors) = if Cfg::EXT_DEGREE > 1 {
+        let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
+        let width = 1usize << split_bits;
+        (
+            nv.checked_sub(split_bits)
+                .expect("Frobenius split must not exceed dense arity")
+                + split_bits,
+            1,
+            width,
+            width,
+        )
+    } else {
+        (nv, 1, 1, 1)
+    };
     let layout = resolve_layout::<FF, Cfg>(protocol_nv);
-    let schedule_key = AkitaScheduleLookupKey::new_with_points(
-        protocol_nv,
-        num_points,
-        num_t_vectors,
-        num_w_vectors,
-        num_z_vectors,
-    );
+    let schedule_key =
+        AkitaScheduleLookupKey::new(protocol_nv, num_t_vectors, num_w_vectors, num_z_vectors);
     let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout, num_t_vectors, Cfg::decomposition().field_bits());
@@ -128,21 +118,21 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF, D>,
-            ClaimField = Cfg::ClaimField,
+            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
             FF,
             D,
-            ClaimField = Cfg::ClaimField,
+            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
 {
     tracing::info!("{}", title);
     if num_polys == 1 {
@@ -185,10 +175,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     }
 }
 
-fn run_onehot_mode<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     title: &str,
     nv: usize,
@@ -198,7 +185,7 @@ fn run_onehot_mode<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
@@ -206,7 +193,7 @@ fn run_onehot_mode<
         > + CommitmentVerifier<
             F,
             D,
-            ClaimField = F,
+            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
@@ -542,7 +529,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
     Cfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout")
 }

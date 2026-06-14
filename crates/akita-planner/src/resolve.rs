@@ -55,13 +55,12 @@ use crate::PlannerPolicy;
 
 /// Convert the public runtime lookup key into a generated-table lookup key.
 ///
-/// The generated-table key preserves the legacy `num_commitment_groups`
-/// field name as part of its ABI; `num_points` is the runtime-facing alias
-/// under the one-commitment-per-point invariant.
+/// Generated tables retain the `num_commitment_groups` field in their on-disk
+/// key shape, but runtime opening batches always use one commitment group.
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
-        num_commitment_groups: key.num_points,
+        num_commitment_groups: 1,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
@@ -280,12 +279,7 @@ pub fn schedule_from_entry(
                     level_num_claims,
                 )?;
                 let (np, nt, nw, nz) = if fold_level == 0 {
-                    (
-                        key.num_points,
-                        key.num_t_vectors,
-                        key.num_w_vectors,
-                        key.num_z_vectors,
-                    )
+                    (1, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
                 } else {
                     (1, 1, 1, 1)
                 };
@@ -453,14 +447,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_schedule_key_preserves_commitment_group_count() {
-        let one_group = AkitaScheduleLookupKey::new_with_points(16, 1, 4, 4, 1);
-        let four_groups = AkitaScheduleLookupKey::new_with_points(16, 4, 4, 4, 1);
-
-        assert_ne!(
-            generated_schedule_lookup_key(one_group),
-            generated_schedule_lookup_key(four_groups),
-            "generated schedule lookup must not alias differently grouped commitment shapes"
-        );
+    fn generated_schedule_key_uses_single_commitment_group() {
+        let key = AkitaScheduleLookupKey::new(16, 4, 4, 1);
+        assert_eq!(generated_schedule_lookup_key(key).num_commitment_groups, 1);
     }
 }

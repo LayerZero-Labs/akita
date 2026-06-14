@@ -55,6 +55,7 @@ Workspace members under `crates/`:
 - `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
+- `OpeningBatch` — normalized single-point batch descriptor for batched prove/verify (`crates/akita-types/src/proof/opening_batch.rs`). One shared opening point per call; multipoint removed. Production folded path: one commitment bundling `N` polynomials. See [`specs/single-point-opening-batch.md`](specs/single-point-opening-batch.md).
 - `AkitaTranscript`, `Transcript` — spongefish-backed Fiat-Shamir layer
 - `AkitaInstanceDescriptor` — canonical transcript preamble binding algebra, setup, plan, and call shape
 

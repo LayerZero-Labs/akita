@@ -391,7 +391,7 @@ mod tests {
 
     struct StructuredFixture {
         prepared: RingSwitchDeferredRowEval<F>,
-        opening_points: Vec<RingOpeningPoint<F>>,
+        opening_point: RingOpeningPoint<F>,
         full_vec_randomness: Vec<F>,
         offset_e: usize,
         offset_t: usize,
@@ -436,10 +436,9 @@ mod tests {
         let n_a = 2usize;
         let n_b = 2usize;
         let n_d = 2usize;
-        let num_polys_per_point = vec![2usize, 1usize];
-        let num_points = num_polys_per_point.len();
         let num_claims = 3usize;
-        let num_public_rows = num_points;
+        let num_points = 1usize;
+        let num_public_rows = 0usize;
         let total_blocks = num_blocks * num_claims;
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
         let inner_width = block_len * depth_commit;
@@ -449,7 +448,7 @@ mod tests {
         let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
             &lp,
             MRowLayout::WithDBlock,
-            &num_polys_per_point,
+            num_claims,
         )
         .expect("witness segment layout");
         let offset_e = witness_segment_layout.offset_e;
@@ -459,16 +458,10 @@ mod tests {
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
-        let opening_points = (0..num_points)
-            .map(|pt| RingOpeningPoint {
-                a: (0..block_len)
-                    .map(|idx| f(1_000 + (pt * block_len + idx) as u128))
-                    .collect(),
-                b: (0..num_blocks)
-                    .map(|idx| f(2_000 + (pt * num_blocks + idx) as u128))
-                    .collect(),
-            })
-            .collect();
+        let opening_point = RingOpeningPoint {
+            a: (0..block_len).map(|idx| f(1_000 + idx as u128)).collect(),
+            b: (0..num_blocks).map(|idx| f(2_000 + idx as u128)).collect(),
+        };
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -478,7 +471,7 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
-            num_t_vectors: num_polys_per_point.iter().sum(),
+            num_t_vectors: num_claims,
             num_blocks,
             num_claims,
             depth_open,
@@ -499,13 +492,10 @@ mod tests {
             n_b,
             tier_split: 1,
             n_f: 0,
-            num_points,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
-            num_polys_per_commitment_group: num_polys_per_point,
-            num_public_rows,
+            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
+            num_polys_per_commitment_group: vec![num_claims],
             gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
-            claim_to_point: vec![1, 0, 1],
             witness_segment_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
@@ -516,7 +506,7 @@ mod tests {
 
         StructuredFixture {
             prepared,
-            opening_points,
+            opening_point,
             full_vec_randomness,
             offset_e,
             offset_t,
@@ -545,25 +535,8 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_e & (p.num_blocks - 1);
 
-        let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
-            .map(|claim_idx| {
-                let point_idx = p.claim_to_point[claim_idx];
-                let mut summary = summarize_pow2_block_carries_base::<F, F>(
-                    &eq_low,
-                    block_offset_low,
-                    &fx.opening_points[point_idx].b,
-                )?;
-                summary[0] *= p.gamma[claim_idx];
-                summary[1] *= p.gamma[claim_idx];
-                Ok::<[F; 2], AkitaError>(summary)
-            })
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let public_row_weights_by_claim: Vec<F> = p
-            .claim_to_point
-            .iter()
-            .map(|&point_idx| p.eq_tau1[1 + point_idx])
-            .collect();
+        let public_block_summaries = vec![[F::zero(); 2]; p.num_claims];
+        let public_row_weights_by_claim = vec![F::zero(); p.num_claims];
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
@@ -592,14 +565,7 @@ mod tests {
             let total_blocks = p.total_blocks();
             let dig = x / total_blocks;
             let blk = x % total_blocks;
-            let claim_idx = blk / p.num_blocks;
-            let block_idx = blk % p.num_blocks;
-            let point_idx = p.claim_to_point[claim_idx];
-            let entry = (p.eq_tau1[1 + point_idx]
-                * p.gamma[claim_idx]
-                * fx.opening_points[point_idx].b[block_idx]
-                + p.eq_tau1[0] * c_alphas[blk])
-                * fx.g1_open[dig];
+            let entry = p.eq_tau1[0] * c_alphas[blk] * fx.g1_open[dig];
             expected += entry * eq[fx.offset_e + x];
         }
         assert_eq!(got, expected);
@@ -627,7 +593,7 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
-        let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
+        let a_start = 1 + p.n_d_active() + p.n_b;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_t >> offset_low_bits,
@@ -654,25 +620,19 @@ mod tests {
     fn z_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
+        let z_len = p.depth_fold * p.depth_commit * p.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
         let z_offset_low_bits = p.block_len.trailing_zeros() as usize;
         let z_block_low_eq =
             EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
         let z_offset_low = fx.offset_z & (p.block_len - 1);
 
-        let a_block_summary: Vec<[F; 2]> = fx
-            .opening_points
-            .iter()
-            .map(|point| {
-                summarize_pow2_block_carries_base::<F, F>(
-                    &z_block_low_eq,
-                    z_offset_low,
-                    &point.a[..p.block_len],
-                )
-            })
-            .collect::<Result<_, _>>()
-            .unwrap();
+        let a_block_summary = vec![summarize_pow2_block_carries_base::<F, F>(
+            &z_block_low_eq,
+            z_offset_low,
+            &fx.opening_point.a[..p.block_len],
+        )
+        .unwrap()];
         let got = ZStructuredPow2SlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
             offset_high: fx.offset_z >> z_offset_low_bits,
@@ -684,18 +644,15 @@ mod tests {
         .evaluate();
 
         let mut expected = F::zero();
-        let z_total_blocks = p.num_points * p.block_len;
+        let z_total_blocks = p.block_len;
         for x in 0..z_len {
             let compound_dig = x / z_total_blocks;
             let global_blk = x % z_total_blocks;
             let dc = compound_dig / p.depth_fold;
             let df = compound_dig % p.depth_fold;
-            let point_idx = global_blk / p.block_len;
             let blk = global_blk % p.block_len;
-            let entry = -(p.eq_tau1[0]
-                * fx.opening_points[point_idx].a[blk]
-                * fx.g1_commit[dc]
-                * fx.fold_gadget[df]);
+            let entry =
+                -(p.eq_tau1[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
@@ -709,13 +666,9 @@ mod tests {
         let p = &fx.prepared;
         assert!(!p.block_len.is_power_of_two());
 
-        let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
+        let z_len = p.depth_fold * p.depth_commit * p.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
-        let a_evals_by_point: Vec<Vec<F>> = fx
-            .opening_points
-            .iter()
-            .map(|point| point.a[..p.block_len].to_vec())
-            .collect();
+        let a_evals_by_point = vec![fx.opening_point.a[..p.block_len].to_vec()];
         let got = ZDenseSlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
@@ -729,18 +682,15 @@ mod tests {
         .unwrap();
 
         let mut expected = F::zero();
-        let z_total_blocks = p.num_points * p.block_len;
+        let z_total_blocks = p.block_len;
         for x in 0..z_len {
             let compound_dig = x / z_total_blocks;
             let global_blk = x % z_total_blocks;
             let dc = compound_dig / p.depth_fold;
             let df = compound_dig % p.depth_fold;
-            let point_idx = global_blk / p.block_len;
             let blk = global_blk % p.block_len;
-            let entry = -(p.eq_tau1[0]
-                * fx.opening_points[point_idx].a[blk]
-                * fx.g1_commit[dc]
-                * fx.fold_gadget[df]);
+            let entry =
+                -(p.eq_tau1[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);

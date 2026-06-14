@@ -665,10 +665,8 @@ mod tests {
     }
 
     /// `ExtField<F>::EXT_DEGREE` over the base prime field must equal
-    /// `ExtField<ClaimField>::EXT_DEGREE * ExtField<F>::EXT_DEGREE` on the
-    /// claim field. This is the chain
-    /// `[ChallengeField : F] = [ChallengeField : ClaimField] * [ClaimField : F]`
-    /// the field-role convention relies on.
+    /// the relative extension degree times the intermediate field's base
+    /// degree. This is the tower chain `[E4 : F] = [E4 : E2] * [E2 : F]`.
     #[test]
     fn fp_ext4_ext_degrees_chain_correctly() {
         assert_eq!(
