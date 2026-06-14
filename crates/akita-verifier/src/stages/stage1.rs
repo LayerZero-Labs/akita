@@ -49,6 +49,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
+    grind_nonce: u32,
 ) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -68,6 +69,7 @@ where
         &lp.stage1_config,
         &lp.fold_challenge_shape,
         stage1_fold_challenge_labels(),
+        grind_nonce,
     )
 }
 

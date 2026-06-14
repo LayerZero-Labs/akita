@@ -796,6 +796,7 @@ mod tests {
         let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
@@ -845,6 +846,7 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
+                    true,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -908,6 +910,7 @@ mod tests {
                     next_w_len,
                     num_claims,
                     MRowLayout::WithoutDBlock,
+                    false,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
@@ -982,6 +985,7 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
+                    false,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"

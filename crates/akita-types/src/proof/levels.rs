@@ -246,6 +246,8 @@ pub enum AkitaLevelProof<F: FieldCore, L: FieldCore> {
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         /// `v = D · ŵ` (ring dim = current level's D).
         v: FlatRingVec<F>,
+        /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+        fold_grind_nonce: u32,
         /// Stage-1 norm-check payload.
         stage1: AkitaStage1Proof<L>,
         /// Stage-2 fused payload.
@@ -275,6 +277,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         Self::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            fold_grind_nonce: 0,
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
@@ -346,6 +349,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         Self::Intermediate {
             extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            fold_grind_nonce: 0,
             stage1,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
@@ -381,6 +385,14 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 final_witness,
             }),
             final_w_len,
+        }
+    }
+
+    /// Accepted fold grind nonce (`0` for terminal levels and deterministic policy).
+    pub fn fold_grind_nonce(&self) -> u32 {
+        match self {
+            Self::Intermediate { fold_grind_nonce, .. } => *fold_grind_nonce,
+            Self::Terminal { .. } => 0,
         }
     }
 
@@ -637,6 +649,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             stage1,
             stage2,
             stage3_sumcheck_proof,
+            ..
         } = self
         else {
             panic!("shape() called on terminal level proof");
@@ -814,6 +827,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             stage1,
             stage2,
             stage3_sumcheck_proof,
+            ..
         } = root
         else {
             panic!("AkitaBatchedRootProof::new called with terminal level proof");

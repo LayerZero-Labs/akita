@@ -498,6 +498,7 @@ where
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            fold_grind_nonce: 0,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]

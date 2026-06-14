@@ -10,6 +10,9 @@
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
 
+/// Fixed wire size of [`AkitaLevelProof::Intermediate`] `fold_grind_nonce`.
+pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
+
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
     degree * elem_bytes
 }
@@ -77,6 +80,7 @@ pub fn level_proof_bytes(
     next_w_len: usize,
     _num_claims: usize,
     layout: MRowLayout,
+    with_fold_grind_nonce: bool,
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
@@ -99,7 +103,8 @@ pub fn level_proof_bytes(
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-            v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes
+            let nonce_bytes = usize::from(with_fold_grind_nonce) * FOLD_GRIND_NONCE_BYTES;
+            v_bytes + nonce_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes
         }
     }
 }
@@ -291,6 +296,7 @@ mod tests {
         let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
@@ -341,6 +347,7 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
+                    true,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, None).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -414,7 +421,8 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock
+                    MRowLayout::WithDBlock,
+                    true,
                 ),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
@@ -479,6 +487,7 @@ mod tests {
                     next_w_len,
                     num_claims,
                     MRowLayout::WithoutDBlock,
+                    false,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

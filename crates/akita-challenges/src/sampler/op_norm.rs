@@ -959,7 +959,7 @@ mod perf {
                 let mut tr = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
                 tr.append_field(b"perf-seed", &F::from_u64(0xC0FFEE));
                 let chs =
-                    crate::sample_sparse_challenges::<F, _, D>(&mut tr, b"perf", n, &cfg).unwrap();
+                    crate::sample_sparse_challenges::<F, _, D>(&mut tr, b"perf", n, &cfg, 0).unwrap();
                 black_box(chs);
             }) / n as f64
         };

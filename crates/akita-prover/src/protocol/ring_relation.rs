@@ -555,6 +555,7 @@ impl RingRelationProver {
             &lp.stage1_config,
             &lp.fold_challenge_shape,
             stage1_fold_challenge_labels(),
+            0,
         )?;
 
         let z_folded_rings = decompose_fold_witness::<F, _, D>(&challenges, polys, &lp)?;

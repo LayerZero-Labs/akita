@@ -651,6 +651,7 @@ where
         prepared.opening_batch.num_claims(),
         prepared.lp,
         prepared.m_row_layout,
+        0,
     )?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(

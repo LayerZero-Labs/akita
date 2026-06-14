@@ -93,7 +93,7 @@ pub use proof::{
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
-pub use proof_size::level_proof_bytes;
+pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,

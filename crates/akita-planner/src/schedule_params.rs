@@ -488,6 +488,7 @@ fn derive_optimal_suffix_schedule(
                 next_witness_len_terminal,
                 1,
                 MRowLayout::WithoutDBlock,
+                false,
             ) + eor_bytes;
             let total = level_proof_size + suffix_cost;
             let mut steps = Vec::with_capacity(1 + suffix_sched.len());
@@ -510,6 +511,7 @@ fn derive_optimal_suffix_schedule(
                 next_witness_len,
                 1,
                 MRowLayout::WithDBlock,
+                level > 0,
             ) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
@@ -979,6 +981,7 @@ pub fn find_schedule(
                     next_w_len_terminal,
                     z_vectors,
                     MRowLayout::WithoutDBlock,
+                    false,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
@@ -1004,6 +1007,7 @@ pub fn find_schedule(
                     next_w_len,
                     z_vectors,
                     MRowLayout::WithDBlock,
+                    false,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {

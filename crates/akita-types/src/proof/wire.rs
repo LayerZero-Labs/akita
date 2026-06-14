@@ -159,6 +159,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             AkitaLevelProof::Intermediate {
                 extension_opening_reduction,
                 v,
+                fold_grind_nonce,
                 stage1,
                 stage2,
                 stage3_sumcheck_proof,
@@ -174,6 +175,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     compress,
                 )?;
                 v.serialize_with_mode(&mut writer, compress)?;
+                fold_grind_nonce.serialize_with_mode(&mut writer, compress)?;
                 for stage in &stage1.stages {
                     #[cfg(not(feature = "zk"))]
                     stage
@@ -238,6 +240,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             AkitaLevelProof::Intermediate {
                 extension_opening_reduction,
                 v,
+                fold_grind_nonce,
                 stage1,
                 stage2,
                 stage3_sumcheck_proof,
@@ -248,7 +251,8 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 let base = extension_opening_reduction_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + v.serialized_size(compress);
+                ) + v.serialized_size(compress)
+                    + fold_grind_nonce.serialized_size(compress);
                 base + stage1
                     .stages
                     .iter()
@@ -316,6 +320,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             AkitaLevelProof::Intermediate {
                 extension_opening_reduction,
                 v,
+                fold_grind_nonce: _,
                 stage1,
                 stage2,
                 stage3_sumcheck_proof,
@@ -399,6 +404,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let fold_grind_nonce =
+            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -477,6 +484,7 @@ impl<
         let out = Self::Intermediate {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,

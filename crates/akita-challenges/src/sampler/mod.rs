@@ -83,13 +83,16 @@ fn sparse_challenge_absorb_buf<const D: usize>(
     label: &[u8],
     instance_tag: u64,
     cfg: &SparseChallengeConfig,
+    grind_nonce: u32,
 ) -> Vec<u8> {
     let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
+    let mut absorb_buf =
+        Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len() + 4);
     absorb_buf.extend_from_slice(label);
     absorb_buf.extend_from_slice(&instance_tag.to_le_bytes());
     absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
     absorb_buf.extend_from_slice(&domain_sep);
+    absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
     absorb_buf
 }
 
@@ -175,6 +178,7 @@ pub fn sample_sparse_challenges<F, T, const D: usize>(
     label: &[u8],
     n: usize,
     cfg: &SparseChallengeConfig,
+    grind_nonce: u32,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -188,7 +192,7 @@ where
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
-    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
+    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     let mut challenges = Vec::with_capacity(n);
     match op_norm_rejection_oracle::<D>(cfg)? {

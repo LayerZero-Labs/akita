@@ -812,6 +812,7 @@ pub fn sample_folding_challenges<F, T, const D: usize>(
     cfg: &SparseChallengeConfig,
     shape: &ChallengeShape,
     labels: ChallengeLabels<'_>,
+    grind_nonce: u32,
 ) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -822,8 +823,9 @@ where
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
                 AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
             })?;
-            let challenges =
-                sample_sparse_challenges::<F, T, D>(transcript, labels.flat, total, cfg)?;
+            let challenges = sample_sparse_challenges::<F, T, D>(
+                transcript, labels.flat, total, cfg, grind_nonce,
+            )?;
             Challenges::from_sparse(challenges, num_blocks, num_claims)
         }
         ChallengeShape::Tensor => {
@@ -839,6 +841,7 @@ where
                 labels.tensor_left,
                 left_total,
                 cfg,
+                grind_nonce,
             )?;
             let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
             transcript.append_bytes(labels.tensor_left_digest, &left_digest);
@@ -847,6 +850,7 @@ where
                 labels.tensor_right,
                 right_total,
                 cfg,
+                grind_nonce,
             )?;
             Challenges::from_tensor::<D>(TensorChallenges {
                 left,
