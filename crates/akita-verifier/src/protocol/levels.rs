@@ -52,17 +52,16 @@ use akita_types::{
     flatten_batched_commitment_rows, generate_y, prepare_opening_point,
     relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, schedule_num_fold_levels, scheduled_fold_execution,
-    scheduled_next_level_params, stage2_trace_coeff, tensor_equality_factor_eval_at_point,
-    terminal_witness_segment_layout, trace_terms_recursive, trace_weight_layout_from_segment,
-    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaScheduleInputs, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode,
-    BlockOrder, ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, PreparedOpeningPoint,
-    RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupSumcheckProof, Step, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    TraceClaim,
+    sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
+    stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
+    trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, CleartextWitnessProof,
+    CommitmentRouting, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams,
+    MRowLayout, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding,
+    Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -72,8 +71,8 @@ use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
 #[cfg(feature = "zk")]
 use zk::verify_zk_hiding_commitment;
 
-mod recursive;
-pub(crate) use recursive::verify_folded_batched_proof;
+mod suffix;
+pub(crate) use suffix::verify_folded_batched_proof;
 
 /// Verifier state carried between recursive fold levels.
 struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -90,8 +89,6 @@ struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub basis: BasisMode,
     /// Current recursive witness length in field elements.
     pub w_len: usize,
-    /// Current digit basis, as `log2(b)`.
-    pub log_basis: u32,
 }
 
 fn prepare_terminal_witness_replay<F, T>(
