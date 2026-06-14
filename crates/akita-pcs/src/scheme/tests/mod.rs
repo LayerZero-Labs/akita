@@ -14,16 +14,16 @@ use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field,
 };
-use akita_types::{scheduled_fold_execution, scheduled_next_level_params, LevelParams};
+use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
-use akita_types::{AkitaScheduleInputs, Step};
 use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -103,25 +103,22 @@ fn expected_same_point_batched_shape(
         stage3_sumcheck: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
-    let first_level_params = next_level_params.clone();
-
     // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
     // total: `num_fold_levels - 2` intermediate steps followed by exactly one
     // terminal step. (We've already consumed the root.)
     let num_intermediate_after_root = num_fold_levels.saturating_sub(2);
     let mut step_shapes = Vec::with_capacity(num_fold_levels - 1);
     let mut current_w_len = root_step.next_w_len;
-    let mut current_log_basis = first_level_params.log_basis;
     let mut current_level = 1usize;
     for _ in 0..num_intermediate_after_root {
-        let inputs = AkitaScheduleInputs {
-            num_vars: max_num_vars,
-            level: current_level,
-            current_w_len,
-        };
-        let (level_params, next_level_params) =
-            scheduled_fold_execution(&schedule, current_level, inputs, current_log_basis)
-                .expect("scheduled recursive fold");
+        let scheduled = schedule
+            .get_execution_schedule(current_level)
+            .expect("scheduled recursive fold");
+        scheduled
+            .validate_current_w_len(current_w_len)
+            .expect("scheduled recursive fold current witness length");
+        let level_params = scheduled.params;
+        let next_level_params = scheduled.next_params;
         let next_w_len =
             w_ring_element_count::<OneHotF>(&level_params).unwrap() * level_params.ring_dimension;
         let rounds = batched_shape_rounds(level_params.ring_dimension, next_w_len);
@@ -135,21 +132,20 @@ fn expected_same_point_batched_shape(
                 * next_level_params.ring_dimension,
         }));
         current_w_len = next_w_len;
-        current_log_basis = next_level_params.log_basis;
         current_level += 1;
     }
 
     // Terminal fold step (always present in the multi-fold case): its params
     // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
     // immediately following Direct step encodes the final packed-digit basis.
-    let terminal_inputs = AkitaScheduleInputs {
-        num_vars: max_num_vars,
-        level: current_level,
-        current_w_len,
-    };
-    let (terminal_params, terminal_next_params) =
-        scheduled_fold_execution(&schedule, current_level, terminal_inputs, current_log_basis)
-            .expect("scheduled terminal fold");
+    let terminal_scheduled = schedule
+        .get_execution_schedule(current_level)
+        .expect("scheduled terminal fold");
+    terminal_scheduled
+        .validate_current_w_len(current_w_len)
+        .expect("scheduled terminal fold current witness length");
+    let terminal_params = terminal_scheduled.params;
+    let terminal_next_params = terminal_scheduled.next_params;
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
