@@ -174,30 +174,37 @@ pub enum TailSegmentModel {
 
 The wire carries only concatenated segment payloads, with no per-segment header.
 Segment boundaries and emission order are derived by both sides from `LevelParams` + incidence.
-For the final `t`-state tail, the logical segment sizes are:
+For the final `t`-state tail, derive segment **coordinate counts** from the same public layout inputs as `terminal_witness_segment_layout` (`crates/akita-types/src/proof/terminal_witness.rs:204-229`).
+Let `D = ring_dimension`.
+The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-types/src/proof/ring_relation.rs:226-237`) count digit **planes**; entropy segments code **recomposed integers**, one per base-field slot inside each underlying ring element:
 
 ```text
-z_planes   = num_digits_fold * num_digits_commit * num_public_rows * block_len
-e_planes   = num_digits_open * num_blocks * num_w_vectors
-t_rings    = n_a * num_blocks * num_t_vectors            (RawField; not digit planes)
+z_plane_count = num_digits_fold * num_digits_commit * num_public_rows * block_len
+e_plane_count = num_digits_open * num_blocks * num_w_vectors
+z_coords      = num_public_rows * block_len * num_digits_commit * D    (= z_plane_count / num_digits_fold * D)
+e_coords      = num_blocks * num_w_vectors * D                         (= e_plane_count / num_digits_open * D)
+t_field_elems = n_a * num_blocks * num_t_vectors * D                   (RawField; not digit planes)
 ```
 
-`z_planes` and `e_planes` count ring elements to be entropy-coded; `t_rings` are serialized as raw field coefficients (`t_rings * D` base-field elements).
-The legacy `PackedDigits` layout in `RingRelationInstance::segment_layout` (`crates/akita-types/src/proof/ring_relation.rs:226-267`) and `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
+`z_coords` and `e_coords` are the Golomb-Rice element counts; `t_field_elems` is the `RawField` element count.
+`terminal_witness_segment_layout_from_counts` multiplies plane-block counts by `D` for packed-digit byte offsets (`e_hat_digit_count = e_plane_count * D`); `derive_counts` for the segment-typed tail must use the recomposed-integer counts above, not `z_plane_count` / `e_plane_count` alone.
+The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
 Segments appear in `z_first`-dependent order for the `z`/`e` split; `r_hat` planes are absent under PR #141 direct mode.
-Multipoint layouts scale `z_planes` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
+Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts; the descriptor supplies models). **S3** adds `CleartextWitnessShape::SegmentTyped(...)` and the matching proof variant; they do not exist in the codebase today.
 
-The verifier decodes each segment to its integer or field vector, then re-decomposes the `z` and `e` integers into balanced digits *on the verifier side* for the digit-range and row checks (wire carries recomposed integers, not digit planes).
-`t` is carried as `RawField` base-field coefficients (`n_a * num_blocks * num_t_vectors * D`); the verifier uses them directly in the terminal A-row checks after binding the segment bytes in the transcript.
+The verifier decodes each segment to its integer or field vector (`z_coords` + `e_coords` + `t_field_elems` coordinates total), then re-decomposes the `z` and `e` integers into balanced digits *on the verifier side* for the digit-range and row checks (wire carries recomposed integers, not digit planes).
+`t` is carried as `RawField` base-field coefficients (`t_field_elems`); the verifier uses them directly in the terminal A-row checks after binding the segment bytes in the transcript.
 Post-decode, every coordinate must lie within the public digit/norm bound (`t*` from PR #174); out-of-range decoded integers are rejected before row arithmetic.
 
 ### Golomb-Rice for the Gaussian z segment
 
-For a signed integer `n`, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` with `W` pinned to the base-field limb width used for digit storage (`0, -1, 1, -2, 2 -> 0, 1, 2, 3, 4`).
+For a signed integer `n` admitted by the segment's public bound, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` where `W` is the **signed-integer bit width** for that segment (the smallest width such that every in-range `n` encodes correctly; e.g. `0, -1, 1, -2, 2 -> 0, 1, 2, 3, 4` when `W = 3`).
+Pin `W` per segment role from public schedule bounds, not from the prime-field modulus: `W_z` from the folded-response digit envelope (`t*` / `num_digits_fold` policy, mirroring the post-#174 fold bound), `W_e` from the opening-digit bound (`num_digits_open * log_basis + 1` sign bit).
+Recomposed `z`/`e` integers can exceed a single field limb; zigzag uses the segment's admitted signed range, not `F::modulus_bits()`.
 Rice-code `u` with parameter `k`: quotient `q = u >> k` in unary (`q` ones then a zero), remainder `u & (2^k - 1)` in `k` bits.
-Bounded-unary escape: if `q >= Q_MAX`, emit `Q_MAX` ones then a fixed `base_field_bits`-bit literal of `u` (the base prime field modulus bit width from setup); this caps decode work and keeps the decoder total. Normal Rice and escape ranges must be disjoint; encoders must use escape exactly when `q >= Q_MAX`.
+Bounded-unary escape: if `q >= Q_MAX`, emit `Q_MAX` ones then a fixed `W`-bit literal of `u` (same segment zigzag width; must be at least `2*ceil(log2(max|n|))` for the admitted range); this caps decode work and keeps the decoder total. Normal Rice and escape ranges must be disjoint; encoders must use escape exactly when `q >= Q_MAX`.
 
 `k` is derived deterministically from the public `sigma`:
 
@@ -226,7 +233,7 @@ Tail encoding uses three layers:
 
 The tail-encoding policy is bound in `AkitaInstanceDescriptor` (same pattern as PR #141's terminal proof mode and PR #174's threshold policy):
 
-- codec identity (Golomb-Rice variant id, zigzag width `W`, `Q_MAX`, escape `base_field_bits`),
+- codec identity (Golomb-Rice variant id, per-role zigzag width rules `W_z` / `W_e`, `Q_MAX`, escape literal width tied to the same `W`),
 - the `sigma -> k` rule identity and per-segment model assignment by role (`z`, `e`, `t`),
 - the terminal-state mode (`OuterCommitmentU` legacy vs `InnerImageT` tail policy) and r-drop flags.
 
