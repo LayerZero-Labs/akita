@@ -59,7 +59,7 @@ pub struct GeneratedFamily {
 ///
 /// # Errors
 ///
-/// Returns an error if the synthetic opening_batch summary fails to build
+/// Returns an error if the synthetic opening batch fails to build
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {

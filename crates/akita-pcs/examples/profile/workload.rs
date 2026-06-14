@@ -407,7 +407,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
     } else {
         let opening_batch =
-            OpeningBatch::same_point(pt.len(), 1).expect("same-point opening_batch summary");
+            OpeningBatch::same_point(pt.len(), 1).expect("same-point opening batch");
         let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
         report_proof_size_against_planner(
             label,
@@ -776,7 +776,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     let opening_batch =
-        OpeningBatch::same_point(nv, num_polys).expect("same-point opening_batch summary");
+        OpeningBatch::same_point(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {
         report_proof_size_against_planner(

@@ -287,7 +287,7 @@ fn root_runtime_matrix_len_for_opening_batch(
         .iter()
         .copied()
         .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty claim opening_batch".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
     let d_width = lp
         .num_blocks
         .checked_mul(num_claims)

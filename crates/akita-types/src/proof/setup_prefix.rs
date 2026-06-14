@@ -759,7 +759,7 @@ fn active_setup_role_widths(
         .iter()
         .copied()
         .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty claim opening_batch".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
     let w_d = num_claims
         .checked_mul(level_params.num_blocks)
         .and_then(|n| n.checked_mul(level_params.num_digits_open))

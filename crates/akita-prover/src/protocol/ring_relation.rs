@@ -496,7 +496,7 @@ impl RingRelationProver {
         for claim_idx in 0..num_claims {
             if opening_batch.claim_poly_indices()[claim_idx] >= num_claims {
                 return Err(AkitaError::InvalidInput(
-                    "batched prover claim opening_batch index out of range".to_string(),
+                    "batched prover opening-batch slot index out of range".to_string(),
                 ));
             }
         }

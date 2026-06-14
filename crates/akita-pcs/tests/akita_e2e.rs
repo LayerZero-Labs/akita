@@ -1084,7 +1084,7 @@ fn batched_onehot_same_point_round_trip() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         // NV=20 is large enough to include a recursive suffix, while the
-        // two-claim opening_batch still misses singleton/4-batch generated tables
+        // two-claim opening batch still misses singleton/4-batch generated tables
         // and routes through the planner DP fallback in `runtime_schedule`.
         type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;

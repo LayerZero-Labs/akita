@@ -244,7 +244,7 @@ pub fn digest_serializable<S: AkitaSerialize>(
     Ok(blake2b_256(&bytes))
 }
 
-/// Digest the normalized claim opening_batch summary.
+/// Digest the normalized opening-batch summary.
 pub fn digest_opening_batch(summary: &OpeningBatch) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, summary.num_vars());
