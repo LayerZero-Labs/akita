@@ -6,11 +6,11 @@
 //! round-trippable so both prover and verifier can compare preamble bytes.
 
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
+use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
     OpeningBatch, Schedule, SisModulusFamily,
 };
-use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -511,13 +511,17 @@ impl AkitaSerialize for SetupSection {
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
-        self.fold_linf.formula_tag
+        self.fold_linf
+            .formula_tag
             .serialize_with_mode(&mut writer, compress)?;
-        self.fold_linf.max_grind_attempts
+        self.fold_linf
+            .max_grind_attempts
             .serialize_with_mode(&mut writer, compress)?;
-        self.fold_linf.grind_nonce_wire_bytes
+        self.fold_linf
+            .grind_nonce_wire_bytes
             .serialize_with_mode(&mut writer, compress)?;
-        self.fold_linf.grind_entropy_bits_per_level
+        self.fold_linf
+            .grind_entropy_bits_per_level
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -529,8 +533,14 @@ impl AkitaSerialize for SetupSection {
             + self.protocol_features.serialized_size(compress)
             + self.fold_linf.formula_tag.serialized_size(compress)
             + self.fold_linf.max_grind_attempts.serialized_size(compress)
-            + self.fold_linf.grind_nonce_wire_bytes.serialized_size(compress)
-            + self.fold_linf.grind_entropy_bits_per_level.serialized_size(compress)
+            + self
+                .fold_linf
+                .grind_nonce_wire_bytes
+                .serialized_size(compress)
+            + self
+                .fold_linf
+                .grind_entropy_bits_per_level
+                .serialized_size(compress)
     }
 }
 
@@ -550,12 +560,7 @@ impl AkitaDeserialize for SetupSection {
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let fold_linf = FoldLinfProtocolBinding {
             formula_tag: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            max_grind_attempts: u32::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
+            max_grind_attempts: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             grind_nonce_wire_bytes: u8::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -917,10 +922,7 @@ mod tests {
     #[test]
     fn fold_linf_binding_is_part_of_setup_section() {
         let descriptor = sample_descriptor();
-        assert_eq!(
-            descriptor.setup.fold_linf,
-            FoldLinfProtocolBinding::CURRENT
-        );
+        assert_eq!(descriptor.setup.fold_linf, FoldLinfProtocolBinding::CURRENT);
         let mut altered = descriptor.clone();
         altered.setup.fold_linf.formula_tag = 0;
         assert_ne!(

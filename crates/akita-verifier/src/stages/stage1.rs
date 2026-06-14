@@ -24,10 +24,11 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::eval_poly;
 use akita_types::{
-    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
-    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    combine_polys, linear_combination,
     sis::{FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS},
-    AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
+    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
+    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
+    MRowLayout, RingSliceSerializer,
 };
 
 #[cfg(feature = "zk")]

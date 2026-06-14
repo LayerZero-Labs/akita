@@ -199,12 +199,7 @@ pub fn num_digits_fold(
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
-    let cap = fold_witness_linf_cap(
-        beta,
-        num_fold_blocks,
-        witness_linf_sq,
-        &linf_sizing,
-    )?;
+    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &linf_sizing)?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
@@ -334,18 +329,42 @@ mod tests {
         let dense = FoldWitnessNorms::new(3, 64, 1, false);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::new(3, 64, 64, true);
-        let dense_digits =
-            num_digits_fold(8, 1, 128, 3, challenge, dense, FoldLinfDigitSizing::deterministic())
-                .unwrap();
-        let onehot_digits =
-            num_digits_fold(8, 1, 128, 3, challenge, onehot, FoldLinfDigitSizing::deterministic())
-                .unwrap();
+        let dense_digits = num_digits_fold(
+            8,
+            1,
+            128,
+            3,
+            challenge,
+            dense,
+            FoldLinfDigitSizing::deterministic(),
+        )
+        .unwrap();
+        let onehot_digits = num_digits_fold(
+            8,
+            1,
+            128,
+            3,
+            challenge,
+            onehot,
+            FoldLinfDigitSizing::deterministic(),
+        )
+        .unwrap();
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        assert!(num_digits_fold(8, 4, 128, 3, challenge, dense, FoldLinfDigitSizing::deterministic())
+        assert!(
+            num_digits_fold(
+                8,
+                4,
+                128,
+                3,
+                challenge,
+                dense,
+                FoldLinfDigitSizing::deterministic()
+            )
             .unwrap()
-            >= dense_digits);
+                >= dense_digits
+        );
     }
 
     #[test]
@@ -356,8 +375,26 @@ mod tests {
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
         // r_vars >= 127 is rejected.
-        assert!(num_digits_fold(127, 1, 128, 3, challenge, witness, FoldLinfDigitSizing::deterministic()).is_err());
+        assert!(num_digits_fold(
+            127,
+            1,
+            128,
+            3,
+            challenge,
+            witness,
+            FoldLinfDigitSizing::deterministic()
+        )
+        .is_err());
         // num_claims == 0 ⇒ β = 0 is rejected.
-        assert!(num_digits_fold(8, 0, 128, 3, challenge, witness, FoldLinfDigitSizing::deterministic()).is_err());
+        assert!(num_digits_fold(
+            8,
+            0,
+            128,
+            3,
+            challenge,
+            witness,
+            FoldLinfDigitSizing::deterministic()
+        )
+        .is_err());
     }
 }

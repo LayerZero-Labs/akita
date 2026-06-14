@@ -404,8 +404,7 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let fold_grind_nonce =
-            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -784,8 +783,7 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let fold_grind_nonce =
-            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {

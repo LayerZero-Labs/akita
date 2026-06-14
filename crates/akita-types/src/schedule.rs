@@ -846,7 +846,6 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
-                    true,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -910,7 +909,6 @@ mod tests {
                     next_w_len,
                     num_claims,
                     MRowLayout::WithoutDBlock,
-                    false,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
@@ -985,7 +983,6 @@ mod tests {
                     next_w_len,
                     1,
                     MRowLayout::WithDBlock,
-                    true,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"

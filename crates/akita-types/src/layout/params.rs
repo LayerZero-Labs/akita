@@ -7,7 +7,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::descriptor_bytes::{push_i8, push_u32, push_u128, push_usize};
+use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
 
 pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 
@@ -227,9 +227,7 @@ impl LevelParams {
     pub fn num_fold_blocks(&self, num_claims: usize) -> Result<u128, AkitaError> {
         (num_claims as u128)
             .checked_mul(self.num_blocks as u128)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string())
-            })
+            .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
     /// Operator-norm acceptance probability `p` as a rational `p_num / p_den`.

@@ -96,8 +96,8 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         proof
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
-        let mut roundtrip = AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape)
-            .expect("decode");
+        let mut roundtrip =
+            AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
         if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
             fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;

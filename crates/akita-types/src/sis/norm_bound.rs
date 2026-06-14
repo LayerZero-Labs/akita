@@ -423,11 +423,7 @@ impl FoldLinfDigitSizing {
         inner_width: usize,
     ) -> Self {
         Self {
-            policy: fold_linf_threshold_policy(
-                stage1_config,
-                fold_challenge_shape,
-                ring_dimension,
-            ),
+            policy: fold_linf_threshold_policy(stage1_config, fold_challenge_shape, ring_dimension),
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs: (inner_width as u128).saturating_mul(ring_dimension as u128),
             op_norm_accept_p_num: 1,

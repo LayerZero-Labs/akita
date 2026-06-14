@@ -21,10 +21,10 @@
 //! [`IntegerChallenge`], because tensor products can widen coefficients beyond
 //! the sampled [`SparseChallenge`] range.
 
-use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
 use crate::sampler::preview_sparse_challenges;
-use akita_transcript::GrindTranscript;
+use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
+use akita_transcript::GrindTranscript;
 use akita_transcript::{labels, Transcript};
 use sha3::{Digest, Sha3_256};
 
@@ -826,7 +826,11 @@ where
                 AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
             })?;
             let challenges = sample_sparse_challenges::<F, T, D>(
-                transcript, labels.flat, total, cfg, grind_nonce,
+                transcript,
+                labels.flat,
+                total,
+                cfg,
+                grind_nonce,
             )?;
             Challenges::from_sparse(challenges, num_blocks, num_claims)
         }
@@ -885,7 +889,11 @@ where
                 AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
             })?;
             let challenges = preview_sparse_challenges::<F, T, D>(
-                transcript, labels.flat, total, cfg, grind_nonce,
+                transcript,
+                labels.flat,
+                total,
+                cfg,
+                grind_nonce,
             )?;
             Challenges::from_sparse(challenges, num_blocks, num_claims)
         }

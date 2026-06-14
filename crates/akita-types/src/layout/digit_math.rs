@@ -178,8 +178,8 @@ pub fn optimal_m_r_split(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
     use crate::sis::FoldWitnessNorms;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {

@@ -340,7 +340,6 @@ pub fn schedule_from_entry(
                     next_w_len,
                     num_claims_here,
                     layout,
-                    matches!(layout, MRowLayout::WithDBlock),
                 ) + extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_opening_width,

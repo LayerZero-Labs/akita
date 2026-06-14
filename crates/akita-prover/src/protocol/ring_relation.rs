@@ -15,18 +15,16 @@ use akita_challenges::{
     preview_folding_challenges, sample_folding_challenges, stage1_fold_challenge_labels,
     Challenges, IntegerChallenge, SparseChallenge,
 };
-use akita_transcript::GrindTranscript;
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
+use akita_transcript::GrindTranscript;
 use akita_transcript::Transcript;
+use akita_types::sis::{isqrt_ceil, FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS};
 use akita_types::{
     gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
-};
-use akita_types::sis::{
-    isqrt_ceil, FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS,
 };
 use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -79,7 +77,7 @@ fn fold_linf_inf_threshold(lp: &LevelParams, num_claims: usize) -> Result<u128, 
         }
         FoldLinfThresholdPolicy::CertifiedFlat => {
             let t_sq = lp.fold_linf_tail_bound_sq(num_claims)?;
-            Ok(u128::from(isqrt_ceil(t_sq)))
+            Ok(isqrt_ceil(t_sq))
         }
     }
 }
@@ -111,12 +109,8 @@ where
             stage1_fold_challenge_labels(),
             nonce,
         )?;
-        let witness = build_point_decompose_fold_witness::<F, P, D>(
-            &challenges,
-            polys,
-            &point_indices,
-            lp,
-        )?;
+        let witness =
+            build_point_decompose_fold_witness::<F, P, D>(&challenges, polys, &point_indices, lp)?;
         if u128::from(witness.centered_inf_norm) <= threshold {
             let challenges = sample_folding_challenges::<F, T, D>(
                 transcript,
@@ -281,20 +275,6 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         centered_coeffs,
         centered_inf_norm,
     })
-}
-
-fn decompose_fold_witness<F, P, const D: usize>(
-    challenges: &Challenges,
-    polys: &[&P],
-    lp: &LevelParams,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    P: AkitaPolyOps<F, D>,
-{
-    let _span = tracing::info_span!("compute_batched_z_folded").entered();
-    let point_indices = (0..polys.len()).collect::<Vec<_>>();
-    build_point_decompose_fold_witness::<F, P, D>(challenges, polys, &point_indices, lp)
 }
 
 fn build_point_decompose_fold_witness<F, P, const D: usize>(

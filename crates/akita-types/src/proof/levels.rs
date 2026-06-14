@@ -391,7 +391,9 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Accepted fold grind nonce (`0` for terminal levels and deterministic policy).
     pub fn fold_grind_nonce(&self) -> u32 {
         match self {
-            Self::Intermediate { fold_grind_nonce, .. } => *fold_grind_nonce,
+            Self::Intermediate {
+                fold_grind_nonce, ..
+            } => *fold_grind_nonce,
             Self::Terminal { .. } => 0,
         }
     }

@@ -67,12 +67,7 @@ pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     match op_norm_rejection_oracle::<D>(cfg)? {
         Some((table, t)) => {
             for _ in 0..n {
-                challenges.push(sample_with_op_norm_rejection::<D>(
-                    cursor,
-                    cfg,
-                    &table,
-                    t,
-                )?);
+                challenges.push(sample_with_op_norm_rejection::<D>(cursor, cfg, &table, t)?);
             }
         }
         None => {
@@ -134,8 +129,7 @@ pub(crate) fn sparse_challenge_absorb_buf<const D: usize>(
     grind_nonce: u32,
 ) -> Vec<u8> {
     let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf =
-        Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len() + 4);
+    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len() + 4);
     absorb_buf.extend_from_slice(label);
     absorb_buf.extend_from_slice(&instance_tag.to_le_bytes());
     absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
