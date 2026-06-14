@@ -206,11 +206,109 @@ impl LevelParams {
             .effective_infinity_norm(&self.stage1_config)
     }
 
+    /// Effective fold-round challenge L2 energy cap `c_l2_sq_max` at this level.
+    #[inline]
+    pub fn challenge_l2_sq_max(&self) -> u128 {
+        self.fold_challenge_shape
+            .effective_l2_sq_max(&self.stage1_config)
+    }
+
+    /// Fold-challenge coefficient count `inner_width · D` (single shared opening point).
+    #[inline]
+    pub fn num_fold_coeffs(&self) -> u128 {
+        (self.inner_width() as u128).saturating_mul(self.ring_dimension as u128)
+    }
+
+    /// Fold block count `num_claims · 2^r_vars` for concentration sizing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the product overflows `u128`.
+    pub fn num_fold_blocks(&self, num_claims: usize) -> Result<u128, AkitaError> {
+        (num_claims as u128)
+            .checked_mul(self.num_blocks as u128)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string())
+            })
+    }
+
+    /// Operator-norm acceptance probability `p` as a rational `p_num / p_den`.
+    ///
+    /// Shipping certified-flat presets bind `p = 1` because
+    /// `effective_operator_norm_cap >= challenge_l1_mass`. Empirical `p < 1`
+    /// sizing is deferred until a binding cap is shipped.
+    #[inline]
+    pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
+        (1, 1)
+    }
+
+    /// Fold-linf threshold policy for this level's sparse family and fold shape.
+    #[inline]
+    pub fn fold_linf_threshold_policy(&self) -> crate::sis::FoldLinfThresholdPolicy {
+        crate::sis::fold_linf_threshold_policy(
+            &self.stage1_config,
+            self.fold_challenge_shape,
+            self.ring_dimension,
+        )
+    }
+
+    /// Inputs threaded into [`crate::sis::num_digits_fold`] for tail-aware sizing.
+    #[inline]
+    pub fn fold_linf_digit_sizing(&self) -> crate::sis::FoldLinfDigitSizing {
+        let (p_num, p_den) = self.op_norm_acceptance_p();
+        crate::sis::FoldLinfDigitSizing {
+            policy: self.fold_linf_threshold_policy(),
+            c_l2_sq_max: self.challenge_l2_sq_max(),
+            num_fold_coeffs: self.num_fold_coeffs(),
+            op_norm_accept_p_num: p_num,
+            op_norm_accept_p_den: p_den,
+        }
+    }
+
+    /// Squared fold-response `∞`-norm tail bound `t*²` for certified-flat levels.
+    ///
+    /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
+    /// digit sizing and acceptance use the same value (invariant 4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
+    /// `num_fold_coeffs`, or overflow in the concentration formula.
+    pub fn fold_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
+        let sizing = self.fold_linf_digit_sizing();
+        if sizing.policy != crate::sis::FoldLinfThresholdPolicy::CertifiedFlat {
+            return Err(AkitaError::InvalidSetup(
+                "fold_linf_tail_bound_sq: deterministic policy has no tail bound".to_string(),
+            ));
+        }
+        if sizing.num_fold_coeffs == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "fold_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
+            ));
+        }
+        let num_fold_blocks = self.num_fold_blocks(num_claims)?;
+        let witness_linf = self.fold_witness_norms().infinity_norm();
+        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
+        let ln_term = crate::sis::fold_linf_ln_term(
+            sizing.num_fold_coeffs,
+            num_fold_blocks,
+            sizing.op_norm_accept_p_num,
+            sizing.op_norm_accept_p_den,
+        )?;
+        crate::sis::fold_linf_tail_bound_sq(
+            num_fold_blocks,
+            sizing.c_l2_sq_max,
+            witness_linf_sq,
+            ln_term,
+        )
+    }
+
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     ///
     /// Delegates to [`crate::sis::num_digits_fold`], which derives
     /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-    /// from this level's fold challenge and witness norms.
+    /// from this level's fold challenge and witness norms, then applies
+    /// `min(β_inf, t*)` under certified-flat policies.
     ///
     /// # Errors
     ///
@@ -229,6 +327,7 @@ impl LevelParams {
             self.log_basis,
             challenge,
             self.fold_witness_norms(),
+            self.fold_linf_digit_sizing(),
         )
     }
 

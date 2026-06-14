@@ -37,9 +37,10 @@ pub use decomposition_digits::{
 };
 pub use four_square::four_squares;
 pub use norm_bound::{
-    committed_fold_collision_l2_sq, fold_linf_ln_term, fold_linf_tail_bound_sq,
-    fold_linf_threshold_policy, fold_witness_beta, isqrt_ceil, l2_sq_from_linf,
-    ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
+    committed_fold_collision_l2_sq, fold_linf_applied_cap, fold_linf_ln_term,
+    fold_linf_tail_bound_sq, fold_linf_threshold_policy, fold_witness_beta, isqrt_ceil,
+    l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
+    rounded_up_collision_norm_w, FoldChallengeNorms, FoldLinfDigitSizing,
     FoldLinfThresholdPolicy, FoldWitnessNorms,
 };

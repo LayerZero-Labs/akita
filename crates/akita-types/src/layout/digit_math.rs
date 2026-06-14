@@ -140,6 +140,7 @@ pub fn optimal_m_r_split(
             log_basis,
             fold_challenge,
             fold_witness,
+            crate::sis::FoldLinfDigitSizing::deterministic(),
         ) else {
             continue;
         };

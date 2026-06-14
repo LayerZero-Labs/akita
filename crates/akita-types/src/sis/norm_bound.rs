@@ -308,8 +308,8 @@ fn ceil_natural_log(x: u128) -> u128 {
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when `num_fold_coeffs == 0`, `p_den == 0`, or
-/// `p_num > p_den`.
+/// Returns [`AkitaError::InvalidSetup`] when `num_fold_coeffs == 0`, `p_den == 0`,
+/// `p_num == 0`, or `p_num > p_den`.
 pub fn fold_linf_ln_term(
     num_fold_coeffs: u128,
     num_fold_blocks: u128,
@@ -324,6 +324,11 @@ pub fn fold_linf_ln_term(
     if p_den == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_linf_ln_term: p_den must be positive".to_string(),
+        ));
+    }
+    if p_num == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_linf_ln_term: p_num must be positive".to_string(),
         ));
     }
     if p_num > p_den {
@@ -375,6 +380,65 @@ pub fn fold_linf_tail_bound_sq(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("fold_linf_tail_bound_sq: t*² overflows u128".to_string())
         })
+}
+
+/// Inputs for fold-linf-aware gadget digit sizing in [`crate::sis::num_digits_fold`].
+///
+/// When the policy is [`DeterministicBetaInf`](FoldLinfThresholdPolicy::DeterministicBetaInf),
+/// tail-bound fields are ignored and sizing uses `β_inf` alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldLinfDigitSizing {
+    pub policy: FoldLinfThresholdPolicy,
+    pub c_l2_sq_max: u128,
+    pub num_fold_coeffs: u128,
+    pub op_norm_accept_p_num: u128,
+    pub op_norm_accept_p_den: u128,
+}
+
+impl FoldLinfDigitSizing {
+    /// Worst-case `β_inf` sizing (tensor folds, non-certified flat presets).
+    #[inline]
+    pub const fn deterministic() -> Self {
+        Self {
+            policy: FoldLinfThresholdPolicy::DeterministicBetaInf,
+            c_l2_sq_max: 0,
+            num_fold_coeffs: 0,
+            op_norm_accept_p_num: 1,
+            op_norm_accept_p_den: 1,
+        }
+    }
+}
+
+/// Applied fold-response `∞`-norm cap for digit sizing: `β_inf` or
+/// `min(β_inf, ⌈√(t*²)⌉)` under the certified-flat policy.
+///
+/// # Errors
+///
+/// Propagates [`fold_linf_ln_term`] / [`fold_linf_tail_bound_sq`] rejections.
+pub fn fold_linf_applied_cap(
+    beta: u128,
+    num_fold_blocks: u128,
+    witness_linf_sq: u128,
+    sizing: &FoldLinfDigitSizing,
+) -> Result<u128, AkitaError> {
+    match sizing.policy {
+        FoldLinfThresholdPolicy::DeterministicBetaInf => Ok(beta),
+        FoldLinfThresholdPolicy::CertifiedFlat => {
+            let ln_term = fold_linf_ln_term(
+                sizing.num_fold_coeffs,
+                num_fold_blocks,
+                sizing.op_norm_accept_p_num,
+                sizing.op_norm_accept_p_den,
+            )?;
+            let t_sq = fold_linf_tail_bound_sq(
+                num_fold_blocks,
+                sizing.c_l2_sq_max,
+                witness_linf_sq,
+                ln_term,
+            )?;
+            Ok(beta.min(isqrt_ceil(t_sq)))
+        }
+    }
 }
 
 /// Integer ceiling `⌈√x⌉` for `x > 0` without floating point.
@@ -539,6 +603,11 @@ mod tests {
             ),
             FoldLinfThresholdPolicy::DeterministicBetaInf,
         );
+    }
+
+    #[test]
+    fn fold_linf_ln_term_rejects_zero_p_num() {
+        assert!(fold_linf_ln_term(16, 16, 0, 1).is_err());
     }
 
     #[test]
