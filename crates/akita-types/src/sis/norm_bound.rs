@@ -249,7 +249,7 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-/// Whether [`num_digits_fold`] sizes `K` from the rigorous sub-Gaussian `t*`
+/// Whether [`num_digits_fold`] sizes `K` from the concentration tail bound `t*`
 /// (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLinfThresholdPolicy {
@@ -302,23 +302,23 @@ fn ceil_natural_log(x: u128) -> u128 {
         .div_ceil(LN2_CEIL_DEN)
 }
 
-/// Conservative integer for `ln(4·n_level) + t_level·ln(1/p)` with
+/// Conservative integer for `ln(4·num_fold_coeffs) + num_fold_blocks·ln(1/p)` with
 /// `p = p_num / p_den` the operator-norm acceptance probability (`p = 1` when
 /// the cap does not bind).
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when `n_level == 0`, `p_den == 0`, or
+/// Returns [`AkitaError::InvalidSetup`] when `num_fold_coeffs == 0`, `p_den == 0`, or
 /// `p_num > p_den`.
 pub fn fold_linf_ln_term(
-    n_level: u128,
-    t_level: u128,
+    num_fold_coeffs: u128,
+    num_fold_blocks: u128,
     p_num: u128,
     p_den: u128,
 ) -> Result<u128, AkitaError> {
-    if n_level == 0 {
+    if num_fold_coeffs == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_ln_term: n_level must be positive".to_string(),
+            "fold_linf_ln_term: num_fold_coeffs must be positive".to_string(),
         ));
     }
     if p_den == 0 {
@@ -331,50 +331,49 @@ pub fn fold_linf_ln_term(
             "fold_linf_ln_term: acceptance probability exceeds 1".to_string(),
         ));
     }
-    let ln_4n = ceil_natural_log(4u128.saturating_mul(n_level));
+    let ln_4n = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
     let ln_inv_p = if p_num >= p_den {
         0
     } else {
         let ratio = p_den.div_ceil(p_num);
-        t_level.saturating_mul(ceil_natural_log(ratio))
+        num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
     };
     Ok(ln_4n.saturating_add(ln_inv_p))
 }
 
-/// Squared sub-Gaussian fold-response threshold `t*²` from the rigorous bound in
-/// `specs/fold-linf-rejection.md`:
+/// Squared fold-response `∞`-norm tail bound `t*²` from the concentration
+/// argument in `specs/fold-linf-rejection.md`:
 ///
 /// ```text
-/// t*² = 2 · T_level · ρ2 · σ_inf² · ln_term
+/// t*² = 2 · num_fold_blocks · c_l2_sq_max · witness_linf² · ln_term
 /// ```
 ///
-/// `ln_term` is a conservative integer for `ln(4·N_level) + T_level·ln(1/p)`.
-/// The real square root is taken only at digit-sizing boundaries.
+/// `ln_term` is a conservative integer for
+/// `ln(4·num_fold_coeffs) + num_fold_blocks·ln(1/p)`. The real square root is
+/// taken only at digit-sizing boundaries. Digit sizing uses `min(β_inf, t*)`.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when any argument is zero or the product
 /// overflows `u128`.
-pub fn fold_response_linf_threshold_sq(
-    t_level: u128,
-    rho2: u128,
-    sigma_inf_sq: u128,
+pub fn fold_linf_tail_bound_sq(
+    num_fold_blocks: u128,
+    c_l2_sq_max: u128,
+    witness_linf_sq: u128,
     ln_term: u128,
 ) -> Result<u128, AkitaError> {
-    if t_level == 0 || rho2 == 0 || sigma_inf_sq == 0 || ln_term == 0 {
+    if num_fold_blocks == 0 || c_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_response_linf_threshold_sq: arguments must be positive".to_string(),
+            "fold_linf_tail_bound_sq: arguments must be positive".to_string(),
         ));
     }
     let two = 2u128;
-    two.checked_mul(t_level)
-        .and_then(|v| v.checked_mul(rho2))
-        .and_then(|v| v.checked_mul(sigma_inf_sq))
+    two.checked_mul(num_fold_blocks)
+        .and_then(|v| v.checked_mul(c_l2_sq_max))
+        .and_then(|v| v.checked_mul(witness_linf_sq))
         .and_then(|v| v.checked_mul(ln_term))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "fold_response_linf_threshold_sq: t*² overflows u128".to_string(),
-            )
+            AkitaError::InvalidSetup("fold_linf_tail_bound_sq: t*² overflows u128".to_string())
         })
 }
 
@@ -500,11 +499,11 @@ mod tests {
     }
 
     #[test]
-    fn fold_response_linf_threshold_sq_monotone_and_clamped_inputs() {
-        let base = fold_response_linf_threshold_sq(16, 78, 1, 24).unwrap();
-        assert!(fold_response_linf_threshold_sq(32, 78, 1, 24).unwrap() >= base);
-        assert!(fold_response_linf_threshold_sq(16, 78, 4, 24).unwrap() >= base);
-        assert!(fold_response_linf_threshold_sq(0, 78, 1, 24).is_err());
+    fn fold_linf_tail_bound_sq_monotone_and_clamped_inputs() {
+        let base = fold_linf_tail_bound_sq(16, 78, 1, 24).unwrap();
+        assert!(fold_linf_tail_bound_sq(32, 78, 1, 24).unwrap() >= base);
+        assert!(fold_linf_tail_bound_sq(16, 78, 4, 24).unwrap() >= base);
+        assert!(fold_linf_tail_bound_sq(0, 78, 1, 24).is_err());
     }
 
     #[test]
@@ -561,7 +560,7 @@ mod tests {
         let omega_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < omega_envelope);
         let ln_term = fold_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
-        let t_sq = fold_response_linf_threshold_sq(16, 78, 1, ln_term).unwrap();
+        let t_sq = fold_linf_tail_bound_sq(16, 78, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(
             t < omega_envelope,

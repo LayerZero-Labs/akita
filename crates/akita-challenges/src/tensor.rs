@@ -96,19 +96,19 @@ impl ChallengeShape {
         }
     }
 
-    /// Effective per-logical-block challenge energy `ρ2` for this shape.
+    /// Effective per-logical-block `max ‖c‖_2²` for this fold-challenge shape.
     ///
-    /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use the
-    /// family's [`SparseChallengeConfig::challenge_energy_rho2`]; tensor folds
-    /// expose `ρ2(α)·ρ2(β)` for future descriptor binding. The first fold-linf
-    /// digit-count cutover sizes only flat certified families from `ρ2` directly.
+    /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use
+    /// [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds expose the
+    /// product bound for future descriptor binding. The first fold-linf digit-count
+    /// cutover sizes only flat certified families from the flat value directly.
     #[inline]
     #[must_use]
-    pub fn effective_energy_rho2(&self, cfg: &SparseChallengeConfig) -> u128 {
-        let rho2 = cfg.challenge_energy_rho2();
+    pub fn effective_l2_sq_max(&self, cfg: &SparseChallengeConfig) -> u128 {
+        let c_l2_sq_max = cfg.challenge_l2_sq_max();
         match self {
-            Self::Flat => rho2,
-            Self::Tensor => rho2.saturating_mul(rho2),
+            Self::Flat => c_l2_sq_max,
+            Self::Tensor => c_l2_sq_max.saturating_mul(c_l2_sq_max),
         }
     }
 }

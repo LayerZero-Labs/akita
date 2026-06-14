@@ -150,14 +150,14 @@ impl SparseChallengeConfig {
         }
     }
 
-    /// Worst-case squared Euclidean energy `ρ2 = max ‖c‖_2²` over the family.
+    /// Worst-case squared ℓ₂ norm `max ‖c‖_2²` over the challenge family.
     ///
-    /// Used by the folded-witness `∞`-norm rejection threshold (`t*`) in
-    /// `akita-types::sis::fold_response_linf_threshold_sq`. Exact integers for
-    /// every shipping preset; see `specs/fold-linf-rejection.md`.
+    /// Used by the folded-witness `∞`-norm tail bound (`t*`) in
+    /// `akita-types::sis::fold_linf_tail_bound_sq`. Exact integers for every
+    /// shipping preset; see `specs/fold-linf-rejection.md`.
     #[inline]
     #[must_use]
-    pub fn challenge_energy_rho2(&self) -> u128 {
+    pub fn challenge_l2_sq_max(&self) -> u128 {
         match self {
             Self::Uniform {
                 weight,
@@ -456,27 +456,27 @@ mod entropy_tests {
     }
 
     #[test]
-    fn challenge_energy_rho2_matches_spec_table() {
+    fn challenge_l2_sq_max_matches_spec_table() {
         let shell = SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
             operator_norm_threshold: 54,
         };
-        assert_eq!(shell.challenge_energy_rho2(), 78);
+        assert_eq!(shell.challenge_l2_sq_max(), 78);
 
         let uni128 = SparseChallengeConfig::Uniform {
             weight: 31,
             nonzero_coeffs: vec![-1, 1],
         };
-        assert_eq!(uni128.challenge_energy_rho2(), 31);
+        assert_eq!(uni128.challenge_l2_sq_max(), 31);
 
         let uni256 = SparseChallengeConfig::Uniform {
             weight: 23,
             nonzero_coeffs: vec![-1, 1],
         };
-        assert_eq!(uni256.challenge_energy_rho2(), 23);
+        assert_eq!(uni256.challenge_l2_sq_max(), 23);
 
         let bounded = SparseChallengeConfig::BoundedL1Norm;
-        assert_eq!(bounded.challenge_energy_rho2(), 8 * 121);
+        assert_eq!(bounded.challenge_l2_sq_max(), 8 * 121);
     }
 }
