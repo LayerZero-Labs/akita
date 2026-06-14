@@ -911,6 +911,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     if commitments.is_empty()
+        || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
         || commitments
             .iter()
             .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())

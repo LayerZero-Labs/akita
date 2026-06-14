@@ -77,8 +77,7 @@ where
     }
 
     for (claim_idx, opening) in openings.iter().enumerate().take(num_claims) {
-        let poly_idx = opening_batch.claim_poly_indices()[claim_idx];
-        let witness = witnesses.get(poly_idx).ok_or(AkitaError::InvalidProof)?;
+        let witness = witnesses.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
         if !cleartext_witness_opening_matches(witness, opening_point, opening, basis)? {
             return Err(AkitaError::InvalidProof);
         }
@@ -138,5 +137,51 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("single-point root-direct batch should verify each witness");
+    }
+
+    #[test]
+    fn root_direct_witnesses_are_indexed_in_flat_claim_order() {
+        use akita_field::MulBase;
+        use akita_types::basis_weights;
+
+        let witness0 = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+            F::from_u64(1),
+            F::from_u64(0),
+        ]));
+        let witness1 = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+            F::from_u64(0),
+            F::from_u64(1),
+        ]));
+        let witnesses = [witness0, witness1];
+        let point = [E::new(F::from_u64(3), F::from_u64(4))];
+        let basis = BasisMode::Lagrange;
+        let weights = basis_weights(&point, basis).expect("basis weights");
+        let openings = witnesses
+            .iter()
+            .map(|witness| {
+                let coeffs = witness.as_field_elements().unwrap().coeffs();
+                coeffs
+                    .iter()
+                    .zip(weights.iter())
+                    .fold(E::zero(), |acc, (&coeff, &weight)| {
+                        acc + weight.mul_base(coeff)
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(
+            openings[0], openings[1],
+            "witnesses must disagree at the point"
+        );
+        let opening_batch =
+            OpeningBatch::from_commitment_groups(1, &[1, 1]).expect("two commitment groups");
+
+        verify_zero_fold_openings_with_opening_batch(
+            &witnesses,
+            &point,
+            &openings,
+            &opening_batch,
+            basis,
+        )
+        .expect("flat claim-indexed witnesses should verify");
     }
 }
