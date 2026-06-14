@@ -14,17 +14,14 @@ use super::params::ArithmeticBenchParams;
 
 pub(crate) fn bench_ext4_matrix(c: &mut Criterion) {
     type F31Mersenne = Mersenne31;
-    type PF31Mersenne = <F31Mersenne as HasPacking>::Packing;
     type F31MersenneFpExt4 = FpExt4<F31Mersenne>;
     type PF31MersenneFpExt4 = <F31MersenneFpExt4 as HasPacking>::Packing;
 
     type F31 = Prime31Offset19;
-    type PF31 = <F31 as HasPacking>::Packing;
     type F31FpExt4 = FpExt4<F31>;
     type PF31FpExt4 = <F31FpExt4 as HasPacking>::Packing;
 
     type F32 = Prime32Offset99;
-    type PF32 = <F32 as HasPacking>::Packing;
     type F32FpExt4 = FpExt4<F32>;
     type PF32FpExt4 = <F32FpExt4 as HasPacking>::Packing;
 
