@@ -15,7 +15,6 @@ pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::flow) trace_scale: L,
     #[cfg(feature = "zk")]
     pub(in crate::protocol::flow) zk_hiding: ZkHidingProverState<F>,
-    pub(in crate::protocol::flow) expected_w_len: Option<usize>,
     pub(in crate::protocol::flow) row_coefficients: Option<Vec<L>>,
 }
 
@@ -78,7 +77,6 @@ pub fn prove_suffix<Cfg, T, B, const D: usize>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
-    num_vars: usize,
     transcript: &mut T,
     starting_state: RecursiveProverState<Cfg::Field, Cfg::ChallengeField>,
     schedule: &Schedule,
@@ -109,33 +107,21 @@ where
             "prove_suffix expects a non-empty recursive suffix".to_string(),
         ));
     }
-    let terminal_level = planned_num_levels - 1;
-
     let mut intermediate_levels = Vec::new();
     let mut current_state = starting_state;
     let mut level = 1usize;
 
     let terminal_result = loop {
-        let inputs = AkitaScheduleInputs {
-            num_vars,
-            level,
-            current_w_len: current_state.w.len(),
-        };
-        let (level_params, next_params) =
-            scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
+        let scheduled = schedule.get_execution_schedule(level)?;
+        scheduled.validate_current_w_len(current_state.w.len())?;
+        let level_params = &scheduled.params;
         let level_d = level_params.ring_dimension;
-        let is_terminal_level = level == terminal_level;
+        let is_terminal_level = scheduled.is_terminal;
         let m_row_layout = if is_terminal_level {
             MRowLayout::WithoutDBlock
         } else {
             MRowLayout::WithDBlock
         };
-        let next_level_params = if is_terminal_level {
-            None
-        } else {
-            Some(&next_params)
-        };
-        let terminal_final_log_basis = is_terminal_level.then_some(next_params.log_basis);
         let out = if level_d == D {
             let prepared_fold = prepare_fold_data::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
                 backend,
@@ -143,7 +129,7 @@ where
                 transcript,
                 current_state,
                 level,
-                &level_params,
+                level_params,
                 m_row_layout,
             )?;
             prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, D>(
@@ -153,12 +139,10 @@ where
                 prepared,
                 transcript,
                 level,
-                &level_params,
-                next_level_params,
+                &scheduled,
                 prepared_fold,
                 setup_contribution_mode,
                 is_terminal_level,
-                terminal_final_log_basis,
             )
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
@@ -171,7 +155,7 @@ where
                         transcript,
                         current_state,
                         level,
-                        &level_params,
+                        level_params,
                         m_row_layout,
                     )?;
                 prove_fold::<Cfg::Field, Cfg::ChallengeField, T, B, Cfg, { D_LEVEL }>(
@@ -181,12 +165,10 @@ where
                     &level_prepared,
                     transcript,
                     level,
-                    &level_params,
-                    next_level_params,
+                    &scheduled,
                     prepared_fold,
                     setup_contribution_mode,
                     is_terminal_level,
-                    terminal_final_log_basis,
                 )
             })
         }?;
@@ -240,12 +222,10 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     level: usize,
-    lp: &LevelParams,
-    next_level_params: Option<&LevelParams>,
+    scheduled: &ExecutionSchedule,
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
-    terminal_final_log_basis: Option<u32>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -267,6 +247,7 @@ where
 {
     #[cfg(feature = "zk")]
     let mut zk_hiding = prepared_fold.zk_hiding;
+    let lp = &scheduled.params;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
     let logical_w = ring_switch_build_w::<F, B, D>(
         &prepared_fold.instance,
@@ -275,23 +256,13 @@ where
         prepared,
         lp,
     )?;
-    if let Some(expected_w_len) = prepared_fold.expected_w_len {
-        if logical_w.len() != expected_w_len {
-            return Err(AkitaError::InvalidSetup(format!(
-                "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
-                logical_w.len()
-            )));
-        }
-    }
+    scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
         None
     } else {
-        let next_level_params = next_level_params.ok_or_else(|| {
-            AkitaError::InvalidInput("intermediate fold missing next-level params".to_string())
-        })?;
         let _span = tracing::info_span!("commit_w_level", level).entered();
         Some(crate::commit_next_w::<Cfg, B, D>(
-            next_level_params,
+            &scheduled.next_params,
             expanded,
             backend,
             prepared,
@@ -306,9 +277,7 @@ where
         &logical_w,
         next_commitment,
         if is_terminal_fold {
-            Some(terminal_final_log_basis.ok_or_else(|| {
-                AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
-            })?)
+            Some(scheduled.next_params.log_basis)
         } else {
             None
         },
@@ -471,15 +440,12 @@ where
         #[cfg(not(feature = "zk"))]
         let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
-        let next_level_params = next_level_params.ok_or_else(|| {
-            AkitaError::InvalidInput("intermediate fold missing next-level params".to_string())
-        })?;
         let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
             setup_contribution_mode,
             expanded.as_ref(),
             prefix_slots,
             lp,
-            next_level_params,
+            &scheduled.next_params,
             &prepared_fold.instance,
             &tau1,
             alpha,
@@ -528,7 +494,7 @@ where
                 logical_w,
                 commitment: committed_commitment,
                 hint: committed_hint,
-                log_basis: next_level_params.log_basis,
+                log_basis: scheduled.next_params.log_basis,
                 sumcheck_challenges,
                 opening: w_eval,
                 #[cfg(feature = "zk")]
@@ -1154,7 +1120,6 @@ where
         trace_eval_target_public,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_w_len: None,
         row_coefficients: None,
     })
 }

@@ -340,23 +340,20 @@ where
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 
-    let Some(root_step) = schedule_root_fold_step(schedule) else {
-        return Err(AkitaError::InvalidSetup(
-            "root schedule does not start with a fold".to_string(),
-        ));
-    };
+    let root_scheduled = schedule.get_execution_schedule(0)?;
 
     if prepared_claims
         .commitments_by_point
         .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.effective_commit_rows())
+        .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
     {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
         ));
     }
 
-    let num_vars = prepared_claims.incidence_summary.num_vars();
+    let root_packed_w_len = root_current_w_len(&root_scheduled.params);
+    root_scheduled.validate_current_w_len(root_packed_w_len)?;
 
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
@@ -364,7 +361,7 @@ where
             backend,
             prepared,
             schedule,
-            &root_step.params,
+            &root_scheduled.params,
             prepared_claims.incidence_summary.num_vars(),
             prepared_claims.incidence_summary.num_claims(),
             prepared_claims.incidence_summary.num_points(),
@@ -372,24 +369,8 @@ where
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
-    if schedule_num_fold_levels(schedule) == 1 {
+    if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
-        let direct_step = match schedule.steps.get(1) {
-            Some(Step::Direct(direct_step)) => direct_step.clone(),
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "1-fold schedule must terminate in a direct step".to_string(),
-                ));
-            }
-        };
-        let final_log_basis = match direct_step.witness_shape {
-            CleartextWitnessShape::PackedDigits((_, bits)) => bits,
-            CleartextWitnessShape::FieldElements(_) => {
-                return Err(AkitaError::InvalidSetup(
-                    "terminal root requires a packed-digit direct step".to_string(),
-                ));
-            }
-        };
         let terminal = prove_terminal_root_fold_with_params::<
             Cfg,
             Cfg::Field,
@@ -409,9 +390,7 @@ where
             &prepared_claims.opening_points,
             &prepared_claims.commitments_by_point,
             prepared_claims.flat_hints,
-            &root_step.params,
-            root_step.next_w_len,
-            final_log_basis,
+            &root_scheduled,
             basis,
             setup_contribution_mode,
             #[cfg(feature = "zk")]
@@ -429,7 +408,6 @@ where
         ));
     }
 
-    let root_next_params = scheduled_next_level_params(schedule, 1)?;
     let root = prove_root_fold::<Cfg::Field, Cfg::ClaimField, Cfg::ChallengeField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
@@ -441,9 +419,7 @@ where
         &prepared_claims.opening_points,
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
-        &root_step.params,
-        root_step.next_w_len,
-        &root_next_params,
+        &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
@@ -457,7 +433,6 @@ where
         prefix_slots,
         backend,
         prepared,
-        num_vars,
         transcript,
         next_state,
         schedule,
