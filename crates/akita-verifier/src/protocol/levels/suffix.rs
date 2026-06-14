@@ -408,7 +408,11 @@ where
             if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
-            if terminal.final_witness().shape() != terminal_direct.witness_shape {
+            let final_witness = terminal
+                .stage2
+                .final_witness()
+                .ok_or(AkitaError::InvalidProof)?;
+            if final_witness.shape() != terminal_direct.witness_shape {
                 return Err(AkitaError::InvalidProof);
             }
             verify_root::<F, E, T, D>(

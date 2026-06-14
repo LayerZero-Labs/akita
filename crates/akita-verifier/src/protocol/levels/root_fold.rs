@@ -164,11 +164,15 @@ where
     };
     let terminal_replay = match proof {
         AkitaBatchedRootProof::Terminal(terminal) => {
+            let final_witness = terminal
+                .stage2
+                .final_witness()
+                .ok_or(AkitaError::InvalidProof)?;
             let layout =
                 terminal_witness_segment_layout(root_lp, num_claims, 1, F::modulus_bits())?;
             Some(prepare_terminal_witness_replay::<F, T>(
                 transcript,
-                terminal.final_witness(),
+                final_witness,
                 w_len,
                 layout,
             )?)
