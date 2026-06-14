@@ -176,14 +176,13 @@ where
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
     incidence: &'a ClaimIncidenceSummary,
-    prepared_points: &'a [PreparedOpeningPoint<F, E, D>],
+    prepared_point: &'a PreparedOpeningPoint<F, E, D>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
 }
 
 struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
     prepared: &'a PreparedOpeningPoint<F, E, D>,
-    point_idx: usize,
     scaled_coefficient: E,
     block_offset: usize,
 }
@@ -218,21 +217,11 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize
             .claim_scales
             .and_then(|scales| scales.get(claim_idx).copied())
             .unwrap_or_else(E::one);
-        let point_idx = *inputs
-            .incidence
-            .claim_to_point()
-            .get(claim_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let prepared = inputs
-            .prepared_points
-            .get(point_idx)
-            .ok_or(AkitaError::InvalidProof)?;
         let block_offset = claim_idx
             .checked_mul(inputs.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
         items.push(RootTraceClaimItem {
-            prepared,
-            point_idx,
+            prepared: inputs.prepared_point,
             scaled_coefficient: coefficient * scale,
             block_offset,
         });
@@ -255,7 +244,7 @@ pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_te
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
-    prepared_points: &[PreparedOpeningPoint<F, E, D>],
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
@@ -266,7 +255,7 @@ where
     let inputs = RootTraceClaimInputs {
         lp,
         incidence,
-        prepared_points,
+        prepared_point,
         row_coefficients,
         claim_scales,
     };
@@ -371,8 +360,8 @@ pub fn root_trace_block_opening<X: FieldCore>(
 
 /// Build the verifier's short closed-form trace terms for a root incidence.
 ///
-/// `b_opens_per_point[point_idx]` must hold the block-axis opening (in the
-/// evaluation field `E`) for that opening point; the verifier obtains it via
+/// `b_open` holds the block-axis opening (in the evaluation field `E`) for the
+/// shared opening point; the verifier obtains it via
 /// [`root_trace_block_opening`] (lifting claim-field coordinates into `E` as
 /// needed). Mirrors [`trace_public_weights_root_terms`] but emits the succinct
 /// per-claim terms instead of materialized block weights.
@@ -380,8 +369,8 @@ pub fn root_trace_block_opening<X: FieldCore>(
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
-    prepared_points: &[PreparedOpeningPoint<F, E, D>],
-    b_opens_per_point: &[Vec<E>],
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    b_open: &[E],
     basis: BasisMode,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -390,29 +379,19 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
-    if b_opens_per_point.len() != incidence.num_points() {
-        return Err(AkitaError::InvalidSize {
-            expected: incidence.num_points(),
-            actual: b_opens_per_point.len(),
-        });
-    }
     let inputs = RootTraceClaimInputs {
         lp,
         incidence,
-        prepared_points,
+        prepared_point,
         row_coefficients,
         claim_scales,
     };
     let items = collect_root_trace_claim_items(&inputs)?;
     let mut terms = Vec::with_capacity(items.len());
     for item in items {
-        let b_open = b_opens_per_point
-            .get(item.point_idx)
-            .ok_or(AkitaError::InvalidProof)?
-            .clone();
         terms.push(TraceTerm {
             block_offset: item.block_offset,
-            b_open,
+            b_open: b_open.to_vec(),
             basis,
             packed_inner_point: item.prepared.packed_inner_point,
             coefficient: item.scaled_coefficient,
@@ -427,8 +406,8 @@ pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
     incidence: &ClaimIncidenceSummary,
-    prepared_points: &[PreparedOpeningPoint<F, E, D>],
-    b_opens_per_point: &[Vec<E>],
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    b_open: &[E],
     basis: BasisMode,
     row_coefficients: &[E],
     trace_coeff: E,
@@ -446,8 +425,8 @@ where
         trace_terms: trace_terms_root(
             lp,
             incidence,
-            prepared_points,
-            b_opens_per_point,
+            prepared_point,
+            b_open,
             basis,
             row_coefficients,
             claim_scales,

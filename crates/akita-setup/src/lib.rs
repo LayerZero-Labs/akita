@@ -50,7 +50,6 @@ use std::sync::Arc;
 pub fn new_prover_setup<F, const D: usize, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
@@ -67,19 +66,13 @@ where
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    if max_num_points == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_points must be at least 1".to_string(),
-        ));
-    }
-    let setup_envelope =
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
     #[cfg(feature = "disk-persistence")]
     let max_setup_len = setup_envelope.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {
-        match load_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
+        match load_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
                 // A cached setup is acceptable only if its physical backing
                 // covers the packed setup envelope for the current request.
@@ -87,15 +80,13 @@ where
                     .expanded
                     .shared_matrix()
                     .total_ring_elements_at::<D>()?;
-                let cached_points = setup.expanded.seed().max_num_points;
                 #[cfg(feature = "zk")]
                 let cached_zk_b_total =
                     setup.expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
                 #[cfg(feature = "zk")]
                 let cached_zk_d_total =
                     setup.expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
-                let cached_shape_covers_request =
-                    cached_total >= max_setup_len && cached_points >= max_num_points;
+                let cached_shape_covers_request = cached_total >= max_setup_len;
                 #[cfg(feature = "zk")]
                 let cached_shape_covers_request = cached_shape_covers_request
                     && cached_zk_b_total >= setup_envelope.max_zk_b_len
@@ -105,22 +96,22 @@ where
                     return Ok(setup);
                 }
                 if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
                             storage_path.display()
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating"
+                            "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
                         );
                 }
             }
             Err(e) => {
                 if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
@@ -137,14 +128,11 @@ where
     let setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
-        max_num_points,
         setup_envelope,
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    if let Err(err) =
-        save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)
-    {
+    if let Err(err) = save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys) {
         tracing::warn!("Failed to persist setup cache: {err}");
     }
 
@@ -159,7 +147,6 @@ where
 fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> String {
     let family = std::any::type_name::<Cfg>()
         .chars()
@@ -169,7 +156,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_batched_polys,
         max_num_batched_polys,
-        max_num_points,
+        1,
     );
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
@@ -186,7 +173,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
             format!(
                 "planner_v6_nv{}_g{}_t{}_w{}_z{}_{hex}",
                 schedule_lookup_key.num_vars,
-                schedule_lookup_key.num_points,
+                1,
                 schedule_lookup_key.num_t_vectors,
                 schedule_lookup_key.num_w_vectors,
                 schedule_lookup_key.num_z_vectors,
@@ -195,7 +182,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         Err(_) => format!(
             "miss_nv{}_g{}_t{}_w{}_z{}",
             schedule_lookup_key.num_vars,
-            schedule_lookup_key.num_points,
+            1,
             schedule_lookup_key.num_t_vectors,
             schedule_lookup_key.num_w_vectors,
             schedule_lookup_key.num_z_vectors,
@@ -207,7 +194,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
+        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
         Cfg::D,
     )
 }
@@ -216,7 +203,6 @@ fn cache_file_name<Cfg: CommitmentConfig>(
 pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Option<PathBuf> {
     let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         Some(PathBuf::from(local_app_data))
@@ -241,11 +227,7 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 
     cache_directory.map(|mut path| {
         path.push("akita");
-        path.push(cache_file_name::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            max_num_points,
-        ));
+        path.push(cache_file_name::<Cfg>(max_num_vars, max_num_batched_polys));
         path
     })
 }
@@ -259,11 +241,8 @@ pub(crate) fn save_prover_setup<
     setup: &AkitaProverSetup<F, D>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<(), AkitaError> {
-    let Some(storage_path) =
-        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-    else {
+    let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) else {
         return Err(AkitaError::InvalidSetup(
             "could not determine storage directory".to_string(),
         ));
@@ -318,10 +297,9 @@ pub(crate) fn load_prover_setup<
 >(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError> {
-    let storage_path = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-        .ok_or_else(|| {
+    let storage_path =
+        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys).ok_or_else(|| {
             AkitaError::InvalidSetup("Failed to determine storage directory".to_string())
         })?;
 
@@ -340,13 +318,9 @@ pub(crate) fn load_prover_setup<
 
     // Disk cache load first validates the byte structure and field elements,
     // then `validate_cached_matrix` verifies the seed-derived matrix content.
-    let setup = deserialize_cached_setup::<F, D, Cfg>(
-        &mut reader,
-        max_num_vars,
-        max_num_batched_polys,
-        max_num_points,
-    )
-    .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    let setup =
+        deserialize_cached_setup::<F, D, Cfg>(&mut reader, max_num_vars, max_num_batched_polys)
+            .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
     let prefix_slots = SetupPrefixProverRegistry::<F, D>::deserialize_with_mode(
         &mut reader,
         Compress::Yes,
@@ -370,7 +344,7 @@ pub(crate) fn load_prover_setup<
     validate_cached_matrix::<F, D>(&setup)?;
 
     tracing::info!(
-        "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}, max_num_points={max_num_points}"
+        "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
     );
     Ok(AkitaProverSetup {
         expanded: Arc::new(setup),
@@ -387,7 +361,6 @@ fn deserialize_cached_setup<
     reader: &mut impl Read,
     expected_max_num_vars: usize,
     expected_max_num_batched_polys: usize,
-    expected_max_num_points: usize,
 ) -> Result<AkitaExpandedSetup<F>, SerializationError> {
     let seed =
         AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
@@ -399,7 +372,6 @@ fn deserialize_cached_setup<
     }
     if seed.max_num_vars != expected_max_num_vars
         || seed.max_num_batched_polys != expected_max_num_batched_polys
-        || seed.max_num_points != expected_max_num_points
     {
         return Err(SerializationError::InvalidData(
             "cached setup seed capacity does not match cache key".to_string(),
@@ -408,7 +380,6 @@ fn deserialize_cached_setup<
     let expected_envelope = Cfg::max_setup_matrix_size(
         expected_max_num_vars,
         expected_max_num_batched_polys,
-        expected_max_num_points,
     )
     .map_err(|err| {
         SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
@@ -496,7 +467,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
+        let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3).unwrap();
         let verifier_setup = prover_setup.verifier_setup().unwrap();
 
         let mut bytes = Vec::new();
@@ -522,9 +493,9 @@ mod tests {
         // falls through to the planner DP via the default `runtime_schedule`
         // fallback. D32Full has a singleton table but the
         // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
-        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -536,20 +507,14 @@ mod tests {
 
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-        fn cleanup_setup_file_shape(
-            max_num_vars: usize,
-            max_num_batched_polys: usize,
-            max_num_points: usize,
-        ) {
-            if let Some(path) =
-                get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-            {
+        fn cleanup_setup_file_shape(max_num_vars: usize, max_num_batched_polys: usize) {
+            if let Some(path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) {
                 let _ = fs::remove_file(path);
             }
         }
 
         fn cleanup_setup_file(max_num_vars: usize) {
-            cleanup_setup_file_shape(max_num_vars, 1, 1);
+            cleanup_setup_file_shape(max_num_vars, 1);
         }
 
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
@@ -574,9 +539,9 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
-                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.expanded, prover_setup.expanded);
 
                 cleanup_setup_file(MAX_VARS);
@@ -596,7 +561,7 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let mut setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let mut setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let id = SetupPrefixSlotId {
                     setup_seed_digest: setup_seed_digest(setup.expanded.seed()).unwrap(),
                     d_setup: TEST_D,
@@ -628,9 +593,9 @@ mod tests {
                         hint,
                     })
                     .unwrap();
-                save_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1, 1).unwrap();
+                save_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1).unwrap();
 
-                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
                 cleanup_setup_file(MAX_VARS);
@@ -644,9 +609,9 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
-                let second = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let second = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 assert_eq!(first.expanded, second.expanded);
 
@@ -663,7 +628,7 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let total = prover_setup.expanded.shared_matrix().total_ring_elements();
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
@@ -677,9 +642,9 @@ mod tests {
                     expanded: Arc::new(corrupt),
                     prefix_slots: SetupPrefixProverRegistry::new(),
                 };
-                save_prover_setup::<TestF, TEST_D, Cfg>(&corrupt, MAX_VARS, 1, 1).unwrap();
+                save_prover_setup::<TestF, TEST_D, Cfg>(&corrupt, MAX_VARS, 1).unwrap();
 
-                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1)
                     .expect_err("corrupt cached matrix must be rejected");
                 assert!(err
                     .to_string()
@@ -698,12 +663,12 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
-                let path = get_storage_path::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
+                let path = get_storage_path::<Cfg>(MAX_VARS, 1).unwrap();
                 let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
                 file.write_all(&[0]).unwrap();
 
-                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1)
                     .expect_err("cache with trailing bytes must be rejected");
                 assert!(err.to_string().contains("trailing bytes"));
 
@@ -717,10 +682,10 @@ mod tests {
                 const MAX_VARS: usize = 13;
                 const MAX_BATCH: usize = 2;
 
-                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH, 1);
+                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH);
 
                 let prover_setup =
-                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
+                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH).unwrap();
                 let mut stale_seed = prover_setup.expanded.seed().clone();
                 stale_seed.max_num_vars = MAX_VARS - 1;
                 stale_seed.max_num_batched_polys = MAX_BATCH - 1;
@@ -736,14 +701,14 @@ mod tests {
                     expanded: Arc::new(stale),
                     prefix_slots: SetupPrefixProverRegistry::new(),
                 };
-                save_prover_setup::<TestF, TEST_D, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1).unwrap();
+                save_prover_setup::<TestF, TEST_D, Cfg>(&stale, MAX_VARS, MAX_BATCH).unwrap();
 
                 let regenerated =
-                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
+                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH).unwrap();
                 assert_eq!(regenerated.expanded.seed().max_num_vars, MAX_VARS);
                 assert_eq!(regenerated.expanded.seed().max_num_batched_polys, MAX_BATCH);
 
-                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH, 1);
+                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH);
             });
         }
 
@@ -760,9 +725,9 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
-                let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
                     &akita_types::ClaimIncidenceSummary::same_point(MAX_VARS, 1)

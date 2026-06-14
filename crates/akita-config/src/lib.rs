@@ -168,7 +168,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range.
@@ -311,7 +310,6 @@ mod tests {
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-            _max_num_points: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
             Ok(SetupMatrixEnvelope {
                 max_setup_len: 1,

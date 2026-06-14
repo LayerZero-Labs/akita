@@ -76,30 +76,23 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
     Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
 {
-    let (protocol_nv, num_points, num_t_vectors, num_w_vectors, num_z_vectors) =
-        if Cfg::EXT_DEGREE > 1 {
-            let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
-            let width = 1usize << split_bits;
-            (
-                nv.checked_sub(split_bits)
-                    .expect("Frobenius split must not exceed dense arity")
-                    + split_bits,
-                1,
-                1,
-                width,
-                width,
-            )
-        } else {
-            (nv, 1, 1, 1, 1)
-        };
+    let (protocol_nv, num_t_vectors, num_w_vectors, num_z_vectors) = if Cfg::EXT_DEGREE > 1 {
+        let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
+        let width = 1usize << split_bits;
+        (
+            nv.checked_sub(split_bits)
+                .expect("Frobenius split must not exceed dense arity")
+                + split_bits,
+            1,
+            width,
+            width,
+        )
+    } else {
+        (nv, 1, 1, 1)
+    };
     let layout = resolve_layout::<FF, Cfg>(protocol_nv);
-    let schedule_key = AkitaScheduleLookupKey::new_with_points(
-        protocol_nv,
-        num_points,
-        num_t_vectors,
-        num_w_vectors,
-        num_z_vectors,
-    );
+    let schedule_key =
+        AkitaScheduleLookupKey::new(protocol_nv, num_t_vectors, num_w_vectors, num_z_vectors);
     let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout, num_t_vectors, Cfg::decomposition().field_bits());

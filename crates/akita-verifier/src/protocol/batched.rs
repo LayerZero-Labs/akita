@@ -69,7 +69,7 @@ where
 
 fn effective_batched_schedule<Cfg, const D: usize>(
     incidence_summary: &ClaimIncidenceSummary,
-    opening_points: &[&[Cfg::ExtField]],
+    opening_point: &[Cfg::ExtField],
 ) -> Result<Schedule, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -81,7 +81,7 @@ where
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-            opening_points,
+            std::slice::from_ref(&opening_point),
             &root_step.params,
             alpha_bits,
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
@@ -130,13 +130,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    let total_group_polys = incidence_summary
-        .num_polys_per_point()
-        .iter()
-        .try_fold(0usize, |acc, &count| {
-            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
-        })?;
-    if total_group_polys != witnesses.len() {
+    if incidence_summary.num_claims() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -154,34 +148,28 @@ where
         .checked_mul(params.a_key.row_len())
         .and_then(|cols| cols.checked_mul(params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-    let mut claim_offset = 0usize;
-    for &point_size in incidence_summary.num_polys_per_point() {
-        let b_required_cols = point_size
-            .checked_mul(per_witness_outer_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-        let b_required = params
-            .b_key
-            .row_len()
-            .checked_mul(b_required_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
-        if a_required.max(b_required) > setup_seed.max_setup_len {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for direct witness layout".to_string(),
-            ));
+    let b_required_cols = witnesses
+        .len()
+        .checked_mul(per_witness_outer_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
+    let b_required = params
+        .b_key
+        .row_len()
+        .checked_mul(b_required_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
+    if a_required.max(b_required) > setup_seed.max_setup_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix is too small for direct witness layout".to_string(),
+        ));
+    }
+    for witness in witnesses {
+        let witness_len = witness
+            .as_field_elements()
+            .ok_or(AkitaError::InvalidProof)?
+            .coeff_len();
+        if witness_len != expected_witness_len {
+            return Err(AkitaError::InvalidProof);
         }
-        let group_end = claim_offset
-            .checked_add(point_size)
-            .ok_or(AkitaError::InvalidProof)?;
-        for witness in &witnesses[claim_offset..group_end] {
-            let witness_len = witness
-                .as_field_elements()
-                .ok_or(AkitaError::InvalidProof)?
-                .coeff_len();
-            if witness_len != expected_witness_len {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        claim_offset = group_end;
     }
     Ok(())
 }
@@ -369,7 +357,7 @@ where
 pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
+    commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
     #[cfg(feature = "zk")] b_blinding_digits: &[Vec<i8>],
@@ -377,11 +365,11 @@ pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
 {
-    if flat_commitments.len() != incidence_summary.num_points() {
+    #[cfg(feature = "zk")]
+    if b_blinding_digits.len() != commitments.len() {
         return Err(AkitaError::InvalidProof);
     }
-    #[cfg(feature = "zk")]
-    if b_blinding_digits.len() != flat_commitments.len() {
+    if commitments.len() != incidence_summary.num_polys_per_commitment_group().len() {
         return Err(AkitaError::InvalidProof);
     }
     validate_root_direct_recommitment_shape::<F, D>(
@@ -392,21 +380,25 @@ where
     )?;
 
     let mut claim_offset = 0usize;
-    for (group_idx, &group_size) in incidence_summary.num_polys_per_point().iter().enumerate() {
-        #[cfg(not(feature = "zk"))]
-        let _ = group_idx;
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let commitment = recommit_direct_witness_group::<F, D>(
-            group_witnesses,
+    for (group_idx, &group_size) in incidence_summary
+        .num_polys_per_commitment_group()
+        .iter()
+        .enumerate()
+    {
+        let group_end = claim_offset
+            .checked_add(group_size)
+            .ok_or(AkitaError::InvalidProof)?;
+        let recomputed = recommit_direct_witness_group::<F, D>(
+            &witnesses[claim_offset..group_end],
             setup,
             params,
             #[cfg(feature = "zk")]
             &b_blinding_digits[group_idx],
         )?;
-        if commitment != flat_commitments[group_idx] {
+        if recomputed != commitments[group_idx] {
             return Err(AkitaError::InvalidProof);
         }
-        claim_offset += group_size;
+        claim_offset = group_end;
     }
 
     Ok(())
@@ -473,7 +465,7 @@ where
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let schedule = effective_batched_schedule::<Cfg, D>(
         &prepared_claims.incidence_summary,
-        &prepared_claims.opening_points,
+        prepared_claims.opening_point,
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
@@ -487,7 +479,7 @@ where
     )?;
 
     let PreparedVerifierClaims {
-        opening_points,
+        opening_point,
         commitments,
         openings,
         incidence_summary,
@@ -505,7 +497,7 @@ where
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
             verify_zero_fold_openings_with_incidence(
                 witnesses,
-                &opening_points,
+                opening_point,
                 &openings,
                 &incidence_summary,
                 basis,
@@ -530,7 +522,7 @@ where
                 proof,
                 setup,
                 transcript,
-                &opening_points,
+                opening_point,
                 &openings,
                 &commitments,
                 &incidence_summary,
@@ -569,7 +561,6 @@ mod tests {
         AkitaSetupSeed {
             max_num_vars: 6,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len,
             #[cfg(feature = "zk")]

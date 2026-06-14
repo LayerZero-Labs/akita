@@ -366,14 +366,14 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         setup,
         &CpuBackend,
         prepared,
-        vec![(
+        (
             pt,
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -427,13 +427,13 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             pt,
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {
@@ -512,13 +512,11 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover(poly.num_vars(), 1, 1),
+        >>::setup_prover(poly.num_vars(), 1),
         SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover_recursion(
-            poly.num_vars(), 1, 1
-        ),
+        >>::setup_prover_recursion(poly.num_vars(), 1),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -604,12 +602,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover_recursion(nv, 1, 1),
+        >>::setup_prover_recursion(nv, 1),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -716,10 +714,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = profile_setup_contribution_mode();
     let setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1)
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys)
         }
         SetupContributionMode::Recursive => {
-            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys, 1)
+            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys)
         }
     }
     .unwrap();
@@ -762,14 +760,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &pt[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -843,13 +841,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &pt[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {

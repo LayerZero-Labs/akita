@@ -113,7 +113,6 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-            _max_num_points: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
             Ok(SetupMatrixEnvelope {
                 max_setup_len: 1,
@@ -214,7 +213,7 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4)
         .expect("setup envelope should cover generated grouped batch schedules");
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
@@ -245,21 +244,18 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
     assert!(runtime_envelope.max_setup_len >= required);
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
         .expect("setup envelope should cover generated batched root widths");
     assert!(setup_envelope.max_setup_len >= required);
 }
 
 #[test]
-fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
+fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     use akita_types::root_direct_schedule;
 
     type Cfg = fp128::D128Full;
-    let incidence =
-        ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
-    let commit_incidence =
-        ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
-    let root_params = Cfg::get_params_for_batched_commitment(&commit_incidence)
+    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
+    let root_params = Cfg::get_params_for_batched_commitment(&incidence)
         .expect("supported batched commit params");
     let schedule = root_direct_schedule(incidence.num_vars(), root_params.clone())
         .expect("synthetic direct schedule");
@@ -270,10 +266,9 @@ fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
 }
 
 #[test]
-fn setup_matrix_scan_uses_worst_case_grouping_for_aggregate_shape() {
-    let incidence =
-        worst_case_grouped_incidence_for_shape(30, 4, 2).expect("valid aggregate incidence");
-    assert_eq!(incidence.num_polys_per_point(), &[3, 1]);
+fn setup_matrix_scan_uses_one_shared_opening_point() {
+    let incidence = worst_case_grouped_incidence_for_shape(30, 4).expect("valid opening batch");
+    assert_eq!(incidence.num_polys_per_commitment_group(), &[4]);
 }
 
 #[test]
@@ -349,7 +344,7 @@ fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
     assert!(runtime_envelope.max_zk_b_len >= required);
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1, 1).unwrap();
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1).unwrap();
     assert!(setup_envelope.max_zk_b_len >= required);
 }
 
@@ -395,20 +390,15 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         };
         // Root-level batched witnesses fan out over the key's vector
         // counts; recursive levels collapse back to singleton-by-construction.
-        let (num_points, num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
-            (
-                key.num_points,
-                key.num_t_vectors,
-                key.num_w_vectors,
-                key.num_z_vectors,
-            )
+        let (num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
+            (key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
         } else {
-            (1, 1, 1, 1)
+            (1, 1, 1)
         };
         let runtime_next_w_len =
             akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
                 &fold.params,
-                num_points,
+                1,
                 num_t_vectors,
                 num_w_vectors,
                 num_public_rows,
@@ -426,9 +416,11 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 #[cfg(not(feature = "zk"))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        if entry.key.num_commitment_groups != 1 {
+            continue;
+        }
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -499,9 +491,11 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        if entry.key.num_commitment_groups != 1 {
+            continue;
+        }
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -520,11 +514,10 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.num_t_vectors > 1)
+        .filter(|entry| entry.key.num_commitment_groups == 1 && entry.key.num_t_vectors > 1)
     {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -641,15 +634,14 @@ fn batched_root_plan_matches_runtime_next_w_len() {
         .entries
         .iter()
         .find(|entry| {
-            entry.key.num_commitment_groups > 1
-                || entry.key.num_t_vectors > 1
-                || entry.key.num_w_vectors > 1
-                || entry.key.num_z_vectors > 1
+            entry.key.num_commitment_groups == 1
+                && (entry.key.num_t_vectors > 1
+                    || entry.key.num_w_vectors > 1
+                    || entry.key.num_z_vectors > 1)
         })
         .expect("generated table should contain a non-singleton batched-root row");
-    let key = AkitaScheduleLookupKey::new_with_points(
+    let key = AkitaScheduleLookupKey::new(
         entry.key.num_vars,
-        entry.key.num_commitment_groups,
         entry.key.num_t_vectors,
         entry.key.num_w_vectors,
         entry.key.num_z_vectors,

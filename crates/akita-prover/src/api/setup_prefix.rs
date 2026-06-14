@@ -300,7 +300,6 @@ mod tests {
         AkitaProverSetup::<F, D>::generate_with_capacity(
             8,
             1,
-            1,
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
                 #[cfg(feature = "zk")]

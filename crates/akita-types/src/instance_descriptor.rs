@@ -198,8 +198,6 @@ impl PlanSection {
 /// Per commit-and-open call descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSection {
-    /// Number of distinct opening points.
-    pub num_points: u32,
     /// Total number of committed polynomials addressed by the call.
     pub num_polys: u32,
     /// Total number of claimed openings addressed by the call.
@@ -224,7 +222,6 @@ impl CallSection {
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
-            num_points: usize_to_u32(incidence.num_points(), "num_points")?,
             num_polys: usize_to_u32(incidence.num_polynomials(), "num_polys")?,
             num_claims: usize_to_u32(incidence.num_claims(), "num_claims")?,
             basis_mode,
@@ -567,7 +564,7 @@ impl AkitaDeserialize for PlanSection {
 
 impl Valid for CallSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.num_points == 0 || self.num_polys == 0 || self.num_claims == 0 {
+        if self.num_polys == 0 || self.num_claims == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor call counts must be non-zero".to_string(),
             ));
@@ -582,7 +579,6 @@ impl AkitaSerialize for CallSection {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.num_points.serialize_with_mode(&mut writer, compress)?;
         self.num_polys.serialize_with_mode(&mut writer, compress)?;
         self.num_claims.serialize_with_mode(&mut writer, compress)?;
         encode_basis_mode(self.basis_mode, &mut writer, compress)?;
@@ -593,8 +589,7 @@ impl AkitaSerialize for CallSection {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.num_points.serialized_size(compress)
-            + self.num_polys.serialized_size(compress)
+        self.num_polys.serialized_size(compress)
             + self.num_claims.serialized_size(compress)
             + basis_mode_size(compress)
             + self.opening_point_arity.serialized_size(compress)
@@ -612,7 +607,6 @@ impl AkitaDeserialize for CallSection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            num_points: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             num_polys: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             num_claims: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
@@ -796,8 +790,7 @@ mod tests {
     }
 
     fn sample_descriptor() -> AkitaInstanceDescriptor {
-        let incidence =
-            ClaimIncidenceSummary::from_point_polys(5, vec![2, 1]).expect("valid incidence");
+        let incidence = ClaimIncidenceSummary::same_point(5, 3).expect("valid opening batch");
         let schedule = Schedule {
             steps: vec![
                 Step::Fold(FoldStep {
@@ -882,9 +875,9 @@ mod tests {
     }
 
     #[test]
-    fn incidence_digest_binds_grouping_order() {
-        let left = ClaimIncidenceSummary::from_point_polys(4, vec![2, 1]).expect("left");
-        let right = ClaimIncidenceSummary::from_point_polys(4, vec![1, 2]).expect("right");
+    fn incidence_digest_binds_claim_count() {
+        let left = ClaimIncidenceSummary::same_point(4, 2).expect("left");
+        let right = ClaimIncidenceSummary::same_point(4, 3).expect("right");
 
         assert_ne!(digest_incidence(&left), digest_incidence(&right));
     }
@@ -906,7 +899,6 @@ mod tests {
         let seed = AkitaSetupSeed {
             max_num_vars: 5,
             max_num_batched_polys: 2,
-            max_num_points: 1,
             gen_ring_dim: 4,
             max_setup_len: 2,
             #[cfg(feature = "zk")]

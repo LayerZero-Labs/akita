@@ -111,14 +111,14 @@ fn prove_input<'a, FF: FieldCore, P, C, H>(
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
+    (
         point,
-        CommittedPolynomials {
+        vec![CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        },
-    )]
+        }],
+    )
 }
 
 fn verify_input<'a, FF: FieldCore, C>(
@@ -126,13 +126,13 @@ fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
+    (
         point,
-        CommittedOpenings {
+        vec![CommittedOpenings {
             openings,
             commitment,
-        },
-    )]
+        }],
+    )
 }
 
 type DenseFixture<FField, E, L, const D: usize> = (
@@ -214,9 +214,8 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1)
-            .unwrap();
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1)
+        .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
@@ -385,7 +384,6 @@ fn full_d64_prove_verify() {
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             FULL_TEST_NV,
             1,
-            1,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -536,8 +534,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         purge_setup_cache(NV);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -763,8 +760,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -949,8 +945,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1125,8 +1120,7 @@ fn batched_onehot_same_point_round_trip() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1244,7 +1238,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             nv,
             SAME_POINT_ONEHOT_BATCH_SIZE,
-            1,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();

@@ -27,10 +27,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 
 mod coeffs;

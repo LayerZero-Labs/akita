@@ -969,7 +969,7 @@ mod tests {
     #[test]
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
-        let incidence = ClaimIncidenceSummary::from_point_polys(5, vec![2, 1]).expect("incidence");
+        let incidence = ClaimIncidenceSummary::same_point(5, 3).expect("opening batch");
         let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &incidence).expect("widths");
         let expected_ring_slots = lp
             .a_key
@@ -999,7 +999,6 @@ mod tests {
         let seed = AkitaSetupSeed {
             max_num_vars: 1,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: d_setup,
             max_setup_len: 2,
             #[cfg(feature = "zk")]

@@ -57,12 +57,10 @@ pub mod fp128 {
         fn max_setup_matrix_size(
             max_num_vars: usize,
             max_num_batched_polys: usize,
-            max_num_points: usize,
         ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
             crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                 max_num_vars,
                 max_num_batched_polys,
-                max_num_points,
             )
         }
 

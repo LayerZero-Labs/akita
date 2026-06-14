@@ -97,24 +97,12 @@ fn validate_proof_optimized_fold_entropy(
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    if max_num_points == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_points must be at least 1".to_string(),
-        ));
-    }
-    if max_num_points > max_num_batched_polys {
-        return Err(AkitaError::InvalidSetup(format!(
-            "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
-        )));
-    }
-
     let mut max_setup_len: usize = 1;
     #[cfg(feature = "zk")]
     let mut max_zk_b_len: usize = 1;
@@ -123,20 +111,16 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut saw_supported_shape = false;
     for num_vars in 1..=max_num_vars {
         for num_polys in 1..=max_num_batched_polys {
-            let upper_pts = num_polys.min(max_num_points);
-            for num_points in 1..=upper_pts {
-                let incidence =
-                    worst_case_grouped_incidence_for_shape(num_vars, num_polys, num_points)?;
-                let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)? else {
-                    continue;
-                };
-                saw_supported_shape = true;
-                max_setup_len = max_setup_len.max(envelope.max_setup_len);
-                #[cfg(feature = "zk")]
-                {
-                    max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
-                    max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
-                }
+            let incidence = worst_case_grouped_incidence_for_shape(num_vars, num_polys)?;
+            let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)? else {
+                continue;
+            };
+            saw_supported_shape = true;
+            max_setup_len = max_setup_len.max(envelope.max_setup_len);
+            #[cfg(feature = "zk")]
+            {
+                max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
+                max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
             }
         }
     }
@@ -156,28 +140,12 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     })
 }
 
-/// Worst-case grouped incidence for a `(num_vars, num_claims, num_points)`
-/// shape: all excess claims are skewed into a single point group so
-/// `max_group_poly_count` (and therefore the packed B setup width) is
-/// maximized. Setup-matrix sizing must use this shape, not an even split,
-/// so the shared matrix is large enough for any runtime incidence with the
-/// same counts.
+/// Worst-case opening batch for a `(num_vars, num_claims)` shape.
 pub fn worst_case_grouped_incidence_for_shape(
     num_vars: usize,
     num_claims: usize,
-    num_points: usize,
 ) -> Result<ClaimIncidenceSummary, AkitaError> {
-    if num_points == 0 || num_claims == 0 || num_points > num_claims {
-        return ClaimIncidenceSummary::from_counts(num_vars, num_claims, num_points);
-    }
-    let mut num_polys_per_point = vec![1usize; num_points];
-    num_polys_per_point[0] = num_claims
-        .checked_sub(num_points)
-        .and_then(|n| n.checked_add(1))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("batched incidence group width overflow".to_string())
-        })?;
-    ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
+    ClaimIncidenceSummary::same_point(num_vars, num_claims)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -463,12 +431,7 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     }
 
     len = len
-        .checked_add(
-            incidence
-                .num_points()
-                .checked_mul(Cfg::D)
-                .ok_or_else(|| AkitaError::InvalidSetup("ZK root mask overflow".to_string()))?,
-        )
+        .checked_add(Cfg::D)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding witness overflow".to_string()))?;
 
     if let Some(root_step) = fold_steps.first() {
@@ -654,12 +617,10 @@ macro_rules! impl_proof_optimized_preset {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-                max_num_points: usize,
             ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
-                    max_num_points,
                 )
             }
 

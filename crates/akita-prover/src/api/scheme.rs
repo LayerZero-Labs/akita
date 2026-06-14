@@ -38,7 +38,6 @@ where
     fn setup_prover(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<Self::ProverSetup, AkitaError>;
 
     /// Build prover setup for recursive setup-contribution mode.
@@ -50,7 +49,6 @@ where
     fn setup_prover_recursion(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<Self::ProverSetup, AkitaError>;
 
     /// Derive verifier setup from prover setup.
@@ -59,12 +57,7 @@ where
     /// Commit a single opening-point bundle.
     ///
     /// All polynomials in `polys` are aggregated into one commitment using a
-    /// layout derived from the singleton incidence view. The returned
-    /// commitment is compatible with a subsequent `batched_prove` call **only
-    /// when this is the sole opening point in that call**. For multipoint
-    /// batched proofs callers must use [`Self::batched_commit`] so that every
-    /// per-point commitment shares the same root layout the prove path will
-    /// select for the full multipoint incidence.
+    /// layout derived from the single shared opening-batch shape.
     ///
     /// # Errors
     ///
@@ -79,14 +72,10 @@ where
         P: AkitaPolyOps<F, D>,
         B: CommitmentComputeBackend<F>;
 
-    /// Commit one polynomial bundle per opening point under a shared root
-    /// layout matched to the corresponding multipoint batched prove.
+    /// Commit the polynomial bundles used by a batched prove.
     ///
-    /// `polys_per_point[i]` is the bundle that will be opened at opening
-    /// point `i` in a subsequent [`Self::batched_prove`] call. Bundle sizes
-    /// may differ across points; the implementation must derive its shared
-    /// commitment layout from the full multipoint incidence so the produced
-    /// commitments are compatible with the prove root.
+    /// Each input bundle produces one commitment. All bundles share one public
+    /// opening point in the subsequent [`Self::batched_prove`] call.
     ///
     /// # Errors
     ///
@@ -97,20 +86,16 @@ where
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_point: &[&[P]],
+        polys_per_commitment_group: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         P: AkitaPolyOps<F, D>,
         B: CommitmentComputeBackend<F>;
 
-    /// Produce a fused batched opening proof for one or more opening points.
-    ///
-    /// The outer vector indexes opening points. Each point carries one
-    /// commitment plus the polynomials it bundles.
+    /// Produce a fused batched opening proof for one shared opening point.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
-    /// commitment, one opening point). Same-point batching is the special
-    /// case `opening_points.len() == 1`.
+    /// commitment, one opening point).
     ///
     /// # Errors
     ///

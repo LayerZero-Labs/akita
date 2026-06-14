@@ -54,9 +54,8 @@ where
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
+    let incidence = ClaimIncidenceSummary::same_point(num_vars, num_claims)?;
     let row_coefficients = vec![L::one()];
-    let challenge_points = [current_state.opening_point.as_slice()];
     let openings = vec![current_state.opening];
     #[cfg(feature = "zk")]
     let opening_masks = vec![Some(&current_state.opening_mask)];
@@ -74,7 +73,7 @@ where
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
         &[],
-        &challenge_points,
+        current_state.opening_point.as_slice(),
         &openings,
         &row_coefficients,
         &incidence,
@@ -100,8 +99,6 @@ where
         append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
 
-    let ring_opening_points = vec![prepared_point.ring_opening_point.clone()];
-    let ring_multiplier_points = vec![prepared_point.ring_multiplier_point.clone()];
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
         None => w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
@@ -124,7 +121,7 @@ where
     } else {
         None
     };
-    let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
+    let commitment_routing = CommitmentRouting::from_recursive_opening_batch(num_claims)?;
     let stage1_proof = proof.stage1_proof();
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(setup_contribution_mode, next_fold_level_params)?;
@@ -161,16 +158,16 @@ where
         row_coefficients,
         incidence,
         commitment_routing,
-        ring_opening_points,
-        ring_multiplier_points,
+        ring_opening_point: prepared_point.ring_opening_point.clone(),
+        ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
         terminal_replay,
         stage3,
-        trace_prepared_points: vec![prepared_point.clone()],
-        trace_block_openings: Vec::new(),
+        trace_prepared_point: Some(prepared_point.clone()),
+        trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,
         #[cfg(feature = "zk")]
@@ -346,7 +343,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    opening_points: &[&[E]],
+    opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
@@ -405,7 +402,7 @@ where
                 &proof.root,
                 setup,
                 transcript,
-                opening_points,
+                opening_point,
                 openings,
                 commitments,
                 incidence_summary,
@@ -457,7 +454,7 @@ where
                 &proof.root,
                 setup,
                 transcript,
-                opening_points,
+                opening_point,
                 openings,
                 commitments,
                 incidence_summary,

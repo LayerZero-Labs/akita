@@ -40,11 +40,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         &[],
         &[],
         &[],
-        1,
         MRowLayout::WithDBlock,
-        0,
-        &[],
-        &[],
         dummy_witness_segment_layout(),
     ) {
         Ok(_) => panic!("invalid log_basis should be rejected"),
@@ -66,11 +62,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         &[],
         &[],
         &[],
-        1,
         MRowLayout::WithDBlock,
-        0,
-        &[],
-        &[],
         dummy_witness_segment_layout(),
     ) {
         Ok(_) => panic!("zero num_blocks should be rejected"),

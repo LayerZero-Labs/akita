@@ -59,7 +59,6 @@ fn populate_recursive_setup_prefixes<F, const D: usize, Cfg>(
     setup: &mut AkitaProverSetup<F, D>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -69,8 +68,7 @@ where
         return Ok(());
     }
 
-    let root_incidence =
-        ClaimIncidenceSummary::from_counts(max_num_vars, max_num_batched_polys, max_num_points)?;
+    let root_incidence = ClaimIncidenceSummary::same_point(max_num_vars, max_num_batched_polys)?;
     let schedule = Cfg::get_params_for_prove(&root_incidence)?;
     let recursive_incidence = ClaimIncidenceSummary::same_point(0, 1)?;
     let available_field_len = setup
@@ -133,23 +131,20 @@ where
 pub fn new_prover_setup_recursion<F, const D: usize, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let mut setup =
-        new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)?;
+    let mut setup = new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys)?;
     populate_recursive_setup_prefixes::<F, D, Cfg>(
         &mut setup,
         max_num_vars,
         max_num_batched_polys,
-        max_num_points,
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)?;
+    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
 
     Ok(setup)
 }
@@ -164,7 +159,7 @@ mod tests {
 
     #[test]
     fn recursive_d64_setup_populates_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1, 1)
+        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1)
             .expect("recursive D64 setup");
 
         assert!(
@@ -187,7 +182,7 @@ mod tests {
 
     #[test]
     fn recursive_d32_setup_skips_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1, 1)
+        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1)
             .expect("recursive D32 setup");
 
         assert!(

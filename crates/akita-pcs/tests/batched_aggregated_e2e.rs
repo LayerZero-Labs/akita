@@ -6,7 +6,7 @@
 //! serialize/deserialize → `batched_verify`.
 //!
 //! This file intentionally keeps a much smaller matrix than the grouped and
-//! multipoint suites, because those tests already cover most batching-shape
+//! same-point batching suites, because those tests already cover most batching-shape
 //! permutations. The aggregated suite now focuses on the unique
 //! single-commitment path with a few representative cases:
 //!
@@ -69,7 +69,7 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::setup_prover(nv, batch_size, 1)
+            >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
@@ -170,7 +170,7 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(nv, batch_size, 1)
+            >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
@@ -307,7 +307,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::setup_prover(NV, BATCH_SIZE, 1)
+        >>::setup_prover(NV, BATCH_SIZE)
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<

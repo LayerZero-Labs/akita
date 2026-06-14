@@ -43,8 +43,8 @@ pub struct RingRelationSegmentLayout {
 pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     m_row_layout: MRowLayout,
     pub challenges: Challenges,
-    opening_points: Vec<RingOpeningPoint<F>>,
-    ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
+    opening_point: RingOpeningPoint<F>,
+    ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     incidence: ClaimIncidenceSummary,
     commitment_routing: CommitmentRouting,
     gamma: Vec<F>,
@@ -61,8 +61,8 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     pub fn new(
         m_row_layout: MRowLayout,
         challenges: Challenges,
-        opening_points: Vec<RingOpeningPoint<F>>,
-        ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
+        opening_point: RingOpeningPoint<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         incidence: ClaimIncidenceSummary,
         commitment_routing: CommitmentRouting,
         gamma: Vec<F>,
@@ -80,13 +80,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                 "ring relation gamma/row coefficients length mismatch".to_string(),
             ));
         }
-        if opening_points.len() != incidence.num_public_rows()
-            || ring_multiplier_points.len() != incidence.num_public_rows()
-        {
-            return Err(AkitaError::InvalidInput(
-                "ring relation opening points do not match public row count".to_string(),
-            ));
-        }
         if y.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "ring relation y must contain at least the consistency row".to_string(),
@@ -95,8 +88,8 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         Ok(Self {
             m_row_layout,
             challenges,
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             incidence,
             commitment_routing,
             gamma,
@@ -118,28 +111,16 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.commitment_routing
     }
 
-    pub fn opening_points(&self) -> &[RingOpeningPoint<F>] {
-        &self.opening_points
+    pub fn opening_point(&self) -> &RingOpeningPoint<F> {
+        &self.opening_point
     }
 
-    pub fn ring_multiplier_points(&self) -> &[RingMultiplierOpeningPoint<F, D>] {
-        &self.ring_multiplier_points
-    }
-
-    pub fn claim_to_point(&self) -> &[usize] {
-        self.incidence.claim_to_point()
+    pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F, D> {
+        &self.ring_multiplier_point
     }
 
     pub fn claim_poly_indices(&self) -> &[usize] {
         self.incidence.claim_poly_indices()
-    }
-
-    pub fn num_polys_per_point(&self) -> &[usize] {
-        self.incidence.num_polys_per_point()
-    }
-
-    pub fn num_public_rows(&self) -> usize {
-        self.incidence.num_public_rows()
     }
 
     pub fn gamma(&self) -> &[F] {
@@ -232,7 +213,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
         let z_len = depth_fold
             .checked_mul(depth_commit)
-            .and_then(|len| len.checked_mul(self.incidence.num_points()))
+            .and_then(|len| len.checked_mul(1))
             .and_then(|len| len.checked_mul(lp.block_len))
             .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
@@ -251,11 +232,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let b_blinding_digit_planes_per_point =
             crate::zk::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
         #[cfg(feature = "zk")]
-        let b_blinding_segment_len = self
-            .incidence
-            .num_points()
-            .checked_mul(b_blinding_digit_planes_per_point)
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
+        let b_blinding_segment_len = b_blinding_digit_planes_per_point;
 
         // Tiered `û_concat` segment length (per the single commitment group);
         // `0` for single-tier levels.
@@ -327,21 +304,16 @@ pub fn ring_relation_segment_layout_for_opening_shape<
 >(
     lp: &LevelParams,
     m_row_layout: MRowLayout,
-    num_polys_per_point: &[usize],
+    num_polys: usize,
 ) -> Result<RingRelationSegmentLayout, AkitaError> {
-    let incidence = ClaimIncidenceSummary::from_point_polys(32, num_polys_per_point.to_vec())?;
+    let incidence = ClaimIncidenceSummary::same_point(32, num_polys)?;
     let routing = CommitmentRouting::copy_incidence(&incidence)?;
-    let num_public_rows = incidence.num_public_rows();
-    let opening_points: Vec<RingOpeningPoint<F>> = (0..num_public_rows)
-        .map(|_| RingOpeningPoint {
-            a: vec![F::zero(); lp.block_len],
-            b: vec![F::zero(); lp.num_blocks],
-        })
-        .collect();
-    let ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>> = opening_points
-        .iter()
-        .map(RingMultiplierOpeningPoint::from_base)
-        .collect();
+    let opening_point = RingOpeningPoint {
+        a: vec![F::zero(); lp.block_len],
+        b: vec![F::zero(); lp.num_blocks],
+    };
+    let ring_multiplier_point: RingMultiplierOpeningPoint<F, D> =
+        RingMultiplierOpeningPoint::from_base(&opening_point);
     let num_claims = incidence.num_claims();
     let challenges = Challenges::Sparse {
         challenges: Vec::new(),
@@ -351,13 +323,13 @@ pub fn ring_relation_segment_layout_for_opening_shape<
     let instance = RingRelationInstance::new(
         m_row_layout,
         challenges,
-        opening_points,
-        ring_multiplier_points,
+        opening_point,
+        ring_multiplier_point,
         incidence,
         routing,
         vec![F::zero(); num_claims],
-        vec![CyclotomicRing::zero(); num_claims],
-        vec![CyclotomicRing::zero(); num_claims],
+        vec![CyclotomicRing::<F, D>::zero(); num_claims],
+        vec![CyclotomicRing::<F, D>::zero(); num_claims],
         Vec::new(),
     )?;
     instance.segment_layout(lp)
@@ -411,20 +383,16 @@ mod tests {
     #[test]
     fn relation_instance_rejects_split_commitment_routing() {
         let lp = test_level_params();
-        let incidence =
-            ClaimIncidenceSummary::from_point_polys(2, vec![1, 1]).expect("valid incidence");
-        let routing =
-            CommitmentRouting::from_recursive_multipoint(incidence.num_claims()).expect("routing");
-        let opening_points = vec![opening_point(&lp), opening_point(&lp)];
-        let ring_multiplier_points = opening_points
-            .iter()
-            .map(RingMultiplierOpeningPoint::from_base)
-            .collect();
+        let incidence = ClaimIncidenceSummary::same_point(2, 2).expect("valid batch");
+        let routing = CommitmentRouting::from_recursive_opening_batch(incidence.num_claims())
+            .expect("routing");
+        let opening_point = opening_point(&lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, incidence.num_claims()),
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             incidence,
             routing,
             vec![F::one(); 2],
@@ -442,19 +410,15 @@ mod tests {
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
-        let incidence =
-            ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
+        let incidence = ClaimIncidenceSummary::same_point(2, 1).expect("valid incidence");
         let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
-        let opening_points = vec![opening_point(&lp)];
-        let ring_multiplier_points = opening_points
-            .iter()
-            .map(RingMultiplierOpeningPoint::from_base)
-            .collect();
+        let opening_point = opening_point(&lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, incidence.num_claims()),
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             incidence,
             routing,
             vec![F::one()],
@@ -473,19 +437,15 @@ mod tests {
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
-        let incidence =
-            ClaimIncidenceSummary::from_point_polys(2, vec![2, 1]).expect("valid incidence");
+        let incidence = ClaimIncidenceSummary::same_point(2, 3).expect("valid batch");
         let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
-        let opening_points = vec![opening_point(&lp), opening_point(&lp)];
-        let ring_multiplier_points = opening_points
-            .iter()
-            .map(RingMultiplierOpeningPoint::from_base)
-            .collect();
+        let opening_point = opening_point(&lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
             MRowLayout::WithDBlock,
             test_challenges(&lp, incidence.num_claims()),
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             incidence,
             routing,
             vec![F::one(); 3],
@@ -506,9 +466,8 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(num_t_vectors, F::modulus_bits())
             .unwrap();
-        let num_points = instance.incidence().num_points();
         let num_claims = instance.incidence().num_claims();
-        let z_len = depth_fold * lp.num_digits_commit * num_points * lp.block_len;
+        let z_len = depth_fold * lp.num_digits_commit * lp.block_len;
         let e_len = lp.num_digits_open * lp.num_blocks * num_claims;
         assert_eq!(layout.offset_e, z_len);
         assert_eq!(layout.offset_t, z_len + e_len);

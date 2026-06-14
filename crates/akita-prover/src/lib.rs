@@ -69,9 +69,9 @@ impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
     }
 }
 
-/// Batched prover input: one commitment plus its polynomials per point.
+/// Batched prover input: one shared opening point plus committed bundles.
 pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
+    (OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>);
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +498,10 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
+    }
+
+    fn num_vars(&self) -> usize {
+        <P as AkitaPolyOps<F, D>>::num_vars(*self)
     }
 
     fn onehot_chunk_size(&self) -> Option<usize> {

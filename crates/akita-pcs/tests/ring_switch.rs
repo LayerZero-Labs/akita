@@ -118,7 +118,7 @@ mod tests {
         num_vars: usize,
         group_poly_count: usize,
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::from_point_polys(num_vars, vec![group_poly_count])
+        ClaimIncidenceSummary::same_point(num_vars, group_poly_count)
             .expect("valid single-point incidence")
     }
 
@@ -280,8 +280,7 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
@@ -324,9 +323,8 @@ mod tests {
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
+            ring_opening_point,
+            ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
             &incidence_summary,
@@ -368,9 +366,8 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[instance.opening_points()[0].clone()],
-                std::slice::from_ref(&ring_multiplier_point),
-                &[0usize],
+                instance.opening_point(),
+                &ring_multiplier_point,
                 &instance.challenges,
                 alpha,
                 &alpha_evals_y,
@@ -414,8 +411,7 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
@@ -450,9 +446,8 @@ mod tests {
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
+            ring_opening_point,
+            ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
             &incidence_summary,
@@ -494,9 +489,8 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[instance.opening_points()[0].clone()],
-                std::slice::from_ref(&ring_multiplier_point),
-                &[0usize],
+                instance.opening_point(),
+                &ring_multiplier_point,
                 &instance.challenges,
                 alpha,
                 &alpha_evals_y,
@@ -575,8 +569,7 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
@@ -614,9 +607,8 @@ mod tests {
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
-            vec![ring_opening_point.clone()],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
+            ring_opening_point.clone(),
+            ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
             &incidence_summary,
@@ -648,9 +640,8 @@ mod tests {
 
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
-            std::slice::from_ref(&ring_opening_point),
-            std::slice::from_ref(&ring_multiplier_point),
-            &[0usize],
+            &ring_opening_point,
+            &ring_multiplier_point,
             &instance.challenges,
             alpha,
             &alpha_evals_y,
@@ -684,8 +675,8 @@ mod tests {
             .eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
-                std::slice::from_ref(&ring_opening_point),
-                std::slice::from_ref(&ring_multiplier_point),
+                &ring_opening_point,
+                &ring_multiplier_point,
                 alpha,
                 None,
             )

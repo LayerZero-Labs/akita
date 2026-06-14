@@ -118,7 +118,7 @@ where
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1).unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let incidence =
         ClaimIncidenceSummary::same_point(num_vars, num_polys).expect("benchmark incidence");

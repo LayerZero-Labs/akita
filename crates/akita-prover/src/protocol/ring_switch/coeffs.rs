@@ -29,7 +29,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
-    let num_claims = instance.claim_to_point().len();
+    let num_claims = instance.incidence().num_claims();
     {
         let x: u8 = 0;
         tracing::trace!(
@@ -69,8 +69,7 @@ where
         &b_blinding_digits,
         &recomposed_inner_rows,
         &e_folded,
-        instance.ring_multiplier_points(),
-        instance.claim_to_point(),
+        instance.ring_multiplier_point(),
         routing.claim_to_commitment_group(),
         routing.claim_poly_in_commitment_group(),
         instance.row_coefficient_rings(),

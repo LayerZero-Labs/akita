@@ -44,7 +44,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1)
+        >>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
@@ -202,7 +202,7 @@ fn run_single_dense_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1)
+        >>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =

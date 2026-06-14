@@ -107,11 +107,11 @@ fn prove_onehot_with_setup_mode(
         SetupContributionMode::Direct => <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::setup_prover(nv, 1, 1),
+        >>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::setup_prover_recursion(nv, 1, 1),
+        >>::setup_prover_recursion(nv, 1),
     }
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();

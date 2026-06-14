@@ -278,7 +278,6 @@ mod tests {
             AkitaSetupSeed {
                 max_num_vars: 8,
                 max_num_batched_polys: 3,
-                max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
                 #[cfg(feature = "zk")]
@@ -432,7 +431,6 @@ mod tests {
             AkitaSetupSeed {
                 max_num_vars: 8,
                 max_num_batched_polys: 3,
-                max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
                 #[cfg(feature = "zk")]

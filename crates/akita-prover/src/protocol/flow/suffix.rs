@@ -10,7 +10,7 @@ pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::flow) trace_eval_target: L,
     #[cfg(feature = "zk")]
     pub(in crate::protocol::flow) trace_eval_target_public: L,
-    pub(in crate::protocol::flow) trace_prepared_points: Vec<PreparedOpeningPoint<F, L, D>>,
+    pub(in crate::protocol::flow) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
     pub(in crate::protocol::flow) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::flow) trace_scale: L,
     #[cfg(feature = "zk")]
@@ -355,13 +355,14 @@ where
     #[cfg(feature = "zk")]
     let trace_eval_target_public_claim = trace_coeff * prepared_fold.trace_eval_target_public;
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
-    let trace_compact = if prepared_fold.trace_prepared_points.is_empty() {
-        None
-    } else if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
+    let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         Some(build_root_stage2_trace_table::<F, L, D>(
             lp,
             &prepared_fold.instance,
-            &prepared_fold.trace_prepared_points,
+            prepared_fold
+                .trace_prepared_point
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?,
             row_coefficients,
             prepared_fold.trace_claim_scales.as_deref(),
             trace_coeff,
@@ -369,11 +370,7 @@ where
             rs.ring_bits,
             rs.live_x_cols,
         )?)
-    } else {
-        let prepared = prepared_fold
-            .trace_prepared_points
-            .first()
-            .ok_or(AkitaError::InvalidProof)?;
+    } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
         Some(build_recursive_stage2_trace_table::<F, L, D>(
             lp,
             &prepared_fold.instance,
@@ -384,6 +381,8 @@ where
             rs.ring_bits,
             rs.live_x_cols,
         )?)
+    } else {
+        None
     };
     let ring_bits = rs.ring_bits;
     let tau1 = rs.tau1.clone();
@@ -529,8 +528,8 @@ where
         );
         let terminal_layout = terminal_witness_segment_layout(
             lp,
-            instance.claim_to_point().len(),
-            instance.num_public_rows(),
+            instance.incidence().num_claims(),
+            1,
             F::modulus_bits(),
         )?;
         let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
@@ -874,7 +873,7 @@ where
 fn compute_trace_target<F, L, const D: usize>(
     reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
     folded_rings: &[CyclotomicRing<F, D>],
-    prepared_points: &[PreparedOpeningPoint<F, L, D>],
+    prepared_point: &PreparedOpeningPoint<F, L, D>,
     expected_opening: L,
 ) -> Result<(L, L), AkitaError>
 where
@@ -887,7 +886,6 @@ where
             Some(reduction) => Ok((reduction.final_claim, reduction.final_factor)),
             None => {
                 let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
-                let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
                 let opening = recover_ring_subfield_inner_product::<F, L, D>(
                     folded_ring,
                     &prepared_point.packed_inner_point,
@@ -903,32 +901,27 @@ where
     }
     #[cfg(feature = "zk")]
     {
-        let internal_claims = folded_rings
-            .iter()
-            .zip(prepared_points.iter())
-            .map(|(folded_ring, prepared_point)| {
-                recover_ring_subfield_inner_product::<F, L, D>(
-                    folded_ring,
-                    &prepared_point.packed_inner_point,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
+        let internal_claim = recover_ring_subfield_inner_product::<F, L, D>(
+            folded_ring,
+            &prepared_point.packed_inner_point,
+        )?;
         match reduction {
             Some(reduction) => {
                 check_extension_opening_reduction_output(
                     reduction.final_claim,
-                    internal_claims[0],
+                    internal_claim,
                     reduction.final_factor,
                 )?;
                 Ok((reduction.final_claim, reduction.final_factor))
             }
             None => {
-                if internal_claims[0] != expected_opening {
+                if internal_claim != expected_opening {
                     return Err(AkitaError::InvalidInput(
                         "recursive opening does not match carried claim".to_string(),
                     ));
                 }
-                Ok((internal_claims[0], L::one()))
+                Ok((internal_claim, L::one()))
             }
         }
     }
@@ -1040,26 +1033,21 @@ where
         BlockOrder::ColumnMajor,
     )?;
     validate_recursive_opening_block_count(&prepared_point, level_params)?;
-    let prepared_points = vec![prepared_point];
     let recursive_polys = [&witness_view];
-    let claim_to_point = vec![0usize];
 
-    let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_points(
+    let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
         &recursive_polys,
-        &claim_to_point,
-        &prepared_points,
+        &prepared_point,
         level_params.block_len,
     )?;
-    for prepared_point in &prepared_points {
-        for pt in &prepared_point.padded_point {
-            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-        }
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
 
     let (trace_eval_target, trace_scale) = compute_trace_target::<F, L, D>(
         &reduction,
         &folded_rings,
-        &prepared_points,
+        &prepared_point,
         current_state.opening,
     )?;
     #[cfg(feature = "zk")]
@@ -1069,19 +1057,8 @@ where
     };
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
-    let ring_opening_points = prepared_points
-        .iter()
-        .map(|prepared_point| prepared_point.ring_opening_point.clone())
-        .collect::<Vec<_>>();
-    let ring_multiplier_points = prepared_points
-        .iter()
-        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
-        .collect::<Vec<_>>();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let incidence = ClaimIncidenceSummary::from_point_polys(
-        recursive_num_vars,
-        vec![1; prepared_points.len()],
-    )?;
+    let incidence = ClaimIncidenceSummary::same_point(recursive_num_vars, 1)?;
     let recursive_commitment = RingCommitment {
         u: commitment_u.to_vec(),
     };
@@ -1089,24 +1066,18 @@ where
     let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
-        ring_opening_points,
-        ring_multiplier_points,
-        claim_to_point,
+        prepared_point.ring_opening_point.clone(),
+        prepared_point.ring_multiplier_point.clone(),
         &recursive_polys,
         e_folded_by_claim,
         &incidence,
         level_params.clone(),
         vec![typed_hint],
         transcript,
-        &[recursive_commitment],
+        std::slice::from_ref(&recursive_commitment),
         row_coefficient_rings,
         m_row_layout,
     )?;
-    let trace_prepared = prepared_points
-        .into_iter()
-        .next()
-        .ok_or(AkitaError::InvalidProof)?;
-
     Ok(PreparedFold {
         commitment: current_state.commitment,
         instance,
@@ -1114,7 +1085,7 @@ where
         extension_opening_reduction: reduction.map(|reduction| reduction.proof),
         trace_eval_target,
         trace_scale,
-        trace_prepared_points: vec![trace_prepared],
+        trace_prepared_point: Some(prepared_point),
         trace_claim_scales: None,
         #[cfg(feature = "zk")]
         trace_eval_target_public,

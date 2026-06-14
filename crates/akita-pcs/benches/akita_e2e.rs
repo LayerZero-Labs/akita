@@ -102,7 +102,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
                     black_box(nv),
                     black_box(1),
-                    black_box(1),
                 )
                 .unwrap(),
             )
@@ -110,7 +109,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     });
 
     let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     group.bench_function("commit", |b| {
@@ -154,14 +153,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                             &setup,
                             &CpuBackend,
                             &prepared,
-                            vec![(
+                            (
                                 &pt[..],
-                                CommittedPolynomials {
+                                vec![CommittedPolynomials {
                                     polynomials: &poly_refs[..],
                                     commitment: &commitments[0],
                                     hint: h.into_iter().next().unwrap(),
-                                },
-                            )],
+                                }],
+                            ),
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -178,14 +177,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             &setup,
             &CpuBackend,
             &prepared,
-            vec![(
+            (
                 &pt[..],
-                CommittedPolynomials {
+                vec![CommittedPolynomials {
                     polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint: hint.clone(),
-                },
-            )],
+                }],
+            ),
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -199,13 +198,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
-                    black_box(vec![(
+                    black_box((
                         &pt[..],
-                        CommittedOpenings {
+                        vec![CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &commitments[0],
-                        },
-                    )]),
+                        }],
+                    )),
                     BasisMode::Lagrange,
                     mode,
                 )
@@ -228,14 +227,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &setup,
                     &CpuBackend,
                     &prepared,
-                    vec![(
+                    (
                         &pt[..],
-                        CommittedPolynomials {
+                        vec![CommittedPolynomials {
                             polynomials: &poly_refs[..],
                             commitment: &cms[0],
                             hint: h,
-                        },
-                    )],
+                        }],
+                    ),
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -246,13 +245,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,
-                    vec![(
+                    (
                         &pt[..],
-                        CommittedOpenings {
+                        vec![CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &cms[0],
-                        },
-                    )],
+                        }],
+                    ),
                     BasisMode::Lagrange,
                     mode,
                 )
@@ -315,7 +314,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
     let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
@@ -362,14 +361,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                             &setup,
                             &CpuBackend,
                             &prepared,
-                            vec![(
+                            (
                                 &pt[..],
-                                CommittedPolynomials {
+                                vec![CommittedPolynomials {
                                     polynomials: &poly_refs[..],
                                     commitment: &commitments[0],
                                     hint: h.into_iter().next().unwrap(),
-                                },
-                            )],
+                                }],
+                            ),
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -386,14 +385,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             &setup,
             &CpuBackend,
             &prepared,
-            vec![(
+            (
                 &pt[..],
-                CommittedPolynomials {
+                vec![CommittedPolynomials {
                     polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint: hint.clone(),
-                },
-            )],
+                }],
+            ),
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -407,13 +406,13 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
-                    black_box(vec![(
+                    black_box((
                         &pt[..],
-                        CommittedOpenings {
+                        vec![CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &commitments[0],
-                        },
-                    )]),
+                        }],
+                    )),
                     BasisMode::Lagrange,
                     mode,
                 )
@@ -436,14 +435,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     &setup,
                     &CpuBackend,
                     &prepared,
-                    vec![(
+                    (
                         &pt[..],
-                        CommittedPolynomials {
+                        vec![CommittedPolynomials {
                             polynomials: &poly_refs[..],
                             commitment: &cms[0],
                             hint: h,
-                        },
-                    )],
+                        }],
+                    ),
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -454,13 +453,13 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,
-                    vec![(
+                    (
                         &pt[..],
-                        CommittedOpenings {
+                        vec![CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &cms[0],
-                        },
-                    )],
+                        }],
+                    ),
                     BasisMode::Lagrange,
                     mode,
                 )

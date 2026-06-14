@@ -84,7 +84,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 ) -> Result<(), AkitaError> {
     if opening_points.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "multipoint ring switch requires at least one opening point".to_string(),
+            "ring switch requires at least one opening point".to_string(),
         ));
     }
     if claim_to_point.len() != num_claims {
@@ -96,7 +96,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
     for opening_point in opening_points {
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
-                "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
+                "ring switch m-eval opening-point layout mismatch".to_string(),
             ));
         }
     }
@@ -105,7 +105,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
         .any(|&point_idx| point_idx >= opening_points.len())
     {
         return Err(AkitaError::InvalidInput(
-            "multipoint ring switch claim-to-point index out of range".to_string(),
+            "ring switch claim-to-point index out of range".to_string(),
         ));
     }
     Ok(())
@@ -116,19 +116,11 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// This is intentionally narrower than a full schedule table entry: it records
 /// only the public inputs that pick a root plan, not the resulting plan data.
 ///
-/// Under the one-commitment-per-opening-point invariant, the number of
-/// distinct point commitments equals the number of distinct opening points,
-/// so the planner-facing projection records `num_points`. The generated
-/// schedule table key still calls this field `num_commitment_groups` for ABI
-/// stability; the translation happens in
-/// `akita_planner::generated_schedule_lookup_key`.
+/// Opening batches always use one shared point and one commitment group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
     pub num_vars: usize,
-    /// Number of distinct opening points (and therefore, distinct point
-    /// commitments).
-    pub num_points: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
     /// Number of root relation `w` protocol vectors.
@@ -142,7 +134,6 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
-            num_points: 1,
             num_t_vectors: 1,
             num_w_vectors: 1,
             num_z_vectors: 1,
@@ -156,26 +147,8 @@ impl AkitaScheduleLookupKey {
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
-        Self::new_with_points(
-            num_vars,
-            num_z_vectors,
-            num_t_vectors,
-            num_w_vectors,
-            num_z_vectors,
-        )
-    }
-
-    /// General root-opening context with an explicit opening-point count.
-    pub const fn new_with_points(
-        num_vars: usize,
-        num_points: usize,
-        num_t_vectors: usize,
-        num_w_vectors: usize,
-        num_z_vectors: usize,
-    ) -> Self {
         Self {
             num_vars,
-            num_points,
             num_t_vectors,
             num_w_vectors,
             num_z_vectors,
@@ -192,25 +165,11 @@ impl AkitaScheduleLookupKey {
     /// Returns an error if the incidence routing tables are malformed.
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
         let num_t_vectors = incidence.num_polynomials();
-        if incidence.claim_to_point().len() != incidence.num_claims() {
-            return Err(AkitaError::InvalidInput(
-                "claim incidence summary lengths do not match aggregate counts".to_string(),
-            ));
-        }
-        for &point_idx in incidence.claim_to_point() {
-            if point_idx >= incidence.num_points() {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains out-of-range routing".to_string(),
-                ));
-            }
-        }
-
-        Ok(Self::new_with_points(
+        Ok(Self::new(
             incidence.num_vars(),
-            incidence.num_points(),
             num_t_vectors,
             incidence.num_claims(),
-            incidence.num_public_rows(),
+            1,
         ))
     }
 }
@@ -239,14 +198,14 @@ pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts_for_layout::<F>(
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -260,7 +219,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -271,7 +230,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -284,7 +243,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
 pub fn w_ring_element_count_with_counts_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -292,7 +251,7 @@ pub fn w_ring_element_count_with_counts_bits(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -306,7 +265,7 @@ pub fn w_ring_element_count_with_counts_bits(
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -323,7 +282,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
     // Tiered levels carry the hidden decomposed concatenated slice images
     // `û_concat` (one per commitment group); `0` for single-tier levels.
-    let u_concat_count = num_points
+    let u_concat_count = num_commitment_groups
         .checked_mul(lp.u_concat_ring_len_per_group())
         .ok_or_else(|| AkitaError::InvalidSetup("witness u-concat width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
@@ -332,7 +291,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     // Public-output M rows bind via the fused trace term; omit from r width.
-    let r_rows = lp.m_row_count_for(num_points, 0, layout)?;
+    let r_rows = lp.m_row_count_for(num_commitment_groups, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -353,7 +312,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             ),
             crate::layout::MRowLayout::WithoutDBlock => 0,
         };
-        let b_blinding_count = num_points
+        let b_blinding_count = num_commitment_groups
             .checked_mul(crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,

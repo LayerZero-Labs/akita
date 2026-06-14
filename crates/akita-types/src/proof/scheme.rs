@@ -20,8 +20,8 @@ pub struct CommittedOpenings<'a, F, C> {
     pub commitment: &'a C,
 }
 
-/// Batched verifier input: one commitment plus its claimed openings per point.
-pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, CommittedOpenings<'a, F, C>)>;
+/// Batched verifier input: one shared opening point plus committed bundles.
+pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>);
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -40,17 +40,15 @@ where
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
-    /// Batched (potentially multi-point) evaluation/opening proof object.
+    /// Batched single-point evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
 
-    /// Verify a fused batched opening proof over one or more opening points.
+    /// Verify a fused batched opening proof at one shared opening point.
     ///
     /// The root layout is derived deterministically from the opening points.
-    ///
-    /// Same-point batching is the special case `opening_points.len() == 1`.
     ///
     /// # Errors
     ///

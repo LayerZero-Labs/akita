@@ -61,7 +61,7 @@ fn tiered_preset_tiers_a_batched_root() {
     // tiered level in every schedule.
     let mut total_tiered = 0usize;
     for batch in [64usize, 128, 256, 512, 1024] {
-        let key = AkitaScheduleLookupKey::new_with_points(22, 1, batch, batch, 1);
+        let key = AkitaScheduleLookupKey::new(22, batch, batch, 1);
         let schedule = fp128::D64OneHotTiered::runtime_schedule(key).expect("tiered schedule");
         total_tiered += assert_tiered_levels_fit_under_a(&schedule);
     }

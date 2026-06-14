@@ -234,48 +234,17 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 fn decompose_fold_witness<F, P, const D: usize>(
     challenges: &Challenges,
     polys: &[&P],
-    claim_to_point: &[usize],
-    num_points: usize,
     lp: &LevelParams,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: AkitaPolyOps<F, D>,
 {
-    // Per-point chunking keeps each aggregated witness aligned with one
-    // opening point's challenge claims.
-    let _span = tracing::info_span!("compute_batched_z_folded", num_points = num_points).entered();
-    let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
-    let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
-    for (claim_idx, poly) in polys.iter().enumerate() {
-        let point_idx = claim_to_point[claim_idx];
-        polys_by_point[point_idx].push(*poly);
-        claim_indices_by_point[point_idx].push(claim_idx);
-    }
-
-    let mut z_folded_rings = Vec::new();
-    let mut centered_coeffs = Vec::new();
-    let mut centered_inf_norm = 0u32;
-    for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-        let point_indices = &claim_indices_by_point[point_idx];
-        let point_claim_count = point_polys.len();
-        let witness = build_point_decompose_fold_witness::<F, P, D>(
-            challenges,
-            point_polys,
-            point_indices,
-            lp,
-        )?;
-        let witness = validate_decompose_fold(witness, lp, point_claim_count)?;
-        centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
-        z_folded_rings.extend(witness.z_folded_rings);
-        centered_coeffs.extend(witness.centered_coeffs);
-    }
-
-    Ok(DecomposeFoldWitness {
-        z_folded_rings,
-        centered_coeffs,
-        centered_inf_norm,
-    })
+    let _span = tracing::info_span!("compute_batched_z_folded").entered();
+    let point_indices = (0..polys.len()).collect::<Vec<_>>();
+    let witness =
+        build_point_decompose_fold_witness::<F, P, D>(challenges, polys, &point_indices, lp)?;
+    validate_decompose_fold(witness, lp, polys.len())
 }
 
 fn build_point_decompose_fold_witness<F, P, const D: usize>(
@@ -444,14 +413,13 @@ where
 pub struct RingRelationProver;
 
 impl RingRelationProver {
-    /// Root-level constructor covering single-claim, same-point batching,
-    /// multi-point batching, or any mix.
+    /// Root-level constructor for one shared opening point with one or more
+    /// polynomial slots.
     ///
-    /// `opening_points` holds the distinct ring-level opening points used by
-    /// the batch; `claim_to_point` maps each flattened claim to its
-    /// opening-point index.  For the trivial single-claim case use
-    /// `opening_points = vec![pt]`, `claim_to_point = vec![0]`,
-    /// `polys = &[poly]`, `num_polys_per_point = &[1]`, `gamma = vec![F::one()]`.
+    /// `opening_point` is the single ring-level opening point used by the
+    /// batch.
+    /// For the trivial single-claim case use `polys = &[poly]` and
+    /// `gamma = vec![F::one()]`.
     ///
     /// # Errors
     ///
@@ -471,9 +439,8 @@ impl RingRelationProver {
     pub fn new<F, const D: usize, T, P, B>(
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        opening_points: Vec<RingOpeningPoint<F>>,
-        ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
-        claim_to_point: Vec<usize>,
+        opening_point: RingOpeningPoint<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         polys: &[&P],
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         incidence_summary: &ClaimIncidenceSummary,
@@ -498,65 +465,36 @@ impl RingRelationProver {
             );
         }
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        if opening_points.is_empty() {
+        if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
-                "batched prover requires at least one opening point".to_string(),
+                "batched prover opening-point layout mismatch".to_string(),
             ));
         }
-        for opening_point in &opening_points {
-            if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover opening-point layout mismatch".to_string(),
-                ));
-            }
-        }
-        if ring_multiplier_points.len() != opening_points.len()
-            || ring_multiplier_points
-                .iter()
-                .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+        if ring_multiplier_point.a_len() < lp.block_len
+            || ring_multiplier_point.b_len() != lp.num_blocks
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
         let num_claims = incidence_summary.num_claims();
-        let num_polys_per_point = &incidence_summary.num_polys_per_point();
-        if polys.is_empty() || num_polys_per_point.is_empty() {
+        if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if num_polys_per_point.contains(&0) {
-            return Err(AkitaError::InvalidInput(
-                "batched prover requires at least one polynomial per opening point".to_string(),
-            ));
-        }
         if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
-            || claim_to_point.len() != num_claims
-            || incidence_summary.claim_to_point().len() != num_claims
             || incidence_summary.claim_poly_indices().len() != num_claims
-            || hints.len() != incidence_summary.num_points()
-            || commitments.len() != incidence_summary.num_points()
+            || hints.len() != incidence_summary.num_polys_per_commitment_group().len()
+            || commitments.len() != incidence_summary.num_polys_per_commitment_group().len()
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
         }
-        if claim_to_point
-            .iter()
-            .any(|&point_idx| point_idx >= opening_points.len())
-        {
-            return Err(AkitaError::InvalidInput(
-                "batched prover claim-to-point index out of range".to_string(),
-            ));
-        }
         for claim_idx in 0..num_claims {
-            let point_idx = incidence_summary.claim_to_point()[claim_idx];
-            if point_idx >= incidence_summary.num_points()
-                || incidence_summary.claim_poly_indices()[claim_idx]
-                    >= num_polys_per_point[point_idx]
-            {
+            if incidence_summary.claim_poly_indices()[claim_idx] >= num_claims {
                 return Err(AkitaError::InvalidInput(
                     "batched prover claim incidence index out of range".to_string(),
                 ));
@@ -585,7 +523,7 @@ impl RingRelationProver {
         };
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
             hints,
-            num_polys_per_point,
+            incidence_summary.num_polys_per_commitment_group(),
             lp.num_digits_open,
             lp.log_basis,
         )?;
@@ -626,18 +564,12 @@ impl RingRelationProver {
             stage1_fold_challenge_labels(),
         )?;
 
-        let z_folded_rings = decompose_fold_witness::<F, _, D>(
-            &challenges,
-            polys,
-            &claim_to_point,
-            opening_points.len(),
-            &lp,
-        )?;
+        let z_folded_rings = decompose_fold_witness::<F, _, D>(&challenges, polys, &lp)?;
 
-        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
+        let commitment_rows = commitments
             .iter()
             .flat_map(|commitment| commitment.u.iter().copied())
-            .collect();
+            .collect::<Vec<_>>();
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
@@ -661,8 +593,8 @@ impl RingRelationProver {
         let instance = RingRelationInstance::new(
             m_row_layout,
             challenges,
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             incidence,
             commitment_routing,
             gamma,
