@@ -398,7 +398,7 @@ where
         ));
     }
 
-    let root = prove_root_fold::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
         backend,

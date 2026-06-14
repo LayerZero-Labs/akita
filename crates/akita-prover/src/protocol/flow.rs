@@ -84,13 +84,13 @@ pub use inputs::{
 };
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_point;
-pub use root_fold::{prove_root_fold, prove_terminal_root_fold_with_params};
-pub use suffix::prove_suffix;
+pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 #[cfg(test)]
 pub(in crate::protocol::flow) use suffix::{
     prove_extension_opening_reduction, recursive_witness_base_evals,
 };
 pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedFold};
+pub use suffix::{prove_suffix, SuffixProverState};
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     lp: &LevelParams,
@@ -156,38 +156,6 @@ where
         trace_claim_scales,
     )?;
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
-}
-
-/// Runtime state carried between recursive prove levels.
-pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
-    /// Current committed recursive witness representation.
-    pub w: RecursiveWitnessFlat,
-    /// Logical recursive witness when it differs from the committed representation.
-    pub logical_w: Option<RecursiveWitnessFlat>,
-    /// Current recursive witness commitment.
-    pub commitment: FlatRingVec<F>,
-    /// D-erased recursive commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
-    /// Current digit basis, as `log2(b)`.
-    pub log_basis: u32,
-    /// Sumcheck challenges that become the next recursive opening point.
-    pub sumcheck_challenges: Vec<L>,
-    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
-    pub opening: L,
-    /// Transcript-visible masked handle for `opening`.
-    #[cfg(feature = "zk")]
-    pub opening_public: L,
-    /// Proof-level ZK hiding material fixed at batched-prove startup.
-    #[cfg(feature = "zk")]
-    pub zk_hiding: ZkHidingProverState<F>,
-}
-
-impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
-    /// Logical witness represented by the carried opening claim.
-    #[inline]
-    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
-        self.logical_w.as_ref().unwrap_or(&self.w)
-    }
 }
 
 /// Cursor into the proof-level hiding witness allocated at batched-prove start.
@@ -368,8 +336,8 @@ fn masked_sumcheck_final_claim<E: FieldCore>(
 pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     /// Fold proof produced at this level.
     pub level_proof: AkitaLevelProof<F, L>,
-    /// Recursive prover state for the next level.
-    pub next_state: RecursiveProverState<F, L>,
+    /// Suffix prover state for the next level.
+    pub next_state: SuffixProverState<F, L>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.

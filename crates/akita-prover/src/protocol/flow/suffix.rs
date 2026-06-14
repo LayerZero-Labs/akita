@@ -1,6 +1,38 @@
 use super::*;
 use cfg_if::cfg_if;
 
+/// Prover state carried between suffix fold levels.
+pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
+    /// Current committed suffix witness representation.
+    pub w: RecursiveWitnessFlat,
+    /// Logical suffix witness when it differs from the committed representation.
+    pub logical_w: Option<RecursiveWitnessFlat>,
+    /// Current suffix witness commitment.
+    pub commitment: FlatRingVec<F>,
+    /// D-erased suffix commitment hint cache.
+    pub hint: RecursiveCommitmentHintCache<F>,
+    /// Current digit basis, as `log2(b)`.
+    pub log_basis: u32,
+    /// Sumcheck challenges that become the next suffix opening point.
+    pub sumcheck_challenges: Vec<L>,
+    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
+    pub opening: L,
+    /// Transcript-visible masked handle for `opening`.
+    #[cfg(feature = "zk")]
+    pub opening_public: L,
+    /// Proof-level ZK hiding material fixed at batched-prove startup.
+    #[cfg(feature = "zk")]
+    pub zk_hiding: ZkHidingProverState<F>,
+}
+
+impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
+    /// Logical witness represented by the carried opening claim.
+    #[inline]
+    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
+        self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+}
+
 pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::flow) commitment: FlatRingVec<F>,
     pub(in crate::protocol::flow) instance: RingRelationInstance<F, D>,
@@ -78,7 +110,7 @@ pub fn prove_suffix<Cfg, T, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    starting_state: RecursiveProverState<Cfg::Field, Cfg::ExtField>,
+    starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -488,7 +520,7 @@ where
 
         Ok(FoldProveOutput::Intermediate(Box::new(ProveLevelOutput {
             level_proof,
-            next_state: RecursiveProverState {
+            next_state: SuffixProverState {
                 w: committed_witness,
                 logical_w,
                 commitment: committed_commitment,
@@ -964,7 +996,7 @@ fn prepare_fold_data<F, L, T, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    current_state: RecursiveProverState<F, L>,
+    current_state: SuffixProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,

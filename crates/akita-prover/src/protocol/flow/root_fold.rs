@@ -13,13 +13,6 @@ fn append_shared_opening_point_to_transcript<F, E, T>(
     }
 }
 
-fn root_trace_claim_scales<C: Copy>(
-    opening_batch: &OpeningBatch,
-    shared_factor: C,
-) -> Result<Vec<C>, AkitaError> {
-    Ok(vec![shared_factor; opening_batch.num_claims()])
-}
-
 pub(in crate::protocol::flow) fn evaluate_claims_at_prepared_point<F, C, P, const D: usize>(
     polys: &[&P],
     prepared_point: &PreparedOpeningPoint<F, C, D>,
@@ -242,10 +235,7 @@ where
         let trace_eval_target = reduction.final_claim;
         #[cfg(feature = "zk")]
         let trace_eval_target_public = reduction.final_claim_public;
-        let trace_claim_scales = Some(root_trace_claim_scales(
-            &opening_batch,
-            reduction.shared_factor,
-        )?);
+        let trace_claim_scales = Some(vec![reduction.shared_factor; opening_batch.num_claims()]);
         return prepare_root_fold_from_evaluated_claims::<
             F,
             E,
@@ -346,8 +336,7 @@ where
     )
 }
 
-/// Prove the folded root level using already-selected root and next-level
-/// parameters.
+/// Prove the folded-root proof payload for an intermediate root.
 ///
 /// The caller owns schedule/config selection and passes the validated schedule
 /// execution for level 0. This function owns root polynomial folding, public
@@ -360,7 +349,7 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold<F, E, T, P, B, Cfg, const D: usize>(
+pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
@@ -405,7 +394,7 @@ where
             stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
             level = 0usize,
             num_claims,
-            "prove_root_fold"
+            "prove_root"
         );
     }
 
@@ -444,7 +433,7 @@ where
     .get_intermediate()
 }
 
-/// Terminal-root analogue of [`prove_root_fold`] used when the
+/// Terminal-root analogue of [`prove_root`] used when the
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
 /// Mirrors the intermediate-root path through opening-batch absorbs,
