@@ -64,7 +64,7 @@ where
     /// Verify a fused batched opening proof at one shared opening point.
     ///
     /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`OpeningBatch`] built from `claims` (single shared point, no multipoint).
+    /// [`OpeningBatch`](crate::OpeningBatch) built from `claims` (single shared point, no multipoint).
     ///
     /// # Errors
     ///
