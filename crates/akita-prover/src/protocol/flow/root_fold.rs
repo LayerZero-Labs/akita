@@ -107,7 +107,7 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
@@ -175,7 +175,7 @@ fn prepare_root_fold_data<F, E, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -205,7 +205,7 @@ where
     if needs_extension_reduction {
         let (reduction, row_coefficients) = prove_root_extension_opening_reduction::<F, E, T, P, D>(
             polys,
-            opening_batch,
+            &opening_batch,
             shared_opening_point,
             transcript,
             #[cfg(feature = "zk")]
@@ -243,7 +243,7 @@ where
         #[cfg(feature = "zk")]
         let trace_eval_target_public = reduction.final_claim_public;
         let trace_claim_scales = Some(root_trace_claim_scales(
-            opening_batch,
+            &opening_batch,
             reduction.shared_factor,
         )?);
         return prepare_root_fold_from_evaluated_claims::<
@@ -315,10 +315,10 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
     let trace_eval_target_public = trace_eval_target;
 
@@ -367,7 +367,7 @@ pub fn prove_root_fold<F, E, T, P, B, Cfg, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -409,7 +409,7 @@ where
         );
     }
 
-    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
@@ -464,7 +464,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -506,7 +506,7 @@ where
         );
     }
 
-    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 

@@ -523,7 +523,7 @@ where
                 opening_point,
                 &openings,
                 &commitments,
-                &opening_batch,
+                opening_batch,
                 basis,
                 &schedule,
                 setup_contribution_mode,

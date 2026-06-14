@@ -1070,7 +1070,7 @@ where
         prepared_point.ring_multiplier_point.clone(),
         &recursive_polys,
         e_folded_by_claim,
-        &opening_batch,
+        opening_batch,
         level_params.clone(),
         vec![typed_hint],
         transcript,

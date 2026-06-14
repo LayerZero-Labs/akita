@@ -346,7 +346,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,

@@ -443,7 +443,7 @@ impl RingRelationProver {
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         polys: &[&P],
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        opening_batch: &OpeningBatch,
+        opening_batch: OpeningBatch,
         lp: LevelParams,
         hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
@@ -588,13 +588,13 @@ impl RingRelationProver {
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
-        let commitment_routing = CommitmentRouting::copy_opening_batch(opening_batch)?;
+        let commitment_routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
         let instance = RingRelationInstance::new(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
-            opening_batch.clone(),
+            opening_batch,
             commitment_routing,
             gamma,
             row_coefficient_rings,

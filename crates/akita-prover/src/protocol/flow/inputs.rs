@@ -358,6 +358,14 @@ where
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
+    let PreparedBatchedProveInputs {
+        opening_point,
+        commitments,
+        opening_batch,
+        flat_polys,
+        commitment_hints,
+    } = prepared_claims;
+
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
         let terminal =
@@ -366,11 +374,11 @@ where
                 backend,
                 prepared,
                 transcript,
-                &prepared_claims.flat_polys,
-                &prepared_claims.opening_batch,
-                prepared_claims.opening_point,
-                &prepared_claims.commitments,
-                prepared_claims.commitment_hints,
+                &flat_polys,
+                opening_batch,
+                opening_point,
+                &commitments,
+                commitment_hints,
                 &root_scheduled,
                 basis,
                 setup_contribution_mode,
@@ -396,11 +404,11 @@ where
         backend,
         prepared,
         transcript,
-        &prepared_claims.flat_polys,
-        &prepared_claims.opening_batch,
-        prepared_claims.opening_point,
-        &prepared_claims.commitments,
-        prepared_claims.commitment_hints,
+        &flat_polys,
+        opening_batch,
+        opening_point,
+        &commitments,
+        commitment_hints,
         &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,

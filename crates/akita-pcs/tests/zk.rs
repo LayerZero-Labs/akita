@@ -103,7 +103,7 @@ fn plain_root_d_image<const D: usize>(
         ring_multiplier_point,
         &[poly],
         vec![e_folded],
-        &single_point_group_opening_batch(point.len()),
+        single_point_group_opening_batch(point.len()),
         layout.clone(),
         vec![hint],
         &mut transcript,

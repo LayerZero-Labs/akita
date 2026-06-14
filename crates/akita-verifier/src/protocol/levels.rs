@@ -696,7 +696,7 @@ where
         stage1_challenges,
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
-        prepared.opening_batch.clone(),
+        prepared.opening_batch,
         prepared.commitment_routing,
         gamma,
         row_coefficient_rings,
@@ -788,8 +788,8 @@ where
         })
     } else {
         let segment = relation_instance.segment_layout(prepared.lp)?;
-        let num_trace_blocks = prepared
-            .opening_batch
+        let num_trace_blocks = relation_instance
+            .opening_batch()
             .num_claims()
             .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
@@ -803,7 +803,7 @@ where
         Some(build_trace_claim_root::<F, E, D>(
             layout,
             prepared.lp,
-            &prepared.opening_batch,
+            relation_instance.opening_batch(),
             prepared
                 .trace_prepared_point
                 .as_ref()
@@ -880,7 +880,7 @@ fn verify_root<F, E, T, const D: usize>(
     shared_opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
-    opening_batch: &OpeningBatch,
+    opening_batch: OpeningBatch,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -921,13 +921,13 @@ where
     }
     let commitment_rows = flatten_batched_commitment_rows(commitments);
 
-    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
     #[cfg(feature = "zk")]
     let opening_masks = vec![None; num_claims];
 
@@ -937,7 +937,7 @@ where
         shared_opening_point,
         openings,
         &row_coefficients,
-        opening_batch,
+        &opening_batch,
         basis,
         root_lp,
         BlockOrder::RowMajor,
@@ -974,7 +974,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, openings)?;
+        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, openings)?;
     #[cfg(not(feature = "zk"))]
     let trace_eval_target = eor_trace_final
         .as_ref()
@@ -1036,7 +1036,7 @@ where
     };
 
     let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
-    let commitment_routing = CommitmentRouting::copy_opening_batch(opening_batch)?;
+    let commitment_routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
@@ -1046,7 +1046,7 @@ where
         v: v_typed.to_vec(),
         commitment_rows: &commitment_rows,
         row_coefficients,
-        opening_batch: opening_batch.clone(),
+        opening_batch,
         commitment_routing,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
