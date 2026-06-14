@@ -559,6 +559,9 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
         2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+        setup_mode_to_u8(SetupContributionMode::Direct)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
         3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
         let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();

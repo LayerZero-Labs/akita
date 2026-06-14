@@ -303,11 +303,11 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
-                nv, 1, 1,
+                nv, 1,
             )
         }
     }
@@ -339,14 +339,14 @@ fn run() -> Result<(), String> {
         &prover_setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitment,
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -364,13 +364,13 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            akita_types::CommittedOpenings {
+            vec![akita_types::CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            },
-        )],
+            }],
+        ),
         setup_contribution_mode,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
