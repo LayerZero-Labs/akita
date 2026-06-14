@@ -26,6 +26,8 @@ pub(crate) mod op_norm;
 mod uniform;
 mod xof;
 
+pub(crate) use xof::XofCursor;
+
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
@@ -37,7 +39,6 @@ use bounded_l1::{sample_bounded_l1_challenge, D_32};
 use exact_shell::sample_exact_shell_challenge;
 use op_norm::OpNormTable;
 use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
-use xof::XofCursor;
 
 /// Fixed-point scale for the certified operator-norm predicate tables built
 /// during rejection sampling. `q = 48` keeps the predicate's `i128`
@@ -57,7 +58,7 @@ const OP_NORM_PREDICATE_SCALE: u32 = 48;
 const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 
 /// Expand sparse challenges from an already-derived XOF cursor.
-fn sparse_challenges_from_xof_cursor<const D: usize>(
+pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     cursor: &mut XofCursor,
     n: usize,
     cfg: &SparseChallengeConfig,
@@ -126,7 +127,7 @@ fn parse_challenge<const D: usize>(
 }
 
 #[inline]
-fn sparse_challenge_absorb_buf<const D: usize>(
+pub(crate) fn sparse_challenge_absorb_buf<const D: usize>(
     label: &[u8],
     instance_tag: u64,
     cfg: &SparseChallengeConfig,

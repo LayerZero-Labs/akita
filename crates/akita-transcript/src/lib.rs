@@ -21,6 +21,18 @@ where
 {
     /// Derive challenge bytes after a hypothetical absorb, without mutating replay state.
     fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8>;
+
+    /// Derive challenge bytes after a hypothetical absorb/squeeze chain on a sponge
+    /// clone, without mutating replay state.
+    ///
+    /// For each `(absorb, squeeze_len)` pair, absorb the payload then squeeze
+    /// `squeeze_len` bytes (discarded except for the final squeeze, whose output
+    /// is returned). `squeeze_lens` must have the same length as `absorbs`.
+    fn preview_challenge_bytes_after_absorb_chain(
+        &self,
+        absorbs: &[&[u8]],
+        squeeze_lens: &[usize],
+    ) -> Vec<u8>;
 }
 
 /// Transcript interface for protocol Fiat-Shamir transforms.

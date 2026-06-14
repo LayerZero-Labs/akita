@@ -897,6 +897,12 @@ where
             let right_total = right_len.checked_mul(num_claims).ok_or_else(|| {
                 AkitaError::InvalidSetup("tensor-right challenge count overflow".to_string())
             })?;
+            let left_buf = crate::sampler::sparse_challenge_absorb_buf::<D>(
+                labels.tensor_left,
+                left_total as u64,
+                cfg,
+                grind_nonce,
+            );
             let left = preview_sparse_challenges::<F, T, D>(
                 transcript,
                 labels.tensor_left,
@@ -904,13 +910,22 @@ where
                 cfg,
                 grind_nonce,
             )?;
-            let _left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
-            let right = preview_sparse_challenges::<F, T, D>(
-                transcript,
+            let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
+            let right_buf = crate::sampler::sparse_challenge_absorb_buf::<D>(
                 labels.tensor_right,
-                right_total,
+                right_total as u64,
                 cfg,
                 grind_nonce,
+            );
+            let right_seed = transcript.preview_challenge_bytes_after_absorb_chain(
+                &[&left_buf, &left_digest, &right_buf],
+                &[32, 0, 32],
+            );
+            let mut right_cursor = crate::sampler::XofCursor::from_seed(&right_seed);
+            let right = crate::sampler::sparse_challenges_from_xof_cursor::<D>(
+                &mut right_cursor,
+                right_total,
+                cfg,
             )?;
             Challenges::from_tensor::<D>(TensorChallenges {
                 left,
