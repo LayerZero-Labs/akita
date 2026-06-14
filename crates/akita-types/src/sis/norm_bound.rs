@@ -249,7 +249,7 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-/// Whether [`num_digits_fold`] sizes `K` from the concentration tail bound `t*`
+/// Whether [`crate::sis::num_digits_fold`] sizes `K` from the concentration tail bound `t*`
 /// (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLinfThresholdPolicy {
