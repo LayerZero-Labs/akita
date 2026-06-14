@@ -55,18 +55,18 @@ where
 
     fn setup_prover(
         max_num_vars: usize,
-        max_num_polys_per_point: usize,
+        max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_setup::new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_polys_per_point)
+        akita_setup::new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_polys_per_commitment_group)
     }
 
     fn setup_prover_recursion(
         max_num_vars: usize,
-        max_num_polys_per_point: usize,
+        max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_setup::new_prover_setup_recursion::<F, D, Cfg>(max_num_vars, max_num_polys_per_point)
+        akita_setup::new_prover_setup_recursion::<F, D, Cfg>(max_num_vars, max_num_polys_per_commitment_group)
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {

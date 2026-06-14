@@ -15,7 +15,7 @@
 
 use akita_field::AkitaError;
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule};
+use akita_types::{AkitaScheduleLookupKey, OpeningBatch, Schedule};
 
 use crate::proof_optimized::{fp128, fp32, fp64};
 use crate::{policy_of, tensor_verifier, CommitmentConfig};
@@ -59,15 +59,15 @@ pub struct GeneratedFamily {
 ///
 /// # Errors
 ///
-/// Returns an error if the synthetic incidence summary fails to build
+/// Returns an error if the synthetic opening_batch summary fails to build
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let mut keys = Vec::with_capacity(2 * (family.max_num_vars - family.min_num_vars + 1));
     for num_polys in [1, 4] {
         for nv in family.min_num_vars..=family.max_num_vars {
-            let incidence = ClaimIncidenceSummary::same_point(nv, num_polys)?;
-            keys.push(AkitaScheduleLookupKey::new_from_incidence(&incidence)?);
+            let opening_batch = OpeningBatch::same_point(nv, num_polys)?;
+            keys.push(AkitaScheduleLookupKey::new_from_opening_batch(&opening_batch)?);
         }
     }
     Ok(keys)

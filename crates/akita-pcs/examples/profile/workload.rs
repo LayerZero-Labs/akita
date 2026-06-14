@@ -19,7 +19,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
+    OpeningBatch, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
     SetupContributionMode, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
@@ -407,9 +407,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         );
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
     } else {
-        let incidence =
-            ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
-        let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+        let opening_batch =
+            OpeningBatch::same_point(pt.len(), 1).expect("same-point opening_batch summary");
+        let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
         report_proof_size_against_planner(
             label,
             &proof,
@@ -776,9 +776,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
-    let incidence =
-        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
+    let opening_batch =
+        OpeningBatch::same_point(nv, num_polys).expect("same-point opening_batch summary");
+    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,

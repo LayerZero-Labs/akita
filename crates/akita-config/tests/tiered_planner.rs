@@ -9,7 +9,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
-use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams, Schedule, Step};
+use akita_types::{AkitaScheduleLookupKey, OpeningBatch, LevelParams, Schedule, Step};
 
 fn footprint(key: &akita_types::AjtaiKeyParams) -> usize {
     key.row_len() * key.col_len()
@@ -73,22 +73,22 @@ fn tiered_preset_tiers_a_batched_root() {
 
 #[test]
 fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
-    // For the same batched incidence, the tiered preset's shared-matrix
+    // For the same batched opening_batch, the tiered preset's shared-matrix
     // envelope must never exceed the non-tiered sibling's, and must be strictly
     // smaller whenever the optimal layout tiers a level (B > A).
     let nv = 22;
     let mut saw_strict_shrink = false;
     for batch in [64usize, 128, 256, 512, 1024] {
-        let incidence = ClaimIncidenceSummary::same_point(nv, batch).expect("incidence");
+        let opening_batch = OpeningBatch::same_point(nv, batch).expect("opening_batch");
         let tiered_sched =
-            fp128::D64OneHotTiered::get_params_for_prove(&incidence).expect("tiered schedule");
+            fp128::D64OneHotTiered::get_params_for_prove(&opening_batch).expect("tiered schedule");
         let plain_sched =
-            fp128::D64OneHot::get_params_for_prove(&incidence).expect("plain schedule");
+            fp128::D64OneHot::get_params_for_prove(&opening_batch).expect("plain schedule");
         let env_tiered =
-            matrix_envelope_for_schedule::<fp128::D64OneHotTiered>(&tiered_sched, &incidence)
+            matrix_envelope_for_schedule::<fp128::D64OneHotTiered>(&tiered_sched, &opening_batch)
                 .expect("tiered envelope")
                 .max_setup_len;
-        let env_plain = matrix_envelope_for_schedule::<fp128::D64OneHot>(&plain_sched, &incidence)
+        let env_plain = matrix_envelope_for_schedule::<fp128::D64OneHot>(&plain_sched, &opening_batch)
             .expect("plain envelope")
             .max_setup_len;
         assert!(

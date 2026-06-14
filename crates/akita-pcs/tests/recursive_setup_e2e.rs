@@ -91,7 +91,7 @@ fn prove_onehot_with_setup_mode(
     setup_mode: SetupContributionMode,
 ) -> OnehotProof {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;

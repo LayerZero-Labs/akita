@@ -2,8 +2,8 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, verifier_claims_to_incidence, AkitaExpandedSetup,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, VerifierClaims,
+    validate_batched_inputs, verifier_claims_to_opening_batch, AkitaExpandedSetup,
+    OpeningBatchLimits, OpeningBatch, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
@@ -15,7 +15,7 @@ pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
     /// Claimed openings flattened by opening point, then by polynomial index.
     pub openings: Vec<E>,
     /// Normalized opening-batch summary that owns canonical root claim routing.
-    pub incidence_summary: ClaimIncidenceSummary,
+    pub opening_batch: OpeningBatch,
 }
 
 /// Validate and flatten verifier claims into the canonical batch layout.
@@ -42,9 +42,9 @@ where
     )?;
 
     let (opening_point, payloads) = claims;
-    let batch = verifier_claims_to_incidence(claims);
+    let batch = verifier_claims_to_opening_batch(claims);
     let summary = batch
-        .validate(ClaimIncidenceLimits {
+        .validate(OpeningBatchLimits {
             max_num_vars: setup.seed().max_num_vars,
             max_num_claims: setup.seed().max_num_batched_polys,
         })
@@ -63,7 +63,7 @@ where
         opening_point,
         commitments,
         openings,
-        incidence_summary: summary,
+        opening_batch: summary,
     })
 }
 
@@ -122,6 +122,6 @@ mod tests {
         assert_eq!(prepared.opening_point, &point[..]);
         assert_eq!(prepared.openings, openings);
         assert_eq!(prepared.commitments, vec![11usize]);
-        assert_eq!(prepared.incidence_summary.num_claims(), 2);
+        assert_eq!(prepared.opening_batch.num_claims(), 2);
     }
 }

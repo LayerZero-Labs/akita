@@ -19,7 +19,7 @@ pub(in crate::protocol::flow) struct RootExtensionOpeningReduction<C: FieldCore>
 
 fn prepare_root_extension_opening_reduction<F, E, P, const D: usize>(
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
 ) -> Result<PreparedRootExtensionOpeningReduction<E>, AkitaError>
 where
@@ -29,11 +29,11 @@ where
 {
     let _span = tracing::info_span!(
         "prepare_root_extension_opening_reduction",
-        num_claims = incidence_summary.num_claims(),
-        num_vars = incidence_summary.num_vars()
+        num_claims = opening_batch.num_claims(),
+        num_vars = opening_batch.num_vars()
     )
     .entered();
-    let num_vars = incidence_summary.num_vars();
+    let num_vars = opening_batch.num_vars();
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     if split_bits > num_vars {
         return Err(AkitaError::InvalidPointDimension {
@@ -41,7 +41,7 @@ where
             actual: num_vars,
         });
     }
-    if polys.len() != incidence_summary.num_claims() {
+    if polys.len() != opening_batch.num_claims() {
         return Err(AkitaError::InvalidInput(
             "root extension-opening reduction input lengths do not match".to_string(),
         ));
@@ -56,12 +56,12 @@ where
     let mut padded_point = shared_opening_point.to_vec();
     padded_point.resize(num_vars, E::zero());
 
-    let mut openings = Vec::with_capacity(incidence_summary.num_claims());
+    let mut openings = Vec::with_capacity(opening_batch.num_claims());
     let mut partials = Vec::with_capacity(root_extension_opening_partials(
         width,
-        incidence_summary.num_claims(),
+        opening_batch.num_claims(),
     ));
-    let mut row_partials_by_claim = Vec::with_capacity(incidence_summary.num_claims());
+    let mut row_partials_by_claim = Vec::with_capacity(opening_batch.num_claims());
     {
         let _span =
             tracing::info_span!("root_extension_prepare_partials", width, split_bits).entered();
@@ -69,9 +69,9 @@ where
             polys,
             &padded_point,
         )?;
-        if point_partials.len() != incidence_summary.num_claims() {
+        if point_partials.len() != opening_batch.num_claims() {
             return Err(AkitaError::InvalidSize {
-                expected: incidence_summary.num_claims(),
+                expected: opening_batch.num_claims(),
                 actual: point_partials.len(),
             });
         }
@@ -103,7 +103,7 @@ pub(in crate::protocol::flow) fn prove_root_extension_opening_reduction<
     const D: usize,
 >(
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -121,17 +121,17 @@ where
 {
     let _span = tracing::info_span!(
         "prove_root_extension_opening_reduction",
-        num_claims = incidence_summary.num_claims()
+        num_claims = opening_batch.num_claims()
     )
     .entered();
     let prepared = prepare_root_extension_opening_reduction::<F, E, P, D>(
         polys,
-        incidence_summary,
+        opening_batch,
         shared_opening_point,
     )?;
     append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
     let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(incidence_summary, transcript)?;
+        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let PreparedRootExtensionOpeningReduction {
         openings: _,
         partials,
@@ -143,7 +143,7 @@ where
     #[cfg(feature = "zk")]
     let (partial_masks, sumcheck_pads) = zk_hiding.take_extension_opening_reduction_pads::<E>(
         partials.len(),
-        incidence_summary.num_vars() - split_bits,
+        opening_batch.num_vars() - split_bits,
     )?;
     #[cfg(feature = "zk")]
     let proof_partials = partials
@@ -244,7 +244,7 @@ where
     let terms = if let Some(terms) = sparse_terms {
         terms
     } else {
-        let mut terms = Vec::with_capacity(incidence_summary.num_claims());
+        let mut terms = Vec::with_capacity(opening_batch.num_claims());
         {
             let _span = tracing::info_span!("root_extension_dense_terms").entered();
             for (claim_idx, poly) in polys.iter().enumerate() {

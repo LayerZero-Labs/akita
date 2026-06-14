@@ -14,10 +14,10 @@ fn append_shared_opening_point_to_transcript<F, E, T>(
 }
 
 fn root_trace_claim_scales<C: Copy>(
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_factor: C,
 ) -> Result<Vec<C>, AkitaError> {
-    Ok(vec![shared_factor; incidence_summary.num_claims()])
+    Ok(vec![shared_factor; opening_batch.num_claims()])
 }
 
 pub(in crate::protocol::flow) fn evaluate_claims_at_prepared_point<F, C, P, const D: usize>(
@@ -107,7 +107,7 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
@@ -143,7 +143,7 @@ where
         prepared_point.ring_multiplier_point.clone(),
         polys,
         e_folded_by_poly,
-        incidence_summary,
+        opening_batch,
         root_params.clone(),
         commitment_hints,
         transcript,
@@ -175,7 +175,7 @@ fn prepare_root_fold_data<F, E, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -197,15 +197,15 @@ where
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
 {
-    let num_claims = incidence_summary.num_claims();
+    let num_claims = opening_batch.num_claims();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E, E, D>(incidence_summary.num_vars());
+        root_tensor_projection_enabled::<F, E, E, D>(opening_batch.num_vars());
 
     if needs_extension_reduction {
         let (reduction, row_coefficients) = prove_root_extension_opening_reduction::<F, E, T, P, D>(
             polys,
-            incidence_summary,
+            opening_batch,
             shared_opening_point,
             transcript,
             #[cfg(feature = "zk")]
@@ -243,7 +243,7 @@ where
         #[cfg(feature = "zk")]
         let trace_eval_target_public = reduction.final_claim_public;
         let trace_claim_scales = Some(root_trace_claim_scales(
-            incidence_summary,
+            opening_batch,
             reduction.shared_factor,
         )?);
         return prepare_root_fold_from_evaluated_claims::<
@@ -258,7 +258,7 @@ where
             prepared,
             transcript,
             &transformed_refs,
-            incidence_summary,
+            opening_batch,
             commitments,
             commitment_hints,
             root_params,
@@ -316,10 +316,10 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(incidence_summary, transcript)?;
+        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let trace_eval_target =
-        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, &openings)?;
+        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
     #[cfg(feature = "zk")]
     let trace_eval_target_public = trace_eval_target;
 
@@ -328,7 +328,7 @@ where
         prepared,
         transcript,
         polys,
-        incidence_summary,
+        opening_batch,
         commitments,
         commitment_hints,
         root_params,
@@ -368,7 +368,7 @@ pub fn prove_root_fold<F, E, T, P, B, Cfg, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -391,7 +391,7 @@ where
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let num_claims = incidence_summary.num_claims();
+    let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
     if polys.len() != num_claims {
@@ -410,7 +410,7 @@ where
         );
     }
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
@@ -419,7 +419,7 @@ where
         prepared,
         transcript,
         polys,
-        incidence_summary,
+        opening_batch,
         shared_opening_point,
         commitments,
         commitment_hints,
@@ -448,14 +448,14 @@ where
 /// Terminal-root analogue of [`prove_root_fold`] used when the
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
-/// Mirrors the intermediate-root path through claim-incidence absorbs,
+/// Mirrors the intermediate-root path through opening-batch absorbs,
 /// optional extension-opening reduction, and ring-relation setup, then
 /// emits a [`TerminalLevelProof`] through the shared fold prover instead of a
 /// [`ProveLevelOutput`].
 ///
 /// # Errors
 ///
-/// Returns an error if claim-incidence setup, EOR construction, or the inner
+/// Returns an error if opening-batch setup, EOR construction, or the inner
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -465,7 +465,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
     polys: &[&P],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -488,7 +488,7 @@ where
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let num_claims = incidence_summary.num_claims();
+    let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
     if polys.len() != num_claims {
@@ -507,7 +507,7 @@ where
         );
     }
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
@@ -518,7 +518,7 @@ where
         prepared,
         transcript,
         polys,
-        incidence_summary,
+        opening_batch,
         shared_opening_point,
         commitments,
         commitment_hints,

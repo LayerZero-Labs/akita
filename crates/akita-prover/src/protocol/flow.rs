@@ -41,8 +41,8 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_values_to_transcript, basis_weights, batched_eval_target_from_incidence,
+    append_batched_commitments_to_transcript, append_opening_batch_shape_to_transcript,
+    append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
     build_trace_table_scaled, check_extension_opening_reduction_output,
     check_tensor_extension_opening_claim, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     ensure_trace_stage2_supported, flatten_batched_commitment_rows,
@@ -58,9 +58,9 @@ use akita_types::{
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, OpeningBatchInput,
+    OpeningBatchLimits, OpeningBatch, CleartextWitnessProof, ExecutionSchedule,
+    ExtensionOpeningReductionProof, FlatRingVec, OpeningClaimSlot, LevelParams, MRowLayout,
     OpeningClaimKind, PackedDigits, PreparedOpeningPoint, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, Schedule,
     SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
@@ -142,7 +142,7 @@ where
     E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let num_trace_blocks = instance
-        .incidence()
+        .opening_batch()
         .num_claims()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
@@ -150,7 +150,7 @@ where
         trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
     let public_weights = trace_public_weights_root_terms::<F, E, D>(
         lp,
-        instance.incidence(),
+        instance.opening_batch(),
         prepared_point,
         row_coefficients,
         trace_claim_scales,
@@ -470,7 +470,7 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     /// Commitments in commitment-group order.
     pub commitments: Vec<RingCommitment<F, D>>,
     /// Normalized opening-batch summary that owns canonical root claim routing.
-    pub incidence_summary: ClaimIncidenceSummary,
+    pub opening_batch: OpeningBatch,
     /// Polynomials flattened in claim order.
     pub flat_polys: Vec<&'a P>,
     /// Commitment hints in commitment-group order.

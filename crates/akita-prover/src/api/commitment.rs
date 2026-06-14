@@ -11,7 +11,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
+    AkitaExpandedSetup, OpeningBatch, FlatDigitBlocks, LevelParams, RingCommitment,
     RingSubfieldEncoding,
 };
 
@@ -210,7 +210,7 @@ pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<ClaimIncidenceSummary, AkitaError>
+) -> Result<OpeningBatch, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -240,7 +240,7 @@ where
         )));
     }
 
-    ClaimIncidenceSummary::same_point(num_vars, polys.len())
+    OpeningBatch::same_point(num_vars, polys.len())
 }
 
 pub(crate) fn validate_onehot_chunk_size_for_params<F, const D: usize, P>(
@@ -502,17 +502,17 @@ where
 ///
 /// Propagates [`CommitmentConfig::get_params_for_prove`].
 fn should_transform_root_commitment<Cfg, const D: usize>(
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
 ) -> Result<bool, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
     if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-        incidence.num_vars(),
+        opening_batch.num_vars(),
     ) {
         return Ok(false);
     }
-    let schedule = Cfg::get_params_for_prove(incidence)?;
+    let schedule = Cfg::get_params_for_prove(opening_batch)?;
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
@@ -549,10 +549,10 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    let incidence = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    let opening_batch = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
+    if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
         let transformed = polys
             .iter()
             .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
@@ -569,7 +569,7 @@ where
     commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
 }
 
-/// Validate a batched commitment request and derive its `ClaimIncidenceSummary`.
+/// Validate a batched commitment request and derive its `OpeningBatch`.
 ///
 /// Each slice is one commitment group at the shared opening point. Polynomials
 /// may have smaller natural arity than the shared padded batch domain; the
@@ -582,7 +582,7 @@ where
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys_per_commitment_group: &[&[P]],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<ClaimIncidenceSummary, AkitaError>
+) -> Result<OpeningBatch, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -632,7 +632,7 @@ where
         )));
     }
 
-    ClaimIncidenceSummary::from_commitment_groups(padded_num_vars, &group_counts)
+    OpeningBatch::from_commitment_groups(padded_num_vars, &group_counts)
 }
 
 /// Commit one polynomial bundle under config `Cfg`.
@@ -668,13 +668,13 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    let incidence =
+    let opening_batch =
         prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_commitment_group, expanded)?;
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
     for group in polys_per_commitment_group {
         validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(group, &params)?;
     }
-    if should_transform_root_commitment::<Cfg, D>(&incidence)? {
+    if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
         let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> =
             polys_per_commitment_group
                 .iter()

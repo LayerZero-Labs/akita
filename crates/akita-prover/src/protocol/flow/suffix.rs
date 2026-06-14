@@ -528,7 +528,7 @@ where
         );
         let terminal_layout = terminal_witness_segment_layout(
             lp,
-            instance.incidence().num_claims(),
+            instance.opening_batch().num_claims(),
             1,
             F::modulus_bits(),
         )?;
@@ -1058,11 +1058,11 @@ where
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let incidence = ClaimIncidenceSummary::same_point(recursive_num_vars, 1)?;
+    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
     let recursive_commitment = RingCommitment {
         u: commitment_u.to_vec(),
     };
-    let row_coefficient_rings = vec![CyclotomicRing::one(); incidence.num_claims()];
+    let row_coefficient_rings = vec![CyclotomicRing::one(); opening_batch.num_claims()];
     let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
@@ -1070,7 +1070,7 @@ where
         prepared_point.ring_multiplier_point.clone(),
         &recursive_polys,
         e_folded_by_claim,
-        &incidence,
+        &opening_batch,
         level_params.clone(),
         vec![typed_hint],
         transcript,

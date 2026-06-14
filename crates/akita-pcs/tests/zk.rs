@@ -16,7 +16,7 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary, DecompositionParams,
+    AkitaVerifierSetup, AppendToTranscript, OpeningBatch, DecompositionParams,
     FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
@@ -60,8 +60,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     }
 }
 
-fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid single-point incidence")
+fn single_point_group_opening_batch(num_vars: usize) -> OpeningBatch {
+    OpeningBatch::same_point(num_vars, 1).expect("valid single-point opening_batch")
 }
 
 fn plain_root_d_image<const D: usize>(
@@ -103,7 +103,7 @@ fn plain_root_d_image<const D: usize>(
         ring_multiplier_point,
         &[poly],
         vec![e_folded],
-        &single_point_group_incidence(point.len()),
+        &single_point_group_opening_batch(point.len()),
         layout.clone(),
         vec![hint],
         &mut transcript,
@@ -410,7 +410,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -521,7 +521,7 @@ fn run_zk_dense_cursor_binding_negatives() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::get_params_for_batched_commitment(
-            &ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_c0de_0001);
@@ -694,7 +694,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -822,9 +822,9 @@ fn run_zk_dense_batched_shape_cases() {
         };
 
         const SAME_POINT_POLYS: usize = 3;
-        let same_point_incidence =
-            ClaimIncidenceSummary::same_point(NV, SAME_POINT_POLYS).expect("valid incidence");
-        let same_point_layout = Cfg::get_params_for_batched_commitment(&same_point_incidence)
+        let same_point_opening_batch =
+            OpeningBatch::same_point(NV, SAME_POINT_POLYS).expect("valid opening batch");
+        let same_point_layout = Cfg::get_params_for_batched_commitment(&same_point_opening_batch)
             .expect("same-point batched layout");
         let same_point_polys: Vec<DensePoly<F, D>> = (0..SAME_POINT_POLYS)
             .map(|idx| make_poly(0xd3e5_8000 + idx as u64))

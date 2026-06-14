@@ -11,7 +11,7 @@ use akita_prover::{
 use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, ClaimIncidenceSummary,
+    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, OpeningBatch,
     LevelParams, SETUP_OFFLOAD_D_SETUP,
 };
 
@@ -68,9 +68,9 @@ where
         return Ok(());
     }
 
-    let root_incidence = ClaimIncidenceSummary::same_point(max_num_vars, max_num_batched_polys)?;
-    let schedule = Cfg::get_params_for_prove(&root_incidence)?;
-    let recursive_incidence = ClaimIncidenceSummary::same_point(0, 1)?;
+    let root_opening_batch = OpeningBatch::same_point(max_num_vars, max_num_batched_polys)?;
+    let schedule = Cfg::get_params_for_prove(&root_opening_batch)?;
+    let recursive_opening_batch = OpeningBatch::same_point(0, 1)?;
     let available_field_len = setup
         .expanded
         .shared_matrix()
@@ -89,14 +89,14 @@ where
         if idx >= terminal_fold_idx {
             continue;
         }
-        let incidence = if idx == 0 {
-            &root_incidence
+        let opening_batch = if idx == 0 {
+            &root_opening_batch
         } else {
-            &recursive_incidence
+            &recursive_opening_batch
         };
         let next_fold = &folds[idx + 1];
         let natural_len =
-            active_setup_field_len(&fold.params, incidence, D)?.min(available_field_len);
+            active_setup_field_len(&fold.params, opening_batch, D)?.min(available_field_len);
         let n_prefix = padded_setup_prefix_len(natural_len);
         if n_prefix > available_field_len {
             continue;

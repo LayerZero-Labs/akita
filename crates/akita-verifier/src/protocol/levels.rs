@@ -46,8 +46,8 @@ use akita_types::check_tensor_extension_opening_claim;
 #[cfg(feature = "zk")]
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_values_to_transcript, batched_eval_target_from_incidence, build_trace_claim_root,
+    append_batched_commitments_to_transcript, append_opening_batch_shape_to_transcript,
+    append_claim_values_to_transcript, batched_eval_target_from_opening_batch, build_trace_claim_root,
     ensure_trace_stage2_supported, flatten_batched_commitment_rows, generate_y,
     prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
@@ -55,7 +55,7 @@ use akita_types::{
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
     trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, CleartextWitnessProof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, OpeningBatch, CleartextWitnessProof,
     CommitmentRouting, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams,
     MRowLayout, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding,
@@ -249,7 +249,7 @@ fn verify_fold_eor<F, C, T, const D: usize>(
     challenge_point: &[C],
     openings: &[C],
     row_coefficients: &[C],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     basis: BasisMode,
     lp: &LevelParams,
     block_order: BlockOrder,
@@ -269,7 +269,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_claims = incidence_summary.num_claims();
+    let num_claims = opening_batch.num_claims();
     if openings.len() != num_claims || row_coefficients.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -292,15 +292,15 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let shape = eor_reduction_shape::<F, C>(
-            incidence_summary.num_vars(),
+            opening_batch.num_vars(),
             reduction.partials.len(),
             num_claims,
         )?;
-        if challenge_point.len() > incidence_summary.num_vars() {
+        if challenge_point.len() > opening_batch.num_vars() {
             return Err(AkitaError::InvalidProof);
         }
         let mut eor_point = challenge_point.to_vec();
-        eor_point.resize(incidence_summary.num_vars(), C::zero());
+        eor_point.resize(opening_batch.num_vars(), C::zero());
         #[cfg(feature = "zk")]
         let mut input_claim_mask = ZkR1csLinearCombination::zero();
         for (claim_idx, opening) in openings.iter().copied().enumerate().take(num_claims) {
@@ -350,7 +350,7 @@ where
         for (claim_idx, &row_coefficient) in row_coefficients
             .iter()
             .enumerate()
-            .take(incidence_summary.num_claims())
+            .take(opening_batch.num_claims())
         {
             let partial_start = claim_idx * shape.width;
             let mut partial_masks = Vec::with_capacity(shape.width);
@@ -441,7 +441,7 @@ struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
     v: Vec<CyclotomicRing<F, D>>,
     commitment_rows: &'a [CyclotomicRing<F, D>],
     row_coefficients: Vec<E>,
-    incidence: ClaimIncidenceSummary,
+    opening_batch: OpeningBatch,
     commitment_routing: CommitmentRouting,
     ring_opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
@@ -667,7 +667,7 @@ where
         transcript,
         &prepared.v,
         prepared.lp.num_blocks,
-        prepared.incidence.num_claims(),
+        prepared.opening_batch.num_claims(),
         prepared.lp,
         prepared.m_row_layout,
     )?;
@@ -696,7 +696,7 @@ where
         stage1_challenges,
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
-        prepared.incidence.clone(),
+        prepared.opening_batch.clone(),
         prepared.commitment_routing,
         gamma,
         row_coefficient_rings,
@@ -789,7 +789,7 @@ where
     } else {
         let segment = relation_instance.segment_layout(prepared.lp)?;
         let num_trace_blocks = prepared
-            .incidence
+            .opening_batch
             .num_claims()
             .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
@@ -803,7 +803,7 @@ where
         Some(build_trace_claim_root::<F, E, D>(
             layout,
             prepared.lp,
-            &prepared.incidence,
+            &prepared.opening_batch,
             prepared
                 .trace_prepared_point
                 .as_ref()
@@ -880,7 +880,7 @@ fn verify_root<F, E, T, const D: usize>(
     shared_opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -908,8 +908,8 @@ where
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
-    let num_claims = incidence_summary.num_claims();
-    if openings.len() != num_claims || incidence_summary.claim_poly_indices().len() != num_claims {
+    let num_claims = opening_batch.num_claims();
+    if openings.len() != num_claims || opening_batch.claim_poly_indices().len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
     if commitments.is_empty()
@@ -921,14 +921,14 @@ where
     }
     let commitment_rows = flatten_batched_commitment_rows(commitments);
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
+    append_opening_batch_shape_to_transcript::<F, T>(opening_batch, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(incidence_summary, transcript)?;
+        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     #[cfg(feature = "zk")]
     let opening_masks = vec![None; num_claims];
 
@@ -938,7 +938,7 @@ where
         shared_opening_point,
         openings,
         &row_coefficients,
-        incidence_summary,
+        opening_batch,
         basis,
         root_lp,
         BlockOrder::RowMajor,
@@ -975,7 +975,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_incidence(incidence_summary, &row_coefficients, openings)?;
+        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, openings)?;
     #[cfg(not(feature = "zk"))]
     let trace_eval_target = eor_trace_final
         .as_ref()
@@ -996,7 +996,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; incidence_summary.num_claims()])
+            Ok(vec![shared_factor; opening_batch.num_claims()])
         })
         .transpose()?;
     #[cfg(feature = "zk")]
@@ -1004,7 +1004,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; incidence_summary.num_claims()])
+            Ok(vec![shared_factor; opening_batch.num_claims()])
         })
         .transpose()?;
 
@@ -1013,7 +1013,7 @@ where
         AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
             root_lp,
             1,
-            incidence_summary.num_claims(),
+            opening_batch.num_claims(),
             num_claims,
             1,
         )?
@@ -1037,7 +1037,7 @@ where
     };
 
     let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
-    let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
+    let commitment_routing = CommitmentRouting::copy_opening_batch(opening_batch)?;
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
@@ -1047,7 +1047,7 @@ where
         v: v_typed.to_vec(),
         commitment_rows: &commitment_rows,
         row_coefficients,
-        incidence: incidence_summary.clone(),
+        opening_batch: opening_batch.clone(),
         commitment_routing,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),

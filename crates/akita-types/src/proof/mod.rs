@@ -47,12 +47,10 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use opening_batch::{
-    append_claim_incidence_shape_to_transcript, append_opening_batch_shape_to_transcript,
-    batched_eval_target_from_incidence, batched_eval_target_from_opening_batch,
-    sample_public_row_coefficients, verifier_claims_to_incidence, verifier_claims_to_opening_batch,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentRouting, IncidenceClaim,
+    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
+    sample_public_row_coefficients, verifier_claims_to_opening_batch, CommitmentRouting,
     OpeningBatch, OpeningBatchInput, OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind,
-    OpeningClaimSlot, OpeningClaimSlotShape, PublicOpeningRow,
+    OpeningClaimSlot, OpeningClaimSlotShape,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

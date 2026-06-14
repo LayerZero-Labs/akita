@@ -10,7 +10,7 @@
 //! directly and never need this module.
 
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, LevelParams};
+use akita_types::{AkitaScheduleLookupKey, OpeningBatch, LevelParams};
 
 use crate::CommitmentConfig;
 
@@ -27,7 +27,7 @@ use crate::CommitmentConfig;
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
 /// inputs (e.g. `OneHotPoly`) so the `block_len` / `num_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
-/// callers always go through `Cfg::get_params_for_batched_commitment(&incidence)`
+/// callers always go through `Cfg::get_params_for_batched_commitment(&opening_batch)`
 /// instead.
 ///
 /// # Errors
@@ -63,7 +63,7 @@ where
     // Size the fallback for the requested batch (`num_claims`), not a
     // singleton — otherwise the per-poly inputs would be smaller than the
     // batched commit layout `Scheme::commit` actually uses.
-    Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
+    Cfg::get_params_for_batched_commitment(&OpeningBatch::same_point(
         num_vars, num_claims,
     )?)
 }

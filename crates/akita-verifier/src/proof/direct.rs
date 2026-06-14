@@ -1,7 +1,7 @@
 //! Verifier helpers for zero-fold proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof};
+use akita_types::{basis_weights, BasisMode, OpeningBatch, CleartextWitnessProof};
 
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
@@ -47,37 +47,37 @@ where
     Ok(evaluation == *opening)
 }
 
-/// Verify all zero-fold witness/opening claims using normalized incidence.
+/// Verify all zero-fold witness/opening claims using normalized opening_batch.
 ///
 /// Cleartext witnesses are stored once per committed polynomial in slot order,
 /// and every slot opens at the same public point.
 /// # Errors
 ///
-/// Returns an error if the incidence summary is inconsistent with the flattened
+/// Returns an error if the opening batch summary is inconsistent with the flattened
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
-pub(crate) fn verify_zero_fold_openings_with_incidence<F, E>(
+pub(crate) fn verify_zero_fold_openings_with_opening_batch<F, E>(
     witnesses: &[CleartextWitnessProof<F>],
     opening_point: &[E],
     openings: &[E],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let num_claims = incidence_summary.num_claims();
-    let num_polynomials = incidence_summary.num_polynomials();
+    let num_claims = opening_batch.num_claims();
+    let num_polynomials = opening_batch.num_polynomials();
     if witnesses.len() != num_polynomials
         || openings.len() != num_claims
-        || incidence_summary.claim_poly_indices().len() != num_claims
+        || opening_batch.claim_poly_indices().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
 
     for (claim_idx, opening) in openings.iter().enumerate().take(num_claims) {
-        let poly_idx = incidence_summary.claim_poly_indices()[claim_idx];
+        let poly_idx = opening_batch.claim_poly_indices()[claim_idx];
         let witness = witnesses.get(poly_idx).ok_or(AkitaError::InvalidProof)?;
         if !cleartext_witness_opening_matches(witness, opening_point, opening, basis)? {
             return Err(AkitaError::InvalidProof);
@@ -97,23 +97,23 @@ mod tests {
     type E = FpExt2<F, NegOneNr>;
 
     #[test]
-    fn root_direct_openings_accept_incidence_summary() {
+    fn root_direct_openings_accept_opening_batch() {
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::from_u64(1), F::from_u64(2)]),
         )];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
-        let incidence_summary =
-            ClaimIncidenceSummary::same_point(1, 1).expect("valid single-point incidence");
+        let opening_batch =
+            OpeningBatch::same_point(1, 1).expect("valid single-point opening_batch");
 
-        verify_zero_fold_openings_with_incidence(
+        verify_zero_fold_openings_with_opening_batch(
             &witnesses,
             &point,
             &opening,
-            &incidence_summary,
+            &opening_batch,
             BasisMode::Lagrange,
         )
-        .expect("extension-valued root-direct incidence claim should verify");
+        .expect("extension-valued root-direct opening_batch claim should verify");
     }
 
     #[test]
@@ -128,14 +128,14 @@ mod tests {
             E::new(F::from_u64(4), F::from_u64(4)),
             E::new(F::from_u64(4), F::from_u64(4)),
         ];
-        let incidence_summary =
-            ClaimIncidenceSummary::same_point(1, 2).expect("valid single-point batch");
+        let opening_batch =
+            OpeningBatch::same_point(1, 2).expect("valid single-point batch");
 
-        verify_zero_fold_openings_with_incidence(
+        verify_zero_fold_openings_with_opening_batch(
             &witnesses,
             &point,
             &openings,
-            &incidence_summary,
+            &opening_batch,
             BasisMode::Lagrange,
         )
         .expect("single-point root-direct batch should verify each witness");

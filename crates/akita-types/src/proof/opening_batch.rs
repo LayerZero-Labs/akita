@@ -124,7 +124,6 @@ where
 pub struct OpeningBatchLimits {
     /// Maximum supported number of variables in the shared opening point.
     pub max_num_vars: usize,
-    /// Legacy setup field. A single-point batch requires this to be nonzero.
     /// Maximum supported number of claimed openings.
     pub max_num_claims: usize,
 }
@@ -165,11 +164,6 @@ impl CommitmentRouting {
             num_polys_per_commitment_group: batch.num_polys_per_commitment_group().to_vec(),
         }
         .check(num_claims)
-    }
-
-    /// Compatibility wrapper for older call sites.
-    pub fn copy_incidence(batch: &OpeningBatch) -> Result<Self, AkitaError> {
-        Self::copy_opening_batch(batch)
     }
 
     /// Build routing for recursive claims over one shared commitment.
@@ -225,11 +219,6 @@ impl CommitmentRouting {
             ));
         }
         Ok(())
-    }
-
-    /// Compatibility wrapper for older call sites.
-    pub fn check_matches_incidence(&self, batch: &OpeningBatch) -> Result<(), AkitaError> {
-        self.check_matches_opening_batch(batch)
     }
 
     /// Flattened claim index to committed-bundle index.
@@ -423,11 +412,6 @@ impl OpeningBatch {
         &self.claim_to_commitment_group
     }
 
-    /// Compatibility alias: every claim maps to the single shared point.
-    pub fn claim_to_point(&self) -> &[usize] {
-        &self.claim_to_commitment_group
-    }
-
     /// Polynomial index within the commitment for each flattened claim.
     pub fn claim_poly_indices(&self) -> &[usize] {
         &self.claim_poly_indices
@@ -435,11 +419,6 @@ impl OpeningBatch {
 
     /// Number of polynomials bundled in the one commitment group.
     pub fn num_polys_per_commitment_group(&self) -> &[usize] {
-        &self.num_polys_per_commitment_group
-    }
-
-    /// Compatibility alias for older call sites.
-    pub fn num_polys_per_point(&self) -> &[usize] {
         &self.num_polys_per_commitment_group
     }
 
@@ -510,18 +489,6 @@ where
     Ok(())
 }
 
-/// Compatibility wrapper for older call sites.
-pub fn append_claim_incidence_shape_to_transcript<F, T>(
-    batch: &OpeningBatch,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    append_opening_batch_shape_to_transcript(batch, transcript)
-}
-
 /// Sample gamma coefficients for the one public row.
 pub fn sample_public_row_coefficients<F, L, T>(
     batch: &OpeningBatch,
@@ -569,34 +536,6 @@ where
             Ok(acc + coefficient * opening)
         })
 }
-
-/// Compatibility wrapper for older call sites.
-pub fn batched_eval_target_from_incidence<E>(
-    batch: &OpeningBatch,
-    row_coefficients: &[E],
-    openings: &[E],
-) -> Result<E, AkitaError>
-where
-    E: FieldCore,
-{
-    batched_eval_target_from_opening_batch(batch, row_coefficients, openings)
-}
-
-/// Compatibility wrapper for older call sites.
-pub fn verifier_claims_to_incidence<'a, F, C>(
-    claims: &VerifierClaims<'a, F, C>,
-) -> OpeningBatchInput<'a, F>
-where
-    F: Copy,
-{
-    verifier_claims_to_opening_batch(claims)
-}
-
-pub type ClaimIncidence<'a, F> = OpeningBatchInput<'a, F>;
-pub type ClaimIncidenceLimits = OpeningBatchLimits;
-pub type ClaimIncidenceSummary = OpeningBatch;
-pub type IncidenceClaim<F> = OpeningClaimSlot<F>;
-pub type PublicOpeningRow = OpeningBatchRow;
 
 #[cfg(test)]
 mod tests {

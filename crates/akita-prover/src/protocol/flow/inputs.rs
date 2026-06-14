@@ -4,7 +4,7 @@ use crate::api::commitment::validate_onehot_chunk_size_for_params;
 struct ProverPreparedOpeningBatch<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     point: &'a [E],
     payloads: Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
-    summary: ClaimIncidenceSummary,
+    summary: OpeningBatch,
 }
 
 fn prover_claims_to_opening_batch<'a, F, E, P, const D: usize>(
@@ -25,7 +25,7 @@ where
                 .polynomials
                 .iter()
                 .enumerate()
-                .map(move |(poly_idx, poly)| IncidenceClaim {
+                .map(move |(poly_idx, poly)| OpeningClaimSlot {
                     commitment_group,
                     poly_idx,
                     // Prover inputs do not contain claimed evaluations. The shared
@@ -49,8 +49,8 @@ where
         ));
     }
 
-    let batch = ClaimIncidence { point, slots };
-    let summary = batch.validate(ClaimIncidenceLimits {
+    let batch = OpeningBatchInput { point, slots };
+    let summary = batch.validate(OpeningBatchLimits {
         max_num_vars: expanded.seed.max_num_vars,
         max_num_claims: expanded.seed.max_num_batched_polys,
     })?;
@@ -95,11 +95,11 @@ where
         .iter()
         .map(|payload| payload.commitment.clone())
         .collect::<Vec<_>>();
-    let incidence_summary = prepared_batch.summary;
-    let flat_polys: Vec<&P> = incidence_summary
+    let opening_batch = prepared_batch.summary;
+    let flat_polys: Vec<&P> = opening_batch
         .claim_to_commitment_group()
         .iter()
-        .zip(incidence_summary.claim_poly_indices().iter())
+        .zip(opening_batch.claim_poly_indices().iter())
         .map(|(&group_idx, &poly_idx)| &prepared_batch.payloads[group_idx].polynomials[poly_idx])
         .collect();
     let commitment_hints = prepared_batch
@@ -111,7 +111,7 @@ where
     Ok(PreparedBatchedProveInputs {
         opening_point,
         commitments,
-        incidence_summary,
+        opening_batch,
         flat_polys,
         commitment_hints,
     })
@@ -220,8 +220,8 @@ where
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
         prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
     };
-    let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
+    let num_vars = prepared_claims.opening_batch.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
@@ -232,7 +232,7 @@ where
             num_vars,
         ) {
             let commit_params =
-                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
+                Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -249,7 +249,7 @@ where
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
-        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_batch,
         &schedule,
         basis,
         transcript,
@@ -351,8 +351,8 @@ where
             prepared,
             schedule,
             &root_scheduled.params,
-            prepared_claims.incidence_summary.num_vars(),
-            prepared_claims.incidence_summary.num_claims(),
+            prepared_claims.opening_batch.num_vars(),
+            prepared_claims.opening_batch.num_claims(),
             1,
         )?;
     #[cfg(feature = "zk")]
@@ -367,7 +367,7 @@ where
                 prepared,
                 transcript,
                 &prepared_claims.flat_polys,
-                &prepared_claims.incidence_summary,
+                &prepared_claims.opening_batch,
                 prepared_claims.opening_point,
                 &prepared_claims.commitments,
                 prepared_claims.commitment_hints,
@@ -397,7 +397,7 @@ where
         prepared,
         transcript,
         &prepared_claims.flat_polys,
-        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_batch,
         prepared_claims.opening_point,
         &prepared_claims.commitments,
         prepared_claims.commitment_hints,

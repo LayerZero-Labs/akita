@@ -255,7 +255,7 @@ fn run() -> Result<(), String> {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;

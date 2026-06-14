@@ -7,7 +7,7 @@
 
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
+    detect_field_modulus, AkitaSetupSeed, BasisMode, OpeningBatch, DecompositionParams,
     LevelParams, Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
@@ -206,27 +206,27 @@ pub struct CallSection {
     pub basis_mode: BasisMode,
     /// Common opening-point arity.
     pub opening_point_arity: u32,
-    /// Digest of normalized batch incidence.
-    pub incidence_digest: DescriptorDigest,
+    /// Digest of normalized batch opening_batch.
+    pub opening_batch_digest: DescriptorDigest,
 }
 
 impl CallSection {
-    /// Build call fields from normalized public incidence.
+    /// Build call fields from normalized public opening_batch.
     ///
     /// # Errors
     ///
     /// Returns an error if a count does not fit the descriptor's fixed-width
     /// integer fields.
-    pub fn from_incidence(
-        incidence: &ClaimIncidenceSummary,
+    pub fn from_opening_batch(
+        opening_batch: &OpeningBatch,
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
-            num_polys: usize_to_u32(incidence.num_polynomials(), "num_polys")?,
-            num_claims: usize_to_u32(incidence.num_claims(), "num_claims")?,
+            num_polys: usize_to_u32(opening_batch.num_polynomials(), "num_polys")?,
+            num_claims: usize_to_u32(opening_batch.num_claims(), "num_claims")?,
             basis_mode,
-            opening_point_arity: usize_to_u32(incidence.num_vars(), "opening_point_arity")?,
-            incidence_digest: digest_incidence(incidence),
+            opening_point_arity: usize_to_u32(opening_batch.num_vars(), "opening_point_arity")?,
+            opening_batch_digest: digest_opening_batch(opening_batch),
         })
     }
 }
@@ -244,12 +244,12 @@ pub fn digest_serializable<S: AkitaSerialize>(
     Ok(blake2b_256(&bytes))
 }
 
-/// Digest the normalized claim incidence summary.
-pub fn digest_incidence(summary: &ClaimIncidenceSummary) -> DescriptorDigest {
+/// Digest the normalized claim opening_batch summary.
+pub fn digest_opening_batch(summary: &OpeningBatch) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, summary.num_vars());
-    push_usize_vec(&mut bytes, summary.num_polys_per_point());
-    push_usize_vec(&mut bytes, summary.claim_to_point());
+    push_usize_vec(&mut bytes, summary.num_polys_per_commitment_group());
+    push_usize_vec(&mut bytes, summary.claim_to_commitment_group());
     push_usize_vec(&mut bytes, summary.claim_poly_indices());
     push_usize(&mut bytes, summary.public_rows().len());
     for row in summary.public_rows() {
@@ -584,7 +584,7 @@ impl AkitaSerialize for CallSection {
         encode_basis_mode(self.basis_mode, &mut writer, compress)?;
         self.opening_point_arity
             .serialize_with_mode(&mut writer, compress)?;
-        writer.write_all(&self.incidence_digest)?;
+        writer.write_all(&self.opening_batch_digest)?;
         Ok(())
     }
 
@@ -611,7 +611,7 @@ impl AkitaDeserialize for CallSection {
             num_claims: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
             opening_point_arity: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            incidence_digest: read_digest(&mut reader)?,
+            opening_batch_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -790,7 +790,7 @@ mod tests {
     }
 
     fn sample_descriptor() -> AkitaInstanceDescriptor {
-        let incidence = ClaimIncidenceSummary::same_point(5, 3).expect("valid opening batch");
+        let opening_batch = OpeningBatch::same_point(5, 3).expect("valid opening batch");
         let schedule = Schedule {
             steps: vec![
                 Step::Fold(FoldStep {
@@ -823,7 +823,7 @@ mod tests {
                 protocol_features: ProtocolFeatureSet::current(),
             },
             PlanSection::from_schedule(&schedule),
-            CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
+            CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call"),
         )
     }
 
@@ -875,11 +875,11 @@ mod tests {
     }
 
     #[test]
-    fn incidence_digest_binds_claim_count() {
-        let left = ClaimIncidenceSummary::same_point(4, 2).expect("left");
-        let right = ClaimIncidenceSummary::same_point(4, 3).expect("right");
+    fn opening_batch_digest_binds_claim_count() {
+        let left = OpeningBatch::same_point(4, 2).expect("left");
+        let right = OpeningBatch::same_point(4, 3).expect("right");
 
-        assert_ne!(digest_incidence(&left), digest_incidence(&right));
+        assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
     }
 
     #[test]

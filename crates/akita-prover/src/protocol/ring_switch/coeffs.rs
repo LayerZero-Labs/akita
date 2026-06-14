@@ -29,7 +29,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
-    let num_claims = instance.incidence().num_claims();
+    let num_claims = instance.opening_batch().num_claims();
     {
         let x: u8 = 0;
         tracing::trace!(

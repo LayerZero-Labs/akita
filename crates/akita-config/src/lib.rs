@@ -14,7 +14,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningBatch, DecompositionParams,
     LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
@@ -26,7 +26,7 @@ pub mod test_support;
 mod transcript_binding;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
-    worst_case_grouped_incidence_for_shape,
+    worst_case_grouped_opening_batch_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -224,13 +224,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `incidence`.
-    fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+    /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
+    fn get_params_for_prove(opening_batch: &OpeningBatch) -> Result<Schedule, AkitaError> {
+        let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
         Self::runtime_schedule(key)
     }
 
-    /// Root commit layout the `batched_prove` flow uses for `incidence`,
+    /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
     /// read off the runtime schedule's first step (the root Fold params or
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
@@ -245,9 +245,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(incidence)?;
+        let schedule = Self::get_params_for_prove(opening_batch)?;
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
             Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
@@ -532,8 +532,8 @@ mod fp128_policy_tests {
             2
         );
 
-        let incidence = ClaimIncidenceSummary::same_point(20, 1).expect("singleton incidence");
-        let schedule = SmallCfg::get_params_for_prove(&incidence).expect("small-field schedule");
+        let opening_batch = OpeningBatch::same_point(20, 1).expect("singleton opening batch");
+        let schedule = SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
             panic!("small-field schedule should start with a root fold");
         };

@@ -1,7 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{ClaimIncidenceSummary, CleartextWitnessShape, LevelParams, RingOpeningPoint};
+use crate::{OpeningBatch, CleartextWitnessShape, LevelParams, RingOpeningPoint};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -78,7 +78,7 @@ impl ExecutionSchedule {
 /// point index is out of range.
 pub fn validate_opening_points_for_claims<F: FieldCore>(
     opening_points: &[RingOpeningPoint<F>],
-    claim_to_point: &[usize],
+    claim_to_commitment_group: &[usize],
     lp: &LevelParams,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
@@ -87,10 +87,10 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
             "ring switch requires at least one opening point".to_string(),
         ));
     }
-    if claim_to_point.len() != num_claims {
+    if claim_to_commitment_group.len() != num_claims {
         return Err(AkitaError::InvalidSize {
             expected: num_claims,
-            actual: claim_to_point.len(),
+            actual: claim_to_commitment_group.len(),
         });
     }
     for opening_point in opening_points {
@@ -100,7 +100,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
             ));
         }
     }
-    if claim_to_point
+    if claim_to_commitment_group
         .iter()
         .any(|&point_idx| point_idx >= opening_points.len())
     {
@@ -155,20 +155,20 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Build a schedule lookup key from normalized opening incidence.
+    /// Build a schedule lookup key from normalized opening opening_batch.
     ///
     /// Each opening point cites exactly one commitment, so the planner-facing
     /// projection carries only the per-point arities.
     ///
     /// # Errors
     ///
-    /// Returns an error if the incidence routing tables are malformed.
-    pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
-        let num_t_vectors = incidence.num_polynomials();
+    /// Returns an error if the opening-batch routing tables are malformed.
+    pub fn new_from_opening_batch(opening_batch: &OpeningBatch) -> Result<Self, AkitaError> {
+        let num_t_vectors = opening_batch.num_polynomials();
         Ok(Self::new(
-            incidence.num_vars(),
+            opening_batch.num_vars(),
             num_t_vectors,
-            incidence.num_claims(),
+            opening_batch.num_claims(),
             1,
         ))
     }

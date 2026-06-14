@@ -271,7 +271,7 @@ where
 {
     let routing = relation.commitment_routing();
     let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
-    let num_claims = relation.incidence().num_claims();
+    let num_claims = relation.opening_batch().num_claims();
     let num_commitment_groups = num_polys_per_commitment_group.len();
     if num_commitment_groups != 1 {
         return Err(AkitaError::InvalidProof);

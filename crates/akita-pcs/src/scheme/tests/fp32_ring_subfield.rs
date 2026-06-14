@@ -198,14 +198,14 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 
     fn get_params_for_prove(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             1,
-            incidence.num_polynomials(),
-            incidence.num_claims(),
+            opening_batch.num_polynomials(),
+            opening_batch.num_claims(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
@@ -282,9 +282,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     }
 
     fn get_params_for_prove(
-        incidence: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
@@ -293,8 +293,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             1,
-            incidence.num_polynomials(),
-            incidence.num_claims(),
+            opening_batch.num_polynomials(),
+            opening_batch.num_claims(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;

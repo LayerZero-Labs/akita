@@ -24,7 +24,7 @@ use akita_types::{
     gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
 };
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting, LevelParams, RingRelationInstance};
+use akita_types::{OpeningBatch, CommitmentRouting, LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::ring_relation_witness::RingRelationWitness;
@@ -443,7 +443,7 @@ impl RingRelationProver {
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         polys: &[&P],
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        incidence_summary: &ClaimIncidenceSummary,
+        opening_batch: &OpeningBatch,
         lp: LevelParams,
         hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
@@ -477,7 +477,7 @@ impl RingRelationProver {
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
-        let num_claims = incidence_summary.num_claims();
+        let num_claims = opening_batch.num_claims();
         if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
@@ -485,18 +485,18 @@ impl RingRelationProver {
         }
         if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
-            || incidence_summary.claim_poly_indices().len() != num_claims
-            || hints.len() != incidence_summary.num_polys_per_commitment_group().len()
-            || commitments.len() != incidence_summary.num_polys_per_commitment_group().len()
+            || opening_batch.claim_poly_indices().len() != num_claims
+            || hints.len() != opening_batch.num_polys_per_commitment_group().len()
+            || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
         }
         for claim_idx in 0..num_claims {
-            if incidence_summary.claim_poly_indices()[claim_idx] >= num_claims {
+            if opening_batch.claim_poly_indices()[claim_idx] >= num_claims {
                 return Err(AkitaError::InvalidInput(
-                    "batched prover claim incidence index out of range".to_string(),
+                    "batched prover claim opening_batch index out of range".to_string(),
                 ));
             }
         }
@@ -523,7 +523,7 @@ impl RingRelationProver {
         };
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
             hints,
-            incidence_summary.num_polys_per_commitment_group(),
+            opening_batch.num_polys_per_commitment_group(),
             lp.num_digits_open,
             lp.log_basis,
         )?;
@@ -588,14 +588,13 @@ impl RingRelationProver {
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
-        let incidence = incidence_summary.clone();
-        let commitment_routing = CommitmentRouting::copy_incidence(incidence_summary)?;
+        let commitment_routing = CommitmentRouting::copy_opening_batch(opening_batch)?;
         let instance = RingRelationInstance::new(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
-            incidence,
+            opening_batch.clone(),
             commitment_routing,
             gamma,
             row_coefficient_rings,

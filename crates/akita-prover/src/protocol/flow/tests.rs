@@ -64,9 +64,9 @@ fn prover_claim_preparation_accepts_extension_points() {
         .expect("extension-valued prover points should validate by shape");
 
     assert_eq!(prepared.opening_point, &point[..]);
-    assert_eq!(prepared.incidence_summary.num_claims(), 2);
-    assert_eq!(prepared.incidence_summary.num_polys_per_point(), &[2]);
-    assert_eq!(prepared.incidence_summary.claim_to_point(), &[0, 0]);
+    assert_eq!(prepared.opening_batch.num_claims(), 2);
+    assert_eq!(prepared.opening_batch.num_polys_per_commitment_group(), &[2]);
+    assert_eq!(prepared.opening_batch.claim_to_commitment_group(), &[0, 0]);
     assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
 }
 

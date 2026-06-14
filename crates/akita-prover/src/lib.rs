@@ -63,7 +63,7 @@ pub struct CommittedPolynomials<'a, P, C, H> {
 }
 
 impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
-    /// Number of polynomials addressable by incidence claims at this point.
+    /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }

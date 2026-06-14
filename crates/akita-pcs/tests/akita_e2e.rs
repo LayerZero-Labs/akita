@@ -38,9 +38,9 @@ const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let incidence =
-        akita_types::ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
-    Cfg::get_params_for_batched_commitment(&incidence).expect("singleton commitment layout")
+    let opening_batch =
+        akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+    Cfg::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
@@ -506,8 +506,8 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(NV, 2).expect("incidence");
-        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = akita_types::OpeningBatch::same_point(NV, 2).expect("opening_batch");
+        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1084,15 +1084,15 @@ fn batched_onehot_same_point_round_trip() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         // NV=20 is large enough to include a recursive suffix, while the
-        // two-claim incidence still misses singleton/4-batch generated tables
+        // two-claim opening_batch still misses singleton/4-batch generated tables
         // and routes through the planner DP fallback in `runtime_schedule`.
         type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
         let nv = NV;
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 2).expect("incidence");
-        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = akita_types::OpeningBatch::same_point(nv, 2).expect("opening_batch");
+        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");

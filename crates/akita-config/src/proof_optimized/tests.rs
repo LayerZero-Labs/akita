@@ -140,8 +140,8 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
     }
 
-    let incidence = ClaimIncidenceSummary::same_point(10, 1).expect("singleton incidence");
-    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&incidence)
+    let opening_batch = OpeningBatch::same_point(10, 1).expect("singleton opening batch");
+    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
         .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
         err.to_string()
@@ -152,7 +152,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 
 #[test]
 #[cfg(not(feature = "zk"))]
-fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
+fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // Locks in the fix for the descriptor-binding bug at
     // `akita_prover::protocol::flow` and
     // `akita_verifier::protocol::batched`: when the planner-selected
@@ -161,43 +161,43 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
     // hashed into the per-proof effective-schedule digest
     // (`PlanSection::from_schedule` -> `digest_effective_schedule`),
     // while the root-direct verification closure recomputes commitments
-    // using `Cfg::get_params_for_batched_commitment(real_incidence)`. If
+    // using `Cfg::get_params_for_batched_commitment(real_opening_batch)`. If
     // the fallback used a synthetic `same_point(num_vars, 1)`
-    // singleton incidence (the pre-fix behavior), the descriptor
+    // singleton opening batch (the pre-fix behavior), the descriptor
     // would bind singleton-sized params while verification ran
     // against batched ones.
     use akita_types::{digest_effective_schedule, root_direct_schedule};
     type Cfg = fp128::D128Full;
-    let real_incidence =
-        ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
+    let real_opening_batch =
+        OpeningBatch::same_point(30, 4).expect("batched same-point opening batch");
     let real_params =
-        Cfg::get_params_for_batched_commitment(&real_incidence).expect("batched commit params");
-    let singleton_incidence =
-        ClaimIncidenceSummary::same_point(30, 1).expect("singleton incidence");
-    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_incidence)
+        Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
+    let singleton_opening_batch =
+        OpeningBatch::same_point(30, 1).expect("singleton opening batch");
+    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
         .expect("singleton commit params");
 
-    // Sanity: a non-singleton incidence should resolve to a
+    // Sanity: a non-singleton opening batch should resolve to a
     // different commit layout, otherwise the regression couldn't
     // manifest with this fixture.
     assert_ne!(
         real_params, singleton_params,
-        "test fixture: pick an incidence where batched and singleton params differ"
+        "test fixture: pick an opening batch where batched and singleton params differ"
     );
 
-    let real_schedule = root_direct_schedule(real_incidence.num_vars(), real_params.clone())
+    let real_schedule = root_direct_schedule(real_opening_batch.num_vars(), real_params.clone())
         .expect("fallback root-direct schedule");
     let bound_levels = setup_level_params_from_runtime_schedule(&real_schedule.steps);
     assert_eq!(
         bound_levels,
         vec![real_params],
-        "fallback schedule must carry the real-incidence params the verifier recomputes"
+        "fallback schedule must carry the real opening-batch params the verifier recomputes"
     );
 
     // The descriptor binds those params through the schedule digest: a
     // singleton-params fallback at the same `num_vars` must produce a
     // different preamble than the real batched-params fallback.
-    let singleton_schedule = root_direct_schedule(real_incidence.num_vars(), singleton_params)
+    let singleton_schedule = root_direct_schedule(real_opening_batch.num_vars(), singleton_params)
         .expect("singleton fallback root-direct schedule");
     assert_ne!(
         digest_effective_schedule(&real_schedule),
@@ -208,8 +208,8 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&incidence)
+    let opening_batch = OpeningBatch::same_point(30, 4).expect("grouped same-point opening_batch");
+    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
 
@@ -218,14 +218,14 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
 
-fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceSummary) -> usize {
-    let max_group_poly_count = incidence
-        .num_polys_per_point()
+fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatch) -> usize {
+    let max_group_poly_count = opening_batch
+        .num_polys_per_commitment_group()
         .iter()
         .copied()
         .max()
-        .expect("nonempty incidence");
-    let d_width = lp.num_blocks * incidence.num_claims() * lp.num_digits_open;
+        .expect("nonempty opening_batch");
+    let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
     (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
@@ -234,14 +234,14 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceS
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
-    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let opening_batch = OpeningBatch::same_point(30, 4).expect("batched same-point opening_batch");
+    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
         .expect("batched root schedule should carry commit params");
-    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_setup_len >= required);
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
@@ -254,21 +254,21 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     use akita_types::root_direct_schedule;
 
     type Cfg = fp128::D128Full;
-    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
-    let root_params = Cfg::get_params_for_batched_commitment(&incidence)
+    let opening_batch = OpeningBatch::same_point(30, 4).expect("supported batched opening_batch");
+    let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("supported batched commit params");
-    let schedule = root_direct_schedule(incidence.num_vars(), root_params.clone())
+    let schedule = root_direct_schedule(opening_batch.num_vars(), root_params.clone())
         .expect("synthetic direct schedule");
-    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_setup_len >= required);
 }
 
 #[test]
 fn setup_matrix_scan_uses_one_shared_opening_point() {
-    let incidence = worst_case_grouped_incidence_for_shape(30, 4).expect("valid opening batch");
-    assert_eq!(incidence.num_polys_per_commitment_group(), &[4]);
+    let opening_batch = worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
+    assert_eq!(opening_batch.num_polys_per_commitment_group(), &[4]);
 }
 
 #[test]
@@ -317,12 +317,12 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     type Cfg = fp128::D128Full;
-    let incidence = ClaimIncidenceSummary::same_point(26, 1).expect("singleton incidence");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let opening_batch = OpeningBatch::same_point(26, 1).expect("singleton opening batch");
+    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
         .expect("batched root schedule should carry commit params");
-    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &incidence).unwrap();
+    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &opening_batch).unwrap();
     let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
     let hiding_params = root_params
         .with_decomp(
@@ -341,7 +341,7 @@ fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
         );
     let required = hiding_params.b_key.row_len() * blinding_cols;
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_zk_b_len >= required);
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1).unwrap();

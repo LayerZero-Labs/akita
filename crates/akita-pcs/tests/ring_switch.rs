@@ -104,7 +104,7 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary, MRowLayout,
+        ring_opening_point_from_field, BasisMode, BlockOrder, OpeningBatch, MRowLayout,
         RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
@@ -114,12 +114,12 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn single_point_group_incidence(
+    fn single_point_group_opening_batch(
         num_vars: usize,
         group_poly_count: usize,
-    ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::same_point(num_vars, group_poly_count)
-            .expect("valid single-point incidence")
+    ) -> OpeningBatch {
+        OpeningBatch::same_point(num_vars, group_poly_count)
+            .expect("valid single-point opening_batch")
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -268,7 +268,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -318,7 +318,7 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let opening_batch = single_point_group_opening_batch(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
@@ -327,7 +327,7 @@ mod tests {
             ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
-            &incidence_summary,
+            &opening_batch,
             lp.clone(),
             vec![batched_hint],
             &mut transcript,
@@ -397,7 +397,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -441,7 +441,7 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let opening_batch = single_point_group_opening_batch(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
@@ -450,7 +450,7 @@ mod tests {
             ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
-            &incidence_summary,
+            &opening_batch,
             lp.clone(),
             vec![batched_hint],
             &mut transcript,
@@ -555,7 +555,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 
@@ -602,7 +602,7 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let opening_batch = single_point_group_opening_batch(NV, 1);
 
         let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
@@ -611,7 +611,7 @@ mod tests {
             ring_multiplier_point.clone(),
             &[&poly],
             vec![e_folded],
-            &incidence_summary,
+            &opening_batch,
             level_params.clone(),
             vec![batched_hint],
             &mut transcript,

@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::{ClaimIncidenceSummary, CommitmentRouting};
+use super::{OpeningBatch, CommitmentRouting};
 use crate::RingSubfieldEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
@@ -45,7 +45,7 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    incidence: ClaimIncidenceSummary,
+    opening_batch: OpeningBatch,
     commitment_routing: CommitmentRouting,
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
@@ -63,18 +63,18 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        incidence: ClaimIncidenceSummary,
+        opening_batch: OpeningBatch,
         commitment_routing: CommitmentRouting,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
     ) -> Result<Self, AkitaError> {
-        incidence.check()?;
-        let commitment_routing = commitment_routing.check(incidence.num_claims())?;
-        commitment_routing.check_matches_incidence(&incidence)?;
-        if gamma.len() != incidence.num_claims()
-            || row_coefficient_rings.len() != incidence.num_claims()
+        opening_batch.check()?;
+        let commitment_routing = commitment_routing.check(opening_batch.num_claims())?;
+        commitment_routing.check_matches_opening_batch(&opening_batch)?;
+        if gamma.len() != opening_batch.num_claims()
+            || row_coefficient_rings.len() != opening_batch.num_claims()
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation gamma/row coefficients length mismatch".to_string(),
@@ -90,7 +90,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             challenges,
             opening_point,
             ring_multiplier_point,
-            incidence,
+            opening_batch,
             commitment_routing,
             gamma,
             row_coefficient_rings,
@@ -103,8 +103,8 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         self.m_row_layout
     }
 
-    pub fn incidence(&self) -> &ClaimIncidenceSummary {
-        &self.incidence
+    pub fn opening_batch(&self) -> &OpeningBatch {
+        &self.opening_batch
     }
 
     pub fn commitment_routing(&self) -> &CommitmentRouting {
@@ -120,7 +120,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     }
 
     pub fn claim_poly_indices(&self) -> &[usize] {
-        self.incidence.claim_poly_indices()
+        self.opening_batch.claim_poly_indices()
     }
 
     pub fn gamma(&self) -> &[F] {
@@ -182,7 +182,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let depth_open = lp.num_digits_open;
         let depth_commit = lp.num_digits_commit;
 
-        let num_claims = self.incidence.num_claims();
+        let num_claims = self.opening_batch.num_claims();
         let total_blocks = num_blocks
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
@@ -306,15 +306,15 @@ pub fn ring_relation_segment_layout_for_opening_shape<
     m_row_layout: MRowLayout,
     num_polys: usize,
 ) -> Result<RingRelationSegmentLayout, AkitaError> {
-    let incidence = ClaimIncidenceSummary::same_point(32, num_polys)?;
-    let routing = CommitmentRouting::copy_incidence(&incidence)?;
+    let opening_batch = OpeningBatch::same_point(32, num_polys)?;
+    let routing = CommitmentRouting::copy_opening_batch(&opening_batch)?;
     let opening_point = RingOpeningPoint {
         a: vec![F::zero(); lp.block_len],
         b: vec![F::zero(); lp.num_blocks],
     };
     let ring_multiplier_point: RingMultiplierOpeningPoint<F, D> =
         RingMultiplierOpeningPoint::from_base(&opening_point);
-    let num_claims = incidence.num_claims();
+    let num_claims = opening_batch.num_claims();
     let challenges = Challenges::Sparse {
         challenges: Vec::new(),
         num_blocks_per_claim: lp.num_blocks,
@@ -325,7 +325,7 @@ pub fn ring_relation_segment_layout_for_opening_shape<
         challenges,
         opening_point,
         ring_multiplier_point,
-        incidence,
+        opening_batch,
         routing,
         vec![F::zero(); num_claims],
         vec![CyclotomicRing::<F, D>::zero(); num_claims],
@@ -383,17 +383,17 @@ mod tests {
     #[test]
     fn relation_instance_rejects_split_commitment_routing() {
         let lp = test_level_params();
-        let incidence = ClaimIncidenceSummary::same_point(2, 2).expect("valid batch");
-        let routing = CommitmentRouting::from_recursive_opening_batch(incidence.num_claims())
+        let opening_batch = OpeningBatch::same_point(2, 2).expect("valid batch");
+        let routing = CommitmentRouting::from_recursive_opening_batch(opening_batch.num_claims())
             .expect("routing");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
-            test_challenges(&lp, incidence.num_claims()),
+            test_challenges(&lp, opening_batch.num_claims()),
             opening_point,
             ring_multiplier_point,
-            incidence,
+            opening_batch,
             routing,
             vec![F::one(); 2],
             vec![CyclotomicRing::one(); 2],
@@ -410,16 +410,16 @@ mod tests {
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
-        let incidence = ClaimIncidenceSummary::same_point(2, 1).expect("valid incidence");
-        let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
+        let opening_batch = OpeningBatch::same_point(2, 1).expect("valid opening batch");
+        let routing = CommitmentRouting::copy_opening_batch(&opening_batch).expect("routing");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
-            test_challenges(&lp, incidence.num_claims()),
+            test_challenges(&lp, opening_batch.num_claims()),
             opening_point,
             ring_multiplier_point,
-            incidence,
+            opening_batch,
             routing,
             vec![F::one()],
             vec![CyclotomicRing::one()],
@@ -437,16 +437,16 @@ mod tests {
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
-        let incidence = ClaimIncidenceSummary::same_point(2, 3).expect("valid batch");
-        let routing = CommitmentRouting::copy_incidence(&incidence).expect("routing");
+        let opening_batch = OpeningBatch::same_point(2, 3).expect("valid batch");
+        let routing = CommitmentRouting::copy_opening_batch(&opening_batch).expect("routing");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
             MRowLayout::WithDBlock,
-            test_challenges(&lp, incidence.num_claims()),
+            test_challenges(&lp, opening_batch.num_claims()),
             opening_point,
             ring_multiplier_point,
-            incidence,
+            opening_batch,
             routing,
             vec![F::one(); 3],
             vec![CyclotomicRing::one(); 3],
@@ -466,7 +466,7 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(num_t_vectors, F::modulus_bits())
             .unwrap();
-        let num_claims = instance.incidence().num_claims();
+        let num_claims = instance.opening_batch().num_claims();
         let z_len = depth_fold * lp.num_digits_commit * lp.block_len;
         let e_len = lp.num_digits_open * lp.num_blocks * num_claims;
         assert_eq!(layout.offset_e, z_len);

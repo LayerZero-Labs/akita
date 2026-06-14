@@ -10,7 +10,7 @@ use super::build::{
 };
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, ClaimIncidenceSummary, LevelParams,
+    embed_ring_subfield_scalar, BasisMode, OpeningBatch, LevelParams,
     PreparedOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, TraceFieldBlockOpening,
     TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
@@ -175,7 +175,7 @@ where
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
-    incidence: &'a ClaimIncidenceSummary,
+    opening_batch: &'a OpeningBatch,
     prepared_point: &'a PreparedOpeningPoint<F, E, D>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
@@ -190,16 +190,16 @@ struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
 fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
     inputs: &RootTraceClaimInputs<'_, F, E, D>,
 ) -> Result<(), AkitaError> {
-    if inputs.row_coefficients.len() != inputs.incidence.num_claims() {
+    if inputs.row_coefficients.len() != inputs.opening_batch.num_claims() {
         return Err(AkitaError::InvalidSize {
-            expected: inputs.incidence.num_claims(),
+            expected: inputs.opening_batch.num_claims(),
             actual: inputs.row_coefficients.len(),
         });
     }
     if let Some(scales) = inputs.claim_scales {
-        if scales.len() != inputs.incidence.num_claims() {
+        if scales.len() != inputs.opening_batch.num_claims() {
             return Err(AkitaError::InvalidSize {
-                expected: inputs.incidence.num_claims(),
+                expected: inputs.opening_batch.num_claims(),
                 actual: scales.len(),
             });
         }
@@ -211,7 +211,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize
     inputs: &'a RootTraceClaimInputs<'a, F, E, D>,
 ) -> Result<Vec<RootTraceClaimItem<'a, F, E, D>>, AkitaError> {
     validate_root_trace_claim_inputs(inputs)?;
-    let mut items = Vec::with_capacity(inputs.incidence.num_claims());
+    let mut items = Vec::with_capacity(inputs.opening_batch.num_claims());
     for (claim_idx, &coefficient) in inputs.row_coefficients.iter().enumerate() {
         let scale = inputs
             .claim_scales
@@ -239,11 +239,11 @@ pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_te
     }
 }
 
-/// Build public trace weights for a root incidence, optionally scaling each
+/// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     lp: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -254,7 +254,7 @@ where
 {
     let inputs = RootTraceClaimInputs {
         lp,
-        incidence,
+        opening_batch,
         prepared_point,
         row_coefficients,
         claim_scales,
@@ -358,7 +358,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
     Ok(padded[start..start + lp.r_vars].to_vec())
 }
 
-/// Build the verifier's short closed-form trace terms for a root incidence.
+/// Build the verifier's short closed-form trace terms for a root opening_batch.
 ///
 /// `b_open` holds the block-axis opening (in the evaluation field `E`) for the
 /// shared opening point; the verifier obtains it via
@@ -368,7 +368,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     b_open: &[E],
     basis: BasisMode,
@@ -381,7 +381,7 @@ where
 {
     let inputs = RootTraceClaimInputs {
         lp,
-        incidence,
+        opening_batch,
         prepared_point,
         row_coefficients,
         claim_scales,
@@ -405,7 +405,7 @@ where
 pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     b_open: &[E],
     basis: BasisMode,
@@ -424,7 +424,7 @@ where
         trace_opening_claim: trace_coeff * trace_eval_target,
         trace_terms: trace_terms_root(
             lp,
-            incidence,
+            opening_batch,
             prepared_point,
             b_open,
             basis,

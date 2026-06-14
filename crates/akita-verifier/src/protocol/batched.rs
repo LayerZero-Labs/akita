@@ -2,7 +2,7 @@
 
 use super::{validate_level_dispatch, validate_log_basis};
 use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
-use crate::proof::direct::verify_zero_fold_openings_with_incidence;
+use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::levels::verify_folded_batched_proof;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -15,7 +15,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, OpeningBatch, CleartextWitnessProof,
     LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
     VerifierClaims,
 };
@@ -68,7 +68,7 @@ where
 }
 
 fn effective_batched_schedule<Cfg, const D: usize>(
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     opening_point: &[Cfg::ExtField],
 ) -> Result<Schedule, AkitaError>
 where
@@ -76,8 +76,8 @@ where
     Cfg::Field: FieldCore,
     Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
 {
-    let num_vars = incidence_summary.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(incidence_summary)?;
+    let num_vars = opening_batch.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
@@ -87,7 +87,7 @@ where
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
             num_vars,
         ) {
-            let commit_params = Cfg::get_params_for_batched_commitment(incidence_summary)?;
+            let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -98,7 +98,7 @@ where
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -118,7 +118,7 @@ where
     }
     let expected_witness_len = 1usize
         .checked_shl(
-            u32::try_from(incidence_summary.num_vars()).map_err(|_| AkitaError::InvalidProof)?,
+            u32::try_from(opening_batch.num_vars()).map_err(|_| AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
@@ -130,7 +130,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if incidence_summary.num_claims() != witnesses.len() {
+    if opening_batch.num_claims() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -358,7 +358,7 @@ pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     params: &LevelParams,
     #[cfg(feature = "zk")] b_blinding_digits: &[Vec<i8>],
 ) -> Result<(), AkitaError>
@@ -369,18 +369,18 @@ where
     if b_blinding_digits.len() != commitments.len() {
         return Err(AkitaError::InvalidProof);
     }
-    if commitments.len() != incidence_summary.num_polys_per_commitment_group().len() {
+    if commitments.len() != opening_batch.num_polys_per_commitment_group().len() {
         return Err(AkitaError::InvalidProof);
     }
     validate_root_direct_recommitment_shape::<F, D>(
         witnesses,
         setup.expanded.seed(),
-        incidence_summary,
+        opening_batch,
         params,
     )?;
 
     let mut claim_offset = 0usize;
-    for (group_idx, &group_size) in incidence_summary
+    for (group_idx, &group_size) in opening_batch
         .num_polys_per_commitment_group()
         .iter()
         .enumerate()
@@ -432,7 +432,7 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 ///
 /// The root-direct branch recomputes commitments with the same root commitment
 /// layout the prover used at commit time (`Cfg::get_params_for_batched_commitment`
-/// for the same incidence); a mismatching layout would cause root-direct
+/// for the same opening_batch); a mismatching layout would cause root-direct
 /// commitment recomputation to reject a correctly produced proof.
 ///
 /// # Errors
@@ -464,7 +464,7 @@ where
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let schedule = effective_batched_schedule::<Cfg, D>(
-        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_batch,
         prepared_claims.opening_point,
     )
     .map_err(|_| AkitaError::InvalidProof)?;
@@ -472,7 +472,7 @@ where
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         &setup.expanded,
-        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_batch,
         &schedule,
         basis,
         transcript,
@@ -482,7 +482,7 @@ where
         opening_point,
         commitments,
         openings,
-        incidence_summary,
+        opening_batch,
     } = prepared_claims;
 
     match &proof.root {
@@ -495,11 +495,11 @@ where
                 return Err(AkitaError::InvalidProof);
             };
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
-            verify_zero_fold_openings_with_incidence(
+            verify_zero_fold_openings_with_opening_batch(
                 witnesses,
                 opening_point,
                 &openings,
-                &incidence_summary,
+                &opening_batch,
                 basis,
             )?;
             #[cfg(feature = "zk")]
@@ -511,7 +511,7 @@ where
                 witnesses,
                 setup,
                 &commitments,
-                &incidence_summary,
+                &opening_batch,
                 params,
                 #[cfg(feature = "zk")]
                 direct_commitment_payload,
@@ -525,7 +525,7 @@ where
                 opening_point,
                 &openings,
                 &commitments,
-                &incidence_summary,
+                &opening_batch,
                 basis,
                 &schedule,
                 setup_contribution_mode,
@@ -553,8 +553,8 @@ mod tests {
         }
     }
 
-    fn incidence_summary(num_vars: usize) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
+    fn opening_batch(num_vars: usize) -> OpeningBatch {
+        OpeningBatch::same_point(num_vars, 1).expect("valid opening batch summary")
     }
 
     fn setup_seed(max_setup_len: usize) -> AkitaSetupSeed {
@@ -584,7 +584,7 @@ mod tests {
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,
-            &incidence_summary(6),
+            &opening_batch(6),
             &params,
         )
         .expect_err("A layout needs four setup entries but setup has three");
@@ -605,7 +605,7 @@ mod tests {
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,
-            &incidence_summary(6),
+            &opening_batch(6),
             &params,
         )
         .expect_err("num_vars=6 requires 64 direct witness elements");

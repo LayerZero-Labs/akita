@@ -78,7 +78,7 @@ where
     let claim_to_commitment_group = routing.claim_to_commitment_group();
     let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
     let challenges = &instance.challenges;
-    if gamma.len() != instance.incidence().num_claims() {
+    if gamma.len() != instance.opening_batch().num_claims() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));

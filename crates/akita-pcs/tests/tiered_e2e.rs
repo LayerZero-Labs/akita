@@ -48,9 +48,9 @@ fn setup_sumcheck_levels(proof: &AkitaBatchedProof<F, F>) -> usize {
 fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let incidence =
-            akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence");
-        let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch =
+            akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch");
+        let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} singleton"
@@ -134,9 +134,9 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
 fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, num_polys)
-            .expect("same-point incidence");
-        let layout = TieredCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = akita_types::OpeningBatch::same_point(nv, num_polys)
+            .expect("same-point opening_batch");
+        let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
             "expected a tiered root layout (f_key) for nv={nv} batch={num_polys}"

@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection,
+    OpeningBatch, PlanSection, RingSubfieldEncoding, Schedule, SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -34,7 +34,7 @@ use akita_types::{
 /// - canonical descriptor serialization fails.
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     setup: &AkitaExpandedSetup<F>,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     schedule: &Schedule,
     basis: BasisMode,
     transcript: &mut T,
@@ -55,7 +55,7 @@ where
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(schedule),
-        CallSection::from_incidence(incidence, basis)?,
+        CallSection::from_opening_batch(opening_batch, basis)?,
     );
     let descriptor_bytes = descriptor
         .canonical_bytes()

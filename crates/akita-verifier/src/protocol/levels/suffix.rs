@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{ClaimIncidenceSummary, CommitmentRouting};
+use akita_types::{OpeningBatch, CommitmentRouting};
 
 /// Prepare one recursive fold level for relation verification.
 ///
@@ -54,7 +54,7 @@ where
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let incidence = ClaimIncidenceSummary::same_point(num_vars, num_claims)?;
+    let opening_batch = OpeningBatch::same_point(num_vars, num_claims)?;
     let row_coefficients = vec![L::one()];
     let openings = vec![current_state.opening];
     #[cfg(feature = "zk")]
@@ -76,7 +76,7 @@ where
         current_state.opening_point.as_slice(),
         &openings,
         &row_coefficients,
-        &incidence,
+        &opening_batch,
         current_state.basis,
         lp,
         block_order,
@@ -156,7 +156,7 @@ where
         v: v_typed.to_vec(),
         commitment_rows: commitment_u,
         row_coefficients,
-        incidence,
+        opening_batch,
         commitment_routing,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
@@ -346,7 +346,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     opening_point: &[E],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -405,7 +405,7 @@ where
                 opening_point,
                 openings,
                 commitments,
-                incidence_summary,
+                opening_batch,
                 basis,
                 root_lp,
                 setup_contribution_mode,
@@ -457,7 +457,7 @@ where
                 opening_point,
                 openings,
                 commitments,
-                incidence_summary,
+                opening_batch,
                 basis,
                 root_lp,
                 setup_contribution_mode,
