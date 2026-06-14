@@ -14,8 +14,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, LevelParams,
-    RingRelationInstance, RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -110,7 +110,7 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+        E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
     {
@@ -226,7 +226,7 @@ fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;

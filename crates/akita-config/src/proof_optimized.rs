@@ -6,7 +6,7 @@
 use super::CommitmentConfig;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
-use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4};
+use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatch;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 

@@ -265,13 +265,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, NegOneNr, TowerBasisFpExt4, UnitNr};
+    use akita_field::{Fp32, FpExt4};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
-    type BaseExt = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
+    type BaseExt = FpExt4<Base>;
 
     #[derive(Clone)]
     struct SingleExtensionConfig;

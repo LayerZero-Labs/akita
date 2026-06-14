@@ -15,9 +15,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FlatRingVec, LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationInstance, RingRelationSegmentLayout, RingSubfieldEncoding,
-    SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout, SetupContributionPlanInputs,
+    TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -167,7 +167,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
@@ -197,7 +197,7 @@ pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
@@ -215,7 +215,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let relation = replay.relation;
@@ -321,7 +321,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -356,7 +356,7 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
@@ -624,7 +624,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+        E: FpExtEncoding<F> + FromPrimitiveInt,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         // ----- Witness-layout offsets ----------------------------------------

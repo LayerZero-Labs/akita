@@ -4,7 +4,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use std::marker::PhantomData;
 
 use crate::field_reduction::trace_open_folded_ring_mle_dot;
-use crate::{gadget_row_scalars, lagrange_weights, BasisMode, RingSubfieldEncoding};
+use crate::{gadget_row_scalars, lagrange_weights, BasisMode, FpExtEncoding};
 
 use super::layout::TraceWeightLayout;
 
@@ -85,7 +85,7 @@ pub fn eval_trace_weight_at_point<F, E, const D: usize, const K: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
 {
     match opening {
         TraceOpeningAtPoint::Field { terms } => {
@@ -162,7 +162,7 @@ fn eval_at_point_k_extension<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -244,15 +244,15 @@ pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
 ///
 /// `gamma[i][j][m]` is the `m`-th ring-subfield coordinate of `beta_i · beta_j`,
 /// where `beta_i` is the basis element with coordinate vector `e_i`. Because the
-/// `RingSubfieldEncoding` types use the same coordinates for `from_base_slice`,
-/// `to_base_vec`, and `to_ring_subfield_coords`, this is exactly the
+/// `FpExtEncoding` types use the same coordinates for `from_base_slice`,
+/// `to_base_vec`, and `to_ext_coords`, this is exactly the
 /// multiplication table the `psi`-embedding respects, so folding block weights in
 /// this `K`-dimensional coordinate algebra agrees with folding the embedded ring
 /// elements in `R_q` (but costs `O(K²)` instead of `O(D²)`).
 fn ring_subfield_struct_consts<F, E>(k: usize) -> Vec<Vec<Vec<F>>>
 where
     F: FieldCore,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
 {
     let mut gamma = vec![vec![vec![F::zero(); k]; k]; k];
     let mut unit = vec![F::zero(); k];
@@ -264,7 +264,7 @@ where
             unit[j] = F::one();
             let beta_j = E::from_base_slice(&unit);
             unit[j] = F::zero();
-            let prod = (beta_i * beta_j).to_ring_subfield_coords();
+            let prod = (beta_i * beta_j).to_ext_coords();
             for (m, slot) in gamma[i][j].iter_mut().enumerate() {
                 *slot = prod[m];
             }
@@ -307,18 +307,14 @@ where
 fn block_weight_coords<F, E>(b: E, basis: BasisMode, k: usize) -> (Vec<E>, Vec<E>)
 where
     F: FieldCore,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
 {
     let (w0, w1) = match basis {
         BasisMode::Lagrange => (E::one() - b, b),
         BasisMode::Monomial => (E::one(), b),
     };
     let lift = |w: E| -> Vec<E> {
-        let mut coords: Vec<E> = w
-            .to_ring_subfield_coords()
-            .into_iter()
-            .map(E::lift_base)
-            .collect();
+        let mut coords: Vec<E> = w.to_ext_coords().into_iter().map(E::lift_base).collect();
         coords.resize(k, E::zero());
         coords
     };
@@ -403,7 +399,7 @@ pub fn eval_trace_terms_closed<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(

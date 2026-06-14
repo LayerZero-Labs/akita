@@ -406,7 +406,7 @@ where
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         Ok(self.tensor_packed_sparse_ring_poly::<E>()?.into())
     }

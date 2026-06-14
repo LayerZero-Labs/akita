@@ -1,9 +1,9 @@
 use akita_algebra::poly::Poly;
 use akita_algebra::{CyclotomicRing, VectorModule};
-use akita_field::{Fp32, Fp64, FpExt2, Prime128Offset275, TowerBasisFpExt4};
+use akita_field::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError};
 
-use super::fixtures::{NR, NR4};
+use super::fixtures::NR;
 
 #[test]
 fn serialization_round_trip_fp32() {
@@ -50,12 +50,14 @@ fn serialization_round_trip_ext() {
 fn serialization_round_trip_fp_ext4() {
     type F = Fp32<251>;
     type F2 = FpExt2<F, NR>;
-    type F4 = TowerBasisFpExt4<F, NR, NR4>;
+    type F4 = FpExt4<F>;
 
-    let val = F4::new(
-        F2::new(F::from_u64(5), F::from_u64(1)),
-        F2::new(F::from_u64(2), F::from_u64(9)),
-    );
+    let val = F4::new([
+        F::from_u64(5),
+        F::from_u64(1),
+        F::from_u64(2),
+        F::from_u64(9),
+    ]);
     let mut buf = Vec::new();
     val.serialize_compressed(&mut buf).unwrap();
     let restored = F4::deserialize_compressed(&buf[..], &()).unwrap();

@@ -6,7 +6,7 @@ use akita_field::FieldCore;
 use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
-use crate::field_reduction::{embed_ring_subfield_scalar, RingSubfieldEncoding};
+use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
 
 const BLOCK_EMBED_ERROR: &str = "block opening weight does not embed in the ring-subfield basis";
 
@@ -207,7 +207,7 @@ pub fn block_rings_at_opening<F, E, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + FieldCore,
+    E: FpExtEncoding<F> + FieldCore,
 {
     lagrange_weights(b_open)?
         .into_iter()

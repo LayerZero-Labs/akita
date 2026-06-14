@@ -72,7 +72,7 @@ fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
@@ -118,7 +118,7 @@ fn prepare_root_fold_from_evaluated_claims<F, C, T, P, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F>
-        + RingSubfieldEncoding<F>
+        + FpExtEncoding<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
@@ -179,7 +179,7 @@ fn prepare_root_fold_data<F, E, T, P, B, const D: usize>(
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F>
+    E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -367,7 +367,7 @@ pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>
+    E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -464,7 +464,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>
+    E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold

@@ -11,8 +11,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, FlatDigitBlocks, LevelParams, OpeningBatch, RingCommitment,
-    RingSubfieldEncoding,
+    AkitaExpandedSetup, FlatDigitBlocks, FpExtEncoding, LevelParams, OpeningBatch, RingCommitment,
 };
 
 pub(crate) fn commit_inner_block_digit_count(
@@ -543,8 +542,8 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
@@ -662,8 +661,8 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: CommitmentComputeBackend<Cfg::Field>,
 {

@@ -56,11 +56,11 @@ use akita_types::{
     trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
     AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, OpeningBatch,
-    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupSumcheckProof, Step, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    TraceClaim,
+    ExtensionOpeningReductionProof, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
+    OpeningBatch, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
+    SetupContributionMode, SetupSumcheckProof, Step, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -248,11 +248,7 @@ fn verify_fold_eor<F, C, T, const D: usize>(
 ) -> Result<FoldEorReplay<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    C: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    C: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_claims = opening_batch.num_claims();
@@ -541,7 +537,7 @@ fn verify_stage2<F, E, T, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     #[cfg(feature = "zk")]
@@ -620,7 +616,7 @@ fn verify_stage3<F, E, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
@@ -645,7 +641,7 @@ fn verify_fold<F, E, T, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(

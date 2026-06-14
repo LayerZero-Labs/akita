@@ -48,11 +48,7 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -217,11 +213,7 @@ fn verify_suffix<'a, F, L, T>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {
@@ -367,11 +359,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {

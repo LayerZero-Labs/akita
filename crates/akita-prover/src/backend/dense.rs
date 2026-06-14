@@ -675,8 +675,8 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_field::FpExt4;
     use akita_field::Prime128OffsetA7F7 as F;
-    use akita_field::{TowerBasisFpExt4, TwoNr, UnitNr};
     use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn dense_tensor_opening_methods_match_flat_reference() {
         const D: usize = 8;
-        type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+        type E = FpExt4<F>;
 
         let num_vars = 5;
         let evals = (0..(1usize << num_vars))

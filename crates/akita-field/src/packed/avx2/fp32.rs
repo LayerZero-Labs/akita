@@ -171,7 +171,7 @@ impl<const P: u32> PackedFp32Avx2<P> {
 
     /// 4-way fused multiply-accumulate with a single end-reduction.
     /// Computes `sum_i a[i] * b[i]` lane-wise and canonicalizes. The key
-    /// fused operation for `RingSubfieldFpExt4` and power-basis FpExt4 multiply.
+    /// fused operation for `FpExt4` and power-basis FpExt4 multiply.
     /// Mirrors `PackedFp32Neon::dot_product_4_vec`. For `BITS <= 31`, four
     /// `(2^31 - 1)^2` products sum below `2^64`, so the raw products
     /// accumulate without overflow. For `BITS == 32`, each product is
@@ -256,20 +256,6 @@ impl<const P: u32> PackedFp32Avx2<P> {
             Self::add_vec(x, x)
         } else {
             C::mul_non_residue(Self::from_vec(x), Self::broadcast).to_vec()
-        }
-    }
-
-    /// Multiply by the power-basis `w` (used by `power_basis_fp_ext4_mul`).
-    /// Recognizes the `w == 2` fast path. Mirrors `PackedFp32Neon::mul_w_vec`.
-    #[inline(always)]
-    unsafe fn mul_w_vec<C>(x: __m256i) -> __m256i
-    where
-        C: PowerBasisFpExt4Config<Fp32<P>>,
-    {
-        if C::w().0 == 2 {
-            Self::add_vec(x, x)
-        } else {
-            C::mul_w(Self::from_vec(x), Self::broadcast).to_vec()
         }
     }
 
@@ -561,71 +547,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn power_basis_fp_ext4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
-    where
-        C: PowerBasisFpExt4Config<Self::Scalar>,
-    {
-        unsafe {
-            let [a0, a1, a2, a3] = a.map(Self::to_vec);
-            let [b0, b1, b2, b3] = b.map(Self::to_vec);
-
-            if C::w().0 == 2 {
-                let two_b1 = Self::add_vec(b1, b1);
-                let two_b2 = Self::add_vec(b2, b2);
-                let two_b3 = Self::add_vec(b3, b3);
-                return [
-                    Self::from_vec(Self::dot_product_4_vec(
-                        [a0, a1, a2, a3],
-                        [b0, two_b3, two_b2, two_b1],
-                    )),
-                    Self::from_vec(Self::dot_product_4_vec(
-                        [a0, a1, a2, a3],
-                        [b1, b0, two_b3, two_b2],
-                    )),
-                    Self::from_vec(Self::dot_product_4_vec(
-                        [a0, a1, a2, a3],
-                        [b2, b1, b0, two_b3],
-                    )),
-                    Self::from_vec(Self::dot_product_4_vec([a0, a1, a2, a3], [b3, b2, b1, b0])),
-                ];
-            }
-
-            let c0_tail = Self::add_vec(
-                Self::add_vec(Self::mul_vec(a1, b3), Self::mul_vec(a2, b2)),
-                Self::mul_vec(a3, b1),
-            );
-            let c1_tail = Self::add_vec(Self::mul_vec(a2, b3), Self::mul_vec(a3, b2));
-            let c2_tail = Self::mul_vec(a3, b3);
-
-            [
-                Self::from_vec(Self::add_vec(
-                    Self::mul_vec(a0, b0),
-                    Self::mul_w_vec::<C>(c0_tail),
-                )),
-                Self::from_vec(Self::add_vec(
-                    Self::add_vec(Self::mul_vec(a0, b1), Self::mul_vec(a1, b0)),
-                    Self::mul_w_vec::<C>(c1_tail),
-                )),
-                Self::from_vec(Self::add_vec(
-                    Self::add_vec(
-                        Self::add_vec(Self::mul_vec(a0, b2), Self::mul_vec(a1, b1)),
-                        Self::mul_vec(a2, b0),
-                    ),
-                    Self::mul_w_vec::<C>(c2_tail),
-                )),
-                Self::from_vec(Self::add_vec(
-                    Self::add_vec(
-                        Self::add_vec(Self::mul_vec(a0, b3), Self::mul_vec(a1, b2)),
-                        Self::mul_vec(a2, b1),
-                    ),
-                    Self::mul_vec(a3, b0),
-                )),
-            ]
-        }
-    }
-
-    #[inline(always)]
-    fn ring_subfield_fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+    fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
             let [b0, b1, b2, b3] = b.map(Self::to_vec);
@@ -658,7 +580,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
+    fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
             let zero = _mm256_setzero_si256();
@@ -689,7 +611,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
+    fn fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
         Self::Scalar: Invertible,
     {
@@ -762,54 +684,6 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
                 Self::from_vec(constant1),
                 Self::from_vec(e1_coeff1),
             ])
-        }
-    }
-
-    #[inline(always)]
-    fn tower_basis_fp_ext4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
-    where
-        C2: FpExt2Config<Self::Scalar>,
-        C4: TowerBasisFpExt4Config<Self::Scalar, C2>,
-    {
-        let nr = C4::non_residue();
-        if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
-            return Self::power_basis_fp_ext4_mul::<C2>(a, b);
-        }
-
-        unsafe {
-            let [a0, a1, a2, a3] = a.map(Self::to_vec);
-            let [b0, b1, b2, b3] = b.map(Self::to_vec);
-
-            let (v0_0, v0_1) = Self::fp_ext2_mul::<C2>(
-                Self::from_vec(a0),
-                Self::from_vec(a2),
-                Self::from_vec(b0),
-                Self::from_vec(b2),
-            );
-            let (v1_0, v1_1) = Self::fp_ext2_mul::<C2>(
-                Self::from_vec(a1),
-                Self::from_vec(a3),
-                Self::from_vec(b1),
-                Self::from_vec(b3),
-            );
-            let (nr_v1_0, nr_v1_1) = Self::fp_ext2_mul::<C2>(
-                Self::broadcast(nr.coeffs[0]),
-                Self::broadcast(nr.coeffs[1]),
-                v1_0,
-                v1_1,
-            );
-            let (cross_0, cross_1) = Self::fp_ext2_mul::<C2>(
-                Self::from_vec(Self::add_vec(a0, a1)),
-                Self::from_vec(Self::add_vec(a2, a3)),
-                Self::from_vec(Self::add_vec(b0, b1)),
-                Self::from_vec(Self::add_vec(b2, b3)),
-            );
-            [
-                v0_0 + nr_v1_0,
-                cross_0 - v0_0 - v1_0,
-                v0_1 + nr_v1_1,
-                cross_1 - v0_1 - v1_1,
-            ]
         }
     }
 }

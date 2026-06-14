@@ -15,7 +15,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    LevelParams, RingCommitment, RingSubfieldEncoding,
+    FpExtEncoding, LevelParams, RingCommitment,
 };
 use akita_verifier::CommitmentVerifier;
 
@@ -73,8 +73,8 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     let (protocol_nv, num_t_vectors, num_w_vectors, num_z_vectors) = if Cfg::EXT_DEGREE > 1 {
         let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
@@ -131,8 +131,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     tracing::info!("{}", title);
     if num_polys == 1 {

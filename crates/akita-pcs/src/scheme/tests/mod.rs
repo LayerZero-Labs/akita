@@ -46,7 +46,7 @@ type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
-mod fp32_ring_subfield;
+mod fp32_ext4;
 mod layout;
 mod onehot;
 mod single;

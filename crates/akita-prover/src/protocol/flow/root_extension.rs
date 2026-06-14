@@ -24,7 +24,7 @@ fn prepare_root_extension_opening_reduction<F, E, P, const D: usize>(
 ) -> Result<PreparedRootExtensionOpeningReduction<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + MulBaseUnreduced<F>,
     P: AkitaPolyOps<F, D>,
 {
     let _span = tracing::info_span!(
@@ -110,7 +110,7 @@ pub(in crate::protocol::flow) fn prove_root_extension_opening_reduction<
 ) -> Result<(RootExtensionOpeningReduction<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>
+    E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold

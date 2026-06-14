@@ -70,7 +70,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {

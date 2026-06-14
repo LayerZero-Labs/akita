@@ -203,8 +203,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -315,8 +315,8 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
