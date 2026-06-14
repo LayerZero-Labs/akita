@@ -7,7 +7,24 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::OpeningBatch;
 
-/// Prepare one recursive fold level for relation verification.
+/// Verifier state carried between suffix fold levels.
+struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
+    /// Current opening point for the committed suffix witness.
+    pub opening_point: Vec<L>,
+    /// Claimed opening value for the current commitment.
+    pub opening: L,
+    /// Hidden mask added to `opening` in the public proof.
+    #[cfg(feature = "zk")]
+    pub opening_mask: ZkR1csLinearCombination<L>,
+    /// Current suffix witness commitment.
+    pub commitment: &'a FlatRingVec<F>,
+    /// Basis used to interpret the current opening point.
+    pub basis: BasisMode,
+    /// Current suffix witness length in field elements.
+    pub w_len: usize,
+}
+
+/// Prepare one suffix fold level for relation verification.
 ///
 /// Terminal levels absorb the cleartext final witness instead of a
 /// next-witness commitment and run stage-2 in relation-only mode.
@@ -22,7 +39,7 @@ use akita_types::OpeningBatch;
 fn prepare_fold_data<'a, F, L, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, L>,
     transcript: &mut T,
-    current_state: &'a RecursiveVerifierState<'a, F, L>,
+    current_state: &'a SuffixVerifierState<'a, F, L>,
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
@@ -85,7 +102,7 @@ where
         #[cfg(feature = "zk")]
         &opening_masks,
         #[cfg(feature = "zk")]
-        "recursive extension-opening partial claim",
+        "suffix extension-opening partial claim",
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
@@ -175,25 +192,25 @@ where
     })
 }
 
-/// Verify all recursive fold levels after the root proof.
+/// Verify all suffix fold levels after the root proof.
 ///
 /// The supplied `schedule` is the already-selected public schedule for this
 /// proof shape. This function checks that each proof level matches that
 /// schedule, dispatches to the corresponding ring dimension, and threads the
-/// verifier state to the next recursive commitment.
+/// verifier state to the next suffix commitment.
 ///
 /// # Errors
 ///
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
-/// the recursive witness handoff has the wrong shape.
+/// the suffix witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
 fn verify_suffix<'a, F, L, T>(
     steps: &'a [AkitaLevelProof<F, L>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    mut current_state: RecursiveVerifierState<'a, F, L>,
+    mut current_state: SuffixVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
@@ -265,7 +282,7 @@ where
                             AkitaError::InvalidSetup("next witness length overflow".to_string())
                         })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
-                current_state = RecursiveVerifierState {
+                current_state = SuffixVerifierState {
                     opening_point: challenges,
                     opening: level_proof.next_w_eval(),
                     #[cfg(feature = "zk")]
@@ -327,15 +344,14 @@ where
 /// Verify the folded-root branch of a batched opening proof.
 ///
 /// The caller owns config-backed schedule selection and passes the derived
-/// root verifier layout plus the first recursive-level params. This function
+/// root verifier layout plus the first suffix-level params. This function
 /// owns the fold-root proof-shape checks, root opening preparation, root
-/// transcript replay, and recursive suffix handoff.
+/// transcript replay, and suffix handoff.
 ///
 /// # Errors
 ///
 /// Returns an error if the proof is not a folded-root proof, the schedule does
-/// not match the proof shape, the root proof rejects, or a recursive suffix
-/// level rejects.
+/// not match the proof shape, the root proof rejects, or a suffix level rejects.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     proof: &AkitaBatchedProof<F, E>,
@@ -388,8 +404,7 @@ where
     match &proof.root {
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
-            // 1-fold case: the root itself is the terminal fold. No recursive
-            // suffix follows.
+            // 1-fold case: the root itself is the terminal fold. No suffix follows.
             if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
@@ -472,7 +487,7 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
-            let current_state = RecursiveVerifierState {
+            let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
                 opening: root_stage2.next_w_eval(),
                 #[cfg(feature = "zk")]
