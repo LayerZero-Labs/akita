@@ -10,6 +10,7 @@ use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
     OpeningBatch, Schedule, SisModulusFamily,
 };
+use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -140,6 +141,29 @@ impl ProtocolFeatureSet {
     }
 }
 
+/// Fold-l∞ rejection protocol identity bound into every transcript preamble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoldLinfProtocolBinding {
+    /// Tail-bound formula tag (`1` = integer `t*` from fold-linf-rejection spec).
+    pub formula_tag: u8,
+    /// Fiat-Shamir reroll cap per committed fold level.
+    pub max_grind_attempts: u32,
+    /// Wire width of `fold_grind_nonce` on committed fold levels.
+    pub grind_nonce_wire_bytes: u8,
+    /// Challenge-entropy budget per fold level: `log2(max_grind_attempts)`.
+    pub grind_entropy_bits_per_level: u8,
+}
+
+impl FoldLinfProtocolBinding {
+    /// Active fold-l∞ rejection cutover parameters.
+    pub const CURRENT: Self = Self {
+        formula_tag: 1,
+        max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
+        grind_nonce_wire_bytes: 4,
+        grind_entropy_bits_per_level: 12,
+    };
+}
+
 /// Setup-bound descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupSection {
@@ -151,6 +175,8 @@ pub struct SetupSection {
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode.
     pub protocol_features: ProtocolFeatureSet,
+    /// Fold-l∞ threshold policy, grind cap, and nonce wire contract.
+    pub fold_linf: FoldLinfProtocolBinding,
 }
 
 impl SetupSection {
@@ -175,6 +201,7 @@ impl SetupSection {
             sis_modulus_family,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
+            fold_linf: FoldLinfProtocolBinding::CURRENT,
         })
     }
 }
@@ -484,6 +511,14 @@ impl AkitaSerialize for SetupSection {
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
+        self.fold_linf.formula_tag
+            .serialize_with_mode(&mut writer, compress)?;
+        self.fold_linf.max_grind_attempts
+            .serialize_with_mode(&mut writer, compress)?;
+        self.fold_linf.grind_nonce_wire_bytes
+            .serialize_with_mode(&mut writer, compress)?;
+        self.fold_linf.grind_entropy_bits_per_level
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -492,6 +527,10 @@ impl AkitaSerialize for SetupSection {
             + sis_family_size(compress)
             + 32
             + self.protocol_features.serialized_size(compress)
+            + self.fold_linf.formula_tag.serialized_size(compress)
+            + self.fold_linf.max_grind_attempts.serialized_size(compress)
+            + self.fold_linf.grind_nonce_wire_bytes.serialized_size(compress)
+            + self.fold_linf.grind_entropy_bits_per_level.serialized_size(compress)
     }
 }
 
@@ -509,11 +548,33 @@ impl AkitaDeserialize for SetupSection {
         let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let fold_linf = FoldLinfProtocolBinding {
+            formula_tag: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            max_grind_attempts: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            grind_nonce_wire_bytes: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            grind_entropy_bits_per_level: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+        };
         let out = Self {
             decomposition,
             sis_modulus_family,
             setup_seed_digest,
             protocol_features,
+            fold_linf,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -769,7 +830,7 @@ fn basis_mode_size(compress: Compress) -> usize {
 mod tests {
     use super::*;
     use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
     use akita_field::{Prime32Offset99, Prime64Offset59};
 
     fn sample_level_params() -> LevelParams {
@@ -821,6 +882,7 @@ mod tests {
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
                 protocol_features: ProtocolFeatureSet::current(),
+                fold_linf: FoldLinfProtocolBinding::CURRENT,
             },
             PlanSection::from_schedule(&schedule),
             CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call"),
@@ -832,6 +894,69 @@ mod tests {
         let err = decode_sis_family(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
             .expect_err("historical Q16 tag 3 must be rejected");
         assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
+    fn fold_linf_descriptor_canonical_digest_pinned() {
+        let bytes = sample_descriptor()
+            .canonical_bytes()
+            .expect("serialize descriptor");
+        assert_eq!(
+            (bytes.len(), blake2b_256(&bytes)),
+            (
+                174,
+                [
+                    0x82, 0x00, 0x2c, 0xbb, 0x46, 0xc2, 0xbe, 0xdb, 0x45, 0x65, 0x9f, 0xbe, 0x02,
+                    0x4d, 0x5c, 0xab, 0x52, 0x70, 0x84, 0x14, 0x9f, 0xa4, 0x65, 0x18, 0x05, 0xd0,
+                    0xb6, 0x77, 0x30, 0x60, 0xbe, 0x83,
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn fold_linf_binding_is_part_of_setup_section() {
+        let descriptor = sample_descriptor();
+        assert_eq!(
+            descriptor.setup.fold_linf,
+            FoldLinfProtocolBinding::CURRENT
+        );
+        let mut altered = descriptor.clone();
+        altered.setup.fold_linf.formula_tag = 0;
+        assert_ne!(
+            altered.canonical_bytes().expect("serialize"),
+            descriptor.canonical_bytes().expect("serialize")
+        );
+    }
+
+    #[test]
+    fn effective_schedule_digest_binds_fold_linf_policy() {
+        let mut tensor_params = sample_level_params();
+        tensor_params.fold_challenge_shape = TensorChallengeShape::Tensor;
+
+        let schedule_flat = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: sample_level_params(),
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+        let schedule_tensor = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: tensor_params,
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+
+        assert_ne!(
+            digest_effective_schedule(&schedule_flat),
+            digest_effective_schedule(&schedule_tensor)
+        );
     }
 
     #[test]

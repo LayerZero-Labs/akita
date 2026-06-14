@@ -7,7 +7,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::descriptor_bytes::{push_i8, push_u32, push_usize};
+use crate::descriptor_bytes::{push_i8, push_u32, push_u128, push_usize};
 
 pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 
@@ -379,6 +379,7 @@ impl LevelParams {
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
+        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_linf_threshold_policy());
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.onehot_chunk_size);
@@ -760,6 +761,17 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
             bytes.push(2);
         }
     }
+    push_u128(bytes, config.challenge_l2_sq_max());
+}
+
+fn append_fold_linf_policy_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    policy: crate::sis::FoldLinfThresholdPolicy,
+) {
+    bytes.push(match policy {
+        crate::sis::FoldLinfThresholdPolicy::CertifiedFlat => 0,
+        crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf => 1,
+    });
 }
 
 fn append_tensor_challenge_shape_descriptor_bytes(
