@@ -315,8 +315,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-    let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let trace_eval_target =
         batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;

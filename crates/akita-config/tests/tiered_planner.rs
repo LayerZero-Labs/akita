@@ -9,7 +9,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
-use akita_types::{AkitaScheduleLookupKey, OpeningBatch, LevelParams, Schedule, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatch, Schedule, Step};
 
 fn footprint(key: &akita_types::AjtaiKeyParams) -> usize {
     key.row_len() * key.col_len()
@@ -88,9 +88,10 @@ fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
             matrix_envelope_for_schedule::<fp128::D64OneHotTiered>(&tiered_sched, &opening_batch)
                 .expect("tiered envelope")
                 .max_setup_len;
-        let env_plain = matrix_envelope_for_schedule::<fp128::D64OneHot>(&plain_sched, &opening_batch)
-            .expect("plain envelope")
-            .max_setup_len;
+        let env_plain =
+            matrix_envelope_for_schedule::<fp128::D64OneHot>(&plain_sched, &opening_batch)
+                .expect("plain envelope")
+                .max_setup_len;
         assert!(
             env_tiered <= env_plain,
             "batch={batch}: tiered envelope {env_tiered} must be <= non-tiered {env_plain}"

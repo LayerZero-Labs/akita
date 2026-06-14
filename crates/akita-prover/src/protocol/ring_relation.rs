@@ -24,7 +24,7 @@ use akita_types::{
     gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
 };
-use akita_types::{OpeningBatch, CommitmentRouting, LevelParams, RingRelationInstance};
+use akita_types::{CommitmentRouting, LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::ring_relation_witness::RingRelationWitness;

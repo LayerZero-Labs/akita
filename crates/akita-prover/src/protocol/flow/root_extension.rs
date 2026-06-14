@@ -130,8 +130,7 @@ where
         shared_opening_point,
     )?;
     append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
-    let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let PreparedRootExtensionOpeningReduction {
         openings: _,
         partials,

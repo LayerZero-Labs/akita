@@ -18,9 +18,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
-    OpeningBatch, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, Step,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder, LevelParams,
+    OpeningBatch, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;

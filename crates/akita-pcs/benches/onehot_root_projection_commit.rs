@@ -122,8 +122,8 @@ where
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let opening_batch =
         OpeningBatch::same_point(num_vars, num_polys).expect("benchmark opening_batch");
-    let params =
-        Cfg::get_params_for_batched_commitment(&opening_batch).expect("benchmark commitment params");
+    let params = Cfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("benchmark commitment params");
 
     let mut group = c.benchmark_group(format!(
         "onehot_root_projection_commit/{label}/nv{num_vars}_np{num_polys}"

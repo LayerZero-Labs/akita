@@ -12,8 +12,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
-use akita_types::OpeningBatch;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::OpeningBatch;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -68,9 +68,10 @@ fn expected_same_point_batched_shape(
     num_claims: usize,
     _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
-    let opening_batch = akita_types::OpeningBatch::same_point(max_num_vars, num_claims)
-        .expect("opening_batch");
-    let schedule = OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
+    let opening_batch =
+        akita_types::OpeningBatch::same_point(max_num_vars, num_claims).expect("opening_batch");
+    let schedule =
+        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };

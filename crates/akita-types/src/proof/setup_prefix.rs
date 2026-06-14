@@ -10,7 +10,7 @@ use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
     AkitaCommitmentHint, FlatRingVec, RingCommitment,
 };
-use crate::{OpeningBatch, LevelParams};
+use crate::{LevelParams, OpeningBatch};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -946,7 +946,7 @@ fn read_limited_usize<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpeningBatch, LevelParams, SisModulusFamily};
+    use crate::{LevelParams, OpeningBatch, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {

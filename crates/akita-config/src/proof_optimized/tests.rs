@@ -172,8 +172,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
         OpeningBatch::same_point(30, 4).expect("batched same-point opening batch");
     let real_params =
         Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
-    let singleton_opening_batch =
-        OpeningBatch::same_point(30, 1).expect("singleton opening batch");
+    let singleton_opening_batch = OpeningBatch::same_point(30, 1).expect("singleton opening batch");
     let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
         .expect("singleton commit params");
 
@@ -267,7 +266,8 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
 
 #[test]
 fn setup_matrix_scan_uses_one_shared_opening_point() {
-    let opening_batch = worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
+    let opening_batch =
+        worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
     assert_eq!(opening_batch.num_polys_per_commitment_group(), &[4]);
 }
 

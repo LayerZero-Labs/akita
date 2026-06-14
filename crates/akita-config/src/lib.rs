@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningBatch, DecompositionParams,
-    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, OpeningBatch,
+    Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -533,7 +533,8 @@ mod fp128_policy_tests {
         );
 
         let opening_batch = OpeningBatch::same_point(20, 1).expect("singleton opening batch");
-        let schedule = SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
+        let schedule =
+            SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
             panic!("small-field schedule should start with a root fold");
         };

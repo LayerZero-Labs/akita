@@ -1,7 +1,7 @@
 //! Verifier helpers for zero-fold proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, OpeningBatch, CleartextWitnessProof};
+use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, OpeningBatch};
 
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
@@ -128,8 +128,7 @@ mod tests {
             E::new(F::from_u64(4), F::from_u64(4)),
             E::new(F::from_u64(4), F::from_u64(4)),
         ];
-        let opening_batch =
-            OpeningBatch::same_point(1, 2).expect("valid single-point batch");
+        let opening_batch = OpeningBatch::same_point(1, 2).expect("valid single-point batch");
 
         verify_zero_fold_openings_with_opening_batch(
             &witnesses,

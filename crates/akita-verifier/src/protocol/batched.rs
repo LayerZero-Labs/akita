@@ -15,8 +15,8 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, OpeningBatch, CleartextWitnessProof,
-    LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, LevelParams,
+    OpeningBatch, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
     VerifierClaims,
 };
 use std::array::from_fn;
@@ -117,9 +117,7 @@ where
         ));
     }
     let expected_witness_len = 1usize
-        .checked_shl(
-            u32::try_from(opening_batch.num_vars()).map_err(|_| AkitaError::InvalidProof)?,
-        )
+        .checked_shl(u32::try_from(opening_batch.num_vars()).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
         .num_blocks

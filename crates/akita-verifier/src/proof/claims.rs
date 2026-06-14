@@ -2,8 +2,8 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, verifier_claims_to_opening_batch, AkitaExpandedSetup,
-    OpeningBatchLimits, OpeningBatch, VerifierClaims,
+    validate_batched_inputs, verifier_claims_to_opening_batch, AkitaExpandedSetup, OpeningBatch,
+    OpeningBatchLimits, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.

@@ -46,18 +46,18 @@ use akita_types::check_tensor_extension_opening_claim;
 #[cfg(feature = "zk")]
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_opening_batch_shape_to_transcript,
-    append_claim_values_to_transcript, batched_eval_target_from_opening_batch, build_trace_claim_root,
-    ensure_trace_stage2_supported, flatten_batched_commitment_rows, generate_y,
-    prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
+    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
+    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
+    build_trace_claim_root, ensure_trace_stage2_supported, flatten_batched_commitment_rows,
+    generate_y, prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
     trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, OpeningBatch, CleartextWitnessProof,
-    CommitmentRouting, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams,
-    MRowLayout, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CommitmentRouting,
+    ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout,
+    OpeningBatch, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding,
     Schedule, SetupContributionMode, SetupSumcheckProof, Step, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim,
@@ -927,8 +927,7 @@ where
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients =
-        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     #[cfg(feature = "zk")]
     let opening_masks = vec![None; num_claims];
 

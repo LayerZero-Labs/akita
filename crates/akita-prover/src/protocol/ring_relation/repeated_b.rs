@@ -171,7 +171,8 @@ where
         .checked_mul(planes_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
     #[cfg(not(feature = "zk"))]
-    let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_commitment_group.len()];
+    let b_blinding_digits =
+        vec![FlatDigitBlocks::<D>::empty(); num_polys_per_commitment_group.len()];
     if b_blinding_digits.len() != num_polys_per_commitment_group.len() {
         return Err(AkitaError::InvalidProof);
     }
@@ -179,7 +180,10 @@ where
     let mut groups = Vec::with_capacity(num_polys_per_commitment_group.len());
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for (&group_poly_count, blinding) in num_polys_per_commitment_group.iter().zip(b_blinding_digits.iter()) {
+    for (&group_poly_count, blinding) in num_polys_per_commitment_group
+        .iter()
+        .zip(b_blinding_digits.iter())
+    {
         let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
@@ -266,7 +270,12 @@ mod tests {
         let blocks_per_claim = 1;
         let block_width = 3;
         let log_basis = 3;
-        let row_width = num_polys_per_commitment_group.iter().copied().max().unwrap() * block_width;
+        let row_width = num_polys_per_commitment_group
+            .iter()
+            .copied()
+            .max()
+            .unwrap()
+            * block_width;
         let setup_rows: Vec<CyclotomicRing<F, D>> = (0..(n_b * row_width))
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|k| {

@@ -1,7 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{OpeningBatch, CleartextWitnessShape, LevelParams, RingOpeningPoint};
+use crate::{CleartextWitnessShape, LevelParams, OpeningBatch, RingOpeningPoint};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Public inputs that deterministically select one level's active Akita params.

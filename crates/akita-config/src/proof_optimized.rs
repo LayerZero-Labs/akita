@@ -166,7 +166,8 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     };
 
     Ok(Some(matrix_envelope_for_schedule::<Cfg>(
-        &schedule, opening_batch,
+        &schedule,
+        opening_batch,
     )?))
 }
 

@@ -10,9 +10,9 @@ use super::build::{
 };
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, OpeningBatch, LevelParams,
-    PreparedOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, TraceFieldBlockOpening,
-    TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
+    embed_ring_subfield_scalar, BasisMode, LevelParams, OpeningBatch, PreparedOpeningPoint,
+    RingRelationSegmentLayout, RingSubfieldEncoding, TraceFieldBlockOpening, TraceRingBlockOpening,
+    TraceTerm, TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.

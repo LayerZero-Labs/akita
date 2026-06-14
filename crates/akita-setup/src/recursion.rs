@@ -11,8 +11,8 @@ use akita_prover::{
 use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, OpeningBatch,
-    LevelParams, SETUP_OFFLOAD_D_SETUP,
+    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams, OpeningBatch,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, const D: usize, B>(

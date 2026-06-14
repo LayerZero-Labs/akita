@@ -16,8 +16,8 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaVerifierSetup, AppendToTranscript, OpeningBatch, DecompositionParams,
-    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
+    AkitaVerifierSetup, AppendToTranscript, DecompositionParams, FlatRingVec, MRowLayout,
+    OpeningBatch, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;

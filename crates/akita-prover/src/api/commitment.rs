@@ -11,7 +11,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, OpeningBatch, FlatDigitBlocks, LevelParams, RingCommitment,
+    AkitaExpandedSetup, FlatDigitBlocks, LevelParams, OpeningBatch, RingCommitment,
     RingSubfieldEncoding,
 };
 

@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::{OpeningBatch, CommitmentRouting};
+use super::{CommitmentRouting, OpeningBatch};
 use crate::RingSubfieldEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,

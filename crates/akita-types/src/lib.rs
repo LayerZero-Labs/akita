@@ -42,7 +42,7 @@ pub use field_reduction::{
     RingSubfieldEncoding, SubfieldParams,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_opening_batch, digest_level_params, digest_serializable,
+    digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
     ProtocolFeatureSet, SetupSection,
 };
@@ -64,7 +64,7 @@ pub use proof::{
 };
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
-    append_opening_batch_shape_to_transcript, append_claim_values_to_transcript,
+    append_claim_values_to_transcript, append_opening_batch_shape_to_transcript,
     batched_eval_target_from_opening_batch, checked_total_claims, derive_public_matrix_flat,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_setup_prefix_len, prepare_opening_point, relation_claim_from_rows,
@@ -79,12 +79,11 @@ pub use proof::{
     AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
-    OpeningBatch, OpeningBatchInput, OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind,
-    OpeningClaimSlot, OpeningClaimSlotShape, CleartextWitnessProof, CleartextWitnessShape,
-    CommitmentRouting, CommitmentVerifier, CommittedOpenings, DummyProof,
-    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
-    FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningPoints, PackedDigits,
-    PreparedOpeningPoint, PublicMatrixSeed,
+    CleartextWitnessProof, CleartextWitnessShape, CommitmentRouting, CommitmentVerifier,
+    CommittedOpenings, DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
+    FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatch,
+    OpeningBatchInput, OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot,
+    OpeningClaimSlotShape, OpeningPoints, PackedDigits, PreparedOpeningPoint, PublicMatrixSeed,
     RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance,
     RingRelationSegmentLayout, RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,

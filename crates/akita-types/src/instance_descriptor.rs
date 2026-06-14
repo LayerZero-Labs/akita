@@ -7,8 +7,8 @@
 
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, OpeningBatch, DecompositionParams,
-    LevelParams, Schedule, SisModulusFamily,
+    detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
+    OpeningBatch, Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{

@@ -54,7 +54,8 @@ mod non_zk_aggregated_cases {
         init_rayon_pool();
         run_on_large_stack(move || {
             let opening_batch = OpeningBatch::same_point(nv, batch_size).expect("opening_batch");
-            let layout = OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+            let layout =
+                OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
             let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -155,7 +156,8 @@ mod non_zk_aggregated_cases {
         init_rayon_pool();
         run_on_large_stack(move || {
             let opening_batch = OpeningBatch::same_point(nv, batch_size).expect("opening_batch");
-            let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+            let layout =
+                DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
             let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))

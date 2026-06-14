@@ -174,7 +174,13 @@ impl SetupContributionFixture {
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
-        let n_cols_t = shape.num_polys_per_commitment_group.iter().copied().max().unwrap() * cols_per_poly_t;
+        let n_cols_t = shape
+            .num_polys_per_commitment_group
+            .iter()
+            .copied()
+            .max()
+            .unwrap()
+            * cols_per_poly_t;
         // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
         // commits `tier_split·n_b·depth_open` decomposed digits.
         let f_stride = shape.tier_split * shape.n_b * shape.depth_open;

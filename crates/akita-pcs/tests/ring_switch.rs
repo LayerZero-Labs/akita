@@ -104,7 +104,7 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, BasisMode, BlockOrder, OpeningBatch, MRowLayout,
+        ring_opening_point_from_field, BasisMode, BlockOrder, MRowLayout, OpeningBatch,
         RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
@@ -114,10 +114,7 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn single_point_group_opening_batch(
-        num_vars: usize,
-        group_poly_count: usize,
-    ) -> OpeningBatch {
+    fn single_point_group_opening_batch(num_vars: usize, group_poly_count: usize) -> OpeningBatch {
         OpeningBatch::same_point(num_vars, group_poly_count)
             .expect("valid single-point opening_batch")
     }

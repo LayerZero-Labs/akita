@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{OpeningBatch, CommitmentRouting};
+use akita_types::{CommitmentRouting, OpeningBatch};
 
 /// Prepare one recursive fold level for relation verification.
 ///
