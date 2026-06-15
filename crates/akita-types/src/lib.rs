@@ -42,6 +42,7 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
     SubfieldParams,
 };
+pub use golomb_rice::ZFoldEncodingStats;
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
@@ -81,13 +82,13 @@ pub use proof::{
     terminal_witness_segment_layout, terminal_witness_segment_layout_from_counts,
     terminal_witness_transcript_parts, validate_batched_inputs,
     validate_public_matrix_matches_seed, validate_segment_typed_z_payload,
-    verifier_claims_to_opening_batch, AkitaBatchedFoldRoot, AkitaBatchedProof,
-    AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaProofStepShape,
-    AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape,
-    AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup, CleartextWitnessProof,
-    CleartextWitnessShape, CommitmentVerifier, CommittedOpenings, DummyProof,
-    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
+    verifier_claims_to_opening_batch, z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
+    AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
+    CleartextWitnessProof, CleartextWitnessShape, CommitmentVerifier, CommittedOpenings,
+    DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatch, OpeningBatchInput,
     OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot, OpeningClaimSlotShape,
     OpeningPoints, PackedDigits, PreparedOpeningPoint, PublicMatrixSeed, RelationOnlyStage2Inputs,

@@ -2,13 +2,85 @@ use akita_field::{CanonicalField, FieldCore};
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    layout::proof_size::field_bytes, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    layout::proof_size::field_bytes, tail_segment_multiplicities_from_layout,
+    z_fold_encoding_stats_from_segment, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+/// Emit fold-response `z` coefficient distribution and Golomb model comparison.
+pub(crate) fn report_z_fold_encoding_stats(label: &str, stats: &ZFoldEncodingStats) {
+    tracing::info!(
+        label,
+        z_coords = stats.coord_count,
+        beta_inf = stats.beta_inf,
+        z_max_abs = stats.observed_max_abs,
+        z_mean_abs = stats.mean_abs,
+        z_median_abs = stats.median_abs,
+        z_p90_abs = stats.p90_abs,
+        z_p99_abs = stats.p99_abs,
+        rice_k_beta = stats.rice_k_beta,
+        rice_k_empirical = stats.rice_k_empirical,
+        bits_per_coord_k_beta = stats.bits_per_coord_k_beta,
+        bits_per_coord_k_empirical = stats.bits_per_coord_k_empirical,
+        bits_per_coord_packed = stats.bits_per_coord_packed_digits,
+        z_payload_bytes = stats.actual_payload_bytes,
+        "z fold encoding stats"
+    );
+    eprintln!(
+        "[{label}] z_fold_stats: coords={} beta_inf={} max_abs={} mean_abs={:.1} \
+         median_abs={} p90={} p99={} k_beta={} k_empirical={} \
+         bits/coord@k_beta={:.2} bits/coord@k_emp={:.2} \
+         bits/coord@packed={:.2} z_bytes={}",
+        stats.coord_count,
+        stats.beta_inf,
+        stats.observed_max_abs,
+        stats.mean_abs,
+        stats.median_abs,
+        stats.p90_abs,
+        stats.p99_abs,
+        stats.rice_k_beta,
+        stats.rice_k_empirical,
+        stats.bits_per_coord_k_beta,
+        stats.bits_per_coord_k_empirical,
+        stats.bits_per_coord_packed_digits,
+        stats.actual_payload_bytes,
+    );
+}
+
+pub(crate) fn report_z_fold_encoding_stats_from_proof<FF, L>(
+    label: &str,
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+    field_bits: u32,
+) where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
+        return;
+    };
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let Ok(terminal_scheduled) = schedule.get_execution_schedule(terminal_fold_level) else {
+        return;
+    };
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return;
+    };
+    let Ok(stats) =
+        z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+    else {
+        return;
+    };
+    report_z_fold_encoding_stats(label, &stats);
 }
 
 /// Surface the prepared-setup memory footprint: the plain shared setup vector

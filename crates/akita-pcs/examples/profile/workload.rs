@@ -1,6 +1,7 @@
 use crate::report::{
     emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
+    report_z_fold_encoding_stats_from_proof,
 };
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
@@ -441,6 +442,12 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             plan,
         );
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
+        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            plan,
+            Cfg::decomposition().field_bits(),
+        );
     } else {
         let opening_batch =
             OpeningBatch::same_point(pt.len(), 1).expect("same-point opening batch");
@@ -454,6 +461,12 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             &schedule,
         );
         emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
+        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            &schedule,
+            Cfg::decomposition().field_bits(),
+        );
     }
 
     let t0 = Instant::now();
@@ -824,6 +837,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             plan,
         );
         emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
+        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            plan,
+            Cfg::decomposition().field_bits(),
+        );
     } else {
         report_proof_size_against_planner(
             label,
@@ -837,6 +856,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             label,
             &schedule,
             num_polys,
+            Cfg::decomposition().field_bits(),
+        );
+        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            &schedule,
             Cfg::decomposition().field_bits(),
         );
     }

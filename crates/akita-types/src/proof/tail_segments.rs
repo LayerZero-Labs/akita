@@ -8,8 +8,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid};
 
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_planner_bits_per_z_coord,
-    golomb_rice_zigzag_width_from_beta, optimal_rice_k,
+    analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
+    golomb_rice_planner_bits_per_z_coord, golomb_rice_zigzag_width_from_beta, optimal_rice_k,
+    ZFoldEncodingStats,
 };
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
@@ -261,9 +262,7 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &FlatRingVec<F>) -
 /// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
 ///
 /// Rice `k` and zigzag width `W` are priced from the per-coefficient fold-response
-/// bound `β_inf` ([`fold_witness_beta`]), not the level variance envelope
-/// [`LevelParams::fold_response_sigma`], which aggregates `T_level · ρ²` and is
-/// far too loose for per-coordinate coding.
+/// bound `β_inf` ([`fold_witness_beta`]).
 ///
 /// # Errors
 ///
@@ -283,6 +282,42 @@ pub fn tail_golomb_rice_z_params(
     let k = optimal_rice_k(beta);
     let w = golomb_rice_zigzag_width_from_beta(beta);
     Ok((k, w))
+}
+
+/// Distribution / Golomb model audit for a realized segment-typed `z` payload.
+///
+/// # Errors
+///
+/// Propagates decode and public-parameter setup errors.
+pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
+    witness: &SegmentTypedWitness<F>,
+    lp: &LevelParams,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    field_bits: u32,
+) -> Result<ZFoldEncodingStats, AkitaError> {
+    let (rice_k, zigzag_w) =
+        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let z_values = golomb_rice_decode_vec(
+        &witness.z_payload,
+        witness.layout.z_coords,
+        rice_k,
+        zigzag_w,
+    )?;
+    let challenge = FoldChallengeNorms {
+        infinity_norm: lp.challenge_infinity_norm() as u128,
+        l1_norm: lp.challenge_l1_mass() as u128,
+    };
+    let beta = fold_witness_beta(lp.r_vars, num_t_vectors, challenge, lp.fold_witness_norms())?;
+    let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
+    analyze_z_fold_golomb_encoding(
+        &z_values,
+        beta,
+        zigzag_w,
+        depth_fold,
+        lp.log_basis,
+        witness.z_payload.len(),
+    )
 }
 
 /// Derive the terminal tail segment layout from public schedule data.

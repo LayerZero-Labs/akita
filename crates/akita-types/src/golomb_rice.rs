@@ -67,6 +67,10 @@ impl BitWriter {
         self.bytes
     }
 
+    fn bit_len(&self) -> usize {
+        self.bit_pos
+    }
+
     fn write_bit(&mut self, bit: bool) {
         let byte_idx = self.bit_pos / 8;
         let bit_idx = self.bit_pos % 8;
@@ -164,6 +168,121 @@ pub fn golomb_rice_planner_bits_per_z_coord(rice_k: u32) -> usize {
     (rice_k as usize).saturating_add(4)
 }
 
+/// Golomb-Rice bit length for one coordinate at public `(k, w)`.
+pub fn golomb_rice_bits_for_coord(n: i64, k: u32, w: u32) -> Result<usize, AkitaError> {
+    let mut writer = BitWriter::default();
+    golomb_rice_encode_one_into(&mut writer, n, k, w)?;
+    Ok(writer.bit_len())
+}
+
+/// Total Golomb-Rice bits for a vector at public `(k, w)`.
+pub fn golomb_rice_total_bits(values: &[i64], k: u32, w: u32) -> Result<usize, AkitaError> {
+    values.iter().try_fold(0usize, |acc, &n| {
+        golomb_rice_bits_for_coord(n, k, w)?
+            .checked_add(acc)
+            .ok_or(AkitaError::InvalidSetup(
+                "golomb-rice total bits overflow".to_string(),
+            ))
+    })
+}
+
+/// Empirical Rice `k` minimizing total Golomb bits on a realized sample.
+#[must_use]
+pub fn empirical_optimal_rice_k(values: &[i64], w: u32, k_max: u32) -> u32 {
+    (0..=k_max)
+        .min_by_key(|&k| golomb_rice_total_bits(values, k, w).unwrap_or(usize::MAX))
+        .unwrap_or(0)
+}
+
+/// Distribution summary for terminal fold-response `z` coefficients.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZFoldEncodingStats {
+    pub coord_count: usize,
+    pub beta_inf: u128,
+    pub observed_max_abs: u64,
+    pub mean_abs: f64,
+    pub median_abs: u64,
+    pub p90_abs: u64,
+    pub p99_abs: u64,
+    pub zigzag_w: u32,
+    pub rice_k_beta: u32,
+    pub rice_k_empirical: u32,
+    pub bits_per_coord_k_beta: f64,
+    pub bits_per_coord_k_empirical: f64,
+    pub bits_per_coord_packed_digits: f64,
+    pub total_bits_k_beta: usize,
+    pub total_bits_k_empirical: usize,
+    pub total_bits_packed_digits: usize,
+    pub actual_payload_bytes: usize,
+}
+
+fn percentile_abs(sorted_abs: &[u64], p_num: usize, p_den: usize) -> u64 {
+    if sorted_abs.is_empty() {
+        return 0;
+    }
+    let idx = sorted_abs
+        .len()
+        .saturating_mul(p_num)
+        .saturating_div(p_den)
+        .min(sorted_abs.len() - 1);
+    sorted_abs[idx]
+}
+
+/// Analyze realized `z` coefficients against public bounds and Golomb models.
+///
+/// `values` are centered fold-response ring coefficients (one per `z_coord`).
+pub fn analyze_z_fold_golomb_encoding(
+    values: &[i64],
+    beta_inf: u128,
+    zigzag_w: u32,
+    depth_fold: usize,
+    log_basis: u32,
+    actual_payload_bytes: usize,
+) -> Result<ZFoldEncodingStats, AkitaError> {
+    let rice_k_beta = optimal_rice_k(beta_inf);
+    let k_search_hi = rice_k_beta.saturating_add(4);
+    let rice_k_empirical = empirical_optimal_rice_k(values, zigzag_w, k_search_hi);
+
+    let mut abs_vals: Vec<u64> = values.iter().map(|&n| n.unsigned_abs()).collect();
+    abs_vals.sort_unstable();
+    let observed_max_abs = *abs_vals.last().unwrap_or(&0);
+    let sum_abs: u128 = abs_vals.iter().map(|&a| u128::from(a)).sum();
+    let mean_abs = if values.is_empty() {
+        0.0
+    } else {
+        sum_abs as f64 / values.len() as f64
+    };
+
+    let total_bits_k_beta = golomb_rice_total_bits(values, rice_k_beta, zigzag_w)?;
+    let total_bits_k_empirical = golomb_rice_total_bits(values, rice_k_empirical, zigzag_w)?;
+    let bits_per_digit_plane = log_basis as usize;
+    let total_bits_packed_digits = values
+        .len()
+        .saturating_mul(depth_fold)
+        .saturating_mul(bits_per_digit_plane);
+    let n = values.len().max(1) as f64;
+
+    Ok(ZFoldEncodingStats {
+        coord_count: values.len(),
+        beta_inf,
+        observed_max_abs,
+        mean_abs,
+        median_abs: percentile_abs(&abs_vals, 50, 100),
+        p90_abs: percentile_abs(&abs_vals, 90, 100),
+        p99_abs: percentile_abs(&abs_vals, 99, 100),
+        zigzag_w,
+        rice_k_beta,
+        rice_k_empirical,
+        bits_per_coord_k_beta: total_bits_k_beta as f64 / n,
+        bits_per_coord_k_empirical: total_bits_k_empirical as f64 / n,
+        bits_per_coord_packed_digits: total_bits_packed_digits as f64 / n,
+        total_bits_k_beta,
+        total_bits_k_empirical,
+        total_bits_packed_digits,
+        actual_payload_bytes,
+    })
+}
+
 fn golomb_rice_encode_one_into(
     writer: &mut BitWriter,
     n: i64,
@@ -256,9 +375,9 @@ mod tests {
     fn optimal_rice_k_tracks_per_coefficient_scale() {
         let beta = 6_912u128;
         assert_eq!(optimal_rice_k(beta), 12);
-        let level_sigma = 6_189_618u128;
+        let level_variance_envelope = 6_189_618u128;
         assert!(
-            optimal_rice_k(beta) < optimal_rice_k(level_sigma),
+            optimal_rice_k(beta) < optimal_rice_k(level_variance_envelope),
             "per-coordinate k must use β_inf, not the level variance envelope"
         );
     }
