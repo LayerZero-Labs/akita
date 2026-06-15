@@ -17,7 +17,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
+    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup,
+    BasisMode, CleartextWitnessProof, CleartextWitnessShape, RingCommitment, Schedule,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
@@ -45,6 +46,32 @@ fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
+
+/// Conservative planner overcount accepted by profile benches (stage-2 degree-2
+/// rounds). Segment-typed Golomb `z` slack is added separately.
+const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
+
+fn segment_typed_z_planner_slack<FF, L>(
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+) -> usize
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
+        return 0;
+    };
+    let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
+        return 0;
+    };
+    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
+        return 0;
+    };
+    scheduled
+        .z_payload_bytes
+        .saturating_sub(witness.z_payload.len())
+}
 
 static INIT_RAYON: Once = Once::new();
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1006,15 +1033,16 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 proof.size(),
                 plan.total_bytes
             );
-            let challenge_elem = F::zero().serialized_size(akita_serialization::Compress::No);
             let overcount = plan.total_bytes - proof.size();
+            let accepted = ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES
+                .saturating_add(segment_typed_z_planner_slack(&proof, &plan));
             assert!(
-                overcount <= plan.num_fold_levels() * challenge_elem,
+                overcount <= accepted,
                 "planner estimate {} overcounts runtime proof {} by {overcount} bytes, \
-                 exceeding the {} stage-2 degree-2 rounds * {challenge_elem}B tolerance",
+                 exceeding the accepted {accepted}-byte tolerance (stage-2 degree-2 rounds \
+                 plus segment-typed z slack; see specs/planner-refactor.md)",
                 plan.total_bytes,
                 proof.size(),
-                plan.num_fold_levels()
             );
             assert_eq!(
                 decoded

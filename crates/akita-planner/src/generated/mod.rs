@@ -165,18 +165,6 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     }
 }
 
-/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries
-/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with
-/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored
-/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.
-#[cfg(not(feature = "zk"))]
-pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        sis_family: SisModulusFamily::Q128,
-        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
-    }
-}
-
 pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -249,6 +237,18 @@ pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q64,
         entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
+    }
+}
+
+/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries
+/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with
+/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored
+/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.
+#[cfg(not(feature = "zk"))]
+pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
     }
 }
 // @generated schedule module wiring end
