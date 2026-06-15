@@ -327,8 +327,7 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce();
-    let grind_observation =
-        take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
     let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
@@ -467,8 +466,7 @@ where
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
-    let grind_observation =
-        take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
     let grind_attempts = grind_observation.grind_probe_count;
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
@@ -606,8 +604,7 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = fold.fold_grind_nonce;
-    let grind_observation =
-        take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
     let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
@@ -735,12 +732,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         "[{label}] proof accounting must exactly match serialized proof size"
     );
     let mut obs_idx = 0usize;
-    print_batched_root_breakdown::<FF, L, D>(
-        label,
-        &proof.root,
-        grind_observations,
-        &mut obs_idx,
-    );
+    print_batched_root_breakdown::<FF, L, D>(label, &proof.root, grind_observations, &mut obs_idx);
     for (i, step) in proof.steps.iter().enumerate() {
         let level_idx = i + 1;
         match step {

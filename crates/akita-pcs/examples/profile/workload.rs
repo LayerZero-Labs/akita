@@ -10,8 +10,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex,
-    FoldGrindObserverGuard, OneHotPoly,
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
+    FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;

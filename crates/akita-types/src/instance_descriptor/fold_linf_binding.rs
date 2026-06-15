@@ -145,12 +145,7 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
                 validate,
                 &(),
             )?,
-            grind_probe_order: u8::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
+            grind_probe_order: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

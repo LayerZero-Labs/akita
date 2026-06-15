@@ -127,10 +127,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::SisModulusFamily;
     use akita_transcript::AkitaTranscript;
+    use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
+    use akita_types::SisModulusFamily;
 
     type F = akita_field::Prime128Offset275;
 
@@ -160,8 +160,8 @@ mod tests {
         let transcript = AkitaTranscript::<F>::prover(b"grind/order", b"instance");
         let mut binding = FoldLinfProtocolBinding::CURRENT;
         binding.grind_probe_order = FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE;
-        let shuffled = grind_probe_nonces(&contract, &binding, &transcript, &lp, 1)
-            .expect("shuffle order");
+        let shuffled =
+            grind_probe_nonces(&contract, &binding, &transcript, &lp, 1).expect("shuffle order");
         let sequential = (0..contract.max_nonce_exclusive).collect::<Vec<_>>();
         assert_ne!(shuffled, sequential);
     }

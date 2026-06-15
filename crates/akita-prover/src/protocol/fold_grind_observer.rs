@@ -17,10 +17,12 @@ struct ObserverState {
 }
 
 thread_local! {
-    static FOLD_GRIND_OBSERVER: RefCell<ObserverState> = RefCell::new(ObserverState {
-        active: false,
-        records: Vec::new(),
-    });
+    static FOLD_GRIND_OBSERVER: RefCell<ObserverState> = const {
+        RefCell::new(ObserverState {
+            active: false,
+            records: Vec::new(),
+        })
+    };
 }
 
 /// RAII guard that activates fold-grind observation on the current thread.
