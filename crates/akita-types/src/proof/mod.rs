@@ -88,7 +88,7 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use tail_segments::{
-    build_segment_typed_witness, emit_witness_planes_block_inner,
+    build_segment_typed_witness, e_folded_segment_bytes, emit_witness_planes_block_inner,
     emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
     tail_golomb_rice_z_params, tail_segment_layout, tail_segment_multiplicities_from_layout,

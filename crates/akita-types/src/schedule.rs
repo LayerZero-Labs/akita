@@ -525,15 +525,7 @@ fn append_direct_witness_shape_descriptor_bytes(
         }
         CleartextWitnessShape::SegmentTyped(shape) => {
             bytes.push(2);
-            push_usize(bytes, shape.layout.ring_dimension);
-            push_u32(bytes, shape.layout.log_basis);
-            bytes.push(u8::from(shape.layout.z_first));
-            push_usize(bytes, shape.layout.z_coords);
-            push_usize(bytes, shape.layout.e_field_elems);
-            push_usize(bytes, shape.layout.t_field_elems);
-            push_usize(bytes, shape.layout.r_field_elems);
-            push_usize(bytes, shape.layout.logical_num_elems);
-            push_usize(bytes, shape.z_payload_bytes);
+            shape.append_descriptor_bytes(bytes);
         }
     }
 }

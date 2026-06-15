@@ -109,16 +109,7 @@ where
     F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
 {
-    let mut bytes = Vec::new();
-    for ring in e_folded {
-        for coeff in ring.coefficients() {
-            coeff
-                .serialize_with_mode(&mut bytes, akita_serialization::Compress::No)
-                .map_err(|_| {
-                    AkitaError::InvalidInput("terminal e_folded absorb failed".to_string())
-                })?;
-        }
-    }
+    let bytes = akita_types::e_folded_segment_bytes::<F, D>(e_folded)?;
     if bytes.is_empty() {
         return Err(AkitaError::InvalidInput(
             "terminal e_folded absorb cannot be empty".to_string(),

@@ -5,8 +5,11 @@ use std::io::Write;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid};
+use akita_serialization::{
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+};
 
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
     golomb_rice_planner_bits_per_z_coord, golomb_rice_zigzag_width_from_beta, optimal_rice_k,
@@ -49,19 +52,159 @@ pub struct SegmentTypedWitness<F: FieldCore> {
     pub r_fields: FlatRingVec<F>,
 }
 
-impl Valid for SegmentTypedWitnessShape {
+impl TailSegmentLayout {
+    /// Append canonical Fiat-Shamir descriptor bytes (fixed little-endian).
+    ///
+    /// Single source of truth for the layout field order shared by the
+    /// schedule digest and [`AkitaSerialize`].
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.ring_dimension);
+        push_u32(bytes, self.log_basis);
+        bytes.push(u8::from(self.z_first));
+        push_usize(bytes, self.z_coords);
+        push_usize(bytes, self.e_field_elems);
+        push_usize(bytes, self.t_field_elems);
+        push_usize(bytes, self.r_field_elems);
+        push_usize(bytes, self.logical_num_elems);
+    }
+}
+
+impl Valid for TailSegmentLayout {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.layout.ring_dimension == 0 {
+        if self.ring_dimension == 0 {
             return Err(SerializationError::InvalidData(
                 "tail segment layout has zero ring dimension".to_string(),
             ));
         }
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for TailSegmentLayout {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.ring_dimension
+            .serialize_with_mode(&mut writer, compress)?;
+        self.log_basis.serialize_with_mode(&mut writer, compress)?;
+        u8::from(self.z_first).serialize_with_mode(&mut writer, compress)?;
+        self.z_coords.serialize_with_mode(&mut writer, compress)?;
+        self.e_field_elems
+            .serialize_with_mode(&mut writer, compress)?;
+        self.t_field_elems
+            .serialize_with_mode(&mut writer, compress)?;
+        self.r_field_elems
+            .serialize_with_mode(&mut writer, compress)?;
+        self.logical_num_elems
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.ring_dimension.serialized_size(compress)
+            + self.log_basis.serialized_size(compress)
+            + u8::from(self.z_first).serialized_size(compress)
+            + self.z_coords.serialized_size(compress)
+            + self.e_field_elems.serialized_size(compress)
+            + self.t_field_elems.serialized_size(compress)
+            + self.r_field_elems.serialized_size(compress)
+            + self.logical_num_elems.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for TailSegmentLayout {
+    type Context = ();
+
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let z_first = u8::deserialize_with_mode(&mut reader, compress, validate, &())? != 0;
+        let z_coords = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let e_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let t_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let r_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let logical_num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let out = Self {
+            ring_dimension,
+            log_basis,
+            z_first,
+            z_coords,
+            e_field_elems,
+            t_field_elems,
+            r_field_elems,
+            logical_num_elems,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl SegmentTypedWitnessShape {
+    /// Append canonical Fiat-Shamir descriptor bytes (fixed little-endian).
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        self.layout.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.z_payload_bytes);
+    }
+}
+
+impl Valid for SegmentTypedWitnessShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.layout.check()?;
         if self.layout.z_coords == 0 {
             return Err(SerializationError::InvalidData(
                 "tail segment z_coords is zero".to_string(),
             ));
         }
         Ok(())
+    }
+}
+
+impl AkitaSerialize for SegmentTypedWitnessShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.layout.serialize_with_mode(&mut writer, compress)?;
+        self.z_payload_bytes
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.layout.serialized_size(compress) + self.z_payload_bytes.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for SegmentTypedWitnessShape {
+    type Context = ();
+
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let layout =
+            TailSegmentLayout::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let z_payload_bytes = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let out = Self {
+            layout,
+            z_payload_bytes,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
@@ -275,6 +418,27 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &FlatRingVec<F>) -
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs()).expect("in-memory field serialization");
     out
+}
+
+/// Canonical transcript bytes for the terminal `e_folded` (`e`) segment.
+///
+/// Both the prover terminal absorb and the verifier's decoded-witness replay
+/// route through this single routine, so the bound `e_hat` bytes are identical
+/// by construction (it mirrors the `e_fields` the segment witness carries).
+///
+/// # Errors
+///
+/// Propagates field serialization failures as [`AkitaError::InvalidProof`].
+pub fn e_folded_segment_bytes<F, const D: usize>(
+    e_folded: &[CyclotomicRing<F, D>],
+) -> Result<Vec<u8>, AkitaError>
+where
+    F: FieldCore + CanonicalField + AkitaSerialize,
+{
+    let fields = FlatRingVec::from_ring_elems(e_folded).into_compact();
+    let mut out = Vec::new();
+    append_field_coeffs_vec(&mut out, fields.coeffs())?;
+    Ok(out)
 }
 
 /// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
@@ -862,8 +1026,6 @@ pub fn emit_witness_z_folded_planes_inner<const D: usize>(
         }
     }
 }
-
-use akita_serialization::Validate;
 
 #[cfg(test)]
 mod tests {

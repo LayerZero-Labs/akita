@@ -459,38 +459,7 @@ impl AkitaSerialize for CleartextWitnessShape {
             }
             Self::SegmentTyped(shape) => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .ring_dimension
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .log_basis
-                    .serialize_with_mode(&mut writer, compress)?;
-                u8::from(shape.layout.z_first).serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .z_coords
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .e_field_elems
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .t_field_elems
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .r_field_elems
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .layout
-                    .logical_num_elems
-                    .serialize_with_mode(&mut writer, compress)?;
-                shape
-                    .z_payload_bytes
-                    .serialize_with_mode(&mut writer, compress)?;
+                shape.serialize_with_mode(&mut writer, compress)?;
             }
         }
         Ok(())
@@ -503,17 +472,7 @@ impl AkitaSerialize for CleartextWitnessShape {
                 tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
             }
             Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
-            Self::SegmentTyped(shape) => {
-                tag + shape.layout.ring_dimension.serialized_size(compress)
-                    + shape.layout.log_basis.serialized_size(compress)
-                    + 1usize
-                    + shape.layout.z_coords.serialized_size(compress)
-                    + shape.layout.e_field_elems.serialized_size(compress)
-                    + shape.layout.t_field_elems.serialized_size(compress)
-                    + shape.layout.r_field_elems.serialized_size(compress)
-                    + shape.layout.logical_num_elems.serialized_size(compress)
-                    + shape.z_payload_bytes.serialized_size(compress)
-            }
+            Self::SegmentTyped(shape) => tag + shape.serialized_size(compress),
         }
     }
 }
@@ -538,36 +497,14 @@ impl AkitaDeserialize for CleartextWitnessShape {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self::FieldElements(coeff_len)
             }
-            2 => {
-                let ring_dimension =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let z_first = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let z_coords = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let e_field_elems =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let t_field_elems =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let r_field_elems =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let logical_num_elems =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let z_payload_bytes =
-                    usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                Self::SegmentTyped(crate::proof::SegmentTypedWitnessShape {
-                    layout: crate::proof::TailSegmentLayout {
-                        ring_dimension,
-                        log_basis,
-                        z_first: z_first != 0,
-                        z_coords,
-                        e_field_elems,
-                        t_field_elems,
-                        r_field_elems,
-                        logical_num_elems,
-                    },
-                    z_payload_bytes,
-                })
-            }
+            2 => Self::SegmentTyped(
+                crate::proof::SegmentTypedWitnessShape::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?,
+            ),
             other => {
                 return Err(SerializationError::InvalidData(format!(
                     "unknown CleartextWitnessShape tag {other}"
