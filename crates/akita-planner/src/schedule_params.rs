@@ -20,11 +20,14 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, segment_typed_witness_upper_bound_bytes,
-    tail_golomb_rice_z_params, tail_segment_layout,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, SegmentTypedWitnessShape, Step,
+    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+};
+#[cfg(not(feature = "zk"))]
+use akita_types::{
+    segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
+    SegmentTypedWitnessShape,
 };
 
 use crate::PlannerPolicy;
@@ -374,12 +377,13 @@ fn terminal_segment_counts(
     terminal_fold_level: usize,
 ) -> (usize, usize, usize, usize) {
     if terminal_fold_level == 0 {
-        (key.num_w_vectors, 1, key.num_w_vectors, 1)
+        (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
     } else {
         (1, 1, 1, 1)
     }
 }
 
+#[cfg(not(feature = "zk"))]
 pub(crate) fn segment_typed_direct_witness_shape(
     terminal_lp: &LevelParams,
     field_bits: u32,
@@ -412,6 +416,7 @@ pub(crate) fn segment_typed_direct_witness_shape(
     ))
 }
 
+#[allow(clippy::too_many_arguments, unused_variables)]
 fn make_terminal_direct_step(
     current_w_len: usize,
     terminal_lp: &LevelParams,
@@ -420,15 +425,25 @@ fn make_terminal_direct_step(
     num_t_vectors: usize,
     num_public_rows: usize,
     num_commitment_groups: usize,
+    #[allow(unused_variables)] terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
-    let witness_shape = segment_typed_direct_witness_shape(
-        terminal_lp,
-        field_bits,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_commitment_groups,
-    )?;
+    let witness_shape = {
+        #[cfg(feature = "zk")]
+        {
+            CleartextWitnessShape::PackedDigits((current_w_len, terminal_log_basis))
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            segment_typed_direct_witness_shape(
+                terminal_lp,
+                field_bits,
+                num_w_vectors,
+                num_t_vectors,
+                num_public_rows,
+                num_commitment_groups,
+            )?
+        }
+    };
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
         current_w_len,
@@ -446,6 +461,7 @@ fn patch_suffix_terminal_direct(
     field_bits: u32,
     key: AkitaScheduleLookupKey,
     terminal_fold_level: usize,
+    terminal_log_basis: u32,
 ) -> Result<usize, AkitaError> {
     let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
         terminal_segment_counts(key, terminal_fold_level);
@@ -466,6 +482,7 @@ fn patch_suffix_terminal_direct(
         num_t_vectors,
         num_public_rows,
         num_commitment_groups,
+        terminal_log_basis,
     )?;
     Ok(suffix_sched
         .iter()
@@ -546,6 +563,7 @@ fn derive_optimal_suffix_schedule(
                 num_t_vectors,
                 num_public_rows,
                 num_commitment_groups,
+                current_lb,
             )?;
             let direct_bytes = step.direct_bytes;
             Some((direct_bytes, vec![Step::Direct(step)]))
@@ -610,6 +628,7 @@ fn derive_optimal_suffix_schedule(
                 field_bits,
                 key,
                 level,
+                lb,
             )?;
             let level_proof_size = level_proof_bytes(
                 field_bits,
@@ -1108,6 +1127,7 @@ pub fn find_schedule(
                     field_bits,
                     key,
                     0,
+                    candidate_log_basis,
                 )?;
                 let root_proof_size = level_proof_bytes(
                     field_bits,

@@ -362,6 +362,50 @@ pub fn tail_segment_layout(
     })
 }
 
+/// Recover tail multiplicities from a committed [`TailSegmentLayout`].
+///
+/// # Errors
+///
+/// Returns an error when the layout is inconsistent with `lp`.
+pub fn tail_segment_multiplicities_from_layout(
+    lp: &LevelParams,
+    layout: &TailSegmentLayout,
+) -> Result<(usize, usize, usize), AkitaError> {
+    let d = layout.ring_dimension;
+    if d == 0 || lp.num_blocks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "tail segment layout has zero ring dimension or block count".to_string(),
+        ));
+    }
+    let e_unit = d
+        .checked_mul(lp.num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("tail e unit overflow".to_string()))?;
+    if !layout.e_field_elems.is_multiple_of(e_unit) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_w_vectors = layout.e_field_elems / e_unit;
+
+    let t_unit = e_unit
+        .checked_mul(lp.a_key.row_len())
+        .ok_or_else(|| AkitaError::InvalidSetup("tail t unit overflow".to_string()))?;
+    if !layout.t_field_elems.is_multiple_of(t_unit) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_t_vectors = layout.t_field_elems / t_unit;
+
+    let z_unit = lp
+        .block_len
+        .checked_mul(lp.num_digits_commit)
+        .and_then(|n| n.checked_mul(d))
+        .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
+    if !layout.z_coords.is_multiple_of(z_unit) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_public_rows = layout.z_coords / z_unit;
+
+    Ok((num_w_vectors, num_t_vectors, num_public_rows))
+}
+
 /// Conservative planner upper bound for a segment-typed tail witness.
 #[must_use]
 pub fn segment_typed_witness_upper_bound_bytes(
@@ -571,9 +615,9 @@ pub fn pad_segment_typed_z_payload<F: FieldCore>(
 pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_public_rows: usize,
+    _num_w_vectors: usize,
+    _num_t_vectors: usize,
+    _num_public_rows: usize,
     num_commitment_groups: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
@@ -583,6 +627,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let field_bits = F::modulus_bits();
+    let (num_w_vectors, num_t_vectors, num_public_rows) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)?;
     let expected_layout = tail_segment_layout(
         lp,
         num_w_vectors,

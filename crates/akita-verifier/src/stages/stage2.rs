@@ -60,7 +60,7 @@ fn cleartext_witness_eval<F, E, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     lp: Option<&akita_types::LevelParams>,
-    num_claims: usize,
+    _num_claims: usize,
     num_commitment_groups: usize,
 ) -> Result<E, AkitaError>
 where
@@ -99,13 +99,15 @@ where
                     .ok_or(AkitaError::InvalidProof)
             })
         }
-        CleartextWitnessProof::SegmentTyped(_witness) => {
+        CleartextWitnessProof::SegmentTyped(witness) => {
             let lp = lp.ok_or(AkitaError::InvalidProof)?;
+            let (num_w_vectors, num_t_vectors, num_public_rows) =
+                akita_types::tail_segment_multiplicities_from_layout(lp, &witness.layout)?;
             let digits = cleartext_witness.logical_i8_digits::<D>(
                 lp,
-                num_claims,
-                1,
-                num_claims,
+                num_w_vectors,
+                num_t_vectors,
+                num_public_rows,
                 num_commitment_groups,
             )?;
             if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {

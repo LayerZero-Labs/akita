@@ -604,22 +604,10 @@ where
                             .to_string(),
                     ));
                 }
-                let num_claims = instance.opening_batch().num_claims();
                 let num_commitment_groups = instance
                     .opening_batch()
                     .num_polys_per_commitment_group()
                     .len();
-                let mut segment = build_segment_typed_witness::<D, F>(
-                    &artifacts.e_folded,
-                    &artifacts.recomposed_inner_rows,
-                    &artifacts.z_folded_centered,
-                    &artifacts.r,
-                    lp,
-                    num_claims,
-                    1,
-                    num_claims,
-                    num_commitment_groups,
-                )?;
                 let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                     terminal_direct_witness_shape.ok_or_else(|| {
                         AkitaError::InvalidSetup(
@@ -632,6 +620,22 @@ where
                         "terminal fold expected segment-typed witness shape".to_string(),
                     ));
                 };
+                let (num_w_vectors, num_t_vectors, num_public_rows) =
+                    akita_types::tail_segment_multiplicities_from_layout(
+                        lp,
+                        &scheduled_shape.layout,
+                    )?;
+                let mut segment = build_segment_typed_witness::<D, F>(
+                    &artifacts.e_folded,
+                    &artifacts.recomposed_inner_rows,
+                    &artifacts.z_folded_centered,
+                    &artifacts.r,
+                    lp,
+                    num_w_vectors,
+                    num_t_vectors,
+                    num_public_rows,
+                    num_commitment_groups,
+                )?;
                 if segment.layout != scheduled_shape.layout {
                     return Err(AkitaError::InvalidSetup(
                         "segment-typed witness layout does not match schedule".to_string(),
@@ -642,9 +646,9 @@ where
                 let digits = akita_types::expand_segment_typed_to_i8_digits::<D, F>(
                     &segment,
                     lp,
-                    num_claims,
-                    1,
-                    num_claims,
+                    num_w_vectors,
+                    num_t_vectors,
+                    num_public_rows,
                     num_commitment_groups,
                 )?;
                 if digits.len() != expanded || digits.as_slice() != logical_w.as_i8_digits() {
@@ -671,7 +675,7 @@ where
             let terminal_layout = terminal_witness_segment_layout(
                 lp,
                 instance.opening_batch().num_claims(),
-                instance.opening_batch().num_claims(),
+                1,
                 F::modulus_bits(),
             )?;
             let parts = final_witness.terminal_transcript_parts(terminal_layout)?;

@@ -20,13 +20,16 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+#[cfg(not(feature = "zk"))]
+use akita_types::LevelParams;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     root_extension_opening_partials, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
 };
 
+#[cfg(not(feature = "zk"))]
 use crate::schedule_params::segment_typed_direct_witness_shape;
 
 use crate::find_schedule;
@@ -248,7 +251,10 @@ pub fn schedule_from_entry(
     let mut total = 0usize;
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
+    #[cfg(feature = "zk")]
+    let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
+    #[cfg(not(feature = "zk"))]
     let mut last_fold_lp: Option<LevelParams> = None;
 
     for (idx, step) in entry.steps.iter().enumerate() {
@@ -352,7 +358,10 @@ pub fn schedule_from_entry(
                 total = total.checked_add(level_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
-                last_fold_lp = Some(lp.clone());
+                #[cfg(not(feature = "zk"))]
+                {
+                    last_fold_lp = Some(lp.clone());
+                }
                 steps.push(Step::Fold(FoldStep {
                     params: lp,
                     current_w_len,
@@ -361,6 +370,13 @@ pub fn schedule_from_entry(
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
+                #[cfg(feature = "zk")]
+                {
+                    current_log_basis = match next {
+                        GeneratedStep::Fold(next_level) => next_level.log_basis,
+                        GeneratedStep::Direct(_) => level.log_basis,
+                    };
+                }
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
@@ -398,26 +414,40 @@ pub fn schedule_from_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing predecessor fold params".to_string(),
-                        )
-                    })?;
-                    let terminal_fold_level = fold_level.saturating_sub(1);
-                    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
-                        if terminal_fold_level == 0 {
-                            (key.num_w_vectors, 1, key.num_w_vectors, 1)
-                        } else {
-                            (1, 1, 1, 1)
-                        };
-                    let witness_shape = segment_typed_direct_witness_shape(
-                        terminal_lp,
-                        field_bits,
-                        num_w_vectors,
-                        num_t_vectors,
-                        num_public_rows,
-                        num_commitment_groups,
-                    )?;
+                    let witness_shape = {
+                        #[cfg(feature = "zk")]
+                        {
+                            CleartextWitnessShape::PackedDigits((len, current_log_basis))
+                        }
+                        #[cfg(not(feature = "zk"))]
+                        {
+                            let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "terminal direct step missing predecessor fold params"
+                                        .to_string(),
+                                )
+                            })?;
+                            let terminal_fold_level = fold_level.saturating_sub(1);
+                            let (
+                                num_w_vectors,
+                                num_t_vectors,
+                                num_public_rows,
+                                num_commitment_groups,
+                            ) = if terminal_fold_level == 0 {
+                                (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
+                            } else {
+                                (1, 1, 1, 1)
+                            };
+                            segment_typed_direct_witness_shape(
+                                terminal_lp,
+                                field_bits,
+                                num_w_vectors,
+                                num_t_vectors,
+                                num_public_rows,
+                                num_commitment_groups,
+                            )?
+                        }
+                    };
                     (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
