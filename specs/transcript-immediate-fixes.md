@@ -16,7 +16,7 @@ proof-size overhead:
 1. `AkitaInstanceDescriptor` binds deterministic setup identity instead of the
    expanded setup artifact.
 2. Terminal folds use a terminal-specific transcript path: bind logical
-   `w_hat` before sparse-seed sampling, bind the terminal witness remainder,
+   terminal `e` before sparse-seed sampling, bind the terminal witness remainder,
    and never squeeze terminal `tau0`. Sumcheck-terminal mode binds the
    remainder before `alpha`/`tau1` and stage-2 challenges; direct-terminal mode
    binds it before direct row checking and has no terminal `alpha`/`tau1` or
@@ -37,7 +37,7 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
   hash the full expanded shared matrix or prover NTT cache into the transcript.
 
 - Terminal sparse-fold inputs are bound before the challenges that depend on
-  them. In particular, the logical `w_hat` segment is absorbed before the
+  them. In particular, the logical terminal `e` segment is absorbed before the
   sparse challenge seed, and the remaining terminal witness digits are absorbed
   before the terminal-mode-specific continuation. For `RingSwitchSumcheck` this
   means before ring-switch `alpha`, grouped `tau1`, and stage-2 challenges; for
@@ -64,10 +64,9 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
   production challenge bytes when the ordered payload bytes are unchanged.
 
 - Terminal direct witness binding is logical, not raw-byte slicing. The verifier
-  must decode the canonical terminal witness into logical digits, derive the
-  `w_hat` digit range from descriptor-bound layout data, absorb that segment
-  before the sparse seed, and absorb the complement before the selected terminal
-  continuation.
+  must decode the canonical terminal witness, derive the terminal `e` segment
+  from descriptor-bound layout data, absorb that segment before the sparse seed,
+  and absorb the complement before the selected terminal continuation.
 
 - Verifier-reachable malformed setup, proof, descriptor, and terminal witness
   shapes reject with `AkitaError` or `SerializationError`, never with panics,
@@ -114,14 +113,14 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
       only `alpha` and grouped `tau1`; it must not call the `tau0` squeeze path.
       In `DirectRingRelations` mode replay stops after the terminal witness
       remainder absorb and performs direct row checking.
-- [ ] Terminal sparse-seed sampling happens only after the logical `w_hat`
+- [ ] Terminal sparse-seed sampling happens only after the logical terminal `e`
       segment has been absorbed.
 - [ ] Terminal ring-switch and stage-2 challenges, when present, happen only
       after all remaining terminal witness digits have been absorbed.
 - [ ] Terminal prover and verifier logging streams contain no
       `CHALLENGE_TAU0` event. Tests assert this directly for terminal-root and
       recursive-terminal shapes where those shapes are reachable.
-- [ ] Mutating terminal logical `w_hat`, mutating the terminal witness
+- [ ] Mutating terminal logical `e`, mutating the terminal witness
       remainder, truncating the terminal witness, or changing terminal segment
       layout metadata causes verifier rejection rather than acceptance or panic.
 - [ ] Existing transcript-hardening event equality and wire-before-squeeze
@@ -155,14 +154,14 @@ New or updated checks:
   descriptor-binding and verifier-policy helpers as the normal verifier path.
 
 - Terminal transcript-order tests: assert the common prefix is "current
-  commitment/opening context, terminal logical `w_hat` absorb, sparse seed
+  commitment/opening context, terminal logical `e` absorb, sparse seed
   squeeze, terminal witness remainder absorb". In `RingSwitchSumcheck` mode that
   prefix is followed by `alpha`, grouped `tau1`, and stage-2 challenges. In
   `DirectRingRelations` mode it is followed by direct row checking and contains
   no terminal `alpha`, `tau1`, or stage-2 challenges. Both modes contain no
   terminal `tau0` squeeze.
 
-- Terminal tamper tests: mutate logical `w_hat`, mutate the remainder, truncate
+- Terminal tamper tests: mutate logical terminal `e`, mutate the remainder, truncate
   the packed witness, and alter layout metadata; all variants reject without
   panicking.
 
@@ -233,9 +232,9 @@ Intermediate and terminal folds must have separate transcript schedules.
 Intermediate fold:
 
 1. absorb the current recursive commitment/opening context;
-2. compute and absorb `v = D * w_hat` under the existing prover-value absorb;
+2. compute and absorb the D-side relation input under the existing prover-value absorb;
 3. absorb sparse-challenge context and squeeze the sparse seed;
-4. compute `z_pre`, build the next recursive witness, and commit it;
+4. compute the folded response, build the next recursive witness, and commit it;
 5. absorb the next-witness commitment;
 6. squeeze ring-switch `alpha`;
 7. squeeze grouped `tau0` coordinates for the stage-1 witness-table point;
@@ -248,11 +247,11 @@ Intermediate fold:
 Terminal fold, `RingSwitchSumcheck` mode:
 
 1. absorb the current recursive commitment/opening context;
-2. compute the decomposed terminal segment `w_hat`;
-3. absorb the cleartext logical `w_hat` segment before any sparse seed is
+2. compute the terminal `e` segment;
+3. absorb the cleartext logical terminal `e` segment before any sparse seed is
    squeezed;
 4. absorb sparse-challenge context and squeeze the sparse seed;
-5. compute `z_pre`, compute `r`, and build the complete cleartext final
+5. compute `z_folded`, compute `r`, and build the complete cleartext final
    witness;
 6. absorb the remaining final-witness digits before ring-switch challenges;
 7. squeeze ring-switch `alpha`;
@@ -262,11 +261,12 @@ Terminal fold, `RingSwitchSumcheck` mode:
 Terminal fold, `DirectRingRelations` mode:
 
 1. absorb the current recursive commitment/opening context;
-2. compute the decomposed terminal segment `w_hat`;
-3. absorb the cleartext logical `w_hat` segment before any sparse seed is
+2. compute the terminal `e` segment;
+3. absorb the cleartext logical terminal `e` segment before any sparse seed is
    squeezed;
 4. absorb sparse-challenge context and squeeze the sparse seed;
-5. compute `z_pre` and build the cleartext final witness without `r_hat`;
+5. compute `z_folded` and build the cleartext final witness without a terminal
+   `r` segment;
 6. absorb the remaining final-witness digits;
 7. check the reduced terminal ring rows directly.
 
@@ -286,47 +286,38 @@ relation_claim
 ### Terminal Witness Segmentation
 
 The terminal direct witness remains one canonical proof object. Transcript
-replay binds it in two phases by deriving a logical `w_hat` range from
+replay binds it in two phases by deriving the logical terminal `e` segment from
 descriptor-bound schedule data and the same terminal segment layout used by
 terminal relation verification.
 
-All counts below are logical ring elements before converting through the packed
-digit representation:
+All counts below are public segment-layout counts before witness serialization:
 
 ```text
 num_w_vectors = descriptor-bound number of opened W vectors
 num_t_vectors = descriptor-bound number of T/relation vectors
 num_z_vectors = descriptor-bound number of public/folded Z rows
 
-w_hat_ring_count = num_w_vectors * num_blocks * num_digits_open
-t_hat_ring_count = num_t_vectors * num_blocks * a_key_row_len * num_digits_open
-z_pre_ring_count = num_z_vectors * inner_width * num_digits_fold
+e_field_count = num_w_vectors * num_blocks * ring_dim
+t_field_count = num_t_vectors * num_blocks * a_key_row_len * ring_dim
+z_coord_count = num_z_vectors * inner_width * ring_dim
 z_first = m_vars >= r_vars
-
-w_hat_digit_count = w_hat_ring_count * ring_dim
-w_hat_digit_offset = if z_first { z_pre_ring_count * ring_dim } else { 0 }
 ```
 
 `num_z_vectors` is the explicit public-row count carried by witness-layout
 helpers. It is independent of `num_w_vectors` and must not be inferred from it.
 
-The verifier first decodes and validates the packed terminal witness into the
-canonical logical final-witness digit stream, then extracts:
-
-```text
-[w_hat_digit_offset, w_hat_digit_offset + w_hat_digit_count)
-```
-
-The verifier must not slice raw `PackedDigits` bytes. The representation is
-bit-packed, and logical digit boundaries need not be byte boundaries. The
-remainder is every terminal witness digit outside the logical `w_hat` range, in
-canonical final-witness order. This avoids relying on a prefix convention:
-current layouts may place `z_pre` before `w_hat` when `m_vars >= r_vars`.
+The verifier first decodes and validates the terminal witness under its
+descriptor-bound shape. For current transparent non-zk tails, that shape is
+`CleartextWitnessProof::SegmentTyped`: the transcript `e` bytes are the raw
+field coefficients of the `e_fields` segment, and the remainder is the canonical
+`z_payload`, `t_fields`, and, in `RingSwitchSumcheck` mode, `r_fields`.
+ZK tails keep the packed-digits representation and use the legacy logical digit
+range.
 
 Verifier replay rejects malformed terminal proofs whose packed witness is too
-short for the derived range, whose remainder length does not match the
-descriptor-bound final-witness shape, whose extracted `w_hat` digits are not
-representable in the scheduled digit basis, or whose event stream contains any
+short for the derived range in ZK mode, whose segment lengths do not match the
+descriptor-bound final-witness shape, whose decoded logical terminal segment is
+not representable in the scheduled basis, or whose event stream contains any
 terminal `CHALLENGE_TAU0` squeeze.
 When the descriptor-bound terminal proof mode is `DirectRingRelations`, replay
 also rejects any terminal `CHALLENGE_RING_SWITCH`, terminal `CHALLENGE_TAU1`, or
@@ -370,7 +361,7 @@ Suggested implementation order:
    `alpha`, grouped `tau0`, grouped `tau1`; terminal returns only `alpha` and
    grouped `tau1`.
 5. Split terminal direct-witness transcript absorption into
-   logical-`w_hat`-before-sparse-seed and remainder-before-ring-switch phases.
+   logical-terminal-`e`-before-sparse-seed and remainder-before-ring-switch phases.
 6. Keep the trusted cached-matrix recursion decode boundary explicit and
    gated to benchmark artifacts; plain guest builds must use strict setup
    validation, while the profile host may opt the Jolt-compiled benchmark ELF
