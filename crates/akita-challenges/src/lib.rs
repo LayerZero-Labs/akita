@@ -23,16 +23,18 @@
 
 mod challenge;
 mod config;
+mod fold_draw;
 mod sampler;
 mod tensor;
 
+pub use akita_transcript::FoldChallengeSeedPreview;
 pub use challenge::{IntegerChallenge, SparseChallenge};
 pub use config::{SparseChallengeConfig, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
+pub use fold_draw::{preview_folding_challenges, sample_folding_challenges};
 pub use sampler::{
     sample_sparse_challenges, sparse_challenge_absorb_buf, sparse_challenges_from_seed,
 };
 pub use tensor::{
-    sample_folding_challenges, stage1_fold_challenge_labels, tensor_left_digest, tensor_split,
-    ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges,
-    TensorChallenges,
+    stage1_fold_challenge_labels, tensor_left_digest, tensor_split, ChallengeLabels,
+    ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges, TensorChallenges,
 };

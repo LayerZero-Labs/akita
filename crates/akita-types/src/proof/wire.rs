@@ -94,6 +94,123 @@ where
     }))
 }
 
+fn serialize_fold_grind_nonce<W: Write>(
+    writer: W,
+    fold_grind_nonce: u32,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    fold_grind_nonce.serialize_with_mode(writer, compress)
+}
+
+fn deserialize_fold_grind_nonce<R: Read>(
+    reader: R,
+    compress: Compress,
+    validate: Validate,
+) -> Result<u32, SerializationError> {
+    u32::deserialize_with_mode(reader, compress, validate, &())
+}
+
+fn fold_grind_nonce_serialized_size(compress: Compress) -> usize {
+    0u32.serialized_size(compress)
+}
+
+fn serialize_intermediate_fold_wire_prefix<F, L, W>(
+    mut writer: W,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    v: &FlatRingVec<F>,
+    fold_grind_nonce: u32,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    F: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
+    v.serialize_with_mode(&mut writer, compress)?;
+    serialize_fold_grind_nonce(writer, fold_grind_nonce, compress)
+}
+
+fn intermediate_fold_wire_prefix_serialized_size<F, L>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    v: &FlatRingVec<F>,
+    compress: Compress,
+) -> usize
+where
+    F: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
+    extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
+        + v.serialized_size(compress)
+        + fold_grind_nonce_serialized_size(compress)
+}
+
+type IntermediateFoldWirePrefix<F, L> = (
+    Option<ExtensionOpeningReductionProof<L>>,
+    FlatRingVec<F>,
+    u32,
+);
+
+fn deserialize_intermediate_fold_wire_prefix<F, L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    extension_shape: Option<&ExtensionOpeningReductionShape>,
+    v_shape: &<FlatRingVec<F> as AkitaDeserialize>::Context,
+) -> Result<IntermediateFoldWirePrefix<F, L>, SerializationError>
+where
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let extension_opening_reduction =
+        deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
+    let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, v_shape)?;
+    let fold_grind_nonce = deserialize_fold_grind_nonce(&mut reader, compress, validate)?;
+    Ok((extension_opening_reduction, v, fold_grind_nonce))
+}
+
+fn serialize_terminal_fold_wire_prefix<L, W>(
+    mut writer: W,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    fold_grind_nonce: u32,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    L: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
+    serialize_fold_grind_nonce(writer, fold_grind_nonce, compress)
+}
+
+fn terminal_fold_wire_prefix_serialized_size<L>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    compress: Compress,
+) -> usize
+where
+    L: FieldCore + AkitaSerialize,
+{
+    extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
+        + fold_grind_nonce_serialized_size(compress)
+}
+
+fn deserialize_terminal_fold_wire_prefix<L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    extension_shape: Option<&ExtensionOpeningReductionShape>,
+) -> Result<(Option<ExtensionOpeningReductionProof<L>>, u32), SerializationError>
+where
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let extension_opening_reduction =
+        deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
+    let fold_grind_nonce = deserialize_fold_grind_nonce(&mut reader, compress, validate)?;
+    Ok((extension_opening_reduction, fold_grind_nonce))
+}
+
 fn serialize_stage3_sumcheck<L, W>(
     stage3_sumcheck: Option<&SetupSumcheckProof<L>>,
     mut writer: W,
@@ -169,13 +286,13 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                         "Akita level proof must carry intermediate stage-2 proof".to_string(),
                     )
                 })?;
-                serialize_extension_opening_reduction(
-                    extension_opening_reduction.as_ref(),
+                serialize_intermediate_fold_wire_prefix(
                     &mut writer,
+                    extension_opening_reduction.as_ref(),
+                    v,
+                    *fold_grind_nonce,
                     compress,
                 )?;
-                v.serialize_with_mode(&mut writer, compress)?;
-                fold_grind_nonce.serialize_with_mode(&mut writer, compress)?;
                 for stage in &stage1.stages {
                     #[cfg(not(feature = "zk"))]
                     stage
@@ -217,12 +334,12 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                         "terminal level proof must carry terminal stage-2 proof".to_string(),
                     )
                 })?;
-                serialize_extension_opening_reduction(
-                    extension_opening_reduction.as_ref(),
+                serialize_terminal_fold_wire_prefix(
                     &mut writer,
+                    extension_opening_reduction.as_ref(),
+                    *fold_grind_nonce,
                     compress,
                 )?;
-                fold_grind_nonce.serialize_with_mode(&mut writer, compress)?;
                 #[cfg(not(feature = "zk"))]
                 stage2
                     .sumcheck_proof
@@ -242,7 +359,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             AkitaLevelProof::Intermediate {
                 extension_opening_reduction,
                 v,
-                fold_grind_nonce,
+                fold_grind_nonce: _,
                 stage1,
                 stage2,
                 stage3_sumcheck_proof,
@@ -250,11 +367,11 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 let stage2 = stage2
                     .as_intermediate()
                     .expect("Akita level proof must carry intermediate stage-2 proof");
-                let base = extension_opening_reduction_serialized_size(
+                let base = intermediate_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
+                    v,
                     compress,
-                ) + v.serialized_size(compress)
-                    + fold_grind_nonce.serialized_size(compress);
+                );
                 base + stage1
                     .stages
                     .iter()
@@ -292,28 +409,26 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             }
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
-                fold_grind_nonce,
+                fold_grind_nonce: _,
                 stage2,
                 ..
             } => {
                 let stage2 = stage2
                     .as_terminal()
                     .expect("terminal level proof must carry terminal stage-2 proof");
-                extension_opening_reduction_serialized_size(
+                terminal_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + fold_grind_nonce.serialized_size(compress)
-                    + {
-                        #[cfg(not(feature = "zk"))]
-                        {
-                            stage2.sumcheck_proof.serialized_size(compress)
-                        }
-                        #[cfg(feature = "zk")]
-                        {
-                            stage2.sumcheck_proof_masked.serialized_size(compress)
-                        }
+                ) + {
+                    #[cfg(not(feature = "zk"))]
+                    {
+                        stage2.sumcheck_proof.serialized_size(compress)
                     }
-                    + stage2.final_witness.serialized_size(compress)
+                    #[cfg(feature = "zk")]
+                    {
+                        stage2.sumcheck_proof_masked.serialized_size(compress)
+                    }
+                } + stage2.final_witness.serialized_size(compress)
             }
         }
     }
@@ -403,14 +518,14 @@ impl<
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let extension_opening_reduction = deserialize_extension_opening_reduction(
-            &mut reader,
-            compress,
-            validate,
-            ctx.extension_opening_reduction.as_ref(),
-        )?;
-        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let (extension_opening_reduction, v, fold_grind_nonce) =
+            deserialize_intermediate_fold_wire_prefix(
+                &mut reader,
+                compress,
+                validate,
+                ctx.extension_opening_reduction.as_ref(),
+                &ctx.v_coeffs,
+            )?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
@@ -514,13 +629,12 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 "terminal level proof must carry terminal stage-2 proof".to_string(),
             )
         })?;
-        serialize_extension_opening_reduction(
-            self.extension_opening_reduction.as_ref(),
+        serialize_terminal_fold_wire_prefix(
             &mut writer,
+            self.extension_opening_reduction.as_ref(),
+            self.fold_grind_nonce,
             compress,
         )?;
-        self.fold_grind_nonce
-            .serialize_with_mode(&mut writer, compress)?;
         #[cfg(not(feature = "zk"))]
         stage2
             .sumcheck_proof
@@ -539,21 +653,19 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .stage2
             .as_terminal()
             .expect("terminal level proof must carry terminal stage-2 proof");
-        extension_opening_reduction_serialized_size(
+        terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + self.fold_grind_nonce.serialized_size(compress)
-            + {
-                #[cfg(not(feature = "zk"))]
-                {
-                    stage2.sumcheck_proof.serialized_size(compress)
-                }
-                #[cfg(feature = "zk")]
-                {
-                    stage2.sumcheck_proof_masked.serialized_size(compress)
-                }
+        ) + {
+            #[cfg(not(feature = "zk"))]
+            {
+                stage2.sumcheck_proof.serialized_size(compress)
             }
-            + stage2.final_witness.serialized_size(compress)
+            #[cfg(feature = "zk")]
+            {
+                stage2.sumcheck_proof_masked.serialized_size(compress)
+            }
+        } + stage2.final_witness.serialized_size(compress)
     }
 }
 
@@ -592,13 +704,13 @@ impl<
         ctx: &TerminalLevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let extension_opening_reduction = deserialize_extension_opening_reduction(
-            &mut reader,
-            compress,
-            validate,
-            ctx.extension_opening_reduction.as_ref(),
-        )?;
-        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let (extension_opening_reduction, fold_grind_nonce) =
+            deserialize_terminal_fold_wire_prefix(
+                &mut reader,
+                compress,
+                validate,
+                ctx.extension_opening_reduction.as_ref(),
+            )?;
         #[cfg(not(feature = "zk"))]
         let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
             &mut reader,
@@ -650,14 +762,13 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 "fold root proof must carry intermediate stage-2 proof".to_string(),
             )
         })?;
-        serialize_extension_opening_reduction(
-            self.extension_opening_reduction.as_ref(),
+        serialize_intermediate_fold_wire_prefix(
             &mut writer,
+            self.extension_opening_reduction.as_ref(),
+            &self.v,
+            self.fold_grind_nonce,
             compress,
         )?;
-        self.v.serialize_with_mode(&mut writer, compress)?;
-        self.fold_grind_nonce
-            .serialize_with_mode(&mut writer, compress)?;
         for stage in &self.stage1.stages {
             #[cfg(not(feature = "zk"))]
             stage
@@ -696,32 +807,31 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .stage2
             .as_intermediate()
             .expect("fold root proof must carry intermediate stage-2 proof");
-        extension_opening_reduction_serialized_size(
+        intermediate_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
+            &self.v,
             compress,
-        ) + self.v.serialized_size(compress)
-            + self.fold_grind_nonce.serialized_size(compress)
-            + self
-                .stage1
-                .stages
-                .iter()
-                .map(|stage| {
-                    ({
-                        #[cfg(not(feature = "zk"))]
-                        {
-                            stage.sumcheck_proof.serialized_size(compress)
-                        }
-                        #[cfg(feature = "zk")]
-                        {
-                            stage.sumcheck_proof_masked.serialized_size(compress)
-                        }
-                    }) + stage
-                        .child_claims
-                        .iter()
-                        .map(|claim| claim.serialized_size(compress))
-                        .sum::<usize>()
-                })
-                .sum::<usize>()
+        ) + self
+            .stage1
+            .stages
+            .iter()
+            .map(|stage| {
+                ({
+                    #[cfg(not(feature = "zk"))]
+                    {
+                        stage.sumcheck_proof.serialized_size(compress)
+                    }
+                    #[cfg(feature = "zk")]
+                    {
+                        stage.sumcheck_proof_masked.serialized_size(compress)
+                    }
+                }) + stage
+                    .child_claims
+                    .iter()
+                    .map(|claim| claim.serialized_size(compress))
+                    .sum::<usize>()
+            })
+            .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + ({
                 #[cfg(not(feature = "zk"))]
@@ -788,14 +898,14 @@ impl<
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let extension_opening_reduction = deserialize_extension_opening_reduction(
-            &mut reader,
-            compress,
-            validate,
-            ctx.extension_opening_reduction.as_ref(),
-        )?;
-        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let (extension_opening_reduction, v, fold_grind_nonce) =
+            deserialize_intermediate_fold_wire_prefix(
+                &mut reader,
+                compress,
+                validate,
+                ctx.extension_opening_reduction.as_ref(),
+                &ctx.v_coeffs,
+            )?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {

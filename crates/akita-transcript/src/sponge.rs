@@ -363,6 +363,24 @@ fn session_tag(session_label: &[u8]) -> [u8; 64] {
     tag
 }
 
+impl<F, S> crate::FoldChallengeSeedPreview for AkitaTranscript<F, S>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
+{
+    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
+        Self::preview_challenge_bytes_after_absorb(self, absorb_payload, len)
+    }
+
+    fn preview_challenge_bytes_after_absorb_chain(
+        &self,
+        absorbs: &[&[u8]],
+        squeeze_lens: &[usize],
+    ) -> Vec<u8> {
+        Self::preview_challenge_bytes_after_absorb_chain(self, absorbs, squeeze_lens)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

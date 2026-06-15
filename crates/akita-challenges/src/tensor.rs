@@ -21,9 +21,9 @@
 //! [`IntegerChallenge`], because tensor products can widen coefficients beyond
 //! the sampled [`SparseChallenge`] range.
 
-use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
-use akita_transcript::{labels, Transcript};
+use crate::{IntegerChallenge, SparseChallenge, SparseChallengeConfig};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_transcript::labels;
 use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
@@ -797,72 +797,4 @@ pub fn tensor_left_digest<const D: usize>(
     }
 
     Ok(hasher.finalize().into())
-}
-
-/// Sample folding challenges using the configured shape.
-///
-/// # Errors
-///
-/// Returns an error if count arithmetic overflows, if tensor splitting is
-/// invalid, or if sparse challenge sampling fails.
-pub fn sample_folding_challenges<F, T, const D: usize>(
-    transcript: &mut T,
-    num_blocks: usize,
-    num_claims: usize,
-    cfg: &SparseChallengeConfig,
-    shape: &ChallengeShape,
-    labels: ChallengeLabels<'_>,
-    grind_nonce: u32,
-) -> Result<Challenges, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    match shape {
-        ChallengeShape::Flat => {
-            let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
-            })?;
-            let challenges = sample_sparse_challenges::<F, T, D>(
-                transcript,
-                labels.flat,
-                total,
-                cfg,
-                grind_nonce,
-            )?;
-            Challenges::from_sparse(challenges, num_blocks, num_claims)
-        }
-        ChallengeShape::Tensor => {
-            let (left_len, right_len) = tensor_split(num_blocks)?;
-            let left_total = left_len.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("tensor-left challenge count overflow".to_string())
-            })?;
-            let right_total = right_len.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("tensor-right challenge count overflow".to_string())
-            })?;
-            let left = sample_sparse_challenges::<F, T, D>(
-                transcript,
-                labels.tensor_left,
-                left_total,
-                cfg,
-                grind_nonce,
-            )?;
-            let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
-            transcript.append_bytes(labels.tensor_left_digest, &left_digest);
-            let right = sample_sparse_challenges::<F, T, D>(
-                transcript,
-                labels.tensor_right,
-                right_total,
-                cfg,
-                grind_nonce,
-            )?;
-            Challenges::from_tensor::<D>(TensorChallenges {
-                left,
-                right,
-                left_len,
-                right_len,
-                num_claims,
-            })
-        }
-    }
 }
