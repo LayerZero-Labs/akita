@@ -2,8 +2,10 @@ use akita_field::{CanonicalField, FieldCore};
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    layout::proof_size::field_bytes, schedule_terminal_direct_witness_shape,
-    tail_segment_multiplicities_from_layout, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
+    golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
+    layout::proof_size::field_bytes,
+    schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
+    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
     LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
@@ -138,20 +140,27 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: beta_inf={} k={} ring_elems={z_ring_elems} field_coeffs={} \
-                     {:.2} bits/field_coeff vs packed {:.2} bits/field_coeff \
+                    " Golomb z: beta_inf={} k_beta={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@k_beta vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
-                     planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B)",
+                     planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
+                     dist max={} median={} p90={} p99={}",
                     stats.beta_inf,
                     stats.rice_k_beta,
+                    stats.rice_k_empirical,
                     stats.coord_count,
                     stats.bits_per_coord_k_beta,
+                    stats.bits_per_coord_k_empirical,
                     stats.bits_per_coord_packed_digits,
                     stats.total_bits_packed_digits.div_ceil(8),
                     stats
                         .total_bits_packed_digits
                         .div_ceil(8)
                         .saturating_sub(z_golomb_bytes),
+                    stats.observed_max_abs,
+                    stats.median_abs,
+                    stats.p90_abs,
+                    stats.p99_abs,
                 )
             })
             .unwrap_or_default();
@@ -176,6 +185,9 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         eprintln!(
             "[{label}]     r: {r_bytes} B, field_coeffs={r_field_elems}, ring_elems={r_ring_elems}",
         );
+        if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
+            emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
+        }
         return;
     }
 
@@ -209,6 +221,69 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
         ));
     };
     z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+}
+
+fn emit_z_golomb_k_sweep<FF: FieldCore>(
+    label: &str,
+    witness: &akita_types::SegmentTypedWitness<FF>,
+    schedule: &Schedule,
+    field_bits: u32,
+    actual_z_payload_bytes: usize,
+) {
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let Ok(terminal_scheduled) = schedule.get_execution_schedule(terminal_fold_level) else {
+        return;
+    };
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return;
+    };
+    let Ok(z_values) =
+        z_fold_decoded_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+    else {
+        return;
+    };
+    let Ok(stats) =
+        z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+    else {
+        return;
+    };
+    let k_hi = stats
+        .rice_k_beta
+        .saturating_add(4)
+        .max(stats.rice_k_empirical);
+    let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
+        return;
+    };
+    let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
+    eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
+    for &(k, bytes) in &sweep {
+        let marker = if k == stats.rice_k_beta {
+            "  <-- public k_beta (sound)"
+        } else if k == stats.rice_k_empirical {
+            "  <-- empirical min on this witness"
+        } else if k == k_observed {
+            "  <-- k from observed max only (NOT sound)"
+        } else {
+            ""
+        };
+        let delta = bytes as i64 - actual_z_payload_bytes as i64;
+        eprintln!(
+            "[{label}]     k={k:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
+            (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
+        );
+    }
+    if let Some((k, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
+        let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
+        eprintln!(
+            "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
+             (vs actual {actual_z_payload_bytes} B at k_beta={}, delta {save_vs_beta} B; \
+             sound tightening needs public k <= k_beta)",
+            stats.rice_k_beta,
+        );
+    }
 }
 
 /// Surface the prepared-setup memory footprint: the plain shared setup vector

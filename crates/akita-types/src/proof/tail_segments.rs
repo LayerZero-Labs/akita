@@ -302,6 +302,28 @@ pub fn tail_golomb_rice_z_params(
     Ok((k, w))
 }
 
+/// Decode centered fold-response `z` coefficients from a segment-typed witness.
+///
+/// # Errors
+///
+/// Propagates decode and public-parameter setup errors.
+pub fn z_fold_decoded_from_segment<F: FieldCore>(
+    witness: &SegmentTypedWitness<F>,
+    lp: &LevelParams,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    field_bits: u32,
+) -> Result<Vec<i64>, AkitaError> {
+    let (rice_k, zigzag_w) =
+        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    golomb_rice_decode_vec(
+        &witness.z_payload,
+        witness.layout.z_coords,
+        rice_k,
+        zigzag_w,
+    )
+}
+
 /// Distribution / Golomb model audit for a realized segment-typed `z` payload.
 ///
 /// # Errors
@@ -314,14 +336,9 @@ pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
     num_public_rows: usize,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let (rice_k, zigzag_w) =
-        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
-    let z_values = golomb_rice_decode_vec(
-        &witness.z_payload,
-        witness.layout.z_coords,
-        rice_k,
-        zigzag_w,
-    )?;
+    let z_values =
+        z_fold_decoded_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)?;
+    let (_, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
     let challenge = FoldChallengeNorms {
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,

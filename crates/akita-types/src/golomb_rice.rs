@@ -194,6 +194,20 @@ pub fn empirical_optimal_rice_k(values: &[i64], w: u32, k_max: u32) -> u32 {
         .unwrap_or(0)
 }
 
+/// Payload byte length for each Rice `k` in `0..=k_hi` on a realized `z` sample.
+pub fn golomb_rice_k_sweep_payload_bytes(
+    values: &[i64],
+    w: u32,
+    k_hi: u32,
+) -> Result<Vec<(u32, usize)>, AkitaError> {
+    (0..=k_hi)
+        .map(|k| {
+            let bits = golomb_rice_total_bits(values, k, w)?;
+            Ok((k, bits.div_ceil(8)))
+        })
+        .collect()
+}
+
 /// Distribution summary for terminal fold-response `z` coefficients.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZFoldEncodingStats {
