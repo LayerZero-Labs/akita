@@ -445,6 +445,7 @@ pub fn schedule_from_entry(
                                 num_t_vectors,
                                 num_public_rows,
                                 num_commitment_groups,
+                                terminal_lp.log_basis,
                             )?
                         }
                     };

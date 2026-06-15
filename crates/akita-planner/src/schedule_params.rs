@@ -20,15 +20,13 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    root_extension_opening_partials,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 #[cfg(not(feature = "zk"))]
-use akita_types::{
-    segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
-    SegmentTypedWitnessShape,
-};
+use akita_types::segment_typed_witness_shape;
 
 use crate::PlannerPolicy;
 
@@ -391,29 +389,17 @@ pub(crate) fn segment_typed_direct_witness_shape(
     num_t_vectors: usize,
     num_public_rows: usize,
     num_commitment_groups: usize,
+    terminal_bits_per_elem: u32,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let layout = tail_segment_layout(
+    segment_typed_witness_shape(
         terminal_lp,
+        field_bits,
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
         num_commitment_groups,
-        field_bits,
-    )?;
-    let (rice_k, zigzag_w_z) =
-        tail_golomb_rice_z_params(terminal_lp, num_t_vectors, num_public_rows, field_bits)?;
-    let z_payload_bytes =
-        segment_typed_witness_upper_bound_bytes(field_bits, &layout, rice_k, zigzag_w_z)
-            .saturating_sub(
-                (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
-                    * akita_types::field_bytes(field_bits),
-            );
-    Ok(CleartextWitnessShape::SegmentTyped(
-        SegmentTypedWitnessShape {
-            layout,
-            z_payload_bytes,
-        },
-    ))
+        terminal_bits_per_elem,
+    )
 }
 
 #[allow(clippy::too_many_arguments, unused_variables)]
@@ -441,6 +427,7 @@ fn make_terminal_direct_step(
                 num_t_vectors,
                 num_public_rows,
                 num_commitment_groups,
+                terminal_log_basis,
             )?
         }
     };

@@ -8,8 +8,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid};
 
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_bits_per_coord,
-    golomb_rice_zigzag_width_z, optimal_rice_k,
+    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_zigzag_width_z, optimal_rice_k,
 };
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
@@ -406,22 +405,54 @@ pub fn tail_segment_multiplicities_from_layout(
     Ok((num_w_vectors, num_t_vectors, num_public_rows))
 }
 
-/// Conservative planner upper bound for a segment-typed tail witness.
+/// Planner byte budget for the Golomb-Rice `z` segment.
+///
+/// Matches the legacy `PackedDigits` `z` digit planes at `bits_per_elem`: each
+/// recomposed `z` coordinate expands to `num_digits_fold` planes in the packed
+/// layout, so the budget is `z_coords * num_digits_fold * bits_per_elem` bits.
+///
+/// # Errors
+///
+/// Propagates [`LevelParams::num_digits_fold`] errors.
+pub fn segment_typed_z_payload_bytes(
+    lp: &LevelParams,
+    layout: &TailSegmentLayout,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    field_bits: u32,
+    bits_per_elem: u32,
+) -> Result<usize, AkitaError> {
+    let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
+    let z_plane_elems = layout
+        .z_coords
+        .checked_mul(depth_fold)
+        .ok_or_else(|| AkitaError::InvalidSetup("tail z plane elem overflow".to_string()))?;
+    let packed_z = crate::layout::proof_size::packed_digits_bytes(z_plane_elems, bits_per_elem);
+    let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let zigzag_w_z = golomb_rice_zigzag_width_z(depth_fold, lp.log_basis);
+    // Conservative Golomb budget: zigzag width plus Rice unary headroom, not the
+    // escape-path worst case used for decode totality.
+    let bits_per_coord = (zigzag_w_z as usize)
+        .saturating_add(rice_k as usize)
+        .saturating_add(2);
+    let golomb_budget = layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8);
+    Ok(packed_z.max(golomb_budget))
+}
+
+/// Serialized byte size for a segment-typed tail witness at a fixed `z` budget.
 #[must_use]
 pub fn segment_typed_witness_upper_bound_bytes(
     field_bits: u32,
     layout: &TailSegmentLayout,
-    rice_k: u32,
-    zigzag_w_z: u32,
+    z_payload_bytes: usize,
 ) -> usize {
     let raw_elems = layout
         .e_field_elems
         .saturating_add(layout.t_field_elems)
         .saturating_add(layout.r_field_elems);
-    let raw_bytes = raw_elems.saturating_mul(field_bytes(field_bits));
-    let bits_per_z = golomb_rice_max_bits_per_coord(rice_k, zigzag_w_z);
-    let z_bits = layout.z_coords.saturating_mul(bits_per_z);
-    raw_bytes.saturating_add(z_bits.div_ceil(8))
+    raw_elems
+        .saturating_mul(field_bytes(field_bits))
+        .saturating_add(z_payload_bytes)
 }
 
 /// Exact serialized byte length for a constructed segment-typed witness.

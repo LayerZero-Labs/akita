@@ -259,7 +259,10 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
             missing.append(key)
     if summary.get("tail_num_elems") is None:
         missing.append("tail_num_elems")
-    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") != "field_elements":
+    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") not in (
+        "field_elements",
+        "segment_typed",
+    ):
         missing.append("tail_bits_per_elem")
     proof_size = summary.get("proof_size_bytes")
     accounted = summary.get("accounted_bytes")
@@ -445,6 +448,13 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             if bits_per_elem is not None and bits_per_elem != "None":
                 summary["tail_bits_per_elem"] = int(bits_per_elem)
                 summary["terminal_log_basis"] = int(bits_per_elem)
+            if kvs.get("final_w_encoding") == "segment_typed":
+                if "tail_z_bytes" in kvs:
+                    summary["tail_z_bytes"] = int(kvs["tail_z_bytes"])
+                if "tail_raw_field_bytes" in kvs:
+                    summary["tail_raw_field_bytes"] = int(kvs["tail_raw_field_bytes"])
+                if "tail_log_basis" in kvs:
+                    summary["terminal_log_basis"] = int(kvs["tail_log_basis"])
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -1349,6 +1359,20 @@ def render_report(args: argparse.Namespace) -> int:
             )
         elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "field_elements":
             print(f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` field elements")
+        elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "segment_typed":
+            z_bytes = current.get("tail_z_bytes")
+            raw_field_bytes = current.get("tail_raw_field_bytes")
+            if z_bytes is not None and raw_field_bytes is not None:
+                print(
+                    f"- Tail shape: segment-typed, `{fmt_count(float(current['tail_num_elems']))}` "
+                    f"logical elems (`z={fmt_bytes(float(z_bytes))} B`, "
+                    f"raw e/t/r={fmt_bytes(float(raw_field_bytes))} B`)"
+                )
+            else:
+                print(
+                    f"- Tail shape: segment-typed, `{fmt_count(float(current['tail_num_elems']))}` "
+                    "logical elems"
+                )
         if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
             print(
                 f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "

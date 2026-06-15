@@ -39,7 +39,9 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
-pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
+pub use direct_witness::{
+    segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape, PackedDigits,
+};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
@@ -87,9 +89,9 @@ pub use tail_segments::{
     build_segment_typed_witness, emit_witness_planes_block_inner,
     emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
     pad_segment_typed_z_payload, segment_typed_witness_exact_bytes,
-    segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
-    tail_segment_multiplicities_from_layout, SegmentTypedWitness, SegmentTypedWitnessShape,
-    TailSegmentLayout,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    tail_golomb_rice_z_params, tail_segment_layout, tail_segment_multiplicities_from_layout,
+    SegmentTypedWitness, SegmentTypedWitnessShape, TailSegmentLayout,
 };
 pub use terminal_witness::{
     i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,

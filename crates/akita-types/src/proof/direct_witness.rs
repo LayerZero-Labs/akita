@@ -1,6 +1,7 @@
 use super::*;
 use crate::proof::tail_segments::{
-    expand_segment_typed_to_i8_digits, SegmentTypedWitness, SegmentTypedWitnessShape,
+    expand_segment_typed_to_i8_digits, segment_typed_z_payload_bytes, tail_segment_layout,
+    SegmentTypedWitness, SegmentTypedWitnessShape,
 };
 use crate::LevelParams;
 
@@ -162,6 +163,46 @@ pub enum CleartextWitnessShape {
     FieldElements(usize),
     /// Segment-typed terminal witness.
     SegmentTyped(SegmentTypedWitnessShape),
+}
+
+/// Build the segment-typed terminal witness shape from public schedule data.
+///
+/// `e`, `t`, and `r` are raw field segments; only `z` is Golomb-Rice coded.
+///
+/// # Errors
+///
+/// Propagates [`tail_segment_layout`] and [`segment_typed_z_payload_bytes`] errors.
+pub fn segment_typed_witness_shape(
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    num_w_vectors: usize,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    num_commitment_groups: usize,
+    terminal_bits_per_elem: u32,
+) -> Result<CleartextWitnessShape, AkitaError> {
+    let layout = tail_segment_layout(
+        terminal_lp,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+        field_bits,
+    )?;
+    let z_payload_bytes = segment_typed_z_payload_bytes(
+        terminal_lp,
+        &layout,
+        num_t_vectors,
+        num_public_rows,
+        field_bits,
+        terminal_bits_per_elem,
+    )?;
+    Ok(CleartextWitnessShape::SegmentTyped(
+        SegmentTypedWitnessShape {
+            layout,
+            z_payload_bytes,
+        },
+    ))
 }
 
 impl PackedDigits {
