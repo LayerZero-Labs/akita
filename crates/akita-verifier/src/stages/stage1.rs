@@ -37,7 +37,7 @@ type Stage1VerifyOutput<E> = Vec<E>;
 
 /// Reject malformed fold grind nonces before challenge replay.
 ///
-/// Deterministic `β_inf` policies forbid reroll (`nonce = 0` only). Certified-flat
+/// Worst-case-β-only policies forbid reroll (`nonce = 0` only). Tail-bound-with-grind
 /// policies accept `nonce < contract.max_nonce_exclusive`.
 ///
 /// # Errors
@@ -523,28 +523,28 @@ mod fold_grind_nonce_tests {
     }
 
     #[test]
-    fn deterministic_policy_rejects_nonzero_nonce() {
+    fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(TensorChallengeShape::Tensor);
         let contract = lp
             .fold_linf_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
         assert_eq!(
             contract.policy,
-            akita_types::sis::FoldLinfThresholdPolicy::DeterministicBetaInf
+            akita_types::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly
         );
         assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
         assert!(validate_fold_grind_nonce(&contract, 1).is_err());
     }
 
     #[test]
-    fn certified_flat_accepts_nonce_below_cap() {
+    fn tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(TensorChallengeShape::Flat);
         let contract = lp
             .fold_linf_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
         assert_eq!(
             contract.policy,
-            akita_types::sis::FoldLinfThresholdPolicy::CertifiedFlat
+            akita_types::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
         );
         let cap = contract.max_nonce_exclusive;
         assert!(validate_fold_grind_nonce(&contract, 0).is_ok());

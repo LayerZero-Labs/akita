@@ -38,7 +38,7 @@ where
 }
 
 fn accepts_witness(contract: &FoldLinfGrindContract, centered_inf_norm: u32) -> bool {
-    contract.policy == FoldLinfThresholdPolicy::DeterministicBetaInf
+    contract.policy == FoldLinfThresholdPolicy::WorstCaseBetaOnly
         || u128::from(centered_inf_norm) <= contract.inf_threshold
 }
 

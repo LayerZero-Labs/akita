@@ -32,14 +32,17 @@ fn assert_invalid_proof(case: &str, result: Result<(), AkitaError>) {
     );
 }
 
-fn run_certified_flat_onehot_roundtrip(num_vars: usize, seed: u64) -> AkitaBatchedProof<F, F> {
+fn run_tail_bound_with_grind_onehot_roundtrip(
+    num_vars: usize,
+    seed: u64,
+) -> AkitaBatchedProof<F, F> {
     let layout = OneHotCfg::get_params_for_batched_commitment(
         &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     assert_eq!(
         layout.fold_linf_threshold_policy(),
-        akita_types::sis::FoldLinfThresholdPolicy::CertifiedFlat
+        akita_types::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
     );
 
     let poly = make_onehot_poly(&layout, seed);
@@ -85,10 +88,10 @@ fn run_certified_flat_onehot_roundtrip(num_vars: usize, seed: u64) -> AkitaBatch
 }
 
 #[test]
-fn certified_flat_onehot_e2e_prove_verify() {
+fn tail_bound_with_grind_onehot_e2e_prove_verify() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let proof = run_certified_flat_onehot_roundtrip(28, 0x51_51_00_01);
+        let proof = run_tail_bound_with_grind_onehot_roundtrip(28, 0x51_51_00_01);
         assert!(
             matches!(proof.root, AkitaBatchedRootProof::Fold(_)),
             "expected a folded root proof"
@@ -106,7 +109,7 @@ fn certified_flat_onehot_e2e_prove_verify() {
 fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let proof = run_certified_flat_onehot_roundtrip(28, 0x51_51_00_02);
+        let proof = run_tail_bound_with_grind_onehot_roundtrip(28, 0x51_51_00_02);
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof
@@ -174,13 +177,13 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
 fn fold_recursive_handle_tamper_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let proof = run_certified_flat_onehot_roundtrip(28, 0x51_51_00_04);
+        let proof = run_tail_bound_with_grind_onehot_roundtrip(28, 0x51_51_00_04);
         let mut malformed = proof;
         let recursive = malformed
             .steps
             .iter_mut()
             .find_map(akita_types::AkitaLevelProof::as_intermediate_mut)
-            .expect("certified-flat onehot nv28 should include an intermediate fold");
+            .expect("tail-bound-with-grind onehot nv28 should include an intermediate fold");
         bump_flat_ring_vec(recursive.v_mut());
 
         let num_vars = 28;
@@ -218,7 +221,7 @@ fn fold_recursive_handle_tamper_rejected() {
 
 #[cfg(feature = "logging-transcript")]
 #[test]
-fn logging_transcript_event_stream_equality_certified_flat() {
+fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
     use akita_transcript::{labels, LoggingTranscript, Transcript};
 
     init_rayon_pool();

@@ -166,7 +166,7 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
-/// norms. Under the certified-flat threshold policy, the signed range is
+/// norms. Under [`FoldLinfThresholdPolicy::TailBoundWithGrind`], the signed range is
 /// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_linf_tail_bound_sq`];
 /// deterministic policies use `β_inf` alone.
 ///

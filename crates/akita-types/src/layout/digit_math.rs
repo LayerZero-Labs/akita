@@ -133,7 +133,7 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r and num_claims; certified-flat presets may size K
+        // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
         // from min(β_inf, t*) rather than β_inf alone.
         let linf_sizing = FoldLinfDigitSizing::for_fold_level(
             stage1_config,

@@ -249,17 +249,19 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-/// Maximum Fiat-Shamir rerolls per committed fold level under certified-flat policy.
+/// Maximum Fiat-Shamir rerolls per committed fold level under tail-bound-with-grind policy.
 pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 
 /// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLinfThresholdPolicy {
-    /// Flat `ExactShell` at `D = 64` or `Uniform{[-1,1]}` at `D ∈ {128, 256}`.
-    CertifiedFlat,
-    /// Tensor folds, `BoundedL1Norm`, and uncertified flat presets.
-    DeterministicBetaInf,
+    /// Proved sub-Gaussian tail: flat `ExactShell` at `D = 64` or
+    /// `Uniform{[-1,1]}` at `D ∈ {128, 256}`; `cap = min(β_inf, t*)` and grind allowed.
+    TailBoundWithGrind,
+    /// No tail certificate yet: tensor folds, `BoundedL1Norm`, uncertified flat presets;
+    /// `cap = β_inf` only and grind nonce must be zero.
+    WorstCaseBetaOnly,
 }
 
 /// Select the fold-linf threshold policy for a stage-1 sparse family at ring
@@ -272,19 +274,19 @@ pub fn fold_linf_threshold_policy(
     ring_dimension: usize,
 ) -> FoldLinfThresholdPolicy {
     if !matches!(fold_shape, TensorChallengeShape::Flat) {
-        return FoldLinfThresholdPolicy::DeterministicBetaInf;
+        return FoldLinfThresholdPolicy::WorstCaseBetaOnly;
     }
     match stage1_config {
         SparseChallengeConfig::ExactShell { .. } if ring_dimension == 64 => {
-            FoldLinfThresholdPolicy::CertifiedFlat
+            FoldLinfThresholdPolicy::TailBoundWithGrind
         }
         SparseChallengeConfig::Uniform { nonzero_coeffs, .. }
             if (ring_dimension == 128 || ring_dimension == 256)
                 && nonzero_coeffs.iter().all(|c| c.unsigned_abs() == 1) =>
         {
-            FoldLinfThresholdPolicy::CertifiedFlat
+            FoldLinfThresholdPolicy::TailBoundWithGrind
         }
-        _ => FoldLinfThresholdPolicy::DeterministicBetaInf,
+        _ => FoldLinfThresholdPolicy::WorstCaseBetaOnly,
     }
 }
 
@@ -387,7 +389,8 @@ pub fn fold_linf_tail_bound_sq(
 
 /// Inputs for fold-linf-aware gadget digit sizing in [`crate::sis::num_digits_fold`].
 ///
-/// When the policy is [`DeterministicBetaInf`](FoldLinfThresholdPolicy::DeterministicBetaInf),
+/// When the policy is [`WorstCaseBetaOnly`](FoldLinfThresholdPolicy::WorstCaseBetaOnly),
+/// tail-bound fields are ignored and sizing uses `β_inf` alone.
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldLinfDigitSizing {
@@ -401,11 +404,11 @@ pub struct FoldLinfDigitSizing {
 }
 
 impl FoldLinfDigitSizing {
-    /// Worst-case `β_inf` sizing (tensor folds, non-certified flat presets).
+    /// Worst-case `β_inf` sizing only (no tail certificate).
     #[inline]
     pub const fn deterministic() -> Self {
         Self {
-            policy: FoldLinfThresholdPolicy::DeterministicBetaInf,
+            policy: FoldLinfThresholdPolicy::WorstCaseBetaOnly,
             challenge_l2_sq_max: 0,
             num_fold_coeffs: 0,
             op_norm_accept_p_num: 1,
@@ -433,7 +436,7 @@ impl FoldLinfDigitSizing {
 }
 
 /// `‖z‖_inf` cap used for fold digit sizing: `β_inf` or `min(β_inf, ⌈√(t*²)⌉)`
-/// under the certified-flat policy.
+/// under the tail-bound-with-grind policy.
 ///
 /// # Errors
 ///
@@ -445,8 +448,8 @@ pub fn fold_witness_linf_cap(
     sizing: &FoldLinfDigitSizing,
 ) -> Result<u128, AkitaError> {
     match sizing.policy {
-        FoldLinfThresholdPolicy::DeterministicBetaInf => Ok(beta),
-        FoldLinfThresholdPolicy::CertifiedFlat => {
+        FoldLinfThresholdPolicy::WorstCaseBetaOnly => Ok(beta),
+        FoldLinfThresholdPolicy::TailBoundWithGrind => {
             let ln_term = fold_linf_ln_term(
                 sizing.num_fold_coeffs,
                 num_fold_blocks,
@@ -604,7 +607,7 @@ mod tests {
         };
         assert_eq!(
             fold_linf_threshold_policy(&shell, TensorChallengeShape::Flat, 64),
-            FoldLinfThresholdPolicy::CertifiedFlat,
+            FoldLinfThresholdPolicy::TailBoundWithGrind,
         );
         let uni = SparseChallengeConfig::Uniform {
             weight: 31,
@@ -612,11 +615,11 @@ mod tests {
         };
         assert_eq!(
             fold_linf_threshold_policy(&uni, TensorChallengeShape::Flat, 128),
-            FoldLinfThresholdPolicy::CertifiedFlat,
+            FoldLinfThresholdPolicy::TailBoundWithGrind,
         );
         assert_eq!(
             fold_linf_threshold_policy(&uni, TensorChallengeShape::Tensor, 128),
-            FoldLinfThresholdPolicy::DeterministicBetaInf,
+            FoldLinfThresholdPolicy::WorstCaseBetaOnly,
         );
         assert_eq!(
             fold_linf_threshold_policy(
@@ -624,7 +627,7 @@ mod tests {
                 TensorChallengeShape::Flat,
                 32
             ),
-            FoldLinfThresholdPolicy::DeterministicBetaInf,
+            FoldLinfThresholdPolicy::WorstCaseBetaOnly,
         );
     }
 

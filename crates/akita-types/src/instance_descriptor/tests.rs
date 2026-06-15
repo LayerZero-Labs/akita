@@ -117,7 +117,7 @@ fn fold_linf_binding_is_part_of_setup_section() {
 }
 
 #[test]
-fn effective_schedule_digest_binds_certified_flat_policy() {
+fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let certified = LevelParams::params_only(
         SisModulusFamily::Q128,
         64,
@@ -146,11 +146,11 @@ fn effective_schedule_digest_binds_certified_flat_policy() {
     .expect("deterministic params");
     assert_eq!(
         certified.fold_linf_threshold_policy(),
-        crate::sis::FoldLinfThresholdPolicy::CertifiedFlat
+        crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
     );
     assert_eq!(
         deterministic.fold_linf_threshold_policy(),
-        crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf
+        crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly
     );
 
     let schedule_certified = Schedule {

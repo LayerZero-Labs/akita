@@ -232,7 +232,7 @@ impl LevelParams {
 
     /// Operator-norm acceptance probability `p` as a rational `p_num / p_den`.
     ///
-    /// Shipping certified-flat presets bind `p = 1` because
+    /// Shipping tail-bound-with-grind presets bind `p = 1` because
     /// `effective_operator_norm_cap >= challenge_l1_mass`. Empirical `p < 1`
     /// sizing is deferred until a binding cap is shipped.
     #[inline]
@@ -261,7 +261,7 @@ impl LevelParams {
         )
     }
 
-    /// Squared `‖z‖_inf` tail bound `t*²` for certified-flat levels.
+    /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
     ///
     /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
     /// digit sizing and acceptance use the same value (invariant 4).
@@ -277,7 +277,7 @@ impl LevelParams {
     ///
     /// # Errors
     ///
-    /// Propagates fold-beta / tail-bound rejections for certified-flat levels.
+    /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
     pub fn fold_linf_grind_contract(
         &self,
         num_claims: usize,
@@ -285,8 +285,8 @@ impl LevelParams {
     ) -> Result<crate::sis::FoldLinfGrindContract, AkitaError> {
         let policy = self.fold_linf_threshold_policy();
         let max_nonce_exclusive = match policy {
-            crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf => 1,
-            crate::sis::FoldLinfThresholdPolicy::CertifiedFlat => max_grind_attempts,
+            crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly => 1,
+            crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind => max_grind_attempts,
         };
         let witness = self.fold_witness_norms();
         let witness_linf = witness.infinity_norm();
@@ -311,7 +311,7 @@ impl LevelParams {
 
     pub fn fold_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let sizing = self.fold_linf_digit_sizing();
-        if sizing.policy != crate::sis::FoldLinfThresholdPolicy::CertifiedFlat {
+        if sizing.policy != crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind {
             return Err(AkitaError::InvalidSetup(
                 "fold_linf_tail_bound_sq: deterministic policy has no tail bound".to_string(),
             ));
@@ -343,7 +343,7 @@ impl LevelParams {
     /// Delegates to [`crate::sis::num_digits_fold`], which derives
     /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
     /// from this level's fold challenge and witness norms, then applies
-    /// `min(β_inf, t*)` under certified-flat policies.
+    /// `min(β_inf, t*)` under tail-bound-with-grind policies.
     ///
     /// # Errors
     ///
@@ -806,8 +806,8 @@ fn append_fold_linf_policy_descriptor_bytes(
     policy: crate::sis::FoldLinfThresholdPolicy,
 ) {
     bytes.push(match policy {
-        crate::sis::FoldLinfThresholdPolicy::CertifiedFlat => 0,
-        crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf => 1,
+        crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind => 0,
+        crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly => 1,
     });
 }
 

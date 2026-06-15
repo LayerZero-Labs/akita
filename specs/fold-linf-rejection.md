@@ -19,7 +19,7 @@ which assumes all `num_fold_blocks · ω` challenge-coefficient products align i
 sign at one output position, an alignment the honest fold never attains. This
 spec replaces that worst case with a **sub-Gaussian tail bound** `t* < β_inf`
 (sub-Gaussian concentration inequality) and a single **challenge reroll** step (Fiat–Shamir grind)
-on certified flat fold challenges, so a level commits the smallest `K` with
+on tail-bound-with-grind fold challenges, so a level commits the smallest `K` with
 `balanced_digit_max(lb, K) >= min(β_inf, t*)`. The prover expects **≤ 2**
 rerolls per committed fold level (hard-capped). The verifier reads the `‖z‖_inf`
 cap off the committed digits, never off the prover's accepting nonce; the nonce
@@ -35,6 +35,9 @@ only replays the accepted Fiat–Shamir challenge stream.
 | `K` | `num_digits_fold` (digit planes for `z_hat`) |
 | `challenge_l2_sq_max` | family worst-case `max ‖c‖_2²` (per logical block); math shorthand `c_l2_sq_max` |
 
+| `TailBoundWithGrind` | `FoldLinfThresholdPolicy` variant: `cap = min(β_inf, t*)`, grind allowed |
+| `WorstCaseBetaOnly` | `FoldLinfThresholdPolicy` variant: `cap = β_inf` only, nonce must be 0 |
+
 This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
 binding rank** (operator norm + Euclidean MSIS); this spec tightens the **fold
 digit count** that sizes the **next-level width**. The two never touch the same
@@ -49,15 +52,16 @@ the Design section below. This spec is self-contained and consistent with the
 
 ### Goal
 
-Size `num_digits_fold` for sign-certified flat committed fold levels from a
+Size `num_digits_fold` for flat committed fold levels with a proved sub-Gaussian
+tail certificate (`TailBoundWithGrind`) from a
 sub-Gaussian tail bound on `‖z‖_inf` instead of the worst-case envelope
 `β_inf`, and add a transcript-bound challenge reroll that re-derives the fold
 challenge until the realized `‖z‖_inf <= t*`.
 The first approved implementation covers the flat challenge families whose
 per-coordinate sign structure is proven in this spec: `ExactShell` at `d=64` and
 `Uniform{[-1,1]}` at `d=128, 256`.
-`BoundedL1Norm` and tensor-shaped folds keep the deterministic `β_inf` digit
-sizing until separate proofs pin their tail constants.
+`BoundedL1Norm` and tensor-shaped folds keep worst-case-β-only (`WorstCaseBetaOnly`)
+digit sizing until separate proofs pin their tail constants.
 
 The feature introduces or modifies:
 
@@ -69,8 +73,8 @@ The feature introduces or modifies:
   `akita-types::sis::norm_bound` (squared domain, no floats on the
   verifier-reachable path).
 - A **digit-sizing path** `num_digits_fold` that takes `K` from
-  `min(β_inf, t*)` only when the level's threshold policy is certified.
-  Unsupported policies return the existing `β_inf` sizing, with no reroll.
+  `min(β_inf, t*)` only when the level's policy is `TailBoundWithGrind`.
+  `WorstCaseBetaOnly` policies return the existing `β_inf` sizing, with no reroll.
 - One per-level **grind nonce** (`u32`) on the wire for every fold level that runs
   stage-1 challenge sampling (root fold, each recursive intermediate, and terminal),
   absorbed before the fold challenge is squeezed, replayed by the verifier.
@@ -95,7 +99,7 @@ The feature introduces or modifies:
    exact same fold challenge from `(transcript, accepted_nonce)`. Protected by:
    `LoggingTranscript` event-stream equality tests (the
    `logging-transcript` feature), extended to the fold-challenge reroll.
-3. **Termination (completeness).** For every certified flat family and level, the
+3. **Termination (completeness).** For every tail-bound-with-grind family and level, the
    chosen threshold `t*` satisfies `Pr[‖z‖_inf > t* | accepted] <= 1/2`, so rerolls
    halt in `<= 2` expected attempts. A hard attempt cap makes cap
    exhaustion a terminating, no-panic, prover-only error on pathological input.
@@ -144,14 +148,14 @@ The feature introduces or modifies:
 - [ ] `fold_linf_tail_bound_sq(...)` is integer-only, total, monotone in
   each argument; digit sizing uses `min(β_inf, t*)` (raw `t*` may exceed the
   tight `fold_witness_beta`; the applied cap is always the minimum).
-- [ ] `num_digits_fold` returns `K_reject <= K_worstcase` for every certified flat
+- [ ] `num_digits_fold` returns `K_reject <= K_worstcase` for every tail-bound-with-grind
   `(family, level, nv)`, strictly smaller at the wider folds, verified by a
   table test; tensor and `BoundedL1Norm` cases are pinned to `K_worstcase`.
 - [ ] Shipped schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
   passes (plain + zk), and `generated_families_stay_within_audited_sis_widths`
   still passes (the A-role rank is unaffected).
 - [ ] Prover reroll loop terminates with mean attempts `< 2` over `>= 100`
-  transcripts for each certified flat production mode at `nv ∈ {16, 28, 30}`.
+  transcripts for each tail-bound-with-grind production mode at `nv ∈ {16, 28, 30}`.
 - [ ] Headerless serialization is pinned: one `u32` nonce is serialized in every
   fold level proof, `LevelProofShape` / `TerminalLevelProofShape` have no variable
   nonce length, and serialized proof bytes match `level_proof_bytes` after adding
@@ -276,7 +280,7 @@ one nonce for the whole stage-1 fold round: the prover samples one challenge
 object, builds the folded witness, and accepts only if every emitted coefficient
 is at most `t*`. Flat recursive intermediate folds use the same one-nonce rule.
 Tensor folds do not reroll in this first cut, so they serialize nonce `0` and the
-descriptor marks the tensor threshold policy as deterministic `β_inf`.
+descriptor marks the tensor threshold policy as `WorstCaseBetaOnly`.
 
 Level counters (conservative for planner/prover/verifier accessors):
 
@@ -375,7 +379,7 @@ For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.4
   sign-independent), but the production sampler uses a fixed `2^128` rank prefix.
   This spec does not claim the prefix has the conditional sign-independence needed
   for (T). Its `challenge_l2_sq_max` value is exposed and tested, but
-  `fold_linf_threshold_policy` returns deterministic `β_inf` for `BoundedL1Norm`
+  `fold_linf_threshold_policy` returns `WorstCaseBetaOnly` for `BoundedL1Norm`
   until a separate certificate proves a tail bound for the truncated support.
 
 **Tensor folds.** A tensor fold materializes the product `c = α_p · β_q`; the
@@ -439,7 +443,7 @@ worst-case path is generalized in place):
   the digit-sizing boundary.
 - `src/sis/decomposition_digits.rs`: `num_digits_fold` gains the tail-bound inputs
   (`challenge_l2_sq_max`, `num_fold_coeffs`, `p`, `policy`) and sizes `K` from
-  `min(β_inf, isqrt_ceil(t*²))` only for certified flat policies. Keep the
+  `min(β_inf, isqrt_ceil(t*²))` only for tail-bound-with-grind policies. Keep the
   degenerate guards and return `β_inf` for deterministic policies.
 - `src/sis/mod.rs`: re-export the new primitive.
 - `src/layout/params.rs`: `LevelParams::num_digits_fold` passes the new inputs
@@ -458,7 +462,7 @@ worst-case path is generalized in place):
 
 - `src/schedule_params.rs` + `src/generated/expand.rs`: thread `challenge_l2_sq_max` /
   `num_fold_coeffs` / `p` / policy into the DP's `num_digits_fold` call so a
-  lowered `K` is searched only for certified flat levels.
+  lowered `K` is searched only for tail-bound-with-grind levels.
 - Regenerate `src/generated/*.rs` (plain + zk) via the existing
   `gen_schedule_tables` binary.
 
@@ -512,7 +516,7 @@ worst-case path is generalized in place):
 - Update the "Folded-Witness ∞-Norm Rejection" section of
   [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) to point
   at this spec, mark flat `ExactShell`/`Uniform{[-1,1]}` as certified, and mark
-  tensor/`BoundedL1Norm` as deterministic `β_inf` pending separate proofs.
+  tensor/`BoundedL1Norm` as `WorstCaseBetaOnly` pending separate proofs.
 - Crate docs on `num_digits_fold` and the tail-bound primitive, stating the
   per-family `challenge_l2_sq_max` table and the sign-symmetry requirement inline.
 - Public security-model docs: extend the challenge-distribution / norm-bound
@@ -530,7 +534,7 @@ W0 (pure, parallel)
 
 W1
   F3  num_digits_fold sizes K from min(β_inf, t*)            [akita-types::sis]  (F2)
-      for certified flat policies only
+      for tail-bound-with-grind policies only
   F4  LevelParams tail-bound accessor                        [akita-types]       (F2,F3)
   F6  grind nonce: sampler param + proof field + shape       [challenges,types]
 
