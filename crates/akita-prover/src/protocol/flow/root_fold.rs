@@ -462,8 +462,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
     scheduled: &ExecutionSchedule,
-    #[cfg(not(feature = "zk"))]
-    terminal_direct_witness_shape: &CleartextWitnessShape,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,

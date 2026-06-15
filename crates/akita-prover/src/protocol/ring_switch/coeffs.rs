@@ -1,6 +1,7 @@
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
+#[cfg(feature = "zk")]
 use std::marker::PhantomData;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.

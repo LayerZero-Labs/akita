@@ -283,8 +283,7 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
-    #[cfg(not(feature = "zk"))]
-    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
     F: FieldCore

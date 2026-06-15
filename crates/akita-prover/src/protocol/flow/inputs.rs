@@ -1,5 +1,7 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
+#[cfg(not(feature = "zk"))]
+use akita_types::schedule_terminal_direct_witness_shape;
 
 struct ProverPreparedOpeningBatch<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     point: &'a [E],
