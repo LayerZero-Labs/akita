@@ -348,6 +348,14 @@ struct FoldSuffix {
     steps: Vec<Step>,
 }
 
+/// Best direct suffix at one DP state: witness length only. The terminal
+/// `DirectStep` is materialized at stitch time from the predecessor fold's
+/// committed `LevelParams`.
+#[derive(Clone, Copy)]
+struct DirectSuffix {
+    current_w_len: usize,
+}
+
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first
 /// step:
@@ -358,7 +366,7 @@ struct FoldSuffix {
 ///   `log_basis`.
 #[derive(Clone)]
 struct SuffixResult {
-    best_direct: Option<(usize, Vec<Step>)>,
+    best_direct: Option<DirectSuffix>,
     best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
@@ -398,28 +406,17 @@ fn make_terminal_direct_step(
     })
 }
 
-/// Replace the leaf `Step::Direct` in a suffix schedule with one whose
-/// segment layout is derived from the predecessor fold's committed params.
-fn patch_suffix_terminal_direct(
-    suffix_sched: &mut [Step],
+fn terminal_direct_suffix_cost(
+    current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
     key: AkitaScheduleLookupKey,
     terminal_fold_level: usize,
     terminal_log_basis: u32,
-) -> Result<usize, AkitaError> {
+) -> Result<(DirectStep, usize), AkitaError> {
     let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
         terminal_fold_segment_counts(key, terminal_fold_level);
-    let Step::Direct(direct) = suffix_sched
-        .last_mut()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty suffix schedule".into()))?
-    else {
-        return Err(AkitaError::InvalidSetup(
-            "suffix direct patch expected terminal Direct step".into(),
-        ));
-    };
-    let current_w_len = direct.current_w_len;
-    *direct = make_terminal_direct_step(
+    let direct = make_terminal_direct_step(
         current_w_len,
         terminal_lp,
         field_bits,
@@ -429,13 +426,8 @@ fn patch_suffix_terminal_direct(
         num_commitment_groups,
         terminal_log_basis,
     )?;
-    Ok(suffix_sched
-        .iter()
-        .map(|step| match step {
-            Step::Direct(d) => d.direct_bytes,
-            Step::Fold(f) => f.level_bytes,
-        })
-        .sum())
+    let direct_bytes = direct.direct_bytes;
+    Ok((direct, direct_bytes))
 }
 
 type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
@@ -492,29 +484,19 @@ fn derive_optimal_suffix_schedule(
         }
     }
 
-    let best_direct = {
-        let field_bits = policy.decomposition.field_bits();
-        if let Some((terminal_lp, _, _)) =
-            derive_candidate_level_params(policy, stage1, current_witness_len, current_lb)?
-        {
-            let terminal_fold_level = level.saturating_sub(1);
-            let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
-                terminal_fold_segment_counts(key, terminal_fold_level);
-            let step = make_terminal_direct_step(
-                current_witness_len_terminal,
-                &terminal_lp,
-                field_bits,
-                num_w_vectors,
-                num_t_vectors,
-                num_public_rows,
-                num_commitment_groups,
-                current_lb,
-            )?;
-            let direct_bytes = step.direct_bytes;
-            Some((direct_bytes, vec![Step::Direct(step)]))
-        } else {
-            None
-        }
+    let best_direct = if derive_candidate_level_params(
+        policy,
+        stage1,
+        current_witness_len,
+        current_lb,
+    )?
+    .is_some()
+    {
+        Some(DirectSuffix {
+            current_w_len: current_witness_len_terminal,
+        })
+    } else {
+        None
     };
 
     if depth > MAX_RECURSION_DEPTH {
@@ -564,11 +546,10 @@ fn derive_optimal_suffix_schedule(
         };
 
         // Branch A: suffix is a Direct at level+1.
-        if let Some((_, suffix_sched)) = suffix.best_direct.as_ref() {
+        if let Some(direct_suffix) = suffix.best_direct {
             let field_bits = policy.decomposition.field_bits();
-            let mut suffix_sched = suffix_sched.clone();
-            let suffix_cost = patch_suffix_terminal_direct(
-                &mut suffix_sched,
+            let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                direct_suffix.current_w_len,
                 &candidate_params,
                 field_bits,
                 key,
@@ -585,14 +566,15 @@ fn derive_optimal_suffix_schedule(
                 MRowLayout::WithoutDBlock,
             ) + eor_bytes;
             let total = level_proof_size + suffix_cost;
-            let mut steps = Vec::with_capacity(1 + suffix_sched.len());
-            steps.push(Step::Fold(FoldStep {
-                params: candidate_params.clone(),
-                current_w_len: current_witness_len,
-                next_w_len: next_witness_len_terminal,
-                level_bytes: level_proof_size,
-            }));
-            steps.extend(suffix_sched);
+            let steps = vec![
+                Step::Fold(FoldStep {
+                    params: candidate_params.clone(),
+                    current_w_len: current_witness_len,
+                    next_w_len: next_witness_len_terminal,
+                    level_bytes: level_proof_size,
+                }),
+                Step::Direct(direct_step),
+            ];
             try_update(total, steps, &mut best_for_this_lb);
         }
         // Branch B: suffix is a Fold at level+1.
@@ -1064,10 +1046,9 @@ pub fn find_schedule(
             };
 
             // Branch A: suffix at level 1 is a Direct
-            if let Some((_, suffix_sched)) = suffix.best_direct.as_ref() {
-                let mut suffix_sched = suffix_sched.clone();
-                let suffix_cost = patch_suffix_terminal_direct(
-                    &mut suffix_sched,
+            if let Some(direct_suffix) = suffix.best_direct {
+                let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                    direct_suffix.current_w_len,
                     &candidate_params,
                     field_bits,
                     key,
@@ -1086,15 +1067,15 @@ pub fn find_schedule(
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
                     best_cost = total;
-                    let mut steps = Vec::with_capacity(1 + suffix_sched.len());
-                    steps.push(Step::Fold(FoldStep {
-                        params: candidate_params.clone(),
-                        current_w_len: witness_len,
-                        next_w_len: next_w_len_terminal,
-                        level_bytes: root_proof_size,
-                    }));
-                    steps.extend(suffix_sched);
-                    best_steps = steps;
+                    best_steps = vec![
+                        Step::Fold(FoldStep {
+                            params: candidate_params.clone(),
+                            current_w_len: witness_len,
+                            next_w_len: next_w_len_terminal,
+                            level_bytes: root_proof_size,
+                        }),
+                        Step::Direct(direct_step),
+                    ];
                 }
             }
             // Branch B: suffix at level 1 is a Fold

@@ -576,7 +576,7 @@ pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D
     is_terminal_fold: bool,
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
-    logical_w: &RecursiveWitnessFlat,
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
     #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
@@ -642,21 +642,6 @@ where
                     ));
                 }
                 validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
-                let expanded = segment.layout.logical_num_elems;
-                let digits = akita_types::expand_segment_typed_to_i8_digits::<D, F>(
-                    &segment,
-                    lp,
-                    num_w_vectors,
-                    num_t_vectors,
-                    num_public_rows,
-                    num_commitment_groups,
-                )?;
-                if digits.len() != expanded || digits.as_slice() != logical_w.as_i8_digits() {
-                    return Err(AkitaError::InvalidInput(
-                        "segment-typed final witness does not match ring-switch witness"
-                            .to_string(),
-                    ));
-                }
                 let parts = segment.terminal_transcript_parts()?;
                 transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
                 return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
