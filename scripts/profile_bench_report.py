@@ -226,6 +226,163 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+TAIL_SUMMARY_INT_FIELDS = (
+    "tail_bytes",
+    "final_w_num_elems",
+    "final_w_bits_per_elem",
+    "tail_log_basis",
+    "tail_z_first",
+    "tail_z_prefix_bytes",
+    "tail_z_golomb_bytes",
+    "tail_z_budget_bytes",
+    "tail_z_slack_bytes",
+    "tail_e_field_elems",
+    "tail_t_field_elems",
+    "tail_r_field_elems",
+    "tail_e_bytes",
+    "tail_t_bytes",
+    "tail_r_bytes",
+    "z_rice_k",
+    "z_coords",
+    "z_packed_hypothetical_bytes",
+    "z_golomb_savings_bytes",
+)
+
+TAIL_SUMMARY_FLOAT_FIELDS = (
+    "z_bits_per_coord_golomb",
+    "z_bits_per_coord_packed",
+)
+
+TAIL_ENCODING_POLICIES = {
+    "segment_typed": "non-zk folded terminal (default in profile bench)",
+    "packed_digits": "zk-feature folded terminal fallback",
+    "field_elements": "root-direct cleartext witness",
+    "none": "root-direct zero-fold (no cleartext tail)",
+}
+
+
+def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) -> None:
+    if "final_w_encoding" in kvs:
+        summary["tail_encoding"] = kvs["final_w_encoding"]
+    if "final_w_policy" in kvs:
+        summary["tail_policy"] = kvs["final_w_policy"]
+    if "final_w_num_elems" in kvs:
+        summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
+        summary["terminal_w_len"] = int(kvs["final_w_num_elems"])
+    bits_per_elem = kvs.get("final_w_bits_per_elem")
+    if bits_per_elem is not None and bits_per_elem != "None":
+        summary["tail_bits_per_elem"] = int(bits_per_elem)
+    if kvs.get("final_w_encoding") == "packed_digits" and "final_w_bits_per_elem" in kvs:
+        summary["terminal_log_basis"] = int(kvs["final_w_bits_per_elem"])
+    for key in TAIL_SUMMARY_INT_FIELDS:
+        if key in kvs:
+            summary[key] = int(kvs[key])
+    for key in TAIL_SUMMARY_FLOAT_FIELDS:
+        if key in kvs:
+            summary[key] = float(kvs[key])
+    if "z_beta_inf" in kvs:
+        summary["z_beta_inf"] = kvs["z_beta_inf"]
+    if summary.get("tail_log_basis") is not None:
+        summary["terminal_log_basis"] = summary["tail_log_basis"]
+
+
+def render_tail_encoding(current: dict[str, object]) -> None:
+    encoding = current.get("tail_encoding")
+    if encoding == "none" or (
+        current.get("tail_bytes") == 0 and encoding in (None, "none")
+    ):
+        print(
+            "- Tail encoding: `none` "
+            "(root-direct zero-fold; profile bench has no cleartext tail witness)"
+        )
+        return
+    if encoding is None:
+        return
+
+    policy = current.get("tail_policy")
+    policy_hint = TAIL_ENCODING_POLICIES.get(str(encoding), str(policy or encoding))
+    print(f"- Tail encoding: `{encoding}` ({policy_hint})")
+
+    if encoding == "packed_digits":
+        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
+            print(
+                f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` logical elems at "
+                f"`{current['tail_bits_per_elem']}` bits/elem (uniform `PackedDigits`)"
+            )
+        return
+
+    if encoding == "field_elements":
+        if current.get("tail_num_elems") is not None:
+            print(
+                f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` raw field elements"
+            )
+        return
+
+    if encoding != "segment_typed":
+        return
+
+    if current.get("tail_num_elems") is not None and current.get("tail_log_basis") is not None:
+        z_first = current.get("tail_z_first")
+        z_first_label = "z-first" if z_first == 1 else "e-first"
+        print(
+            f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elems, "
+            f"`log_basis={current['tail_log_basis']}`, wire order `{z_first_label}`"
+        )
+
+    z_prefix = current.get("tail_z_prefix_bytes")
+    z_golomb = current.get("tail_z_golomb_bytes")
+    e_bytes = current.get("tail_e_bytes")
+    t_bytes = current.get("tail_t_bytes")
+    r_bytes = current.get("tail_r_bytes")
+    if all(value is not None for value in (z_prefix, z_golomb, e_bytes, t_bytes, r_bytes)):
+        e_elems = current.get("tail_e_field_elems", "?")
+        t_elems = current.get("tail_t_field_elems", "?")
+        r_elems = current.get("tail_r_field_elems", "?")
+        wire_total = int(z_prefix) + int(z_golomb) + int(e_bytes) + int(t_bytes) + int(r_bytes)
+        print(
+            f"  - Wire breakdown: `{fmt_bytes(float(wire_total))} B` = "
+            f"z prefix `{fmt_bytes(float(z_prefix))} B` + Golomb z `{fmt_bytes(float(z_golomb))} B` + "
+            f"e `{fmt_bytes(float(e_bytes))} B` (`{e_elems}` elems) + "
+            f"t `{fmt_bytes(float(t_bytes))} B` (`{t_elems}` elems) + "
+            f"r `{fmt_bytes(float(r_bytes))} B` (`{r_elems}` elems)"
+        )
+
+    z_budget = current.get("tail_z_budget_bytes")
+    z_slack = current.get("tail_z_slack_bytes")
+    if z_budget is not None and z_golomb is not None:
+        slack_note = (
+            f", slack `{fmt_bytes(float(z_slack))} B` under planner upper bound"
+            if z_slack is not None
+            else ""
+        )
+        print(
+            f"  - Golomb z budget: realized `{fmt_bytes(float(z_golomb))} B` / "
+            f"scheduled upper `{fmt_bytes(float(z_budget))} B`{slack_note}"
+        )
+
+    z_beta_inf = current.get("z_beta_inf")
+    z_rice_k = current.get("z_rice_k")
+    z_coords = current.get("z_coords")
+    z_bits_golomb = current.get("z_bits_per_coord_golomb")
+    z_bits_packed = current.get("z_bits_per_coord_packed")
+    z_packed_hyp = current.get("z_packed_hypothetical_bytes")
+    z_savings = current.get("z_golomb_savings_bytes")
+    if z_beta_inf is not None and z_rice_k is not None and z_coords is not None:
+        comparison = ""
+        if z_bits_golomb is not None and z_bits_packed is not None:
+            comparison = (
+                f", `{z_bits_golomb:.2f}` bits/coord (Golomb k=`{z_rice_k}` from beta_inf=`{z_beta_inf}`) "
+                f"vs `{z_bits_packed:.2f}` bits/coord (legacy uniform `PackedDigits` z planes)"
+            )
+        savings_note = ""
+        if z_packed_hyp is not None and z_golomb is not None and z_savings is not None:
+            savings_note = (
+                f"; hypothetical packed z `{fmt_bytes(float(z_packed_hyp))} B`, "
+                f"savings `{fmt_bytes(float(z_savings))} B`"
+            )
+        print(f"  - Fold-response z: `{fmt_count(float(z_coords))}` coords{comparison}{savings_note}")
+
+
 def write_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -257,12 +414,17 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
             missing.append(key)
-    if summary.get("tail_num_elems") is None:
-        missing.append("tail_num_elems")
-    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") not in (
-        "field_elements",
-        "segment_typed",
+    tail_bytes = summary.get("tail_bytes")
+    tail_encoding = summary.get("tail_encoding")
+    if tail_bytes not in (None, 0) and tail_encoding is None:
+        missing.append("tail_encoding")
+    if (
+        tail_encoding not in ("none", None)
+        and tail_bytes not in (None, 0)
+        and summary.get("tail_num_elems") is None
     ):
+        missing.append("tail_num_elems")
+    if summary.get("tail_bits_per_elem") is None and tail_encoding == "packed_digits":
         missing.append("tail_bits_per_elem")
     proof_size = summary.get("proof_size_bytes")
     accounted = summary.get("accounted_bytes")
@@ -440,21 +602,23 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
-            summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
-            if "final_w_encoding" in kvs:
-                summary["tail_encoding"] = kvs["final_w_encoding"]
-            bits_per_elem = kvs.get("final_w_bits_per_elem")
-            summary["terminal_w_len"] = int(kvs["final_w_num_elems"])
-            if bits_per_elem is not None and bits_per_elem != "None":
-                summary["tail_bits_per_elem"] = int(bits_per_elem)
-                summary["terminal_log_basis"] = int(bits_per_elem)
-            if kvs.get("final_w_encoding") == "segment_typed":
-                if "tail_z_bytes" in kvs:
-                    summary["tail_z_bytes"] = int(kvs["tail_z_bytes"])
-                if "tail_raw_field_bytes" in kvs:
-                    summary["tail_raw_field_bytes"] = int(kvs["tail_raw_field_bytes"])
-                if "tail_log_basis" in kvs:
-                    summary["terminal_log_basis"] = int(kvs["tail_log_basis"])
+            ingest_tail_summary_fields(summary, kvs)
+        elif "z fold encoding stats" in line and kvs.get("label") == mode:
+            # Legacy line shape before tail summary consolidation; keep for old logs.
+            if summary.get("tail_encoding") != "segment_typed":
+                summary["tail_encoding"] = "segment_typed"
+            if "z_coords" in kvs:
+                summary["z_coords"] = int(kvs["z_coords"])
+            if "beta_inf" in kvs:
+                summary["z_beta_inf"] = kvs["beta_inf"]
+            if "rice_k_beta" in kvs:
+                summary["z_rice_k"] = int(kvs["rice_k_beta"])
+            if "bits_per_coord_k_beta" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_beta"])
+            if "bits_per_coord_packed" in kvs:
+                summary["z_bits_per_coord_packed"] = float(kvs["bits_per_coord_packed"])
+            if "z_payload_bytes" in kvs:
+                summary["tail_z_golomb_bytes"] = int(kvs["z_payload_bytes"])
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -548,8 +712,9 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "akita_levels": "proof levels",
         "planned_levels": "planned levels",
         "proof_levels": "proof levels",
-        "tail_num_elems": "tail shape",
-        "tail_bits_per_elem": "tail shape",
+        "tail_num_elems": "tail encoding",
+        "tail_encoding": "tail encoding",
+        "tail_bits_per_elem": "tail encoding",
     }
     if first_missing in phase_by_metric:
         return phase_by_metric[first_missing]
@@ -604,6 +769,7 @@ SUMMARY_CSV_COLUMNS = (
     "proof_framing_bytes",
     "akita_levels",
     "tail_num_elems",
+    "tail_encoding",
     "tail_bits_per_elem",
     "exit_code",
     "error",
@@ -1352,36 +1518,23 @@ def render_report(args: argparse.Namespace) -> int:
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
                 "do not apply until the Frobenius optimization is wired."
             )
-        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
-            print(
-                f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "
-                f"`{current['tail_bits_per_elem']}` bits/elem"
-            )
-        elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "field_elements":
-            print(f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` field elements")
-        elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "segment_typed":
-            z_bytes = current.get("tail_z_bytes")
-            raw_field_bytes = current.get("tail_raw_field_bytes")
-            if z_bytes is not None and raw_field_bytes is not None:
-                print(
-                    f"- Tail shape: segment-typed, `{fmt_count(float(current['tail_num_elems']))}` "
-                    f"logical elems (`z={fmt_bytes(float(z_bytes))} B`, "
-                    f"raw e/t/r={fmt_bytes(float(raw_field_bytes))} B`)"
-                )
-            else:
-                print(
-                    f"- Tail shape: segment-typed, `{fmt_count(float(current['tail_num_elems']))}` "
-                    "logical elems"
-                )
-        if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
+        render_tail_encoding(current)
+        if (
+            current.get("terminal_w_len") is not None
+            and current.get("terminal_log_basis") is not None
+            and current.get("tail_encoding") not in ("segment_typed", "none", None)
+        ):
             print(
                 f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
                 f"with `log_basis={current['terminal_log_basis']}`"
             )
-        elif current.get("terminal_w_len") is not None and current.get("tail_encoding") == "field_elements":
+        elif (
+            current.get("terminal_w_len") is not None
+            and current.get("tail_encoding") == "field_elements"
+        ):
             print(
                 f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
-                f"with field-element encoding"
+                "with field-element encoding"
             )
 
         planned_levels = current.get("planned_levels")

@@ -1,7 +1,6 @@
 use crate::report::{
-    emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
+    emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
-    report_z_fold_encoding_stats_from_proof,
 };
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
@@ -442,7 +441,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             plan,
         );
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
-        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
             plan,
@@ -461,7 +460,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             &schedule,
         );
         emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
-        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
             &schedule,
@@ -837,7 +836,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             plan,
         );
         emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
-        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
             plan,
@@ -858,7 +857,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             num_polys,
             Cfg::decomposition().field_bits(),
         );
-        report_z_fold_encoding_stats_from_proof::<FF, Cfg::ExtField>(
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
             &schedule,
