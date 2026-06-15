@@ -1,4 +1,8 @@
 use super::*;
+use crate::proof::tail_segments::{
+    expand_segment_typed_to_i8_digits, SegmentTypedWitness, SegmentTypedWitnessShape,
+};
+use crate::LevelParams;
 
 /// Bit-packed balanced digits for the final-level witness vector.
 ///
@@ -18,12 +22,13 @@ pub struct PackedDigits {
 /// Terminal direct witness payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CleartextWitnessProof<F: FieldCore> {
-    /// Packed small signed digits, used by the current recursive terminal
-    /// witness.
+    /// Packed small signed digits, used by ZK terminal witnesses.
     PackedDigits(PackedDigits),
     /// Raw field elements, for direct witnesses that are not naturally digit
     /// bounded.
     FieldElements(FlatRingVec<F>),
+    /// Segment-typed terminal witness (`e`/`t`/`r` raw field, `z` Golomb-Rice).
+    SegmentTyped(SegmentTypedWitness<F>),
 }
 
 impl<F: FieldCore> CleartextWitnessProof<F> {
@@ -31,14 +36,22 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     pub fn as_packed_digits(&self) -> Option<&PackedDigits> {
         match self {
             Self::PackedDigits(packed) => Some(packed),
-            Self::FieldElements(_) => None,
+            Self::FieldElements(_) | Self::SegmentTyped(_) => None,
+        }
+    }
+
+    /// Borrow the segment-typed payload, if present.
+    pub fn as_segment_typed(&self) -> Option<&SegmentTypedWitness<F>> {
+        match self {
+            Self::SegmentTyped(witness) => Some(witness),
+            Self::PackedDigits(_) | Self::FieldElements(_) => None,
         }
     }
 
     /// Borrow the raw field-element payload, if present.
     pub fn as_field_elements(&self) -> Option<&FlatRingVec<F>> {
         match self {
-            Self::PackedDigits(_) => None,
+            Self::PackedDigits(_) | Self::SegmentTyped(_) => None,
             Self::FieldElements(field_elems) => Some(field_elems),
         }
     }
@@ -52,6 +65,10 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
             Self::FieldElements(field_elems) => {
                 CleartextWitnessShape::FieldElements(field_elems.coeff_len())
             }
+            Self::SegmentTyped(witness) => CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
+                layout: witness.layout,
+                z_payload_bytes: witness.z_payload.len(),
+            }),
         }
     }
 
@@ -60,6 +77,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         match self {
             Self::PackedDigits(packed) => packed.num_elems,
             Self::FieldElements(field_elems) => field_elems.coeff_len(),
+            Self::SegmentTyped(witness) => witness.layout.logical_num_elems,
         }
     }
 
@@ -80,6 +98,34 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
             .collect()
     }
 
+    /// Decode the logical digit stream for stage-2 replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the witness cannot be decoded.
+    pub fn logical_i8_digits<const D: usize>(
+        &self,
+        lp: &LevelParams,
+        num_w_vectors: usize,
+        num_t_vectors: usize,
+        num_public_rows: usize,
+    ) -> Result<Vec<i8>, AkitaError>
+    where
+        F: CanonicalField + HalvingField,
+    {
+        match self {
+            Self::PackedDigits(_) => self.packed_i8_digits(),
+            Self::SegmentTyped(witness) => expand_segment_typed_to_i8_digits::<D, F>(
+                witness,
+                lp,
+                num_w_vectors,
+                num_t_vectors,
+                num_public_rows,
+            ),
+            Self::FieldElements(_) => Err(AkitaError::InvalidProof),
+        }
+    }
+
     /// Split this terminal direct witness into transcript-bound byte slices.
     ///
     /// # Errors
@@ -89,8 +135,17 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     pub fn terminal_transcript_parts(
         &self,
         layout: TerminalWitnessSegmentLayout,
-    ) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
-        terminal_witness_transcript_parts(&self.packed_i8_digits()?, layout)
+    ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
+    where
+        F: CanonicalField + AkitaSerialize,
+    {
+        match self {
+            Self::PackedDigits(_) => {
+                terminal_witness_transcript_parts(&self.packed_i8_digits()?, layout)
+            }
+            Self::SegmentTyped(witness) => witness.terminal_transcript_parts(),
+            Self::FieldElements(_) => Err(AkitaError::InvalidProof),
+        }
     }
 }
 
@@ -101,6 +156,8 @@ pub enum CleartextWitnessShape {
     PackedDigits((usize, u32)),
     /// Raw field elements.
     FieldElements(usize),
+    /// Segment-typed terminal witness.
+    SegmentTyped(SegmentTypedWitnessShape),
 }
 
 impl PackedDigits {
@@ -288,7 +345,7 @@ impl AkitaDeserialize for PackedDigits {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> {
+impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -299,6 +356,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> 
             Self::FieldElements(field_elems) => {
                 field_elems.serialize_with_mode(&mut writer, compress)
             }
+            Self::SegmentTyped(witness) => witness.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -306,6 +364,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> 
         match self {
             Self::PackedDigits(packed) => packed.serialized_size(compress),
             Self::FieldElements(field_elems) => field_elems.serialized_size(compress),
+            Self::SegmentTyped(witness) => witness.serialized_size(compress),
         }
     }
 }
@@ -315,6 +374,7 @@ impl<F: FieldCore + Valid> Valid for CleartextWitnessProof<F> {
         match self {
             Self::PackedDigits(packed) => packed.check(),
             Self::FieldElements(field_elems) => field_elems.check(),
+            Self::SegmentTyped(witness) => witness.check(),
         }
     }
 }
@@ -336,6 +396,9 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             ),
             CleartextWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
                 FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
+            ),
+            CleartextWitnessShape::SegmentTyped(shape) => Self::SegmentTyped(
+                SegmentTypedWitness::deserialize_with_mode(&mut reader, compress, validate, shape)?,
             ),
         };
         if matches!(validate, Validate::Yes) {

@@ -39,7 +39,9 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
-pub use coeffs::{build_w_coeffs, ring_switch_build_w};
+pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
+#[cfg(not(feature = "zk"))]
+pub use coeffs::RingSwitchTerminalArtifacts;
 pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
 pub use finalize::ring_switch_finalize;

@@ -47,7 +47,7 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -212,7 +212,7 @@ fn verify_suffix<'a, F, L, T>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -358,7 +358,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {

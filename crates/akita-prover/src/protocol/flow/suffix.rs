@@ -1,6 +1,10 @@
 use super::*;
 use cfg_if::cfg_if;
 
+#[cfg(not(feature = "zk"))]
+use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
+use akita_types::build_segment_typed_witness;
+
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     /// Current committed suffix witness representation.
@@ -266,7 +270,8 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + AkitaSerialize,
     L: ExtField<F>
         + FpExtEncoding<F>
         + HasUnreducedOps
@@ -281,13 +286,15 @@ where
     let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
-    let logical_w = ring_switch_build_w::<F, B, D>(
+    let build_output = ring_switch_build_w::<F, B, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
         backend,
         prepared,
         lp,
+        is_terminal_fold,
     )?;
+    let logical_w = build_output.w;
     scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
         None
@@ -313,6 +320,8 @@ where
         } else {
             None
         },
+        #[cfg(not(feature = "zk"))]
+        build_output.terminal_artifacts,
     )?;
     let m_row_layout = if is_terminal_fold {
         MRowLayout::WithoutDBlock
@@ -546,22 +555,62 @@ pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D
     logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
+    #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,
 {
     if is_terminal_fold {
         let final_log_basis = final_log_basis.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
+        #[cfg(not(feature = "zk"))]
+        {
+            if let Some(artifacts) = terminal_artifacts {
+                if artifacts.u_concat_planes != 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "segment-typed terminal witness does not support tiered u_concat".to_string(),
+                    ));
+                }
+                let num_claims = instance.opening_batch().num_claims();
+                let segment = build_segment_typed_witness::<D, F>(
+                    &artifacts.e_folded,
+                    &artifacts.recomposed_inner_rows,
+                    &artifacts.z_folded_centered,
+                    &artifacts.r,
+                    lp,
+                    num_claims,
+                    1,
+                    num_claims,
+                )?;
+                let expanded = segment
+                    .layout
+                    .logical_num_elems;
+                let digits = akita_types::expand_segment_typed_to_i8_digits::<D, F>(
+                    &segment,
+                    lp,
+                    num_claims,
+                    1,
+                    num_claims,
+                )?;
+                if digits.len() != expanded || digits.as_slice() != logical_w.as_i8_digits() {
+                    return Err(AkitaError::InvalidInput(
+                        "segment-typed final witness does not match ring-switch witness".to_string(),
+                    ));
+                }
+                let parts = segment.terminal_transcript_parts()?;
+                transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+                return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
+            }
+        }
         let final_witness = CleartextWitnessProof::PackedDigits(
             PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
         );
         let terminal_layout = terminal_witness_segment_layout(
             lp,
             instance.opening_batch().num_claims(),
-            1,
+            instance.opening_batch().num_claims(),
             F::modulus_bits(),
         )?;
         let parts = final_witness.terminal_transcript_parts(terminal_layout)?;

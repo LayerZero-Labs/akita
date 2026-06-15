@@ -2,7 +2,7 @@
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
@@ -10,7 +10,7 @@ use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    PackedDigits, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::marker::PhantomData;
 
@@ -56,9 +56,11 @@ fn cleartext_witness_eval<F, E, const D: usize>(
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
+    lp: Option<&akita_types::LevelParams>,
+    num_claims: usize,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F>,
 {
     let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -93,6 +95,16 @@ where
                     .ok_or(AkitaError::InvalidProof)
             })
         }
+        CleartextWitnessProof::SegmentTyped(_witness) => {
+            let lp = lp.ok_or(AkitaError::InvalidProof)?;
+            let digits = cleartext_witness.logical_i8_digits::<D>(lp, num_claims, 1, num_claims)?;
+            if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
+                return Err(AkitaError::InvalidProof);
+            }
+            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
+                Ok(E::from_i64(digits[idx] as i64))
+            })
+        }
         CleartextWitnessProof::FieldElements(field_witness) => {
             let field_witness = field_witness.coeffs();
             if field_witness.len() != physical_w_len {
@@ -109,6 +121,8 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     Cleartext {
         witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
+        lp: Option<&'a akita_types::LevelParams>,
+        num_claims: usize,
     },
     ClaimedEval {
         eval: E,
@@ -145,7 +159,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
@@ -226,12 +240,16 @@ where
             Stage2WitnessOracle::Cleartext {
                 witness,
                 physical_w_len,
+                lp,
+                num_claims,
             } => cleartext_witness_eval::<F, E, D>(
                 witness,
                 *physical_w_len,
                 challenges,
                 self.col_bits,
                 self.ring_bits,
+                *lp,
+                *num_claims,
             ),
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
@@ -251,7 +269,7 @@ where
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
@@ -311,7 +329,7 @@ where
 #[cfg(feature = "zk")]
 impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Record the deferred relation tying the stage-2 masked input to the

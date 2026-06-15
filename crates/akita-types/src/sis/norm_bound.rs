@@ -32,6 +32,30 @@ pub fn ring_product_infinity_norm_bound(
         .min(lhs_l1_norm.saturating_mul(rhs_infinity_norm))
 }
 
+/// Smallest integer `s` with `s^2 >= v`.
+#[inline]
+#[must_use]
+pub fn isqrt_ceil(v: u128) -> u128 {
+    if v == 0 {
+        return 0;
+    }
+    let mut lo = 1u128;
+    let mut hi = v;
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if mid.saturating_mul(mid) <= v {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if lo.saturating_mul(lo) < v {
+        lo.saturating_add(1)
+    } else {
+        lo
+    }
+}
+
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
 /// already accounting for the fold-challenge shape (flat vs tensor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +271,31 @@ pub fn fold_witness_beta(
     .checked_mul(num_claims as u128)
     .and_then(|t| t.checked_mul(1u128 << r_vars))
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
+}
+
+/// Public variance-envelope scale for terminal `z` Golomb-Rice coding.
+///
+/// `V = sigma_inf^2 * T_level * rho2`, `sigma = isqrt_ceil(V)` per
+/// `specs/tail-wire-encoding.md`.
+///
+/// # Errors
+///
+/// Propagates [`fold_witness_beta`] setup errors.
+#[inline]
+pub fn fold_response_sigma(
+    r_vars: usize,
+    num_claims: usize,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    t_level: u128,
+) -> Result<u128, AkitaError> {
+    let sigma_inf = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
+    let rho2 = challenge.l1_norm.saturating_mul(challenge.l1_norm);
+    let variance = sigma_inf
+        .saturating_mul(sigma_inf)
+        .saturating_mul(t_level)
+        .saturating_mul(rho2);
+    Ok(isqrt_ceil(variance))
 }
 
 // --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------

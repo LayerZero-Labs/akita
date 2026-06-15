@@ -20,7 +20,7 @@ use akita_algebra::CyclotomicRing;
 use akita_algebra::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    PseudoMersenneField, RandomSampling,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
 #[cfg(feature = "zk")]
 use akita_r1cs::{
@@ -526,6 +526,8 @@ fn verify_stage2<F, E, T, const D: usize>(
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
+    lp: &LevelParams,
+    num_claims: usize,
     #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
@@ -536,7 +538,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -547,6 +549,8 @@ where
         AkitaStage2Proof::Terminal(proof) => Stage2WitnessOracle::Cleartext {
             witness: &proof.final_witness,
             physical_w_len,
+            lp: Some(lp),
+            num_claims,
         },
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
@@ -640,7 +644,7 @@ fn verify_fold<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -816,6 +820,8 @@ where
         stage1_replay,
         &rs,
         relation_claim,
+        prepared.lp,
+        relation_instance.opening_batch().num_claims(),
         #[cfg(feature = "zk")]
         relation_claim_mask,
         setup_claim,

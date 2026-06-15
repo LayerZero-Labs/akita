@@ -397,9 +397,10 @@ pub struct DirectStep {
 impl DirectStep {
     /// Active terminal log-basis for packed direct witnesses.
     pub fn log_basis(&self, field_bits: u32) -> u32 {
-        match self.witness_shape {
-            CleartextWitnessShape::PackedDigits((_, bits)) => bits,
+        match &self.witness_shape {
+            CleartextWitnessShape::PackedDigits((_, bits)) => *bits,
             CleartextWitnessShape::FieldElements(_) => field_bits,
+            CleartextWitnessShape::SegmentTyped(shape) => shape.layout.log_basis,
         }
     }
 }
@@ -522,6 +523,18 @@ fn append_direct_witness_shape_descriptor_bytes(
             bytes.push(1);
             push_usize(bytes, *coeff_len);
         }
+        CleartextWitnessShape::SegmentTyped(shape) => {
+            bytes.push(2);
+            push_usize(bytes, shape.layout.ring_dimension);
+            push_u32(bytes, shape.layout.log_basis);
+            bytes.push(u8::from(shape.layout.z_first));
+            push_usize(bytes, shape.layout.z_coords);
+            push_usize(bytes, shape.layout.e_field_elems);
+            push_usize(bytes, shape.layout.t_field_elems);
+            push_usize(bytes, shape.layout.r_field_elems);
+            push_usize(bytes, shape.layout.logical_num_elems);
+            push_usize(bytes, shape.z_payload_bytes);
+        }
     }
 }
 
@@ -623,9 +636,12 @@ pub fn scheduled_next_level_params(
 ) -> Result<LevelParams, AkitaError> {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => match step.witness_shape {
+        Some(Step::Direct(step)) => match &step.witness_shape {
             CleartextWitnessShape::PackedDigits((_, log_basis)) => {
-                Ok(LevelParams::log_basis_stub(log_basis))
+                Ok(LevelParams::log_basis_stub(*log_basis))
+            }
+            CleartextWitnessShape::SegmentTyped(shape) => {
+                Ok(LevelParams::log_basis_stub(shape.layout.log_basis))
             }
             CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
@@ -650,7 +666,7 @@ mod tests {
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{AkitaError, FieldCore, Prime128OffsetA7F7};
+    use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     #[cfg(not(feature = "zk"))]
@@ -771,7 +787,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,

@@ -20,9 +20,10 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
+    root_extension_opening_partials, segment_typed_witness_upper_bound_bytes,
+    tail_golomb_rice_z_params, tail_segment_layout, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, SegmentTypedWitnessShape, Step,
 };
 
 use crate::PlannerPolicy;
@@ -420,9 +421,38 @@ fn derive_optimal_suffix_schedule(
     }
 
     let best_direct = {
-        let witness_shape =
-            CleartextWitnessShape::PackedDigits((current_witness_len_terminal, current_lb));
-        let direct_bytes = direct_witness_bytes(policy.decomposition.field_bits(), &witness_shape);
+        let field_bits = policy.decomposition.field_bits();
+        let (witness_shape, direct_bytes) =
+            if let Some((terminal_lp, _, _)) =
+                derive_candidate_level_params(policy, stage1, current_witness_len, current_lb)?
+            {
+                let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, field_bits)?;
+                let (rice_k, zigzag_w_z) =
+                    tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
+                let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
+                    field_bits,
+                    &layout,
+                    rice_k,
+                    zigzag_w_z,
+                )
+                .saturating_sub(
+                    (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
+                        * akita_types::field_bytes(field_bits),
+                );
+                let witness_shape = CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
+                    layout,
+                    z_payload_bytes,
+                });
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+                (witness_shape, direct_bytes)
+            } else {
+                let witness_shape = CleartextWitnessShape::PackedDigits((
+                    current_witness_len_terminal,
+                    current_lb,
+                ));
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+                (witness_shape, direct_bytes)
+            };
         let step = Step::Direct(DirectStep {
             current_w_len: current_witness_len_terminal,
             witness_shape,

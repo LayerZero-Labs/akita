@@ -1,5 +1,23 @@
+use akita_serialization::AkitaSerialize;
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
+
+/// Prover-side ring artifacts retained for segment-typed terminal encoding.
+#[cfg(not(feature = "zk"))]
+pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
+    pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
+    pub recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>,
+    pub z_folded_centered: Vec<[i32; D]>,
+    pub r: Vec<akita_algebra::CyclotomicRing<F, D>>,
+    pub u_concat_planes: usize,
+}
+
+/// Output of [`ring_switch_build_w`].
+pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
+    pub w: RecursiveWitnessFlat,
+    #[cfg(not(feature = "zk"))]
+    pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+}
 
 /// Build the witness vector `w` from the ring-relation witness.
 ///
@@ -24,9 +42,10 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
-) -> Result<RecursiveWitnessFlat, AkitaError>
+    retain_terminal_artifacts: bool,
+) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField + AkitaSerialize,
     B: RingSwitchComputeBackend<F>,
 {
     let num_claims = instance.opening_batch().num_claims();
@@ -91,6 +110,7 @@ where
             FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
         }
     };
+    let z_centered = z_folded_rings.centered_coeffs.clone();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
@@ -107,7 +127,23 @@ where
             num_claims,
         )
     };
-    Ok(w)
+    #[cfg(not(feature = "zk"))]
+    let terminal_artifacts = if retain_terminal_artifacts {
+        Some(RingSwitchTerminalArtifacts {
+            e_folded,
+            recomposed_inner_rows,
+            z_folded_centered: z_centered,
+            r,
+            u_concat_planes: u_concat_digits.len(),
+        })
+    } else {
+        None
+    };
+    Ok(RingSwitchBuildOutput {
+        w,
+        #[cfg(not(feature = "zk"))]
+        terminal_artifacts,
+    })
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(

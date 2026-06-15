@@ -21,10 +21,12 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes, level_proof_bytes,
+    root_extension_opening_partials, segment_typed_witness_upper_bound_bytes,
+    tail_golomb_rice_z_params, tail_segment_layout, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule,
+    SegmentTypedWitnessShape, Step,
 };
 
 use crate::find_schedule;
@@ -248,6 +250,7 @@ pub fn schedule_from_entry(
     let mut current_w_len = expected_root_w_len;
     let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
+    let mut last_fold_lp: Option<LevelParams> = None;
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
@@ -350,6 +353,7 @@ pub fn schedule_from_entry(
                 total = total.checked_add(level_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
+                last_fold_lp = Some(lp.clone());
                 steps.push(Step::Fold(FoldStep {
                     params: lp,
                     current_w_len,
@@ -399,8 +403,29 @@ pub fn schedule_from_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, field_bits)?;
+                    let (rice_k, zigzag_w_z) =
+                        tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
+                    let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
+                        field_bits,
+                        &layout,
+                        rice_k,
+                        zigzag_w_z,
+                    )
+                    .saturating_sub(
+                        (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
+                            * field_bytes(field_bits),
+                    );
                     (
-                        CleartextWitnessShape::PackedDigits((len, current_log_basis)),
+                        CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
+                            layout,
+                            z_payload_bytes,
+                        }),
                         len,
                         None,
                     )

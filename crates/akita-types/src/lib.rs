@@ -9,6 +9,7 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
+pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
@@ -85,11 +86,14 @@ pub use proof::{
     OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot, OpeningClaimSlotShape,
     OpeningPoints, PackedDigits, PreparedOpeningPoint, PublicMatrixSeed, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    RingSliceSerializer, SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    build_segment_typed_witness, expand_segment_typed_to_i8_digits, segment_typed_witness_exact_bytes,
+    segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};

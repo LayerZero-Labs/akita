@@ -97,6 +97,34 @@ where
     Ok(())
 }
 
+#[cfg(not(feature = "zk"))]
+fn absorb_terminal_e_folded_fields<F, T, const D: usize>(
+    transcript: &mut T,
+    e_folded: &[CyclotomicRing<F, D>],
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    T: Transcript<F>,
+{
+    let mut bytes = Vec::new();
+    for ring in e_folded {
+        for coeff in ring.coefficients() {
+            coeff
+                .serialize_with_mode(&mut bytes, akita_serialization::Compress::No)
+                .map_err(|_| {
+                    AkitaError::InvalidInput("terminal e_folded absorb failed".to_string())
+                })?;
+        }
+    }
+    if bytes.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "terminal e_folded absorb cannot be empty".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
+    Ok(())
+}
+
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[Vec<CyclotomicRing<F, D>>],
     depth_open: usize,
@@ -546,6 +574,15 @@ impl RingRelationProver {
         )?;
 
         if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+            #[cfg(not(feature = "zk"))]
+            {
+                let e_folded_flat: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
+                    .iter()
+                    .flat_map(|block| block.iter().cloned())
+                    .collect();
+                absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
+            }
+            #[cfg(feature = "zk")]
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
         let challenges = sample_folding_challenges::<F, T, D>(

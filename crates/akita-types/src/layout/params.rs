@@ -232,6 +232,33 @@ impl LevelParams {
         )
     }
 
+    /// Public `sigma` proxy for terminal `z` Golomb-Rice parameterization.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::sis::fold_response_sigma`] setup errors.
+    #[inline]
+    pub fn fold_response_sigma(
+        &self,
+        num_t_vectors: usize,
+        num_public_rows: usize,
+    ) -> Result<u128, AkitaError> {
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        let t_level = (num_public_rows as u128)
+            .saturating_mul(self.block_len as u128)
+            .saturating_mul(self.num_digits_commit as u128);
+        crate::sis::fold_response_sigma(
+            self.r_vars,
+            num_t_vectors,
+            challenge,
+            self.fold_witness_norms(),
+            t_level,
+        )
+    }
+
     /// Set the one-hot chunk size `K`, returning the updated params.
     #[inline]
     #[must_use]
