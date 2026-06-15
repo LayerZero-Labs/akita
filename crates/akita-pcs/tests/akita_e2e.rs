@@ -48,11 +48,7 @@ const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-/// Conservative planner overcount accepted by profile benches (stage-2 degree-2
-/// rounds). Segment-typed Golomb `z` slack is added separately.
-const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
-
-fn segment_typed_z_planner_slack<FF, L>(
+fn schedule_bytes_with_realized_terminal_z<FF, L>(
     proof: &AkitaBatchedProof<FF, L>,
     schedule: &Schedule,
 ) -> usize
@@ -61,17 +57,19 @@ where
     L: FieldCore,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
-        return 0;
+        return schedule.total_bytes;
     };
     let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
-        return 0;
+        return schedule.total_bytes;
     };
     let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
-        return 0;
+        return schedule.total_bytes;
     };
-    scheduled
-        .z_payload_bytes
-        .saturating_sub(witness.z_payload.len())
+
+    schedule
+        .total_bytes
+        .saturating_sub(scheduled.z_payload_bytes)
+        .saturating_add(witness.z_payload.len())
 }
 
 static INIT_RAYON: Once = Once::new();
@@ -1022,28 +1020,21 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-            // `Schedule::total_bytes` is the planner's conservative upper bound:
-            // `level_proof_bytes` sizes every stage-2 sumcheck round as
-            // degree-3, but the prover ships a degree-2 first round per
-            // stage-2 sumcheck (one challenge-field element fewer per fold
-            // level). So the runtime proof never exceeds the estimate and
-            // undershoots it by at most one challenge element per fold level.
+            // `Schedule::total_bytes` is the planner's public upper bound. For
+            // segment-typed tails the schedule budgets the variable-length
+            // Golomb `z` segment at its worst-case public length; the proof
+            // carries the realized byte length on the wire.
             assert!(
                 proof.size() <= plan.total_bytes,
                 "runtime proof {} exceeds planner upper bound {}",
                 proof.size(),
                 plan.total_bytes
             );
-            let overcount = plan.total_bytes - proof.size();
-            let accepted = ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES
-                .saturating_add(segment_typed_z_planner_slack(&proof, &plan));
-            assert!(
-                overcount <= accepted,
-                "planner estimate {} overcounts runtime proof {} by {overcount} bytes, \
-                 exceeding the accepted {accepted}-byte tolerance (stage-2 degree-2 rounds \
-                 plus segment-typed z slack; see specs/planner-refactor.md)",
-                plan.total_bytes,
+            assert_eq!(
+                schedule_bytes_with_realized_terminal_z(&proof, &plan),
                 proof.size(),
+                "planner/runtime proof-size accounting should be exact once the \
+                 realized variable-length terminal z payload is substituted",
             );
             assert_eq!(
                 decoded
