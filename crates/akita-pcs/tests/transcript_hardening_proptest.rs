@@ -7,83 +7,51 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
-use akita_types::ClaimIncidenceSummary;
+use akita_types::OpeningBatch;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
 
-fn batch_shape(index: usize) -> Vec<usize> {
+fn batch_shape(index: usize) -> usize {
     match index {
-        0 => vec![1],
-        1 => vec![2],
-        2 => vec![1, 2],
-        _ => vec![2, 1],
+        0 => 1,
+        1 => 2,
+        _ => 3,
     }
 }
 
 fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
 
-    let num_polys_per_point = batch_shape(shape_index);
-    let total_claims: usize = num_polys_per_point.iter().sum();
-    let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point.clone())
-        .expect("valid incidence");
+    let total_claims = batch_shape(shape_index);
+    let opening_batch =
+        OpeningBatch::same_point(num_vars, total_claims).expect("valid opening batch");
     let layout =
-        DenseCfg::get_params_for_batched_commitment(&incidence).expect("batched commit layout");
+        DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
 
-    let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
+    let polys: Vec<DensePoly<F, DENSE_D>> = (0..total_claims)
+        .map(|poly_idx| make_dense_poly(num_vars, seed.wrapping_add(poly_idx as u64)))
+        .collect();
+    let opening_point = random_point(num_vars, seed.wrapping_add(0x9e37_0000));
+    let openings: Vec<F> = polys
         .iter()
-        .enumerate()
-        .map(|(point_idx, &count)| {
-            (0..count)
-                .map(|poly_idx| {
-                    make_dense_poly(
-                        num_vars,
-                        seed.wrapping_add((point_idx as u64) << 16)
-                            .wrapping_add(poly_idx as u64),
-                    )
-                })
-                .collect()
-        })
-        .collect();
-    let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
-        .map(|point_idx| random_point(num_vars, seed.wrapping_add(0x9e37_0000 + point_idx as u64)))
-        .collect();
-    let openings_per_point: Vec<Vec<F>> = polys_per_point
-        .iter()
-        .zip(opening_points_owned.iter())
-        .map(|(polys, point)| {
-            polys
-                .iter()
-                .map(|poly| opening_from_poly_with_basis(poly, point, &layout, basis_mode))
-                .collect()
-        })
+        .map(|poly| opening_from_poly_with_basis(poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
-        polys_per_point.iter().map(Vec::as_slice).collect();
-    let openings_per_point_refs: Vec<&[F]> = openings_per_point.iter().map(Vec::as_slice).collect();
-    let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
-
-    let setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(
-        num_vars,
-        total_claims,
-        num_polys_per_point.len(),
-    )
-    .unwrap();
+    let setup =
+        <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 
-    let commit_outputs = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
+    let (commitment, hint) = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
         &setup,
         &CpuBackend,
         &prepared,
-        &polys_per_point_refs,
+        &polys,
     )
     .expect("batched commit");
-    let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
@@ -91,7 +59,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         &setup,
         &CpuBackend,
         &prepared,
-        prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
+        prove_input(&opening_point, &polys, &commitment, hint),
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,
@@ -104,7 +72,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
+        verify_input(&opening_point, &openings, &commitment),
         basis_mode,
         akita_types::SetupContributionMode::Direct,
     )

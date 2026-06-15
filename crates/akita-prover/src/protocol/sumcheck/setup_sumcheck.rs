@@ -14,8 +14,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, LevelParams,
-    RingRelationInstance, RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -110,7 +110,7 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+        E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
     {
@@ -226,12 +226,12 @@ fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let num_t_vectors = relation
-        .commitment_routing()
+        .opening_batch()
         .num_polys_per_commitment_group()
         .iter()
         .try_fold(0usize, |acc, &count| {
@@ -269,18 +269,11 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore,
 {
-    let routing = relation.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
-    let num_claims = relation.claim_to_point().len();
-    let num_points = num_polys_per_commitment_group.len();
-    if relation.opening_points().len() != num_points {
-        return Err(AkitaError::InvalidProof);
-    }
-    if relation
-        .claim_to_point()
-        .iter()
-        .any(|&point_idx| point_idx >= num_points)
-    {
+    let opening_batch = relation.opening_batch();
+    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
+    let num_claims = relation.opening_batch().num_claims();
+    let num_commitment_groups = num_polys_per_commitment_group.len();
+    if num_commitment_groups != 1 {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -343,7 +336,7 @@ where
     let m_row_layout = relation.m_row_layout();
     // Public-output M rows are enforced by the fused trace term, not M itself.
     let num_public_m_rows = 0usize;
-    let rows = lp.m_row_count_for(num_points, num_public_m_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(num_commitment_groups, num_public_m_rows, m_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -366,7 +359,7 @@ where
         n_d: lp.d_key.row_len(),
         m_row_layout,
         n_b: lp.b_key.row_len(),
-        num_points,
+        num_commitment_groups,
         rows,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         num_public_rows: num_public_m_rows,

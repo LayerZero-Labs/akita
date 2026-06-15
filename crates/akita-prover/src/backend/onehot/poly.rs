@@ -294,7 +294,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     ) -> Result<Arc<SparseRingPoly<F, D>>, AkitaError>
     where
         F: FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         let (width, total_evals) = self.tensor_packing_shape::<E>()?;
         let _span = tracing::info_span!(

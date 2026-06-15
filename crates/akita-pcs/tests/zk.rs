@@ -5,27 +5,21 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
 mod common;
 
-use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_config::CommitmentConfig;
 use akita_field::{ExtField, LiftBase};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::protocol::ring_switch::{
-    build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
-};
 use akita_prover::{AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_sumcheck::multilinear_eval;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
-    DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    SisModulusFamily,
+    lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaVerifierSetup, AppendToTranscript, DecompositionParams, FlatRingVec, MRowLayout,
+    OpeningBatch, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
-use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier, RingSwitchReplay};
+use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::marker::PhantomData;
 
@@ -36,8 +30,7 @@ struct RuntimePlanned<Cfg>(PhantomData<Cfg>);
 
 impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     type Field = Cfg::Field;
-    type ClaimField = Cfg::ClaimField;
-    type ChallengeField = Cfg::ChallengeField;
+    type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
 
@@ -58,9 +51,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -68,8 +60,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     }
 }
 
-fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid single-point incidence")
+fn single_point_group_opening_batch(num_vars: usize) -> OpeningBatch {
+    OpeningBatch::same_point(num_vars, 1).expect("valid single-point opening_batch")
 }
 
 fn plain_root_d_image<const D: usize>(
@@ -107,12 +99,11 @@ fn plain_root_d_image<const D: usize>(
     let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         &CpuBackend,
         prepared,
-        vec![ring_opening_point],
-        vec![ring_multiplier_point],
-        vec![0usize],
+        ring_opening_point,
+        ring_multiplier_point,
         &[poly],
         vec![e_folded],
-        &single_point_group_incidence(point.len()),
+        single_point_group_opening_batch(point.len()),
         layout.clone(),
         vec![hint],
         &mut transcript,
@@ -301,7 +292,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         let point = random_fp32_extension_point(NV, 0xcafe_babe);
         let expected_opening = dense_fp32_extension_opening(&evals, &point);
 
-        let setup = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_prover(NV, 1, 1)
+        let setup = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_prover(NV, 1)
             .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
@@ -393,8 +384,8 @@ fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
 
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
-    BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ExtField = F>,
     Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
@@ -402,14 +393,14 @@ where
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
@@ -419,7 +410,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -431,7 +422,7 @@ where
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
         let setup =
-            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -530,7 +521,7 @@ fn run_zk_dense_cursor_binding_negatives() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::get_params_for_batched_commitment(
-            &ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_c0de_0001);
@@ -541,8 +532,8 @@ fn run_zk_dense_cursor_binding_negatives() {
         let point = random_point(NV, 0x0bad_cafe_0001);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-            .expect("setup_prover");
+        let setup =
+            <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
@@ -677,8 +668,8 @@ fn run_zk_dense_cursor_binding_negatives() {
 
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
-    BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ExtField = F>,
     Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
@@ -686,14 +677,14 @@ where
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            ClaimField = F,
+            ExtField = F,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
@@ -703,7 +694,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -715,7 +706,7 @@ where
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
         let setup =
-            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -816,11 +807,8 @@ where
 fn run_zk_dense_batched_shape_cases() {
     type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
-    // Under the corrected weak-binding collision norm + regenerated SIS floor,
-    // the multipoint (2-point) dense fp128 D32 batched root first folds at
-    // `nv = 15` (it ships a cleartext `ZeroFold` root for `nv <= 14`). The
-    // same-point 3-poly case folds from `nv = 14`; `nv = 15` keeps both shapes
-    // on a folded root, which is what this fixture exercises.
+    // The same-point 3-poly case folds from `nv = 14`; `nv = 15` keeps this
+    // fixture on a folded root, which is what this ZK path exercises.
     const NV: usize = 15;
 
     init_rayon_pool();
@@ -834,9 +822,9 @@ fn run_zk_dense_batched_shape_cases() {
         };
 
         const SAME_POINT_POLYS: usize = 3;
-        let same_point_incidence =
-            ClaimIncidenceSummary::same_point(NV, SAME_POINT_POLYS).expect("valid incidence");
-        let same_point_layout = Cfg::get_params_for_batched_commitment(&same_point_incidence)
+        let same_point_opening_batch =
+            OpeningBatch::same_point(NV, SAME_POINT_POLYS).expect("valid opening batch");
+        let same_point_layout = Cfg::get_params_for_batched_commitment(&same_point_opening_batch)
             .expect("same-point batched layout");
         let same_point_polys: Vec<DensePoly<F, D>> = (0..SAME_POINT_POLYS)
             .map(|idx| make_poly(0xd3e5_8000 + idx as u64))
@@ -846,9 +834,8 @@ fn run_zk_dense_batched_shape_cases() {
             .iter()
             .map(|poly| opening_from_poly(poly, &same_point, &same_point_layout))
             .collect();
-        let setup =
-            <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, SAME_POINT_POLYS, 1)
-                .expect("setup_prover");
+        let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, SAME_POINT_POLYS)
+            .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
@@ -900,309 +887,6 @@ fn run_zk_dense_batched_shape_cases() {
             akita_types::SetupContributionMode::Direct,
         )
         .expect("same-point zk batched verify");
-
-        const NUM_POINTS: usize = 2;
-        let num_polys_per_point = [1usize; NUM_POINTS];
-        let total_claims: usize = num_polys_per_point.iter().sum();
-        let multipoint_incidence =
-            ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
-                .expect("valid multipoint incidence");
-        let multipoint_layout = Cfg::get_params_for_batched_commitment(&multipoint_incidence)
-            .expect("multipoint batched layout");
-        let polys_per_point: Vec<Vec<DensePoly<F, D>>> = (0..NUM_POINTS)
-            .map(|point_idx| vec![make_poly(0xd3e5_9000 + point_idx as u64)])
-            .collect();
-        let opening_points_owned: Vec<Vec<F>> = (0..NUM_POINTS)
-            .map(|point_idx| random_point(NV, 0xaaaa_9000 + point_idx as u64))
-            .collect();
-        let openings_per_point: Vec<Vec<F>> = polys_per_point
-            .iter()
-            .zip(opening_points_owned.iter())
-            .map(|(polys, point)| {
-                polys
-                    .iter()
-                    .map(|poly| opening_from_poly(poly, point, &multipoint_layout))
-                    .collect()
-            })
-            .collect();
-        let polys_per_point_refs: Vec<&[DensePoly<F, D>]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
-        let openings_per_point_refs: Vec<&[F]> =
-            openings_per_point.iter().map(Vec::as_slice).collect();
-        let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
-        let setup =
-            <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, total_claims, NUM_POINTS)
-                .expect("setup_prover");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
-        let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
-            &setup,
-            &CpuBackend,
-            &prepared,
-            &polys_per_point_refs,
-        )
-        .expect("multipoint zk batched commit");
-        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/multipoint");
-        let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
-            &CpuBackend,
-            &prepared,
-            prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        )
-        .expect("multipoint zk batched prove");
-        match &proof.root {
-            AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {}
-            AkitaBatchedRootProof::ZeroFold { .. } => {
-                panic!("multipoint fixture should use a folded or terminal ZK proof")
-            }
-        }
-        let proof_shape = proof.shape();
-        let mut serialized = Vec::new();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize multipoint zk proof");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(serialized),
-            &proof_shape,
-        )
-        .expect("deserialize multipoint zk proof");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/multipoint");
-        <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        )
-        .expect("multipoint zk batched verify");
-    });
-}
-
-#[test]
-fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
-    type Cfg = RuntimePlanned<fp128::D32Full>;
-    const D: usize = fp128::D32Full::D;
-    const NV: usize = 14;
-    const NUM_POINTS: usize = 2;
-
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        let make_poly = |seed: u64| {
-            let mut rng = StdRng::seed_from_u64(seed);
-            let evals: Vec<F> = (0..1usize << NV)
-                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-                .collect();
-            DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly")
-        };
-
-        let num_polys_per_point = vec![1usize; NUM_POINTS];
-        let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.clone())
-            .expect("valid multipoint incidence");
-        let lp = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
-        let polys_per_point: Vec<Vec<DensePoly<F, D>>> = (0..NUM_POINTS)
-            .map(|point_idx| vec![make_poly(0xd3e5_9000 + point_idx as u64)])
-            .collect();
-        let opening_points_owned: Vec<Vec<F>> = (0..NUM_POINTS)
-            .map(|point_idx| random_point(NV, 0xaaaa_9000 + point_idx as u64))
-            .collect();
-        let polys_per_point_refs: Vec<&[DensePoly<F, D>]> =
-            polys_per_point.iter().map(Vec::as_slice).collect();
-        let setup =
-            <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, NUM_POINTS, NUM_POINTS)
-                .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare");
-        let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
-            &setup,
-            &CpuBackend,
-            &prepared,
-            &polys_per_point_refs,
-        )
-        .expect("commit");
-        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
-
-        let alpha_bits = D.trailing_zeros() as usize;
-        let mut ring_opening_points = Vec::with_capacity(NUM_POINTS);
-        let mut ring_multiplier_points = Vec::with_capacity(NUM_POINTS);
-        let mut e_folded_by_poly = Vec::with_capacity(NUM_POINTS);
-        for (point, polys) in opening_points_owned.iter().zip(polys_per_point.iter()) {
-            let ring_opening_point = ring_opening_point_from_field(
-                &point[alpha_bits..],
-                lp.r_vars,
-                lp.m_vars,
-                BasisMode::Lagrange,
-                BlockOrder::RowMajor,
-            )
-            .expect("ring point");
-            let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-            let (_, e_folded) = polys[0].evaluate_and_fold(
-                &ring_opening_point.b,
-                &ring_opening_point.a,
-                lp.block_len,
-            );
-            ring_opening_points.push(ring_opening_point);
-            ring_multiplier_points.push(ring_multiplier_point);
-            e_folded_by_poly.push(e_folded);
-        }
-
-        let mut transcript = AkitaTranscript::<F>::new(b"zk/multipoint-row-regression");
-        for commitment in &commitments {
-            commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
-        }
-        for point in &opening_points_owned {
-            for coord in point {
-                transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
-            }
-        }
-        let polys_flat: Vec<&DensePoly<F, D>> = polys_per_point
-            .iter()
-            .flat_map(|polys| polys.iter())
-            .collect();
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-            &CpuBackend,
-            &prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            incidence.claim_to_point().to_vec(),
-            &polys_flat,
-            e_folded_by_poly,
-            &incidence,
-            lp.clone(),
-            hints,
-            &mut transcript,
-            &commitments,
-            vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
-        let w = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &lp,
-        )
-        .expect("ring-switch witness");
-        let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
-        let live_x_cols = w_compact.len() >> ring_bits;
-
-        let alpha = F::from_u64(71);
-        let alpha_evals_y = scalar_powers(alpha, D);
-        const NUM_PUBLIC_M_ROWS: usize = 0;
-        let rows = lp
-            .m_row_count_for(NUM_POINTS, NUM_PUBLIC_M_ROWS, MRowLayout::WithDBlock)
-            .expect("row count");
-        let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
-        let gamma = vec![F::one(); incidence.num_claims()];
-        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
-            .iter()
-            .flat_map(|commitment| commitment.u.iter().copied())
-            .collect();
-        for row in 0..rows {
-            let tau1: Vec<F> = (0..tau1_bits)
-                .map(|bit| {
-                    if (row >> bit) & 1 == 1 {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                })
-                .collect();
-            let m_evals_x = compute_m_evals_x::<F, F, D>(
-                &setup.expanded,
-                instance.opening_points(),
-                instance.ring_multiplier_points(),
-                instance.claim_to_point(),
-                &instance.challenges,
-                alpha,
-                &alpha_evals_y,
-                &lp,
-                &tau1,
-                instance
-                    .commitment_routing()
-                    .num_polys_per_commitment_group(),
-                instance.commitment_routing().claim_to_commitment_group(),
-                instance
-                    .commitment_routing()
-                    .claim_poly_in_commitment_group(),
-                &gamma,
-                NUM_PUBLIC_M_ROWS,
-                MRowLayout::WithDBlock,
-            )
-            .expect("m evals");
-            let got = (0..live_x_cols).fold(F::zero(), |acc_x, x| {
-                let column_start = x * D;
-                let y_eval =
-                    alpha_evals_y
-                        .iter()
-                        .enumerate()
-                        .fold(F::zero(), |acc_y, (y, &alpha)| {
-                            acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
-                        });
-                acc_x + y_eval * m_evals_x[x]
-            });
-            let expected = relation_claim_from_rows_extension::<F, F, D>(
-                &tau1,
-                alpha,
-                &instance.v,
-                &commitment_rows,
-            )
-            .expect("relation claim");
-            assert_eq!(got, expected, "row {row}");
-        }
-
-        let mut rng = StdRng::seed_from_u64(0x51de_cafe);
-        let tau1: Vec<F> = (0..tau1_bits)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect();
-        let m_evals_x = compute_m_evals_x::<F, F, D>(
-            &setup.expanded,
-            instance.opening_points(),
-            instance.ring_multiplier_points(),
-            instance.claim_to_point(),
-            &instance.challenges,
-            alpha,
-            &alpha_evals_y,
-            &lp,
-            &tau1,
-            instance
-                .commitment_routing()
-                .num_polys_per_commitment_group(),
-            instance.commitment_routing().claim_to_commitment_group(),
-            instance
-                .commitment_routing()
-                .claim_poly_in_commitment_group(),
-            &gamma,
-            NUM_PUBLIC_M_ROWS,
-            MRowLayout::WithDBlock,
-        )
-        .expect("m evals");
-        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect();
-        let expected_eval = multilinear_eval(&m_evals_x, &x_challenges).expect("mle");
-        let replay = RingSwitchReplay {
-            relation: &instance,
-            row_coefficients: &gamma,
-            lp: &lp,
-        };
-        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
-            .expect("prepare row eval")
-            .eval_at_point::<F, D>(
-                &x_challenges,
-                &setup.expanded,
-                instance.opening_points(),
-                instance.ring_multiplier_points(),
-                alpha,
-                None,
-            )
-            .expect("deferred row eval");
-        assert_eq!(prepared_eval, expected_eval);
     });
 }
 

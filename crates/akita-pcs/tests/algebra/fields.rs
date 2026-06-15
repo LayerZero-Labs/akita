@@ -2,12 +2,12 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
 use akita_field::{
-    pseudo_mersenne_modulus, Fp32, Fp64, FpExt2, Invertible, Prime128Offset159, Prime128Offset2355,
-    Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenneField, RandomSampling,
-    TowerBasisFpExt4, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    pseudo_mersenne_modulus, Fp32, Fp64, FpExt2, FpExt4, Invertible, Prime128Offset159,
+    Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec,
+    PseudoMersenneField, RandomSampling, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 
-use super::fixtures::{check_solinas_prime, NR, NR4};
+use super::fixtures::{check_solinas_prime, NR};
 
 #[test]
 fn fp32_basic_arith() {
@@ -57,16 +57,18 @@ fn fp128_primes_match_biguint_oracle() {
 fn fp_ext2_fp_ext4_inversion_smoke() {
     type F = Fp32<251>;
     type F2 = FpExt2<F, NR>;
-    type F4 = TowerBasisFpExt4<F, NR, NR4>;
+    type F4 = FpExt4<F>;
 
     let x = F2::new(F::from_u64(3), F::from_u64(7));
     let inv = x.inverse().unwrap();
     assert!((x * inv) == F2::one());
 
-    let y = F4::new(
-        F2::new(F::from_u64(5), F::from_u64(1)),
-        F2::new(F::from_u64(2), F::from_u64(9)),
-    );
+    let y = F4::new([
+        F::from_u64(5),
+        F::from_u64(1),
+        F::from_u64(2),
+        F::from_u64(9),
+    ]);
     let invy = y.inverse().unwrap();
     assert!((y * invy) == F4::one());
 }

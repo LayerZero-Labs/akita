@@ -17,7 +17,7 @@ pub const ABSORB_COMMITMENT: &[u8] = b"ak/a/cm";
 pub const ABSORB_ZK_HIDING_COMMITMENT: &[u8] = b"ak/a/zhc";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"ak/a/ec";
-/// Absorb the public batch nesting shape for grouped/multipoint batching.
+/// Absorb the public batch nesting shape for grouped single-point batching.
 pub const ABSORB_BATCH_SHAPE: &[u8] = b"ak/a/bs";
 /// Challenge for the evaluation-to-linear-relation reduction (paper §4.2).
 pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"ak/c/lr";

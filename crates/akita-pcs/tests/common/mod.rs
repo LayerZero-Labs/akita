@@ -19,7 +19,7 @@ use std::sync::Once;
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-// Bare presets: test-only multipoint / non-singleton batched incidences
+// Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::D64OneHot;
@@ -66,14 +66,14 @@ pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
+    (
         point,
-        CommittedPolynomials {
+        vec![CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        },
-    )]
+        }],
+    )
 }
 
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
@@ -81,58 +81,13 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
+    (
         point,
-        CommittedOpenings {
+        vec![CommittedOpenings {
             openings,
             commitment,
-        },
-    )]
-}
-
-pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
-    points: &[&'a [FF]],
-    polynomials_by_point: &[&'a [P]],
-    commitments: &'a [C],
-    hints: Vec<H>,
-) -> ProverClaims<'a, FF, P, C, H> {
-    points
-        .iter()
-        .zip(polynomials_by_point.iter())
-        .zip(commitments.iter())
-        .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
-            (
-                *point,
-                CommittedPolynomials {
-                    polynomials,
-                    commitment,
-                    hint,
-                },
-            )
-        })
-        .collect()
-}
-
-pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
-    points: &[&'a [FF]],
-    openings_by_point: &[&'a [FF]],
-    commitments: &'a [C],
-) -> VerifierClaims<'a, FF, C> {
-    points
-        .iter()
-        .zip(openings_by_point.iter())
-        .zip(commitments.iter())
-        .map(|((point, openings), commitment)| {
-            (
-                *point,
-                CommittedOpenings {
-                    openings,
-                    commitment,
-                },
-            )
-        })
-        .collect()
+        }],
+    )
 }
 
 pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(

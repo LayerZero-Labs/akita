@@ -232,12 +232,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, Prime32Offset99, RingSubfieldFpExt4};
+    use akita_field::{AkitaError, FpExt4, Prime32Offset99};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {
         type F = Prime32Offset99;
-        type E = RingSubfieldFpExt4<F>;
+        type E = FpExt4<F>;
         const D: usize = 32;
         let witness = RecursiveWitnessFlat::from_i8_digits(vec![1, 2, 3]);
 

@@ -27,10 +27,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
+    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
 };
 
 mod coeffs;
@@ -40,7 +39,9 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
-pub use coeffs::{build_w_coeffs, ring_switch_build_w};
+#[cfg(not(feature = "zk"))]
+pub use coeffs::RingSwitchTerminalArtifacts;
+pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
 pub use finalize::ring_switch_finalize;
