@@ -4,8 +4,8 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-10                                                |
-| Status      | proposed                                                  |
-| PR          | #174 (spec, targets `main`); implementation #189 (stacked on #188 → #186) |
+| Status      | implemented (pending merge via #189)                      |
+| PR          | #189 (spec + implementation, targets `main`; spec-only #174 closed as superseded) |
 
 ## Summary
 
@@ -20,8 +20,9 @@ sign at one output position, an alignment the honest fold never attains. This
 spec replaces that worst case with a **sub-Gaussian tail bound** `t* < β_inf`
 (sub-Gaussian concentration inequality) and a single **challenge reroll** step (Fiat–Shamir grind)
 on tail-bound-with-grind fold challenges, so a level commits the smallest `K` with
-`balanced_digit_max(lb, K) >= min(β_inf, t*)`. The prover expects **≤ 2**
-rerolls per committed fold level (hard-capped). The verifier reads the `‖z‖_inf`
+`balanced_digit_max(lb, K) >= min(β_inf, t*)`. The prover expects **≤ 8**
+rerolls per fold level in expectation (`p_grind = 1/8`, hard-capped at
+`MAX_FOLD_GRIND_ATTEMPTS`). The verifier reads the `‖z‖_inf`
 cap off the committed digits, never off the prover's accepting nonce; the nonce
 only replays the accepted Fiat–Shamir challenge stream.
 
@@ -143,30 +144,31 @@ The feature introduces or modifies:
 
 ### Acceptance Criteria
 
-- [ ] `SparseChallengeConfig::challenge_l2_sq_max()` returns the exact
+- [x] `SparseChallengeConfig::challenge_l2_sq_max()` returns the exact
   worst-case `‖c‖_2²` for `Uniform`, `ExactShell`, `BoundedL1Norm`, validated by
   a unit test against hand-computed values.
-- [ ] `fold_witness_linf_tail_bound_sq(...)` is integer-only, total, monotone in
+- [x] `fold_witness_linf_tail_bound_sq(...)` is integer-only, total, monotone in
   each argument; digit sizing uses `min(β_inf, t*)` (raw `t*` may exceed the
   tight `fold_witness_beta`; the applied cap is always the minimum).
-- [ ] `num_digits_fold` returns `K_reject <= K_worstcase` for every tail-bound-with-grind
+- [x] `num_digits_fold` returns `K_reject <= K_worstcase` for every tail-bound-with-grind
   `(family, level, nv)`, strictly smaller at the wider folds, verified by a
   table test; tensor and `BoundedL1Norm` cases are pinned to `K_worstcase`.
-- [ ] Shipped schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
+- [x] Shipped schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
   passes (plain + zk), and `generated_families_stay_within_audited_sis_widths`
   still passes (the A-role rank is unaffected).
-- [ ] Prover reroll loop terminates with mean attempts `< 2` over `>= 100`
-  transcripts for each tail-bound-with-grind production mode at `nv ∈ {16, 28, 30}`.
-- [ ] Headerless serialization is pinned: one `u32` nonce is serialized in every
+- [x] Prover reroll loop terminates with mean probe count `<= 8` over production
+  tail-bound-with-grind modes; `FoldGrindObserver` records true probe counts in
+  the profile harness (not inferred from nonce + 1).
+- [x] Headerless serialization is pinned: one `u32` nonce is serialized in every
   fold level proof, `LevelProofShape` / `TerminalLevelProofShape` have no variable
   nonce length, and serialized proof bytes match `level_proof_bytes` after adding
   four bytes per fold level.
-- [ ] e2e prove/verify passes; a tampered `z` exceeding `balanced_digit_max(lb, K)`
+- [x] e2e prove/verify passes; a tampered `z` exceeding `balanced_digit_max(lb, K)`
   is rejected by the verifier.
-- [ ] `LoggingTranscript` event-stream equality holds across the reroll.
-- [ ] Descriptor bytes change intentionally and are pinned; cross-policy verify
+- [x] `LoggingTranscript` event-stream equality holds across the reroll.
+- [x] Descriptor bytes change intentionally and are pinned; cross-policy verify
   fails.
-- [ ] Net proof-size improvement at the affected modes, reported by the profile
+- [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
 
 ### Testing Strategy
@@ -232,7 +234,7 @@ prover reroll loop: sample fold challenge (nonce) → fold → accept if ‖z‖
 verifier: absorb nonce → re-derive same challenge → digit-range check enforces K
         │                                                      [akita-verifier]
         ▼
-AkitaInstanceDescriptor binds the threshold policy            [akita-config]
+AkitaInstanceDescriptor binds the threshold policy            [akita-types]
 ```
 
 ### Nonce and Wire Contract
@@ -539,12 +541,12 @@ worst-case path is generalized in place):
   deterministic policies with `AkitaError`. No new norm check (the digit-range
   check already enforces `K`).
 
-**`akita-config`**
+**`akita-types` (descriptor)**
 
-- Instance-descriptor binding: add the threshold-policy identity (formula tag,
-  certified-family set, deterministic-policy set, per-family `challenge_l2_sq_max`,
-  attempt cap, nonce presence, and `12L` entropy-budget rule) to
-  `bind_transcript_instance_descriptor`; pin the bytes.
+- Instance-descriptor binding: `FoldLinfProtocolBinding` in the setup section
+  (formula tag, `p_grind`, certified-family set, per-family `challenge_l2_sq_max`,
+  attempt cap, grind-nonce wire bytes, probe-order tag); pinned digest tests in
+  `instance_descriptor/tests.rs`.
 
 ### Alternatives Considered
 
@@ -581,34 +583,23 @@ worst-case path is generalized in place):
 
 ## Execution
 
-Slices (each independently reviewable; W0 are pure and unblock the rest):
+All slices landed in implementation PR #189:
 
 ```text
-W0 (pure, parallel)
-  F1  challenge_l2_sq_max + effective_l2_sq_max              [akita-challenges]
-  F2  threshold policy + fold_witness_linf_tail_bound_sq + ln term   [akita-types::sis]
-
-W1
-  F3  num_digits_fold sizes K from min(β_inf, t*)            [akita-types::sis]  (F2)
-      for tail-bound-with-grind policies only
-  F4  LevelParams tail-bound accessor                        [akita-types]       (F2,F3)
-  F6  grind nonce: sampler param + proof field + shape       [challenges,types]
-
-W2
-  F5  planner DP + regenerate shipped tables                 [akita-planner]     (F3,F4)
-  F7  prover reroll loop + accepted nonce                    [akita-prover]      (F4,F6)
-
-W3
-  F8  verifier replay + no-panic                             [akita-verifier]    (F6,F7)
-  F9  descriptor binding + pinned bytes                       [akita-config]      (F4,F6)
-
-W4
-  F10 e2e tamper / termination / ZK parity tests             (all)
-
-W5 (ZK milestone, after plain cut)
-  F11 transcript-seeded grind probe order in ZK prover paths   [akita-prover]  (done)
-      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
-  F12 fold grind probe-count observer for profile metrics      [akita-prover]  (done)
+F1   challenge_l2_sq_max + effective_l2_sq_max              [akita-challenges]  landed
+F2   threshold policy + fold_witness_linf_tail_bound_sq + ln term   [akita-types::sis]  landed
+F3   num_digits_fold sizes K from min(β_inf, t*)            [akita-types::sis]  landed
+     for tail-bound-with-grind policies only
+F4   LevelParams tail-bound accessor                        [akita-types]       landed
+F5   planner DP + regenerate shipped tables                 [akita-planner]     landed
+F6   grind nonce: sampler param + proof field + shape       [challenges,types]  landed
+F7   prover reroll loop + accepted nonce                    [akita-prover]      landed
+F8   verifier replay + no-panic                             [akita-verifier]    landed
+F9   descriptor binding + pinned bytes                       [akita-types]       landed
+F10  e2e tamper / termination / ZK parity tests             (all)               landed
+F11  transcript-seeded grind probe order in ZK prover paths [akita-prover]      landed
+     (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
+F12  fold grind probe-count observer for profile metrics    [akita-prover]      landed
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
