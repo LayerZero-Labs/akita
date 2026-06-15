@@ -21,12 +21,12 @@ threshold.
 - Paper §2.1 `sec:prelim-ring` ("Partial splitting", `eq:partial-split`; LS18 Cor 1.2).
 - `crates/akita-algebra/src/ring/cyclotomic.rs`, `ring/partial_split_ntt.rs`.
 
-## Extension-field embedding and ring-subfield coordinates
+## Extension-field embedding (cyclotomic ring-subfield coordinates)
 
-The trace/Galois embedding of \\( \mathbb{F}_{q^{k'}} \\) into \\( R_q \\) (the
-Hachi packing), the explicit ring-subfield basis \\( e_j = X^{jm}+X^{-jm} \\),
-and the concrete degree-2 and degree-4 arithmetic (Karatsuba, the tower form,
-the closed-form trace decode).
+The trace/Galois embedding of \\( \mathbb{F}_{q^{k'}} \\) into \\( R_q \\),
+the explicit cyclotomic ring-subfield basis \\( e_j = X^{jm}+X^{-jm} \\), and
+the concrete degree-2 and degree-4 arithmetic in the implementation
+(`fp_ext2`, `fp_ext4`, `fp_ext8`; no separate power/tower quartic path).
 
 **Sources to fold in**
 

@@ -28,7 +28,7 @@ re-derives rather than trusts.
 
 - `crates/akita-types/src/layout/params.rs:41-97`.
 - `crates/akita-types/src/schedule.rs` (`Step`, `FoldStep`, `DirectStep`).
-- Paper §3.10 `sec:akita-planner` ("What the schedule fixes").
+- Paper §3.11 `sec:akita-planner` ("What the schedule fixes").
 - Council architecture + newcomer reports (schedule invariants, level overload).
 
 ## The planner and proof size
@@ -42,5 +42,6 @@ reject malformed input, never panic). The verifier-reachable proof-size formula.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, generated tables, and supported features.
 - `crates/akita-planner/src/` (`resolve.rs`, `find_schedule`, `generated/`).
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
-- Paper §3.10 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
-- `AGENTS.md` (Profiling: D32/D64/D128 optimum).
+- Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
+- `crates/akita-config/src/generated_families.rs`, `crates/akita-planner/src/resolve.rs` (`shipped_table`).
+- `AGENTS.md` (Profiling), `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.

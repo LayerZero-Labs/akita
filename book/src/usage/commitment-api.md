@@ -7,10 +7,10 @@ verify, plus the setup and transcript objects those calls thread through.
 
 ## Commit, prove, verify
 
-The `commit` / `prove` / `verify` entry points, the `CommitmentProver` and
-`CommitmentVerifier` traits, single-point batched openings via `OpeningBatch`
-(one shared evaluation point per call; multipoint removed), and the shapes of
-the inputs and proof objects.
+The `batched_commit` / `batched_prove` / `batched_verify` entry points (via
+`CommitmentProver` and `CommitmentVerifier`), single-point batched openings via
+`OpeningBatch` (one shared evaluation point per call; multipoint removed), and
+the shapes of the inputs and proof objects.
 
 **Sources to fold in**
 

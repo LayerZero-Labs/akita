@@ -33,8 +33,9 @@ and the opening commitment via `D`. How binding reduces to Module-SIS.
 ## Polynomial backends: dense vs one-hot
 
 When the dense (CRT+NTT digit) mat-vec is used versus the one-hot backend that
-iterates only nonzero monomial positions, and why one-hot is the proof-size
-optimum for the common case.
+iterates only nonzero monomial positions. One-hot at **fp128 D64** is the usual
+production choice; smaller **D32** and larger **D128** are alternates (see
+`usage/quickstart.md`).
 
 **Sources to fold in**
 
