@@ -16,10 +16,12 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
+#[cfg(not(feature = "zk"))]
 use akita_types::{
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
-    AkitaVerifierSetup, BasisMode, CleartextWitnessProof, CleartextWitnessShape, RingCommitment,
-    Schedule,
+    schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
+};
+use akita_types::{
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
@@ -48,6 +50,7 @@ const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
+#[cfg(not(feature = "zk"))]
 fn schedule_bytes_with_realized_terminal_z<FF, L>(
     proof: &AkitaBatchedProof<FF, L>,
     schedule: &Schedule,
