@@ -180,6 +180,65 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
+/// Prover-side attempts for one fold level under the current sequential
+/// `0..MAX` search (`nonce + 1`).
+fn fold_grind_attempts_from_nonce(nonce: u32) -> u32 {
+    nonce.saturating_add(1)
+}
+
+fn collect_fold_grind_nonces<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> Vec<u32>
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    if proof.is_root_direct() {
+        return Vec::new();
+    }
+
+    let mut nonces = Vec::with_capacity(1 + proof.steps.len());
+    if let Ok(root_nonce) = proof.root.fold_grind_nonce() {
+        nonces.push(root_nonce);
+    }
+    for step in &proof.steps {
+        nonces.push(step.fold_grind_nonce());
+    }
+    nonces
+}
+
+fn emit_fold_grind_summary(label: &str, nonces: &[u32]) {
+    if nonces.is_empty() {
+        tracing::info!(label, grind_levels = 0u32, "fold grind summary");
+        eprintln!("[{label}] fold grind: no tail-bound fold levels");
+        return;
+    }
+
+    let max_nonce = *nonces.iter().max().expect("non-empty nonce list");
+    let attempts_sum: u64 = nonces
+        .iter()
+        .map(|nonce| u64::from(fold_grind_attempts_from_nonce(*nonce)))
+        .sum();
+    let nonces_csv = nonces
+        .iter()
+        .map(|nonce| nonce.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    tracing::info!(
+        label,
+        grind_levels = nonces.len(),
+        grind_nonce_max = max_nonce,
+        grind_attempts_sum = attempts_sum,
+        grind_nonces = nonces_csv.as_str(),
+        "fold grind summary"
+    );
+    eprintln!(
+        "[{label}] fold grind: levels={}, attempts_sum={}, max_nonce={}, nonces=[{nonces_csv}]",
+        nonces.len(),
+        attempts_sum,
+        max_nonce,
+    );
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
@@ -243,6 +302,8 @@ where
         .next_w_eval()
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce();
+    let grind_attempts = fold_grind_attempts_from_nonce(grind_nonce);
 
     tracing::info!(
         label,
@@ -253,6 +314,8 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -298,6 +361,7 @@ trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
     ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>>;
     fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L>;
     fn final_witness(&self) -> &CleartextWitnessProof<FF>;
+    fn fold_grind_nonce_value(&self) -> u32;
 }
 
 impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
@@ -315,6 +379,10 @@ impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProo
 
     fn final_witness(&self) -> &CleartextWitnessProof<FF> {
         self.final_witness()
+    }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce
     }
 }
 
@@ -335,6 +403,10 @@ impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProo
         self.stage2()
             .final_witness()
             .expect("terminal Akita level proof must carry final witness")
+    }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce()
     }
 }
 
@@ -366,6 +438,8 @@ where
     };
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce_value();
+    let grind_attempts = fold_grind_attempts_from_nonce(grind_nonce);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -386,6 +460,8 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -490,6 +566,8 @@ where
         .next_w_eval()
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = fold.fold_grind_nonce;
+    let grind_attempts = fold_grind_attempts_from_nonce(grind_nonce);
 
     tracing::info!(
         label,
@@ -500,6 +578,8 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -627,6 +707,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     if !proof.is_root_direct() {
         emit_observed_tail_summary(label, proof.final_witness());
     }
+    emit_fold_grind_summary(label, &collect_fold_grind_nonces(proof));
 }
 
 fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(

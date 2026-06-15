@@ -276,7 +276,12 @@ TIMING_SAMPLE_METRICS = (
     "prove_akita_s",
     "verify_akita_s",
 )
-SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",)
+GRIND_SAMPLE_METRICS = (
+    "grind_levels",
+    "grind_nonce_max",
+    "grind_attempts_sum",
+)
+SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",) + GRIND_SAMPLE_METRICS
 
 
 def case_id(mode: str, num_vars: int, num_polys: int) -> str:
@@ -434,8 +439,18 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "next_w_commitment_bytes": int(kvs.get("next_w_commitment_bytes", "0")),
                 "next_w_eval_bytes": int(kvs.get("next_w_eval_bytes", "0")),
             }
+            if "grind_nonce" in kvs:
+                proof_levels[level]["grind_nonce"] = int(kvs["grind_nonce"])
+            if "grind_attempts" in kvs:
+                proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
+        elif "fold grind summary" in line and kvs.get("label") == mode:
+            summary["grind_levels"] = int(kvs["grind_levels"])
+            if int(kvs["grind_levels"]) > 0:
+                summary["grind_nonce_max"] = int(kvs["grind_nonce_max"])
+                summary["grind_attempts_sum"] = int(kvs["grind_attempts_sum"])
+                summary["grind_nonces"] = kvs["grind_nonces"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
             summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
             if "final_w_encoding" in kvs:
@@ -593,6 +608,10 @@ SUMMARY_CSV_COLUMNS = (
     "tail_bytes",
     "proof_framing_bytes",
     "akita_levels",
+    "grind_levels",
+    "grind_nonce_max",
+    "grind_attempts_sum",
+    "grind_nonces",
     "tail_num_elems",
     "tail_bits_per_elem",
     "exit_code",
@@ -617,6 +636,11 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
 
     for key in TIMING_SAMPLE_METRICS:
+        values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
+        if values:
+            combined[key] = statistics.median(values)
+
+    for key in GRIND_SAMPLE_METRICS:
         values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
         if values:
             combined[key] = statistics.median(values)
@@ -831,6 +855,13 @@ def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def fmt_optional_count(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_count(float(value))
+
+
 def case_status(summary: dict[str, object]) -> str:
     return "ok" if int(summary.get("exit_code", 0)) == 0 else "fail"
 
@@ -981,6 +1012,8 @@ def render_matrix_summary(
         "Verify ms",
         "RSS MiB",
         "Proof B",
+        "Grind Σ",
+        "Grind max",
     ]
     if matrix_baseline is not None:
         label = matrix_baseline[0]
@@ -1006,6 +1039,8 @@ def render_matrix_summary(
             fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
+            fmt_optional_count(current, "grind_attempts_sum"),
+            fmt_optional_count(current, "grind_nonce_max"),
         ]
         if matrix_baseline is not None:
             baseline_case = matrix_baseline[1].get(str(current["case_id"]))
@@ -1061,22 +1096,42 @@ def render_proof_levels(levels: list[dict[str, object]]) -> None:
     print("<details>")
     print("<summary>Per-level proof-size breakdown</summary>")
     print()
-    print(
-        "| L | total | v | stage1 sc | interstage | s_claim | "
-        "stage2 sc | next_w_commit | next_w_eval |"
-    )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for level in levels:
+    has_grind = any("grind_attempts" in level for level in levels)
+    if has_grind:
         print(
-            f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
-            f"{fmt_bytes(float(level['v_bytes']))} | "
-            f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
-            f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
-            f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
-            f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
-            f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
-            f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
+            "| L | total | grind nonce | grind tries | v | stage1 sc | interstage | s_claim | "
+            "stage2 sc | next_w_commit | next_w_eval |"
         )
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for level in levels:
+            print(
+                f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+                f"{level.get('grind_nonce', 'n/a')} | {level.get('grind_attempts', 'n/a')} | "
+                f"{fmt_bytes(float(level['v_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
+                f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+                f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
+                f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
+            )
+    else:
+        print(
+            "| L | total | v | stage1 sc | interstage | s_claim | "
+            "stage2 sc | next_w_commit | next_w_eval |"
+        )
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for level in levels:
+            print(
+                f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+                f"{fmt_bytes(float(level['v_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
+                f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
+                f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+                f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
+                f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
+            )
     print()
     print("</details>")
 
@@ -1335,6 +1390,18 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("akita_levels") is not None:
             print(f"- Akita levels: `{current['akita_levels']}`")
+        if current.get("grind_levels") is not None:
+            grind_levels = int(current["grind_levels"])
+            if grind_levels > 0:
+                print(
+                    f"- Fold grind: `{fmt_count(float(grind_levels))}` levels, "
+                    f"`{fmt_count(float(current.get('grind_attempts_sum', 0)))}` total tries "
+                    f"(max nonce `{current.get('grind_nonce_max', 'n/a')}`)"
+                )
+                if current.get("grind_nonces") is not None:
+                    print(f"- Fold grind nonces (L0..): `{current['grind_nonces']}`")
+            else:
+                print("- Fold grind: root-direct (no grind levels)")
         if current.get("ext_degree") is not None:
             print(f"- Field role: `ext_degree={current['ext_degree']}`")
         if current.get("extension_root_direct_fallback"):

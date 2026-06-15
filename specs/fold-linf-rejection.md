@@ -293,6 +293,54 @@ num_fold_blocks = num_claims · 2^r_vars
 `LevelParams::num_digits_fold(num_claims, field_bits)` are the shared accessors
 used by planner/prover/verifier paths.
 
+### ZK: grind probe order (deferred)
+
+The wire contract fixes only the **accepted** `fold_grind_nonce` (`u32`) and its
+absorb point in `sparse_challenge_absorb_buf`. It does **not** mandate how the
+prover searches for an accepting nonce.
+
+**Current non-ZK prover (`akita-prover::fold_grind`).** The implementation probes
+`nonce = 0, 1, 2, …` and commits the **minimum** accepting index. This is
+deterministic, easy to reason about for completeness tests, and sufficient for
+soundness: the verifier never treats the nonce as evidence of `‖z‖_inf ≤ t*`.
+
+**Why ZK needs a different search order.** The accepted nonce is public on every
+fold level. Under minimum-nonce sequential search, its distribution is a
+function of the secret witness (witnesses that pass at smaller indices publish
+smaller nonces). That is not a soundness defect, but it is a potential
+**witness-hiding / side-channel** leak once ZK presets ship with
+`TailBoundWithGrind`. The published value should not always be the minimum
+accepting nonce.
+
+**Planned ZK cut (no wire change).** Before production ZK enables tail-bound
+grind, switch the prover to a **transcript-seeded pseudorandom probe order**
+over `[0, MAX_FOLD_GRIND_ATTEMPTS)` (e.g. Fisher–Yates shuffle keyed by Fiat–Shamir
+bytes absorbed immediately before the grind loop, with level/claim domain
+separation). Properties:
+
+- **Soundness/completeness unchanged:** any accepting nonce in range remains valid;
+  the attempt cap and `t*` threshold are unchanged.
+- **Verifier unchanged:** still replays the single published nonce.
+- **Descriptor:** when the probe-order rule lands, pin it in
+  `FoldLinfProtocolBinding` / instance-descriptor bytes so prover and verifier
+  agree on the grinding model (sequential-min vs transcript-shuffled).
+
+**Profile bench note.** CI profile runs collect accepted nonces from the finalized
+proof (`grind_nonce`, `grind_attempts = nonce + 1` under the current sequential
+search). Those metrics describe the **committed** grind difficulty, not prover CPU
+in failed attempts beyond what the winning nonce implies.
+
+**Out of scope for the first plain cut.** Randomized probe order is explicitly
+deferred to the ZK milestone; non-ZK benches and e2e tests may keep sequential
+minimum-nonce search until then.
+
+**Profile measurement under ZK (planned).** Distinguish **wire nonce**
+(verifier-replay index) from **probe count** (prover work). Under `sequential_min`,
+probe count may be inferred as `nonce + 1`. Under `transcript_shuffle`, only
+prover-emitted `grind_probe_count` is valid; wire-nonce aggregates are diagnostic
+only. ZK profile runs must pin mask RNG seeds for comparable regression tracking.
+See execution slice F11 and the observer/tracing sketch in the fold-linf PR thread.
+
 ### Tail bound (statement)
 
 Let `num_fold_blocks = num_claims · 2^r_vars` logical blocks in one stage-1
@@ -474,7 +522,10 @@ worst-case path is generalized in place):
   `‖z‖_inf <= t*` (read from `lp.fold_witness_linf_tail_bound_sq(num_claims)`). Record
   the accepted nonce into the level proof. Unsupported policies skip the loop and
   use nonce `0`. The nonce is absorbed before the challenge squeeze (already the
-  absorb point in `sample_folding_challenges`).
+  absorb point in `sample_folding_challenges`). **Plain presets** use sequential
+  minimum-nonce search; **ZK presets** must switch to transcript-seeded probe
+  order before tail-bound grind ships in production ZK (see *ZK: grind probe
+  order* above).
 
 **`akita-verifier`**
 
@@ -548,6 +599,10 @@ W3
 
 W4
   F10 e2e tamper / termination / ZK parity tests             (all)
+
+W5 (ZK milestone, after plain cut)
+  F11 transcript-seeded grind probe order in ZK prover paths   [akita-prover]
+      (no wire change; pin probe-order tag in descriptor when landed)
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
