@@ -234,11 +234,17 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_z_first",
     "tail_z_prefix_bytes",
     "tail_z_golomb_bytes",
+    "tail_z_bytes",
+    "tail_z_field_elems",
+    "tail_z_ring_elems",
     "tail_z_budget_bytes",
     "tail_z_slack_bytes",
     "tail_e_field_elems",
+    "tail_e_ring_elems",
     "tail_t_field_elems",
+    "tail_t_ring_elems",
     "tail_r_field_elems",
+    "tail_r_ring_elems",
     "tail_e_bytes",
     "tail_t_bytes",
     "tail_r_bytes",
@@ -277,6 +283,8 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
     for key in TAIL_SUMMARY_INT_FIELDS:
         if key in kvs:
             summary[key] = int(kvs[key])
+    if "tail_z_coords" in kvs and "tail_z_field_elems" not in summary:
+        summary["tail_z_field_elems"] = int(kvs["tail_z_coords"])
     for key in TAIL_SUMMARY_FLOAT_FIELDS:
         if key in kvs:
             summary[key] = float(kvs[key])
@@ -331,21 +339,50 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     z_prefix = current.get("tail_z_prefix_bytes")
     z_golomb = current.get("tail_z_golomb_bytes")
-    e_bytes = current.get("tail_e_bytes")
-    t_bytes = current.get("tail_t_bytes")
-    r_bytes = current.get("tail_r_bytes")
-    if all(value is not None for value in (z_prefix, z_golomb, e_bytes, t_bytes, r_bytes)):
-        e_elems = current.get("tail_e_field_elems", "?")
-        t_elems = current.get("tail_t_field_elems", "?")
-        r_elems = current.get("tail_r_field_elems", "?")
-        wire_total = int(z_prefix) + int(z_golomb) + int(e_bytes) + int(t_bytes) + int(r_bytes)
+    z_wire = current.get("tail_z_bytes")
+    z_field = current.get("tail_z_field_elems")
+    z_ring = current.get("tail_z_ring_elems")
+    if z_wire is not None and z_field is not None and z_ring is not None:
+        prefix_golomb = ""
+        if z_prefix is not None and z_golomb is not None:
+            prefix_golomb = (
+                f" (len prefix `{fmt_bytes(float(z_prefix))} B` + Golomb "
+                f"`{fmt_bytes(float(z_golomb))} B`)"
+            )
         print(
-            f"  - Wire breakdown: `{fmt_bytes(float(wire_total))} B` = "
-            f"z prefix `{fmt_bytes(float(z_prefix))} B` + Golomb z `{fmt_bytes(float(z_golomb))} B` + "
-            f"e `{fmt_bytes(float(e_bytes))} B` (`{e_elems}` elems) + "
-            f"t `{fmt_bytes(float(t_bytes))} B` (`{t_elems}` elems) + "
-            f"r `{fmt_bytes(float(r_bytes))} B` (`{r_elems}` elems)"
+            f"  - `z` segment: `{fmt_bytes(float(z_wire))} B`{prefix_golomb}, "
+            f"`{fmt_count(float(z_field))}` field coeffs, "
+            f"`{fmt_count(float(z_ring))}` ring elems"
         )
+
+    for seg, bytes_key, field_key, ring_key in (
+        ("e", "tail_e_bytes", "tail_e_field_elems", "tail_e_ring_elems"),
+        ("t", "tail_t_bytes", "tail_t_field_elems", "tail_t_ring_elems"),
+        ("r", "tail_r_bytes", "tail_r_field_elems", "tail_r_ring_elems"),
+    ):
+        seg_bytes = current.get(bytes_key)
+        field_coeffs = current.get(field_key)
+        ring_elems = current.get(ring_key)
+        if seg_bytes is None:
+            continue
+        detail = f"`{fmt_bytes(float(seg_bytes))} B`"
+        if field_coeffs is not None:
+            detail += f", `{fmt_count(float(field_coeffs))}` field coeffs"
+        if ring_elems is not None:
+            detail += f", `{fmt_count(float(ring_elems))}` ring elems"
+        print(f"  - `{seg}` segment: {detail}")
+
+    if all(
+        current.get(key) is not None
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_r_bytes")
+    ):
+        wire_total = (
+            int(current["tail_z_bytes"])
+            + int(current["tail_e_bytes"])
+            + int(current["tail_t_bytes"])
+            + int(current["tail_r_bytes"])
+        )
+        print(f"  - Wire total (z+e+t+r): `{fmt_bytes(float(wire_total))} B`")
 
     z_budget = current.get("tail_z_budget_bytes")
     z_slack = current.get("tail_z_slack_bytes")
@@ -362,17 +399,18 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     z_beta_inf = current.get("z_beta_inf")
     z_rice_k = current.get("z_rice_k")
-    z_coords = current.get("z_coords")
+    z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
+    z_ring_elems = current.get("tail_z_ring_elems")
     z_bits_golomb = current.get("z_bits_per_coord_golomb")
     z_bits_packed = current.get("z_bits_per_coord_packed")
     z_packed_hyp = current.get("z_packed_hypothetical_bytes")
     z_savings = current.get("z_golomb_savings_bytes")
-    if z_beta_inf is not None and z_rice_k is not None and z_coords is not None:
+    if z_beta_inf is not None and z_rice_k is not None and z_field_coeffs is not None:
         comparison = ""
         if z_bits_golomb is not None and z_bits_packed is not None:
             comparison = (
-                f", `{z_bits_golomb:.2f}` bits/coord (Golomb k=`{z_rice_k}` from beta_inf=`{z_beta_inf}`) "
-                f"vs `{z_bits_packed:.2f}` bits/coord (legacy uniform `PackedDigits` z planes)"
+                f", `{z_bits_golomb:.2f}` bits/field_coeff (Golomb k=`{z_rice_k}` from beta_inf=`{z_beta_inf}`) "
+                f"vs `{z_bits_packed:.2f}` bits/field_coeff (legacy uniform `PackedDigits` z planes)"
             )
         savings_note = ""
         if z_packed_hyp is not None and z_golomb is not None and z_savings is not None:
@@ -380,7 +418,15 @@ def render_tail_encoding(current: dict[str, object]) -> None:
                 f"; hypothetical packed z `{fmt_bytes(float(z_packed_hyp))} B`, "
                 f"savings `{fmt_bytes(float(z_savings))} B`"
             )
-        print(f"  - Fold-response z: `{fmt_count(float(z_coords))}` coords{comparison}{savings_note}")
+        ring_note = (
+            f"`{fmt_count(float(z_ring_elems))}` ring elems, "
+            if z_ring_elems is not None
+            else ""
+        )
+        print(
+            f"  - Golomb z model: {ring_note}"
+            f"`{fmt_count(float(z_field_coeffs))}` field coeffs{comparison}{savings_note}"
+        )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:

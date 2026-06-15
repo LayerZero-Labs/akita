@@ -63,10 +63,17 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
 
     if let Some(segment) = final_w.as_segment_typed() {
         let field_sz = field_bytes(FF::modulus_bits());
+        let ring_dim = segment.layout.ring_dimension;
         let z_golomb_bytes = segment.z_payload.len();
+        let z_field_elems = segment.layout.z_coords;
+        let z_ring_elems = z_field_elems / ring_dim.max(1);
+        let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
         let e_field_elems = segment.e_fields.coeff_len();
         let t_field_elems = segment.t_fields.coeff_len();
         let r_field_elems = segment.r_fields.coeff_len();
+        let e_ring_elems = e_field_elems / ring_dim.max(1);
+        let t_ring_elems = t_field_elems / ring_dim.max(1);
+        let r_ring_elems = r_field_elems / ring_dim.max(1);
         let e_bytes = e_field_elems.saturating_mul(field_sz);
         let t_bytes = t_field_elems.saturating_mul(field_sz);
         let r_bytes = r_field_elems.saturating_mul(field_sz);
@@ -81,7 +88,7 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
         let z_beta_inf = z_stats.as_ref().map(|s| s.beta_inf).unwrap_or(0);
         let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_beta).unwrap_or(0);
-        let z_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
+        let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
             .map(|s| s.bits_per_coord_k_beta)
@@ -106,17 +113,23 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             tail_z_first = segment.layout.z_first as u8,
             tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
             tail_z_golomb_bytes = z_golomb_bytes,
+            tail_z_bytes = z_wire_bytes,
+            tail_z_field_elems = z_field_elems,
+            tail_z_ring_elems = z_ring_elems,
             tail_z_budget_bytes = z_budget_bytes,
             tail_z_slack_bytes = z_slack_bytes,
             tail_e_field_elems = e_field_elems,
+            tail_e_ring_elems = e_ring_elems,
             tail_t_field_elems = t_field_elems,
+            tail_t_ring_elems = t_ring_elems,
             tail_r_field_elems = r_field_elems,
+            tail_r_ring_elems = r_ring_elems,
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
             tail_r_bytes = r_bytes,
             z_beta_inf,
             z_rice_k,
-            z_coords,
+            z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
             z_bits_per_coord_packed,
             z_packed_hypothetical_bytes,
@@ -127,8 +140,8 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: beta_inf={} k={} coords={} \
-                     {:.2} bits/coord vs packed {:.2} bits/coord \
+                    " Golomb z: beta_inf={} k={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/field_coeff vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B)",
                     stats.beta_inf,
@@ -153,9 +166,17 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             golomb_line,
         );
         eprintln!(
-            "[{label}]     wire: z_prefix={TAIL_Z_LENGTH_PREFIX_BYTES} B + z_golomb={z_golomb_bytes} B \
-             + e={e_bytes} B ({e_field_elems} elems) + t={t_bytes} B ({t_field_elems} elems) \
-             + r={r_bytes} B ({r_field_elems} elems)",
+            "[{label}]     z: {z_wire_bytes} B (len_prefix={TAIL_Z_LENGTH_PREFIX_BYTES} + golomb={z_golomb_bytes}), \
+             field_coeffs={z_field_elems}, ring_elems={z_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     e: {e_bytes} B, field_coeffs={e_field_elems}, ring_elems={e_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     r: {r_bytes} B, field_coeffs={r_field_elems}, ring_elems={r_ring_elems}",
         );
         return;
     }
