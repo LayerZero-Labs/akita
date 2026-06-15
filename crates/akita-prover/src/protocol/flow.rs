@@ -54,19 +54,21 @@ use akita_types::{
     schedule_root_fold_step, stage2_trace_coeff, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
     tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, terminal_witness_segment_layout,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
-    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits,
-    OpeningClaimKind, OpeningClaimSlot, PackedDigits, PreparedOpeningPoint, RingCommitment,
+    tensor_row_partials_from_columns, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_weight_layout_from_segment, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
+    BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput,
+    OpeningBatchLimits, OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
-use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
+use akita_types::{
+    stage1_tree_stage_shapes, sumcheck_rounds, terminal_witness_segment_layout, PackedDigits,
+    ZkHidingProof,
+};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 use std::sync::Arc;

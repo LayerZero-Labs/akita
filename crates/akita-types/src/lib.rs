@@ -9,6 +9,7 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
+pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
@@ -41,6 +42,7 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
     SubfieldParams,
 };
+pub use golomb_rice::ZFoldEncodingStats;
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
@@ -65,31 +67,40 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, append_opening_batch_shape_to_transcript,
-    batched_eval_target_from_opening_batch, checked_total_claims, derive_public_matrix_flat,
+    batched_eval_target_from_opening_batch, build_segment_typed_witness, checked_total_claims,
+    derive_public_matrix_flat, e_folded_segment_bytes, emit_witness_planes_block_inner,
+    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_setup_prefix_len, prepare_opening_point, relation_claim_from_rows,
     relation_claim_from_rows_extension, ring_column_z_first,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
-    select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
-    terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
+    segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
+    setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
+    tail_segment_multiplicities_from_layout, terminal_direct_witness_shape,
+    terminal_direct_witness_shape_for_key, terminal_e_hat_bytes_from_blocks,
+    terminal_fold_segment_counts, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
-    validate_batched_inputs, validate_public_matrix_matches_seed, verifier_claims_to_opening_batch,
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,
-    AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
-    CleartextWitnessProof, CleartextWitnessShape, CommitmentVerifier, CommittedOpenings,
-    DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
+    validate_batched_inputs, validate_public_matrix_matches_seed, validate_segment_typed_z_payload,
+    verifier_claims_to_opening_batch, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot, AkitaBatchedProof,
+    AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaProofStepShape,
+    AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape,
+    AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup, CleartextWitnessProof,
+    CleartextWitnessShape, CommitmentVerifier, CommittedOpenings, DummyProof,
+    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatch, OpeningBatchInput,
     OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot, OpeningClaimSlotShape,
     OpeningPoints, PackedDigits, PreparedOpeningPoint, PublicMatrixSeed, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSliceSerializer, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    RingSliceSerializer, SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
