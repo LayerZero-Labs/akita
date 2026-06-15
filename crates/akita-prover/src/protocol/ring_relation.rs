@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::GrindTranscript;
 use akita_transcript::Transcript;
-use akita_types::sis::{isqrt_ceil, FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS};
+use akita_types::sis::{fold_witness_linf_cap, FoldLinfThresholdPolicy, MAX_FOLD_GRIND_ATTEMPTS};
 use akita_types::{
     gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
     MRowLayout, RingCommitment, RingSliceSerializer,
@@ -71,15 +71,16 @@ fn beta_linf_fold_bound_with_num_claims(
 }
 
 fn fold_linf_inf_threshold(lp: &LevelParams, num_claims: usize) -> Result<u128, AkitaError> {
-    match lp.fold_linf_threshold_policy() {
-        FoldLinfThresholdPolicy::DeterministicBetaInf => {
-            beta_linf_fold_bound_with_num_claims(lp, num_claims)
-        }
-        FoldLinfThresholdPolicy::CertifiedFlat => {
-            let t_sq = lp.fold_linf_tail_bound_sq(num_claims)?;
-            Ok(isqrt_ceil(t_sq))
-        }
-    }
+    let beta = beta_linf_fold_bound_with_num_claims(lp, num_claims)?;
+    let num_fold_blocks = lp.num_fold_blocks(num_claims)?;
+    let witness_linf = lp.fold_witness_norms().infinity_norm();
+    let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
+    fold_witness_linf_cap(
+        beta,
+        num_fold_blocks,
+        witness_linf_sq,
+        &lp.fold_linf_digit_sizing(),
+    )
 }
 
 fn sample_fold_decompose_witness<F, P, T, const D: usize>(

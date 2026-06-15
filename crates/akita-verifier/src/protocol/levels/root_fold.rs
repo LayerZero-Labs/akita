@@ -181,10 +181,7 @@ where
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
-    let fold_grind_nonce = proof
-        .as_fold()
-        .map(|fold| fold.fold_grind_nonce)
-        .unwrap_or(0);
+    let fold_grind_nonce = proof.fold_grind_nonce()?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,

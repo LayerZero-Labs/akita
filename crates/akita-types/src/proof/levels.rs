@@ -935,6 +935,15 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         }
     }
 
+    /// Accepted fold grind nonce for root proofs that run fold challenge sampling.
+    pub fn fold_grind_nonce(&self) -> Result<u32, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(fold.fold_grind_nonce),
+            Self::Terminal(terminal) => Ok(terminal.fold_grind_nonce),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
     /// Borrow the per-claim cleartext witnesses when this is a zero-fold
     /// batched proof.
     pub fn as_zero_fold(&self) -> Option<&[CleartextWitnessProof<F>]> {
