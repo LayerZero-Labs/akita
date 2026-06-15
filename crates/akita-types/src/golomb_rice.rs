@@ -327,7 +327,11 @@ fn golomb_rice_decode_one_from(
         break;
     }
     let u = if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
-        reader.read_bits(w)?
+        let u = reader.read_bits(w)?;
+        if (u >> k) < u64::from(GOLOMB_RICE_Q_MAX) {
+            return Err(AkitaError::InvalidProof);
+        }
+        u
     } else if k == 0 {
         quotient
     } else {
@@ -415,5 +419,32 @@ mod tests {
     #[test]
     fn golomb_rice_decode_is_total_on_empty_prefix() {
         assert!(golomb_rice_decode_vec(&[], 1, 0, 4).is_err());
+    }
+
+    fn non_canonical_escape_bytes(u: u64, w: u32) -> Vec<u8> {
+        let mut writer = BitWriter::default();
+        for _ in 0..GOLOMB_RICE_Q_MAX {
+            writer.write_bit(true);
+        }
+        writer.write_bit(false);
+        writer.write_bits(u, w);
+        writer.finish()
+    }
+
+    #[test]
+    fn golomb_rice_decode_rejects_non_canonical_escape() {
+        let k = 3u32;
+        let w = 12u32;
+        let u = 2u64;
+        assert!(u >> k < u64::from(GOLOMB_RICE_Q_MAX));
+        let bytes = non_canonical_escape_bytes(u, w);
+        assert!(golomb_rice_decode_vec(&bytes, 1, k, w).is_err());
+
+        let k0 = 0u32;
+        let w0 = 16u32;
+        let u0 = 5u64;
+        assert!(u0 < u64::from(GOLOMB_RICE_Q_MAX));
+        let bytes0 = non_canonical_escape_bytes(u0, w0);
+        assert!(golomb_rice_decode_vec(&bytes0, 1, k0, w0).is_err());
     }
 }
