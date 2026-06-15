@@ -879,9 +879,10 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             assert_eq!(
                 proof
                     .final_witness()
-                    .as_packed_digits()
-                    .expect("current terminal witness should be packed digits")
-                    .bits_per_elem,
+                    .as_segment_typed()
+                    .expect("terminal witness should be segment-typed")
+                    .layout
+                    .log_basis,
                 schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
@@ -1018,9 +1019,10 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             assert_eq!(
                 decoded
                     .final_witness()
-                    .as_packed_digits()
-                    .expect("current terminal witness should be packed digits")
-                    .bits_per_elem,
+                    .as_segment_typed()
+                    .expect("terminal witness should be segment-typed")
+                    .layout
+                    .log_basis,
                 schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }

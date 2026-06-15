@@ -21,13 +21,13 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes, level_proof_bytes,
-    root_extension_opening_partials, segment_typed_witness_upper_bound_bytes,
-    tail_golomb_rice_z_params, tail_segment_layout, w_ring_element_count_with_counts_bits,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule,
-    SegmentTypedWitnessShape, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
+
+use crate::schedule_params::segment_typed_direct_witness_shape;
 
 use crate::find_schedule;
 // @generated schedule table cfg imports begin
@@ -408,24 +408,23 @@ pub fn schedule_from_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, 1, field_bits)?;
-                    let (rice_k, zigzag_w_z) =
-                        tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
-                    let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
+                    let terminal_fold_level = fold_level.saturating_sub(1);
+                    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+                        if terminal_fold_level == 0 {
+                            (key.num_w_vectors, 1, key.num_w_vectors, 1)
+                        } else {
+                            (1, 1, 1, 1)
+                        };
+                    let witness_shape = segment_typed_direct_witness_shape(
+                        terminal_lp,
                         field_bits,
-                        &layout,
-                        rice_k,
-                        zigzag_w_z,
-                    )
-                    .saturating_sub(
-                        (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
-                            * field_bytes(field_bits),
-                    );
+                        num_w_vectors,
+                        num_t_vectors,
+                        num_public_rows,
+                        num_commitment_groups,
+                    )?;
                     (
-                        CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
-                            layout,
-                            z_payload_bytes,
-                        }),
+                        witness_shape,
                         len,
                         None,
                     )

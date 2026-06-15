@@ -81,17 +81,12 @@ fn expected_same_point_batched_shape(
     // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
     // shape with no recursive-suffix steps.
     if num_fold_levels == 1 {
-        // The terminal fold's `next` parameters live at `schedule.steps[1]`,
-        // which is a `Direct` step encoding the final packed-digit basis.
-        let terminal_next_params =
-            scheduled_next_level_params(&schedule, 1).expect("terminal next params");
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-                root_step.next_w_len,
-                terminal_next_params.log_basis,
-            )),
+            final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+                .expect("1-fold schedule should end in a direct step")
+                .clone(),
         });
     }
 

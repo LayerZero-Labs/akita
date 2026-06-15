@@ -240,25 +240,48 @@ enum TerminalTamper {
 
 impl TerminalTamper {
     fn apply(self, witness: &mut CleartextWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
-        let packed = packed_digits_mut(witness);
-        match self {
-            Self::EHatDigit => mutate_packed_digit(packed, layout.e_hat_digit_offset),
-            Self::RemainderDigit => {
-                let e_hat_end = layout.e_hat_digit_end().expect("terminal range");
-                let remainder_idx = if layout.e_hat_digit_offset > 0 {
-                    0
-                } else {
-                    e_hat_end
-                };
-                assert!(
-                    remainder_idx < packed.num_elems,
-                    "terminal tamper corpus must include a non-empty remainder"
-                );
-                mutate_packed_digit(packed, remainder_idx);
-            }
-            Self::WitnessLen => packed.num_elems -= 1,
-            Self::PackedPayload => {
-                packed.data.pop();
+        match witness {
+            CleartextWitnessProof::SegmentTyped(segment) => match self {
+                Self::EHatDigit => {
+                    let mut coeffs = segment.e_fields.coeffs().to_vec();
+                    let first = coeffs
+                        .first_mut()
+                        .expect("segment-typed terminal must carry e field coeffs");
+                    *first += F::one();
+                    segment.e_fields = akita_types::FlatRingVec::from_coeffs(coeffs);
+                }
+                Self::RemainderDigit => {
+                    segment.z_payload[0] ^= 1;
+                }
+                Self::WitnessLen => {
+                    segment.layout.logical_num_elems = segment.layout.logical_num_elems.saturating_sub(1);
+                }
+                Self::PackedPayload => {
+                    segment.z_payload.pop();
+                }
+            },
+            CleartextWitnessProof::PackedDigits(packed) => match self {
+                Self::EHatDigit => mutate_packed_digit(packed, layout.e_hat_digit_offset),
+                Self::RemainderDigit => {
+                    let e_hat_end = layout.e_hat_digit_end().expect("terminal range");
+                    let remainder_idx = if layout.e_hat_digit_offset > 0 {
+                        0
+                    } else {
+                        e_hat_end
+                    };
+                    assert!(
+                        remainder_idx < packed.num_elems,
+                        "terminal tamper corpus must include a non-empty remainder"
+                    );
+                    mutate_packed_digit(packed, remainder_idx);
+                }
+                Self::WitnessLen => packed.num_elems -= 1,
+                Self::PackedPayload => {
+                    packed.data.pop();
+                }
+            },
+            CleartextWitnessProof::FieldElements(_) => {
+                panic!("terminal tamper test does not cover field-element witnesses");
             }
         }
     }
@@ -331,7 +354,7 @@ fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
 
 fn packed_digits_mut(witness: &mut CleartextWitnessProof<F>) -> &mut PackedDigits {
     let CleartextWitnessProof::PackedDigits(packed) = witness else {
-        panic!("terminal witness should use packed digits");
+        panic!("expected packed-digit witness");
     };
     packed
 }
@@ -417,14 +440,12 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
         let mut bad_shape = proof.shape();
-        let CleartextWitnessShape::PackedDigits((num_elems, _bits_per_elem)) =
+        let CleartextWitnessShape::SegmentTyped(shape) =
             terminal_shape_final_witness_mut(&mut bad_shape)
         else {
-            panic!("terminal witness should use packed digits");
+            panic!("terminal witness should be segment-typed");
         };
-        *num_elems = num_elems
-            .checked_add(1)
-            .expect("terminal witness shape overflow");
+        shape.z_payload_bytes = shape.z_payload_bytes.saturating_add(1);
 
         AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &bad_shape)
             .expect_err("terminal direct-witness shape mismatch must reject");

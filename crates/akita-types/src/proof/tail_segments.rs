@@ -508,7 +508,7 @@ where
         rice_k,
         zigzag_w_z,
     )?;
-    let e_fields = FlatRingVec::from_ring_elems(e_folded);
+    let e_fields = FlatRingVec::from_ring_elems(e_folded).into_compact();
     if e_fields.coeff_len() != layout.e_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed e segment length mismatch".to_string(),
@@ -518,13 +518,13 @@ where
     for block in recomposed_inner_rows {
         t_rings.extend_from_slice(block);
     }
-    let t_fields = FlatRingVec::from_ring_elems(&t_rings);
+    let t_fields = FlatRingVec::from_ring_elems(&t_rings).into_compact();
     if t_fields.coeff_len() != layout.t_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed t segment length mismatch".to_string(),
         ));
     }
-    let r_fields = FlatRingVec::from_ring_elems(r);
+    let r_fields = FlatRingVec::from_ring_elems(r).into_compact();
     if r_fields.coeff_len() != layout.r_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed r segment length mismatch".to_string(),
@@ -660,7 +660,7 @@ where
 
     let mut out = Vec::with_capacity(witness.layout.logical_num_elems);
     if witness.layout.z_first {
-        emit_z_folded_block_inner::<D>(
+        emit_witness_z_folded_planes_inner::<D>(
             &mut out,
             &all_z_planes,
             lp.block_len,
@@ -668,12 +668,12 @@ where
             num_digits_fold,
             total_z_elems,
         );
-        emit_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
+        emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
+        emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
     } else {
-        emit_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
-        emit_z_folded_block_inner::<D>(
+        emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
+        emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
+        emit_witness_z_folded_planes_inner::<D>(
             &mut out,
             &all_z_planes,
             lp.block_len,
@@ -718,7 +718,8 @@ where
     Ok(out)
 }
 
-fn emit_planes_block_inner<const D: usize>(
+/// Emit digit-major block planes (block index innermost).
+pub fn emit_witness_planes_block_inner<const D: usize>(
     out: &mut Vec<i8>,
     flat: &[[i8; D]],
     total_blocks: usize,
@@ -731,7 +732,8 @@ fn emit_planes_block_inner<const D: usize>(
     }
 }
 
-fn emit_z_folded_block_inner<const D: usize>(
+/// Emit folded `z` digit planes in `(dc, df, point, block)` order.
+pub fn emit_witness_z_folded_planes_inner<const D: usize>(
     out: &mut Vec<i8>,
     all_planes: &[[i8; D]],
     block_len: usize,

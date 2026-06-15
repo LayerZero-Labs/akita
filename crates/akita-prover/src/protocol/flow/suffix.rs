@@ -579,7 +579,12 @@ where
     T: Transcript<F>,
 {
     if is_terminal_fold {
+        #[cfg(feature = "zk")]
         let final_log_basis = final_log_basis.ok_or_else(|| {
+            AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
+        })?;
+        #[cfg(not(feature = "zk"))]
+        final_log_basis.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
         #[cfg(not(feature = "zk"))]
@@ -643,24 +648,30 @@ where
                 transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
                 return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
             }
-        }
-        let final_witness = CleartextWitnessProof::PackedDigits(
-            PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
-        );
-        let terminal_layout = terminal_witness_segment_layout(
-            lp,
-            instance.opening_batch().num_claims(),
-            instance.opening_batch().num_claims(),
-            F::modulus_bits(),
-        )?;
-        let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
-        if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
-            return Err(AkitaError::InvalidInput(
-                "terminal final witness does not match ring-switch witness".to_string(),
+            return Err(AkitaError::InvalidSetup(
+                "terminal fold missing segment-typed witness artifacts".to_string(),
             ));
         }
-        transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
-        return Ok((None, Some(final_witness)));
+        #[cfg(feature = "zk")]
+        {
+            let final_witness = CleartextWitnessProof::PackedDigits(
+                PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
+            );
+            let terminal_layout = terminal_witness_segment_layout(
+                lp,
+                instance.opening_batch().num_claims(),
+                instance.opening_batch().num_claims(),
+                F::modulus_bits(),
+            )?;
+            let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+            if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
+                return Err(AkitaError::InvalidInput(
+                    "terminal final witness does not match ring-switch witness".to_string(),
+                ));
+            }
+            transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+            return Ok((None, Some(final_witness)));
+        }
     }
 
     let next_commitment = next_commitment.ok_or_else(|| {

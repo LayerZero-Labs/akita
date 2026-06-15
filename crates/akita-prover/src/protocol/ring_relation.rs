@@ -21,9 +21,11 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, terminal_e_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
-    MRowLayout, RingCommitment, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
+    RingSliceSerializer,
 };
+#[cfg(feature = "zk")]
+use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
@@ -83,6 +85,7 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
     Ok(z)
 }
 
+#[cfg(feature = "zk")]
 fn absorb_terminal_e_hat<F, T, const D: usize>(
     transcript: &mut T,
     e_hat: &FlatDigitBlocks<D>,

@@ -368,6 +368,120 @@ impl SuffixResult {
     }
 }
 
+fn terminal_segment_counts(
+    key: AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+) -> (usize, usize, usize, usize) {
+    if terminal_fold_level == 0 {
+        (
+            key.num_w_vectors,
+            1,
+            key.num_w_vectors,
+            1,
+        )
+    } else {
+        (1, 1, 1, 1)
+    }
+}
+
+pub(crate) fn segment_typed_direct_witness_shape(
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    num_w_vectors: usize,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    num_commitment_groups: usize,
+) -> Result<CleartextWitnessShape, AkitaError> {
+    let layout = tail_segment_layout(
+        terminal_lp,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+        field_bits,
+    )?;
+    let (rice_k, zigzag_w_z) =
+        tail_golomb_rice_z_params(terminal_lp, num_t_vectors, num_public_rows, field_bits)?;
+    let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
+        field_bits,
+        &layout,
+        rice_k,
+        zigzag_w_z,
+    )
+    .saturating_sub(
+        (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
+            * akita_types::field_bytes(field_bits),
+    );
+    Ok(CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
+        layout,
+        z_payload_bytes,
+    }))
+}
+
+fn make_terminal_direct_step(
+    current_w_len: usize,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    num_w_vectors: usize,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    num_commitment_groups: usize,
+) -> Result<DirectStep, AkitaError> {
+    let witness_shape = segment_typed_direct_witness_shape(
+        terminal_lp,
+        field_bits,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+    )?;
+    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+    Ok(DirectStep {
+        current_w_len,
+        witness_shape,
+        direct_bytes,
+        params: None,
+    })
+}
+
+/// Replace the leaf `Step::Direct` in a suffix schedule with one whose
+/// segment layout is derived from the predecessor fold's committed params.
+fn patch_suffix_terminal_direct(
+    suffix_sched: &mut [Step],
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    key: AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+) -> Result<usize, AkitaError> {
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+        terminal_segment_counts(key, terminal_fold_level);
+    let Step::Direct(direct) = suffix_sched
+        .last_mut()
+        .ok_or_else(|| AkitaError::InvalidSetup("empty suffix schedule".into()))?
+    else {
+        return Err(AkitaError::InvalidSetup(
+            "suffix direct patch expected terminal Direct step".into(),
+        ));
+    };
+    let current_w_len = direct.current_w_len;
+    *direct = make_terminal_direct_step(
+        current_w_len,
+        terminal_lp,
+        field_bits,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+    )?;
+    Ok(suffix_sched
+        .iter()
+        .map(|step| match step {
+            Step::Direct(d) => d.direct_bytes,
+            Step::Fold(f) => f.level_bytes,
+        })
+        .sum())
+}
+
 type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
@@ -380,6 +494,7 @@ struct SuffixCtx<'a> {
     policy: &'a PlannerPolicy,
     stage1: Stage1Fn<'a>,
     num_vars: usize,
+    key: AkitaScheduleLookupKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -407,6 +522,7 @@ fn derive_optimal_suffix_schedule(
         policy,
         stage1,
         num_vars,
+        key,
     } = *ctx;
     let memo_key = (
         level,
@@ -422,44 +538,26 @@ fn derive_optimal_suffix_schedule(
 
     let best_direct = {
         let field_bits = policy.decomposition.field_bits();
-        let (witness_shape, direct_bytes) =
-            if let Some((terminal_lp, _, _)) =
-                derive_candidate_level_params(policy, stage1, current_witness_len, current_lb)?
-            {
-                let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, 1, field_bits)?;
-                let (rice_k, zigzag_w_z) =
-                    tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
-                let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
-                    field_bits,
-                    &layout,
-                    rice_k,
-                    zigzag_w_z,
-                )
-                .saturating_sub(
-                    (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
-                        * akita_types::field_bytes(field_bits),
-                );
-                let witness_shape = CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
-                    layout,
-                    z_payload_bytes,
-                });
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                (witness_shape, direct_bytes)
-            } else {
-                let witness_shape = CleartextWitnessShape::PackedDigits((
-                    current_witness_len_terminal,
-                    current_lb,
-                ));
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                (witness_shape, direct_bytes)
-            };
-        let step = Step::Direct(DirectStep {
-            current_w_len: current_witness_len_terminal,
-            witness_shape,
-            direct_bytes,
-            params: None,
-        });
-        Some((direct_bytes, vec![step]))
+        if let Some((terminal_lp, _, _)) =
+            derive_candidate_level_params(policy, stage1, current_witness_len, current_lb)?
+        {
+            let terminal_fold_level = level.saturating_sub(1);
+            let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+                terminal_segment_counts(key, terminal_fold_level);
+            let step = make_terminal_direct_step(
+                current_witness_len_terminal,
+                &terminal_lp,
+                field_bits,
+                num_w_vectors,
+                num_t_vectors,
+                num_public_rows,
+                num_commitment_groups,
+            )?;
+            let direct_bytes = step.direct_bytes;
+            Some((direct_bytes, vec![Step::Direct(step)]))
+        } else {
+            None
+        }
     };
 
     if depth > MAX_RECURSION_DEPTH {
@@ -509,10 +607,19 @@ fn derive_optimal_suffix_schedule(
         };
 
         // Branch A: suffix is a Direct at level+1.
-        if let Some((suffix_cost, suffix_sched)) = suffix.best_direct.as_ref() {
+        if let Some((_, suffix_sched)) = suffix.best_direct.as_ref() {
+            let field_bits = policy.decomposition.field_bits();
+            let mut suffix_sched = suffix_sched.clone();
+            let suffix_cost = patch_suffix_terminal_direct(
+                &mut suffix_sched,
+                &candidate_params,
+                field_bits,
+                key,
+                level,
+            )?;
             let level_proof_size = level_proof_bytes(
-                policy.decomposition.field_bits(),
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                field_bits,
+                field_bits * policy.chal_ext_degree as u32,
                 &candidate_params,
                 None,
                 next_witness_len_terminal,
@@ -527,7 +634,7 @@ fn derive_optimal_suffix_schedule(
                 next_w_len: next_witness_len_terminal,
                 level_bytes: level_proof_size,
             }));
-            steps.extend(suffix_sched.iter().cloned());
+            steps.extend(suffix_sched);
             try_update(total, steps, &mut best_for_this_lb);
         }
         // Branch B: suffix is a Fold at level+1.
@@ -778,6 +885,7 @@ pub fn find_schedule(
         policy,
         stage1,
         num_vars: key.num_vars,
+        key,
     };
 
     let t_vectors = key.num_t_vectors;
@@ -998,7 +1106,15 @@ pub fn find_schedule(
             };
 
             // Branch A: suffix at level 1 is a Direct
-            if let Some((suffix_cost, suffix_sched)) = suffix.best_direct.as_ref() {
+            if let Some((_, suffix_sched)) = suffix.best_direct.as_ref() {
+                let mut suffix_sched = suffix_sched.clone();
+                let suffix_cost = patch_suffix_terminal_direct(
+                    &mut suffix_sched,
+                    &candidate_params,
+                    field_bits,
+                    key,
+                    0,
+                )?;
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
@@ -1018,7 +1134,7 @@ pub fn find_schedule(
                         next_w_len: next_w_len_terminal,
                         level_bytes: root_proof_size,
                     }));
-                    steps.extend(suffix_sched.iter().cloned());
+                    steps.extend(suffix_sched);
                     best_steps = steps;
                 }
             }

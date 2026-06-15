@@ -10,7 +10,7 @@ use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    PackedDigits, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::marker::PhantomData;
 

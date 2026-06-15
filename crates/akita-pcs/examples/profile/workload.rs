@@ -40,7 +40,7 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
 
 fn assert_observed_proof_size<FF, L>(label: &str, proof: &AkitaBatchedProof<FF, L>)
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let mut encoded = Vec::with_capacity(proof.size());
@@ -151,7 +151,7 @@ fn report_proof_size_against_planner<FF, L>(
     source: &str,
     mode: SetupContributionMode,
 ) where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     match mode {

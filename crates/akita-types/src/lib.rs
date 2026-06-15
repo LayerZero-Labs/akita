@@ -92,8 +92,9 @@ pub use proof::{
     SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
     TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
-    build_segment_typed_witness, expand_segment_typed_to_i8_digits, pad_segment_typed_z_payload,
-    segment_typed_witness_exact_bytes,
+    build_segment_typed_witness, emit_witness_planes_block_inner,
+    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
+    pad_segment_typed_z_payload, segment_typed_witness_exact_bytes,
     segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
 };
 #[cfg(feature = "zk")]
