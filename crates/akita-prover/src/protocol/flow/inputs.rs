@@ -368,6 +368,7 @@ where
 
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
+        let terminal_shape = schedule_terminal_direct_witness_shape(schedule)?;
         let terminal =
             prove_terminal_root_fold_with_params::<Cfg, Cfg::Field, Cfg::ExtField, T, P, B, D>(
                 expanded,
@@ -380,6 +381,7 @@ where
                 &commitments,
                 commitment_hints,
                 &root_scheduled,
+                terminal_shape,
                 basis,
                 setup_contribution_mode,
                 #[cfg(feature = "zk")]

@@ -1066,9 +1066,12 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             // bound. Under honest A-role pricing, D=64 stops securing a fold
             // for very large `num_vars`, so the DP returns this edge instead
             // of a folded schedule; it carries no basis to check.
-            akita_types::Step::Direct(direct) => match direct.witness_shape {
-                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => bits <= 6,
+            akita_types::Step::Direct(direct) => match &direct.witness_shape {
+                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => *bits <= 6,
                 akita_types::CleartextWitnessShape::FieldElements(_) => true,
+                akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
+                    shape.layout.log_basis <= 6
+                }
             },
         });
         assert!(
@@ -1290,8 +1293,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     akita_types::CleartextWitnessProof::PackedDigits(packed) => {
                         packed.data[0] ^= 1;
                     }
+                    akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
+                        segment.z_payload[0] ^= 1;
+                    }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
-                        panic!("expected packed-digits final witness for tamper test");
+                        panic!("expected packed-digits or segment-typed final witness for tamper test");
                     }
                 }
             }

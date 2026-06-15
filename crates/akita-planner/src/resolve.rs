@@ -408,7 +408,7 @@ pub fn schedule_from_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, field_bits)?;
+                    let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, 1, field_bits)?;
                     let (rice_k, zigzag_w_z) =
                         tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
                     let z_payload_bytes = segment_typed_witness_upper_bound_bytes(

@@ -58,6 +58,7 @@ fn cleartext_witness_eval<F, E, const D: usize>(
     ring_bits: usize,
     lp: Option<&akita_types::LevelParams>,
     num_claims: usize,
+    num_commitment_groups: usize,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -97,7 +98,13 @@ where
         }
         CleartextWitnessProof::SegmentTyped(_witness) => {
             let lp = lp.ok_or(AkitaError::InvalidProof)?;
-            let digits = cleartext_witness.logical_i8_digits::<D>(lp, num_claims, 1, num_claims)?;
+            let digits = cleartext_witness.logical_i8_digits::<D>(
+                lp,
+                num_claims,
+                1,
+                num_claims,
+                num_commitment_groups,
+            )?;
             if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
                 return Err(AkitaError::InvalidProof);
             }
@@ -123,6 +130,7 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
         physical_w_len: usize,
         lp: Option<&'a akita_types::LevelParams>,
         num_claims: usize,
+        num_commitment_groups: usize,
     },
     ClaimedEval {
         eval: E,
@@ -242,6 +250,7 @@ where
                 physical_w_len,
                 lp,
                 num_claims,
+                num_commitment_groups,
             } => cleartext_witness_eval::<F, E, D>(
                 witness,
                 *physical_w_len,
@@ -250,6 +259,7 @@ where
                 self.ring_bits,
                 *lp,
                 *num_claims,
+                *num_commitment_groups,
             ),
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
@@ -469,6 +479,9 @@ mod tests {
             &challenges,
             col_bits,
             ring_bits,
+            None,
+            1,
+            1,
         )
         .expect("valid packed witness");
 
@@ -501,6 +514,9 @@ mod tests {
             &challenges,
             1,
             1,
+            None,
+            1,
+            1,
         )
         .expect("valid witness");
 
@@ -514,6 +530,9 @@ mod tests {
             &CleartextWitnessProof::PackedDigits(packed),
             1,
             &[E::zero()],
+            1,
+            1,
+            None,
             1,
             1,
         )
@@ -533,6 +552,9 @@ mod tests {
             &CleartextWitnessProof::PackedDigits(packed),
             4,
             &challenges,
+            1,
+            1,
+            None,
             1,
             1,
         )

@@ -8,12 +8,13 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid};
 
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_zigzag_width_z, optimal_rice_k,
+    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_bits_per_coord,
+    golomb_rice_zigzag_width_z, optimal_rice_k,
 };
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
-use crate::LevelParams;
+use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +283,7 @@ pub fn tail_segment_layout(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
+    num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
     let d = lp.ring_dimension;
@@ -331,7 +333,7 @@ pub fn tail_segment_layout(
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
     let r_plane_rings = lp
-        .m_row_count(num_w_vectors, num_public_rows)?
+        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -343,7 +345,7 @@ pub fn tail_segment_layout(
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
     let r_field_elems = lp
-        .m_row_count(num_w_vectors, num_public_rows)?
+        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
@@ -371,7 +373,7 @@ pub fn segment_typed_witness_upper_bound_bytes(
         .saturating_add(layout.t_field_elems)
         .saturating_add(layout.r_field_elems);
     let raw_bytes = raw_elems.saturating_mul(field_bytes(field_bits));
-    let bits_per_z = (zigzag_w_z.saturating_add(rice_k).saturating_add(3)) as usize;
+    let bits_per_z = golomb_rice_max_bits_per_coord(rice_k, zigzag_w_z);
     let z_bits = layout.z_coords.saturating_mul(bits_per_z);
     raw_bytes.saturating_add(z_bits.div_ceil(8))
 }
@@ -479,12 +481,20 @@ pub fn build_segment_typed_witness<const D: usize, F>(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
+    num_commitment_groups: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
 {
     let field_bits = F::modulus_bits();
-    let layout = tail_segment_layout(lp, num_w_vectors, num_t_vectors, num_public_rows, field_bits)?;
+    let layout = tail_segment_layout(
+        lp,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+        field_bits,
+    )?;
     let (rice_k, zigzag_w_z) =
         tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
     let depth_commit = lp.num_digits_commit;
@@ -530,6 +540,25 @@ where
     Ok(witness)
 }
 
+/// Pad a segment witness `z` bitstream to the schedule-bound byte length.
+///
+/// # Errors
+///
+/// Returns an error when the encoded payload already exceeds `budget_bytes`.
+pub fn pad_segment_typed_z_payload<F: FieldCore>(
+    witness: &mut SegmentTypedWitness<F>,
+    budget_bytes: usize,
+) -> Result<(), AkitaError> {
+    if witness.z_payload.len() > budget_bytes {
+        return Err(AkitaError::InvalidInput(format!(
+            "segment-typed z payload {} bytes exceeds schedule budget {budget_bytes}",
+            witness.z_payload.len()
+        )));
+    }
+    witness.z_payload.resize(budget_bytes, 0);
+    Ok(())
+}
+
 /// Expand a segment-typed witness into the legacy digit stream consumed by
 /// stage-2 evaluation and packed-digit transcript helpers.
 ///
@@ -542,6 +571,7 @@ pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
+    num_commitment_groups: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -550,6 +580,17 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let field_bits = F::modulus_bits();
+    let expected_layout = tail_segment_layout(
+        lp,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+        field_bits,
+    )?;
+    if expected_layout != witness.layout {
+        return Err(AkitaError::InvalidProof);
+    }
     let log_basis = lp.log_basis;
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
@@ -752,7 +793,7 @@ mod tests {
     #[test]
     fn tail_segment_layout_is_non_empty() {
         let lp = test_lp();
-        let layout = tail_segment_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+        let layout = tail_segment_layout(&lp, 1, 1, 1, 1, F::modulus_bits()).unwrap();
         assert!(layout.logical_num_elems > 0);
         assert!(layout.z_coords > 0);
     }

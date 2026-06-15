@@ -114,6 +114,14 @@ pub fn zigzag_decode(u: u64, width: u32) -> Result<i64, AkitaError> {
     Ok(n)
 }
 
+/// Worst-case Golomb-Rice bit length for one coordinate at public `(k, w)`.
+#[must_use]
+pub fn golomb_rice_max_bits_per_coord(rice_k: u32, zigzag_w_z: u32) -> usize {
+    let normal_max = 32usize.saturating_add(rice_k as usize);
+    let escape_max = 33usize.saturating_add(zigzag_w_z as usize);
+    normal_max.max(escape_max)
+}
+
 /// Rice parameter `k` from public fold-response `sigma`.
 #[must_use]
 pub fn optimal_rice_k(sigma: u128) -> u32 {
@@ -206,8 +214,10 @@ pub fn golomb_rice_decode_vec(
     for _ in 0..count {
         out.push(golomb_rice_decode_one_from(&mut reader, k, w)?);
     }
-    if reader.remaining_bits() > 7 {
-        return Err(AkitaError::InvalidProof);
+    while reader.remaining_bits() > 0 {
+        if reader.read_bit()? {
+            return Err(AkitaError::InvalidProof);
+        }
     }
     Ok(out)
 }

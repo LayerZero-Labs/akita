@@ -528,6 +528,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     relation_claim: E,
     lp: &LevelParams,
     num_claims: usize,
+    num_commitment_groups: usize,
     #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
@@ -551,6 +552,7 @@ where
             physical_w_len,
             lp: Some(lp),
             num_claims,
+            num_commitment_groups,
         },
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
@@ -822,6 +824,10 @@ where
         relation_claim,
         prepared.lp,
         relation_instance.opening_batch().num_claims(),
+        relation_instance
+            .opening_batch()
+            .num_polys_per_commitment_group()
+            .len(),
         #[cfg(feature = "zk")]
         relation_claim_mask,
         setup_claim,

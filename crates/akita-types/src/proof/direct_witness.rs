@@ -109,6 +109,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         num_w_vectors: usize,
         num_t_vectors: usize,
         num_public_rows: usize,
+        num_commitment_groups: usize,
     ) -> Result<Vec<i8>, AkitaError>
     where
         F: CanonicalField + HalvingField,
@@ -121,6 +122,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
                 num_w_vectors,
                 num_t_vectors,
                 num_public_rows,
+                num_commitment_groups,
             ),
             Self::FieldElements(_) => Err(AkitaError::InvalidProof),
         }

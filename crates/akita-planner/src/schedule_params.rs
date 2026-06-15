@@ -426,7 +426,7 @@ fn derive_optimal_suffix_schedule(
             if let Some((terminal_lp, _, _)) =
                 derive_candidate_level_params(policy, stage1, current_witness_len, current_lb)?
             {
-                let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, field_bits)?;
+                let layout = tail_segment_layout(&terminal_lp, 1, 1, 1, 1, field_bits)?;
                 let (rice_k, zigzag_w_z) =
                     tail_golomb_rice_z_params(&terminal_lp, 1, 1, field_bits)?;
                 let z_payload_bytes = segment_typed_witness_upper_bound_bytes(

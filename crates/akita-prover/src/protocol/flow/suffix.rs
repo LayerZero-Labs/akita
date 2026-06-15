@@ -4,6 +4,9 @@ use cfg_if::cfg_if;
 #[cfg(not(feature = "zk"))]
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness;
+use akita_types::pad_segment_typed_z_payload;
+use akita_types::schedule_terminal_direct_witness_shape;
+use akita_types::CleartextWitnessShape;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -147,6 +150,7 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
+    let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
@@ -179,6 +183,11 @@ where
                 prepared_fold,
                 setup_contribution_mode,
                 is_terminal_level,
+                if is_terminal_level {
+                    Some(terminal_direct_witness_shape)
+                } else {
+                    None
+                },
             )
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
@@ -205,6 +214,11 @@ where
                     prepared_fold,
                     setup_contribution_mode,
                     is_terminal_level,
+                    if is_terminal_level {
+                        Some(terminal_direct_witness_shape)
+                    } else {
+                        None
+                    },
                 )
             })
         }?;
@@ -262,6 +276,7 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -322,6 +337,7 @@ where
         },
         #[cfg(not(feature = "zk"))]
         build_output.terminal_artifacts,
+        terminal_direct_witness_shape,
     )?;
     let m_row_layout = if is_terminal_fold {
         MRowLayout::WithoutDBlock
@@ -556,6 +572,7 @@ pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
     #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -574,7 +591,11 @@ where
                     ));
                 }
                 let num_claims = instance.opening_batch().num_claims();
-                let segment = build_segment_typed_witness::<D, F>(
+                let num_commitment_groups = instance
+                    .opening_batch()
+                    .num_polys_per_commitment_group()
+                    .len();
+                let mut segment = build_segment_typed_witness::<D, F>(
                     &artifacts.e_folded,
                     &artifacts.recomposed_inner_rows,
                     &artifacts.z_folded_centered,
@@ -583,7 +604,25 @@ where
                     num_claims,
                     1,
                     num_claims,
+                    num_commitment_groups,
                 )?;
+                let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
+                    terminal_direct_witness_shape.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal fold missing scheduled segment-typed witness shape".to_string(),
+                        )
+                    })?
+                else {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal fold expected segment-typed witness shape".to_string(),
+                    ));
+                };
+                if segment.layout != scheduled_shape.layout {
+                    return Err(AkitaError::InvalidSetup(
+                        "segment-typed witness layout does not match schedule".to_string(),
+                    ));
+                }
+                pad_segment_typed_z_payload(&mut segment, scheduled_shape.z_payload_bytes)?;
                 let expanded = segment
                     .layout
                     .logical_num_elems;
@@ -593,6 +632,7 @@ where
                     num_claims,
                     1,
                     num_claims,
+                    num_commitment_groups,
                 )?;
                 if digits.len() != expanded || digits.as_slice() != logical_w.as_i8_digits() {
                     return Err(AkitaError::InvalidInput(

@@ -41,7 +41,8 @@ pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use tail_segments::{
-    build_segment_typed_witness, expand_segment_typed_to_i8_digits, segment_typed_witness_exact_bytes,
+    build_segment_typed_witness, expand_segment_typed_to_i8_digits, pad_segment_typed_z_payload,
+    segment_typed_witness_exact_bytes,
     segment_typed_witness_upper_bound_bytes, tail_golomb_rice_z_params, tail_segment_layout,
     SegmentTypedWitness, SegmentTypedWitnessShape, TailSegmentLayout,
 };
