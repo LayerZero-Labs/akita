@@ -11,10 +11,10 @@ use crate::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_planner_bits_per_z_coord,
     golomb_rice_zigzag_width_from_beta, optimal_rice_k,
 };
-use crate::sis::{fold_witness_beta, FoldChallengeNorms};
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
+use crate::sis::{fold_witness_beta, FoldChallengeNorms};
 use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
@@ -279,12 +279,7 @@ pub fn tail_golomb_rice_z_params(
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,
     };
-    let beta = fold_witness_beta(
-        lp.r_vars,
-        num_t_vectors,
-        challenge,
-        lp.fold_witness_norms(),
-    )?;
+    let beta = fold_witness_beta(lp.r_vars, num_t_vectors, challenge, lp.fold_witness_norms())?;
     let k = optimal_rice_k(beta);
     let w = golomb_rice_zigzag_width_from_beta(beta);
     Ok((k, w))
@@ -864,10 +859,8 @@ mod tests {
         let lp = test_lp();
         let field_bits = F::modulus_bits();
         let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
-        let at_five =
-            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
-        let at_eight =
-            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 8).unwrap();
+        let at_five = segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
+        let at_eight = segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 8).unwrap();
         assert_eq!(at_five, at_eight);
         let depth_fold = lp.num_digits_fold(1, field_bits).unwrap();
         let packed_z = crate::layout::proof_size::packed_digits_bytes(
@@ -886,8 +879,8 @@ mod tests {
         let payload =
             encode_z_segment_from_centered(&centered, 1, lp.num_digits_commit, rice_k, zigzag_w_z)
                 .unwrap();
-        let decoded = golomb_rice_decode_vec(&payload, centered.len() * 8, rice_k, zigzag_w_z)
-            .unwrap();
+        let decoded =
+            golomb_rice_decode_vec(&payload, centered.len() * 8, rice_k, zigzag_w_z).unwrap();
         let expected: Vec<i64> = centered
             .iter()
             .flat_map(|row| row.iter().map(|&c| i64::from(c)))

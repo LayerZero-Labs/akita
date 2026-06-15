@@ -442,16 +442,13 @@ where
                     AkitaLevelProof::Intermediate { .. } => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;
-            if !terminal_direct
-                .witness_shape
-                .admits_realized(
-                    &terminal_step
-                        .stage2()
-                        .final_witness()
-                        .ok_or(AkitaError::InvalidProof)?
-                        .shape(),
-                )
-            {
+            if !terminal_direct.witness_shape.admits_realized(
+                &terminal_step
+                    .stage2()
+                    .final_witness()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .shape(),
+            ) {
                 return Err(AkitaError::InvalidProof);
             }
 

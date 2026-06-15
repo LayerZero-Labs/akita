@@ -6,9 +6,9 @@ use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 #[cfg(not(feature = "zk"))]
 use akita_types::build_segment_typed_witness;
 #[cfg(not(feature = "zk"))]
-use akita_types::validate_segment_typed_z_payload;
-#[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+#[cfg(not(feature = "zk"))]
+use akita_types::validate_segment_typed_z_payload;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 

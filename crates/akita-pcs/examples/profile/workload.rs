@@ -82,7 +82,10 @@ where
 /// absolute proof growth is bounded by the CI proof-size regression threshold.
 const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
 
-fn segment_typed_z_planner_slack<FF, L>(proof: &AkitaBatchedProof<FF, L>, schedule: &Schedule) -> usize
+fn segment_typed_z_planner_slack<FF, L>(
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+) -> usize
 where
     FF: FieldCore,
     L: FieldCore,
