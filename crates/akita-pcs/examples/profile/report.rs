@@ -33,9 +33,7 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             final_w_policy = "root_direct",
             "proof tail summary"
         );
-        eprintln!(
-            "[{label}]   final_w: none (root-direct zero-fold; no cleartext tail witness)"
-        );
+        eprintln!("[{label}]   final_w: none (root-direct zero-fold; no cleartext tail witness)");
         return;
     }
 
