@@ -64,7 +64,7 @@ The feature introduces or modifies:
 - [ ] A terminal proof that reveals `t` verifies, and tampering `t`, `e`, or `z` is rejected; the terminal A-row check enforces that the revealed witness maps to the transcript-bound `t` state.
 - [ ] Descriptor bytes change intentionally and are pinned; a proof under the new policy fails to verify under the legacy `PackedDigits` policy and vice versa.
 - [ ] Under `feature = "zk"`, selecting the entropy/t-reveal tail policy rejects with `InvalidSetup`; the masked tail is unchanged.
-- [ ] Net proof-size reduction reported by the profile command at the affected modes, with the per-lever breakdown (r-drop, u-drop, z entropy, one-hot `e` width recovery) recorded.
+- [ ] Net proof-size reduction reported by the profile command at the affected modes. CI (`scripts/profile_bench_report.py`) renders a per-case **Tail encoding** block from the structured `proof tail summary` trace (encoding policy, per-segment wire bytes, Golomb `z` vs legacy `PackedDigits` comparison, planner `z` budget slack). Deferred levers (r-drop, u-drop) stay out of scope until later slices.
 - [ ] In-guest decode cost measured: add a `final_witness_decode` cycle marker in `profile/akita-recursion`; entropy-coded tail decode adds bounded cycles and net `akita_verify` cycles do not regress versus the PR #141 direct-mode baseline at the cited profile cell.
 - [ ] `generated_schedule_tables_match_find_schedule` passes after S5 table regen under the tail policy.
 
@@ -257,7 +257,7 @@ Shipped schedule tables are regenerated under the new tail policy in S5; the dri
 
 - Update PR #141 branch `specs/terminal-direct-ring-relation.md` and `specs/terminal-fold-cutover.md` (PR #88) to cross-link this spec as the encoding layer on top of the r-drop and D-drop, and to record the terminal `t`-state cutover as the replacement for the old terminal `u` opening.
 - Update PR #174 branch `specs/fold-linf-rejection.md` to note that the `t*` threshold uses the same `β_inf` fold bound, which is also the Golomb-Rice scale for `z` (distinct from the level variance envelope).
-- Profile example / bench reports: add per-segment tail breakdown fields (S5).
+- Profile example / bench reports: structured tail witness reporting is implemented in `crates/akita-pcs/examples/profile/report.rs` (`emit_proof_tail_report`) and `scripts/profile_bench_report.py`. The profile binary (non-zk) emits `proof tail summary` with `final_w_encoding` / `final_w_policy` and, for `segment_typed`, per-segment wire bytes plus Golomb-vs-`PackedDigits` `z` stats. Encoding variants on `CleartextWitnessProof`: `segment_typed` (non-zk folded terminal default), `packed_digits` (`feature = "zk"` fallback), `field_elements` (root-direct cleartext witness), and `none` (root-direct zero-fold; `tail_bytes = 0`).
 - **Extension point:** a future revealed JL projection image `p` at the tail is itself sub-Gaussian and should become another `Gaussian{k}` segment; coordinate with `specs/akita-jl-norm-check-resolutions.md` §8 when that path is specified.
 
 ## Execution
