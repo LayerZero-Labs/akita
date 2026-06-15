@@ -125,6 +125,19 @@ The current folded terminal prover path:
 9. Runs relation-only stage 2.
 10. Serializes `TerminalLevelProof` with terminal stage-2 proof and final witness.
 
+### Current Terminal Proof Body
+
+`TerminalLevelProof` on the wire is headerless and carries only:
+
+- optional extension-opening reduction,
+- terminal stage-2 sumcheck (non-zk) or masked sumcheck (zk),
+- and `final_witness` (`SegmentTyped` in non-zk folded builds).
+
+Public terminal `y` is not serialized in that payload.
+Since #154 (`specs/y-ring-trace-internalization.md`), on-wire `y_ring` / `y_rings` was dropped at every fold level, including the terminal.
+The verifier recomputes the public-output row targets from the committed terminal witness (and opening incidence) when checking the relation.
+Proof-size accounting matches this split: `level_proof_bytes(..., MRowLayout::WithoutDBlock)` prices only the terminal stage-2 body, and `direct_witness_bytes` prices `final_witness` on the terminal schedule step.
+
 The `r` segment exists only because the terminal relation is still proved through the same quotient-to-sumcheck machinery as intermediate folds.
 It is not part of the terminal statement once the verifier checks rows directly.
 
@@ -195,7 +208,7 @@ The checker inputs should include:
 - `LevelParams`,
 - the active ring dimension,
 - the decoded `SegmentTypedWitness`,
-- terminal `y_rings`,
+- recomputed terminal public-output row targets `y` (derived from witness and incidence, not read from the proof body),
 - row coefficients,
 - opening point and ring-multiplier point,
 - commitment rows,
@@ -333,12 +346,14 @@ pub enum TerminalRelationProofShape {
 
 ```rust
 pub struct TerminalLevelProofShape {
-    pub y_rings: usize,
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProofShape>,
     pub relation: TerminalRelationProofShape,
     pub final_witness: CleartextWitnessShape,
 }
 ```
+
+Do not reintroduce a `y_rings` shape field.
+On-wire `y` was removed in #154 and is not part of `TerminalLevelProof` today.
 
 The proof body mirrors it:
 
@@ -429,7 +444,7 @@ The direct-mode builder should still compute the data needed by direct row verif
 - `e_folded`,
 - recomposed inner rows for `t`,
 - centered `z_folded` coefficients,
-- terminal `y_rings`,
+- recomputed public-output row targets `y` for row-equality checks,
 - row coefficients and row rings already bound by the relation instance.
 
 Do not reconstruct `r` and then drop it.
@@ -457,7 +472,7 @@ Its responsibilities:
 The row targets are:
 
 - consistency row equals zero,
-- public rows equal `y_rings`,
+- public rows equal the recomputed `y` targets from witness and incidence,
 - commitment rows equal the current commitment-row semantics,
 - inner-B rows equal the current inner-B row semantics,
 - A rows equal zero,
@@ -493,22 +508,26 @@ ceil(r_digit_count * bits_per_elem / 8)
 
 The latter was the pre-#190 packed-digit estimate and is now stale for non-zk tails.
 
+Terminal level bytes follow the same split as today: proof body (`level_proof_bytes`) plus scheduled witness (`direct_witness_bytes`).
+Neither term includes on-wire `y`; that was removed in #154.
+
 The direct terminal level byte formula becomes:
 
 ```text
-y_rings_bytes
-  + optional_extension_opening_reduction_bytes
-  + segment_typed_witness_upper_bound_bytes(z, e, t)
+optional_extension_opening_reduction_bytes
+  + direct_witness_bytes(SegmentTyped(z, e, t))
 ```
 
 The sumcheck terminal formula stays:
 
 ```text
-y_rings_bytes
-  + optional_extension_opening_reduction_bytes
+optional_extension_opening_reduction_bytes
   + terminal_stage2_sumcheck_bytes
-  + segment_typed_witness_upper_bound_bytes(z, e, t, r)
+  + direct_witness_bytes(SegmentTyped(z, e, t, r))
 ```
+
+Here `terminal_stage2_sumcheck_bytes` is what `level_proof_bytes(..., MRowLayout::WithoutDBlock)` already prices.
+`direct_witness_bytes` is the terminal schedule step's witness accounting, matching `segment_typed_witness_upper_bound_bytes` for the bound shape.
 
 Planner and schedule materialization must derive the same terminal witness shape as the prover.
 If direct mode is exposed by production configs, generated schedule tables must be regenerated under the direct-mode policy and protected by the drift guard.
@@ -522,10 +541,11 @@ Under `feature = "zk"`, selecting `DirectRingRelations` must reject with `Invali
 This is a protocol boundary, not merely missing code.
 The current ZK terminal path relies on:
 
-- masked `y_rings`,
 - `stage2_sumcheck_proof_masked`,
 - verifier-side relation-claim masking,
 - and B-side blinding carried through the terminal stage-2 row-evaluation path.
+
+On-wire `y_ring` masking was removed with #154; the fused trace term in stage 2 binds the public opening instead.
 
 Removing terminal stage 2 removes that masking mechanism.
 A future ZK direct mode needs a separate masked direct-row relation argument.
@@ -567,9 +587,8 @@ Add or update `akita-prover` / `akita-verifier` tests:
 - Direct row checker accepts a deterministic small suffix-terminal instance produced by prover code.
 - Direct row checker accepts a deterministic terminal-root instance with multiple public rows.
 - Tampering `z` rejects.
-- Tampering `e` rejects.
+- Tampering `e` rejects, including when public-output row targets disagree with opening incidence.
 - Tampering `t` rejects.
-- Tampering `y_rings` rejects.
 - Tampering commitment-row input rejects.
 - Truncated `z_payload` rejects without panic.
 - Malformed raw field segment lengths reject without panic.
