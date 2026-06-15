@@ -96,7 +96,7 @@ where
     T: Transcript<F>,
 {
     let bytes = terminal_e_hat_bytes_from_blocks(e_hat, planes_per_block)?;
-    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
     Ok(())
 }
 
@@ -115,7 +115,7 @@ where
             "terminal e_folded absorb cannot be empty".to_string(),
         ));
     }
-    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
     Ok(())
 }
 

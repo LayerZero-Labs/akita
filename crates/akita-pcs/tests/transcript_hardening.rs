@@ -22,6 +22,12 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
+/// Singleton onehot `num_vars` large enough that `batched_prove` keeps a root
+/// fold and segment-typed terminal direct witness. Smaller values (e.g. 10)
+/// fall back to root-direct zero-fold and never emit terminal transcript wire
+/// labels.
+const TRANSCRIPT_HARDENING_NUM_VARS: usize = 20;
+
 #[test]
 fn preamble_separation_changes_first_challenge() {
     let mut left = AkitaTranscript::<F>::prover(labels::DOMAIN_AKITA_PROTOCOL, b"descriptor-a");
@@ -37,7 +43,7 @@ fn preamble_separation_changes_first_challenge() {
 fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let num_vars = 10;
+        let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
             &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
         )
@@ -350,7 +356,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
 }
 
 fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
-    assert_terminal_tamper_rejected_at_num_vars(10, tamper);
+    assert_terminal_tamper_rejected_at_num_vars(TRANSCRIPT_HARDENING_NUM_VARS, tamper);
 }
 
 fn packed_digits_mut(witness: &mut CleartextWitnessProof<F>) -> &mut PackedDigits {
@@ -405,7 +411,7 @@ fn terminal_shape_final_witness_mut(
 fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let num_vars = 10;
+        let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
             &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
         )
@@ -446,7 +452,9 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         else {
             panic!("terminal witness should be segment-typed");
         };
-        shape.z_payload_bytes = shape.z_payload_bytes.saturating_add(1);
+        // Segment-typed tails admit exact `z` payloads up to the scheduled
+        // upper bound; a *tighter* budget than the encoded payload must reject.
+        shape.z_payload_bytes = shape.z_payload_bytes.saturating_sub(1);
 
         AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &bad_shape)
             .expect_err("terminal direct-witness shape mismatch must reject");
