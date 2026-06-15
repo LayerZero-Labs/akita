@@ -16,6 +16,22 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
+fn bump_flat_ring_vec(flat: &mut akita_types::FlatRingVec<F>) {
+    let mut coeffs = flat.coeffs().to_vec();
+    let first = coeffs
+        .first_mut()
+        .expect("tamper target must contain at least one coefficient");
+    *first += F::one();
+    *flat = akita_types::FlatRingVec::from_coeffs(coeffs);
+}
+
+fn assert_invalid_proof(case: &str, result: Result<(), AkitaError>) {
+    assert!(
+        matches!(result, Err(AkitaError::InvalidProof)),
+        "{case} must reject with InvalidProof, got {result:?}"
+    );
+}
+
 fn run_certified_flat_onehot_roundtrip(num_vars: usize, seed: u64) -> AkitaBatchedProof<F, F> {
     let layout = OneHotCfg::get_params_for_batched_commitment(
         &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
@@ -99,16 +115,6 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         let mut roundtrip =
             AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
-        if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
-            fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
-        }
-        if let Some(AkitaLevelProof::Intermediate {
-            fold_grind_nonce, ..
-        }) = roundtrip.steps.first_mut()
-        {
-            *fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
-        }
-
         let num_vars = 28;
         let layout = OneHotCfg::get_params_for_batched_commitment(
             &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
@@ -129,7 +135,28 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect("commit");
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/tamper");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
+        <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &roundtrip,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&point, &[opening], &commitment),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .expect("deserialized proof must verify");
+
+        if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
+            fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
+        }
+        if let Some(AkitaLevelProof::Intermediate {
+            fold_grind_nonce, ..
+        }) = roundtrip.steps.first_mut()
+        {
+            *fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
+        }
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let err = <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
             &roundtrip,
             &verifier_setup,
@@ -140,6 +167,52 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect_err("oversized grind nonce must be rejected");
         assert!(matches!(err, AkitaError::InvalidProof));
+    });
+}
+
+#[test]
+fn fold_recursive_handle_tamper_rejected() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let proof = run_certified_flat_onehot_roundtrip(28, 0x51_51_00_04);
+        let mut malformed = proof;
+        let recursive = malformed
+            .steps
+            .iter_mut()
+            .find_map(akita_types::AkitaLevelProof::as_intermediate_mut)
+            .expect("certified-flat onehot nv28 should include an intermediate fold");
+        bump_flat_ring_vec(recursive.v_mut());
+
+        let num_vars = 28;
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+        )
+        .expect("layout");
+        let poly = make_onehot_poly(&layout, 0x51_51_00_04);
+        let point = random_point(num_vars, 0x51_51_00_05);
+        let opening = opening_from_poly(&poly, &point, &layout);
+        let setup =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+        let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
+        let (commitment, _) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            std::slice::from_ref(&poly),
+        )
+        .expect("commit");
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
+        let result = <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&point, &[opening], &commitment),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert_invalid_proof("tampered recursive fold handle", result);
     });
 }
 

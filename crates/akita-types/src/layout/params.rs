@@ -378,6 +378,7 @@ impl LevelParams {
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_linf_threshold_policy());
+        push_u128(bytes, self.challenge_l2_sq_max());
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.onehot_chunk_size);
@@ -759,7 +760,6 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
             bytes.push(2);
         }
     }
-    push_u128(bytes, config.challenge_l2_sq_max());
 }
 
 fn append_fold_linf_policy_descriptor_bytes(

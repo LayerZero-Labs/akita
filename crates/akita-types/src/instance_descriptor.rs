@@ -496,6 +496,11 @@ impl Valid for SetupSection {
                 "descriptor log_basis must be non-zero".to_string(),
             ));
         }
+        if self.fold_linf != FoldLinfProtocolBinding::CURRENT {
+            return Err(SerializationError::InvalidData(
+                "descriptor fold_linf binding does not match active protocol cutover".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -886,7 +891,7 @@ mod tests {
                 },
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
-                protocol_features: ProtocolFeatureSet::current(),
+                protocol_features: ProtocolFeatureSet { zk: false },
                 fold_linf: FoldLinfProtocolBinding::CURRENT,
             },
             PlanSection::from_schedule(&schedule),
@@ -911,11 +916,31 @@ mod tests {
             (
                 174,
                 [
-                    0x82, 0x00, 0x2c, 0xbb, 0x46, 0xc2, 0xbe, 0xdb, 0x45, 0x65, 0x9f, 0xbe, 0x02,
-                    0x4d, 0x5c, 0xab, 0x52, 0x70, 0x84, 0x14, 0x9f, 0xa4, 0x65, 0x18, 0x05, 0xd0,
-                    0xb6, 0x77, 0x30, 0x60, 0xbe, 0x83,
+                    0xfd, 0xb0, 0x5e, 0x1f, 0x26, 0x64, 0x88, 0xc4, 0xc5, 0xdd, 0x18, 0x07, 0xfc,
+                    0x65, 0x08, 0x66, 0xef, 0xbf, 0x92, 0x22, 0x3b, 0xc8, 0xe4, 0x13, 0xf6, 0x95,
+                    0xb5, 0x74, 0x3c, 0x97, 0x35, 0x5e,
                 ]
             )
+        );
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn fold_linf_descriptor_canonical_digest_pinned_zk() {
+        let mut descriptor = sample_descriptor();
+        descriptor.setup.protocol_features = ProtocolFeatureSet { zk: true };
+        let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
+        assert_eq!(
+            (bytes.len(), blake2b_256(&bytes)),
+            (
+                174,
+                [
+                    0xe3, 0x85, 0xab, 0xc4, 0x35, 0x43, 0x43, 0x2f, 0x20, 0xd0, 0x13, 0x7b, 0x53,
+                    0x89, 0x1e, 0x11, 0xe7, 0x4e, 0xb3, 0x07, 0x1b, 0x70, 0x55, 0x7d, 0x50, 0x25,
+                    0x70, 0x1d, 0x46, 0x62, 0xaa, 0x85,
+                ]
+            ),
+            "update pinned zk digest after changing descriptor layout"
         );
     }
 
@@ -928,6 +953,100 @@ mod tests {
         assert_ne!(
             altered.canonical_bytes().expect("serialize"),
             descriptor.canonical_bytes().expect("serialize")
+        );
+    }
+
+    #[test]
+    fn effective_schedule_digest_binds_certified_flat_policy() {
+        let certified = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+                operator_norm_threshold: 0,
+            },
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("certified params");
+        let deterministic = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            SparseChallengeConfig::BoundedL1Norm,
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("deterministic params");
+        assert_eq!(
+            certified.fold_linf_threshold_policy(),
+            crate::sis::FoldLinfThresholdPolicy::CertifiedFlat
+        );
+        assert_eq!(
+            deterministic.fold_linf_threshold_policy(),
+            crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf
+        );
+
+        let schedule_certified = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: certified,
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+        let schedule_deterministic = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: deterministic,
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+
+        assert_ne!(
+            digest_effective_schedule(&schedule_certified),
+            digest_effective_schedule(&schedule_deterministic)
+        );
+    }
+
+    #[test]
+    fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
+        let flat = sample_level_params();
+        let mut tensor = sample_level_params();
+        tensor.fold_challenge_shape = TensorChallengeShape::Tensor;
+        assert_ne!(flat.challenge_l2_sq_max(), tensor.challenge_l2_sq_max());
+
+        let schedule_flat = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: flat,
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+        let schedule_tensor = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: tensor,
+                current_w_len: 256,
+                next_w_len: 256,
+                level_bytes: 123,
+            })],
+            total_bytes: 123,
+        };
+
+        assert_ne!(
+            digest_effective_schedule(&schedule_flat),
+            digest_effective_schedule(&schedule_tensor)
         );
     }
 
