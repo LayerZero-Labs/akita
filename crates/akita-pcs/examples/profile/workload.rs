@@ -1,5 +1,5 @@
 use crate::report::{
-    emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
+    emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
@@ -18,7 +18,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
+    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
+    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
     FpExtEncoding, LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode,
     Step,
 };
@@ -40,7 +41,7 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
 
 fn assert_observed_proof_size<FF, L>(label: &str, proof: &AkitaBatchedProof<FF, L>)
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let mut encoded = Vec::with_capacity(proof.size());
@@ -81,6 +82,28 @@ where
 /// absolute proof growth is bounded by the CI proof-size regression threshold.
 const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
 
+fn segment_typed_z_planner_slack<FF, L>(
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+) -> usize
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
+        return 0;
+    };
+    let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
+        return 0;
+    };
+    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
+        return 0;
+    };
+    scheduled
+        .z_payload_bytes
+        .saturating_sub(witness.z_payload.len())
+}
+
 /// Check the runtime proof size against a planner estimate, tolerating the
 /// small, conservative overcount documented on
 /// [`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES`].
@@ -89,6 +112,7 @@ fn assert_runtime_matches_planned_proof_size(
     actual_bytes: usize,
     planned_bytes: usize,
     source: &str,
+    extra_slack: usize,
 ) {
     assert!(
         actual_bytes <= planned_bytes,
@@ -96,11 +120,12 @@ fn assert_runtime_matches_planned_proof_size(
          {planned_bytes}; the planner estimate must remain an upper bound"
     );
     let overcount = planned_bytes - actual_bytes;
+    let accepted = ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES.saturating_add(extra_slack);
     assert!(
-        overcount <= ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES,
+        overcount <= accepted,
         "[{label}] {source} proof size {planned_bytes} overcounts the runtime proof bytes \
          {actual_bytes} by {overcount} bytes, exceeding the accepted \
-         {ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES}-byte stage-2 degree-2 round tolerance"
+         {accepted}-byte tolerance (stage-2 degree-2 rounds plus segment-typed z slack)"
     );
     if overcount != 0 {
         tracing::warn!(
@@ -150,13 +175,21 @@ fn report_proof_size_against_planner<FF, L>(
     planned_bytes: usize,
     source: &str,
     mode: SetupContributionMode,
+    schedule: &Schedule,
 ) where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
+    let z_slack = segment_typed_z_planner_slack(proof, schedule);
     match mode {
         SetupContributionMode::Direct => {
-            assert_runtime_matches_planned_proof_size(label, proof.size(), planned_bytes, source);
+            assert_runtime_matches_planned_proof_size(
+                label,
+                proof.size(),
+                planned_bytes,
+                source,
+                z_slack,
+            );
         }
         SetupContributionMode::Recursive => {
             let stage3_bytes = observed_stage3_setup_product_bytes(proof);
@@ -170,6 +203,7 @@ fn report_proof_size_against_planner<FF, L>(
                 direct_equivalent,
                 planned_bytes,
                 &recursive_source,
+                z_slack,
             );
             tracing::info!(
                 label,
@@ -404,8 +438,15 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             plan.total_bytes,
             "planned",
             setup_contribution_mode,
+            plan,
         );
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            plan,
+            Cfg::decomposition().field_bits(),
+        );
     } else {
         let opening_batch =
             OpeningBatch::same_point(pt.len(), 1).expect("same-point opening batch");
@@ -416,8 +457,15 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             schedule.total_bytes,
             "runtime schedule",
             setup_contribution_mode,
+            &schedule,
         );
         emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            &schedule,
+            Cfg::decomposition().field_bits(),
+        );
     }
 
     let t0 = Instant::now();
@@ -785,8 +833,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             plan.total_bytes,
             "planned",
             setup_contribution_mode,
+            plan,
         );
         emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            plan,
+            Cfg::decomposition().field_bits(),
+        );
     } else {
         report_proof_size_against_planner(
             label,
@@ -794,11 +849,18 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             schedule.total_bytes,
             "runtime schedule",
             setup_contribution_mode,
+            &schedule,
         );
         emit_runtime_schedule_summary(
             label,
             &schedule,
             num_polys,
+            Cfg::decomposition().field_bits(),
+        );
+        emit_proof_tail_report::<FF, Cfg::ExtField>(
+            label,
+            &proof,
+            &schedule,
             Cfg::decomposition().field_bits(),
         );
     }

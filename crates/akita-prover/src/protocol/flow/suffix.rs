@@ -1,6 +1,17 @@
 use super::*;
 use cfg_if::cfg_if;
 
+#[cfg(not(feature = "zk"))]
+use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
+#[cfg(not(feature = "zk"))]
+use akita_types::build_segment_typed_witness;
+#[cfg(not(feature = "zk"))]
+use akita_types::schedule_terminal_direct_witness_shape;
+#[cfg(not(feature = "zk"))]
+use akita_types::validate_segment_typed_z_payload;
+#[cfg(not(feature = "zk"))]
+use akita_types::CleartextWitnessShape;
+
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     /// Current committed suffix witness representation.
@@ -143,6 +154,8 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
+    #[cfg(not(feature = "zk"))]
+    let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
@@ -175,6 +188,12 @@ where
                 prepared_fold,
                 setup_contribution_mode,
                 is_terminal_level,
+                #[cfg(not(feature = "zk"))]
+                if is_terminal_level {
+                    Some(terminal_direct_witness_shape)
+                } else {
+                    None
+                },
             )
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
@@ -201,6 +220,12 @@ where
                     prepared_fold,
                     setup_contribution_mode,
                     is_terminal_level,
+                    #[cfg(not(feature = "zk"))]
+                    if is_terminal_level {
+                        Some(terminal_direct_witness_shape)
+                    } else {
+                        None
+                    },
                 )
             })
         }?;
@@ -258,6 +283,7 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -266,7 +292,8 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + AkitaSerialize,
     L: ExtField<F>
         + FpExtEncoding<F>
         + HasUnreducedOps
@@ -281,13 +308,15 @@ where
     let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
-    let logical_w = ring_switch_build_w::<F, B, D>(
+    let build_output = ring_switch_build_w::<F, B, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
         backend,
         prepared,
         lp,
+        is_terminal_fold,
     )?;
+    let logical_w = build_output.w;
     scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
         None
@@ -313,6 +342,10 @@ where
         } else {
             None
         },
+        #[cfg(not(feature = "zk"))]
+        build_output.terminal_artifacts,
+        #[cfg(not(feature = "zk"))]
+        terminal_direct_witness_shape,
     )?;
     let m_row_layout = if is_terminal_fold {
         MRowLayout::WithoutDBlock
@@ -543,35 +576,102 @@ pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D
     is_terminal_fold: bool,
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
-    logical_w: &RecursiveWitnessFlat,
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
+    #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,
 {
     if is_terminal_fold {
+        #[cfg(feature = "zk")]
         let final_log_basis = final_log_basis.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
-        let final_witness = CleartextWitnessProof::PackedDigits(
-            PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
-        );
-        let terminal_layout = terminal_witness_segment_layout(
-            lp,
-            instance.opening_batch().num_claims(),
-            1,
-            F::modulus_bits(),
-        )?;
-        let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
-        if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
-            return Err(AkitaError::InvalidInput(
-                "terminal final witness does not match ring-switch witness".to_string(),
+        #[cfg(not(feature = "zk"))]
+        final_log_basis.ok_or_else(|| {
+            AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
+        })?;
+        #[cfg(not(feature = "zk"))]
+        {
+            if let Some(artifacts) = terminal_artifacts {
+                if artifacts.u_concat_planes != 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "segment-typed terminal witness does not support tiered u_concat"
+                            .to_string(),
+                    ));
+                }
+                let num_commitment_groups = instance
+                    .opening_batch()
+                    .num_polys_per_commitment_group()
+                    .len();
+                let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
+                    terminal_direct_witness_shape.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal fold missing scheduled segment-typed witness shape"
+                                .to_string(),
+                        )
+                    })?
+                else {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal fold expected segment-typed witness shape".to_string(),
+                    ));
+                };
+                let (num_w_vectors, num_t_vectors, num_public_rows) =
+                    akita_types::tail_segment_multiplicities_from_layout(
+                        lp,
+                        &scheduled_shape.layout,
+                    )?;
+                let segment = build_segment_typed_witness::<D, F>(
+                    &artifacts.e_folded,
+                    &artifacts.recomposed_inner_rows,
+                    &artifacts.z_folded_centered,
+                    &artifacts.r,
+                    lp,
+                    num_w_vectors,
+                    num_t_vectors,
+                    num_public_rows,
+                    num_commitment_groups,
+                )?;
+                if segment.layout != scheduled_shape.layout {
+                    return Err(AkitaError::InvalidSetup(
+                        "segment-typed witness layout does not match schedule".to_string(),
+                    ));
+                }
+                validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
+                let parts = segment.terminal_transcript_parts()?;
+                transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+                return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
+            }
+            return Err(AkitaError::InvalidSetup(
+                "terminal fold missing segment-typed witness artifacts".to_string(),
             ));
         }
-        transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
-        return Ok((None, Some(final_witness)));
+        #[cfg(feature = "zk")]
+        {
+            let final_witness =
+                CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits_with_min_bits(
+                    logical_w.as_i8_digits(),
+                    final_log_basis,
+                ));
+            let terminal_layout = terminal_witness_segment_layout(
+                lp,
+                instance.opening_batch().num_claims(),
+                1,
+                F::modulus_bits(),
+            )?;
+            let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+            if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
+                return Err(AkitaError::InvalidInput(
+                    "terminal final witness does not match ring-switch witness".to_string(),
+                ));
+            }
+            transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+            return Ok((None, Some(final_witness)));
+        }
     }
 
     let next_commitment = next_commitment.ok_or_else(|| {

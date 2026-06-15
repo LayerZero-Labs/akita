@@ -37,6 +37,13 @@ pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> u
         CleartextWitnessShape::FieldElements(num_coeffs) => {
             num_coeffs.saturating_mul(field_bytes(field_bits))
         }
+        CleartextWitnessShape::SegmentTyped(segment_shape) => {
+            crate::proof::segment_typed_witness_upper_bound_bytes(
+                field_bits,
+                &segment_shape.layout,
+                segment_shape.z_payload_bytes,
+            )
+        }
     }
 }
 

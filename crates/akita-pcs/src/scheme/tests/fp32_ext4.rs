@@ -209,22 +209,29 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
-        let compact_w_len = w_ring * Self::D;
+        let next_w_len = w_ring * Self::D;
+        let witness_shape = akita_types::segment_typed_witness_shape(
+            &lp,
+            Self::Field::modulus_bits(),
+            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
+            1,
+            1,
+        )?;
+        let direct_bytes =
+            akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
                     params: lp.clone(),
                     current_w_len: akita_types::root_current_w_len(&lp),
-                    next_w_len: compact_w_len,
+                    next_w_len,
                     level_bytes: 0,
                 }),
                 Step::Direct(akita_types::DirectStep {
-                    current_w_len: compact_w_len,
-                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
-                        compact_w_len,
-                        3,
-                    )),
-                    direct_bytes: compact_w_len,
+                    current_w_len: next_w_len,
+                    witness_shape,
+                    direct_bytes,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
@@ -299,6 +306,16 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             akita_types::MRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
+        let witness_shape = akita_types::segment_typed_witness_shape(
+            &lp,
+            Self::Field::modulus_bits(),
+            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
+            1,
+            1,
+        )?;
+        let direct_bytes =
+            akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -309,10 +326,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
-                        next_w_len, 3,
-                    )),
-                    direct_bytes: next_w_len,
+                    witness_shape,
+                    direct_bytes,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
