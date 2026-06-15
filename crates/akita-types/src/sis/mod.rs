@@ -44,5 +44,6 @@ pub use norm_bound::{
     isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
     rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessLinfCapPolicy, FoldWitnessNorms, MAX_FOLD_GRIND_ATTEMPTS,
+    FoldWitnessLinfCapPolicy, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };

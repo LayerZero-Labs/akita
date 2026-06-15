@@ -100,12 +100,13 @@ The feature introduces or modifies:
    `LoggingTranscript` event-stream equality tests (the
    `logging-transcript` feature), extended to the fold-challenge reroll.
 3. **Termination (completeness).** For every tail-bound-with-grind family and level, the
-   chosen threshold `t*` satisfies `Pr[‖z‖_inf > t* | accepted] <= 1/2`, so rerolls
-   halt in `<= 2` expected attempts. A hard attempt cap makes cap
-   exhaustion a terminating, no-panic, prover-only error on pathological input.
-   Unsupported families do not reroll. Protected by: a prover-side statistical
-   test (sampled re-fold count stays small over many transcripts) and the
-   capped-loop unit test.
+   chosen threshold `t*` is sized from the descriptor-bound grind acceptance target
+   `p_grind` (`FoldLinfProtocolBinding::grind_target_accept_prob`, shipped `1/8`):
+   the union bound certifies `Pr[‖z‖_inf > t*] <= 1 - p_grind`. Expected rerolls are
+   `<= 1/p_grind` (here `<= 8`). A hard attempt cap makes cap exhaustion a
+   terminating, no-panic, prover-only error on pathological input. Unsupported families
+   do not reroll. Protected by: a prover-side statistical test (sampled re-fold count
+   stays small over many transcripts) and the capped-loop unit test.
 4. **Planner/digit consistency.** The prover's grind threshold `t*` is the same
    value the planner used to size `K` (no drift), exactly as
    `beta_linf_fold_bound_with_num_claims` mirrors `num_digits_fold` today.
@@ -117,10 +118,10 @@ The feature introduces or modifies:
    `SerializationError`. Protected by: verifier no-panic audit + shape
    deserialization tests.
 6. **Descriptor binding.** The active threshold policy (formula identity,
-   certified-family set, per-family `challenge_l2_sq_max`, attempt cap, grind-nonce
-   presence) is bound into `AkitaInstanceDescriptor`; a proof produced under the
-   rejection policy must not verify under the legacy `β_inf` policy. Protected by:
-   pinned descriptor-bytes test.
+   descriptor-bound `p_grind`, certified-family set, per-family `challenge_l2_sq_max`,
+   attempt cap, grind-nonce presence) is bound into `AkitaInstanceDescriptor`; a proof
+   produced under the rejection policy must not verify under the legacy `β_inf` policy.
+   Protected by: pinned descriptor-bytes test.
 
 ### Non-Goals
 
@@ -395,16 +396,29 @@ Pr[‖z‖_inf > t | all num_fold_blocks accepted] ≤ (2·num_fold_coeffs / p^{
 so
 
 ```text
-t* = sqrt( 2·num_fold_blocks·challenge_l2_sq_max·witness_linf² · ( ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p) ) )
+t* = sqrt( 2·num_fold_blocks·challenge_l2_sq_max·witness_linf² · ln_term )
+ln_term = ln( 2·num_fold_coeffs / (1 - p_grind) ) + num_fold_blocks·ln(1/p_opnorm)
 ```
 
-makes the conditional miss probability `<= 1/2`: rerolls take `<= 2` attempts in
-expectation. At `p = 1` this is
-`t* = sqrt(2·num_fold_blocks·challenge_l2_sq_max·witness_linf²·ln 4·num_fold_coeffs)`;
-against the ω-envelope `β_inf = num_fold_blocks·ω·witness_linf`, the gain ratio is
-`t*/β_inf ≈ sqrt(2·challenge_l2_sq_max·ln 4·num_fold_coeffs)/(ω·sqrt(num_fold_blocks))`.
-For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.41, 0.29, 0.20,
-0.14` at `num_fold_blocks = 4, 8, 16, 32`.
+`p_grind` is the descriptor-bound per-challenge grind acceptance target
+(`FoldLinfProtocolBinding::grind_target_accept_prob`; shipped `1/8`).
+`p_opnorm` is the operator-norm block-filter acceptance probability (`1` when the cap
+does not bind). The union bound certifies `Pr[‖z‖_inf > t*] <= 1 - p_grind`, so expected
+rerolls are `<= 1/p_grind` (here `<= 8`). At integer `ln` resolution the shipped target
+is applied as a rational tighten relative to the legacy `p_grind = 1/2` reference:
+`ln_union = ceil(ln(4·num_fold_coeffs)) · p_grind_den / (2·(p_grind_den - p_grind_num))`.
+The legacy `p_grind = 1/2` choice is recovered exactly when `p_grind_den = 2·(p_grind_den - p_grind_num)`.
+At `p_opnorm = 1` and `p_grind = 1/8`:
+
+```text
+t* = sqrt(2·num_fold_blocks·challenge_l2_sq_max·witness_linf²·ln(8·num_fold_coeffs/3))
+```
+
+Against the ω-envelope `β_inf = num_fold_blocks·ω·witness_linf`, the gain ratio is
+`t*/β_inf ≈ sqrt(2·challenge_l2_sq_max·ln_term)/(ω·sqrt(num_fold_blocks))`.
+For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`, `p_grind = 1/4`:
+gain ratios sit slightly below the `p_grind = 1/2` column (`≈ 0.41, 0.29, 0.20, 0.14`
+at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 
 **Per-family `challenge_l2_sq_max` (all exact integers).**
 

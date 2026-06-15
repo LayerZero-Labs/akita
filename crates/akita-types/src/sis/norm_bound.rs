@@ -252,6 +252,16 @@ pub fn fold_witness_beta(
 /// Maximum Fiat-Shamir rerolls per committed fold level under tail-bound-with-grind policy.
 pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 
+/// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
+/// sizing for `t*` (`specs/fold-linf-rejection.md`). Distinct from the operator-norm
+/// acceptance probability on already-filtered blocks.
+///
+/// `p_grind = 1/2` was the original baked-in default (`ln(4·num_fold_coeffs)`).
+/// Production ships `1/4`: a tighter certificate that still leaves honest grinding
+/// rare in practice because realized `‖z‖_inf` sits well below `t*`.
+pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;
+pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
+
 /// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,48 +317,76 @@ fn ceil_natural_log(x: u128) -> u128 {
         .div_ceil(LN2_CEIL_DEN)
 }
 
-/// Conservative integer for `ln(4·num_fold_coeffs) + num_fold_blocks·ln(1/p)` with
-/// `p = p_num / p_den` the operator-norm acceptance probability (`p = 1` when
-/// the cap does not bind).
+/// Union-bound ln term at the legacy `p_grind = 1/2` reference (`ln(4·num_fold_coeffs)`),
+/// scaled down for tighter descriptor-bound targets via
+/// `ln((1 - p_ref)/(1 - p_grind))` approximated as `p_grind_den / (2·(p_grind_den - p_grind_num))`.
+#[inline]
+fn fold_witness_linf_grind_union_ln(
+    num_fold_coeffs: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+) -> Result<u128, AkitaError> {
+    let ln_half = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
+    let miss = grind_target_accept_den - grind_target_accept_num;
+    Ok(ln_half
+        .saturating_mul(grind_target_accept_den)
+        .div_ceil(2u128.saturating_mul(miss)))
+}
+
+/// Conservative integer for
+/// `ln(2·num_fold_coeffs / (1 - p_grind)) + num_fold_blocks·ln(1/p_opnorm)` with
+/// `p_grind = grind_target_accept_num / grind_target_accept_den` and
+/// `p_opnorm = op_norm_accept_num / op_norm_accept_den`.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when `num_fold_coeffs == 0`, `p_den == 0`,
-/// `p_num == 0`, or `p_num > p_den`.
+/// Returns [`AkitaError::InvalidSetup`] on zero denominators, zero numerators,
+/// `p_grind >= 1`, or `p_opnorm > 1`.
 pub fn fold_witness_linf_ln_term(
     num_fold_coeffs: u128,
     num_fold_blocks: u128,
-    p_num: u128,
-    p_den: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+    op_norm_accept_num: u128,
+    op_norm_accept_den: u128,
 ) -> Result<u128, AkitaError> {
     if num_fold_coeffs == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_witness_linf_ln_term: num_fold_coeffs must be positive".to_string(),
         ));
     }
-    if p_den == 0 {
+    if grind_target_accept_den == 0 || op_norm_accept_den == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: p_den must be positive".to_string(),
+            "fold_witness_linf_ln_term: probability denominators must be positive".to_string(),
         ));
     }
-    if p_num == 0 {
+    if grind_target_accept_num == 0 || op_norm_accept_num == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: p_num must be positive".to_string(),
+            "fold_witness_linf_ln_term: probability numerators must be positive".to_string(),
         ));
     }
-    if p_num > p_den {
+    if grind_target_accept_num >= grind_target_accept_den {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: acceptance probability exceeds 1".to_string(),
+            "fold_witness_linf_ln_term: grind target accept probability must be < 1".to_string(),
         ));
     }
-    let ln_4n = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
-    let ln_inv_p = if p_num >= p_den {
+    if op_norm_accept_num > op_norm_accept_den {
+        return Err(AkitaError::InvalidSetup(
+            "fold_witness_linf_ln_term: operator-norm accept probability exceeds 1".to_string(),
+        ));
+    }
+    let ln_union = fold_witness_linf_grind_union_ln(
+        num_fold_coeffs,
+        grind_target_accept_num,
+        grind_target_accept_den,
+    )?;
+    let ln_inv_p = if op_norm_accept_num >= op_norm_accept_den {
         0
     } else {
-        let ratio = p_den.div_ceil(p_num);
+        let ratio = op_norm_accept_den.div_ceil(op_norm_accept_num);
         num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
     };
-    Ok(ln_4n.saturating_add(ln_inv_p))
+    Ok(ln_union.saturating_add(ln_inv_p))
 }
 
 /// Squared `‖z‖_inf` tail bound `t*²` from the sub-Gaussian argument in
@@ -358,8 +396,8 @@ pub fn fold_witness_linf_ln_term(
 /// t*² = 2 · num_fold_blocks · challenge_l2_sq_max · witness_linf² · ln_term
 /// ```
 ///
-/// `ln_term` is a conservative integer for
-/// `ln(4·num_fold_coeffs) + num_fold_blocks·ln(1/p)`. The real square root is
+/// `ln_term` is a conservative integer for the grind union bound plus the
+/// operator-norm block filter (see [`fold_witness_linf_ln_term`]). The real square root is
 /// taken only at digit-sizing boundaries. Digit sizing uses `min(β_inf, t*)`.
 ///
 /// # Errors
@@ -400,6 +438,11 @@ pub struct FoldWitnessLinfCapConfig {
     /// [`SparseChallengeConfig::challenge_l2_sq_max`].
     pub challenge_l2_sq_max: u128,
     pub num_fold_coeffs: u128,
+    /// Grind reroll target `p_grind` (`NUM / DEN`); copied from
+    /// [`crate::FoldLinfProtocolBinding`] at level construction time.
+    pub grind_target_accept_num: u128,
+    pub grind_target_accept_den: u128,
+    /// Operator-norm block acceptance `p_opnorm` (`NUM / DEN`; `1/1` when the cap does not bind).
     pub op_norm_accept_p_num: u128,
     pub op_norm_accept_p_den: u128,
 }
@@ -412,6 +455,8 @@ impl FoldWitnessLinfCapConfig {
             policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
             challenge_l2_sq_max: 0,
             num_fold_coeffs: 0,
+            grind_target_accept_num: 0,
+            grind_target_accept_den: 1,
             op_norm_accept_p_num: 1,
             op_norm_accept_p_den: 1,
         }
@@ -419,6 +464,9 @@ impl FoldWitnessLinfCapConfig {
 
     /// Tail-aware sizing inputs for a fold level from its sparse family, shape,
     /// ring degree, and inner A-matrix width (`block_len · δ_commit`).
+    ///
+    /// The grind acceptance target is read from [`crate::FoldLinfProtocolBinding::CURRENT`]
+    /// so planner digit sizing, prover rerolls, and the transcript descriptor agree.
     #[inline]
     pub fn for_fold_level(
         stage1_config: &SparseChallengeConfig,
@@ -426,6 +474,8 @@ impl FoldWitnessLinfCapConfig {
         ring_dimension: usize,
         inner_width: usize,
     ) -> Self {
+        let binding = crate::FoldLinfProtocolBinding::CURRENT;
+        let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
         Self {
             policy: fold_witness_linf_cap_policy(
                 stage1_config,
@@ -434,6 +484,8 @@ impl FoldWitnessLinfCapConfig {
             ),
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs: (inner_width as u128).saturating_mul(ring_dimension as u128),
+            grind_target_accept_num,
+            grind_target_accept_den,
             op_norm_accept_p_num: 1,
             op_norm_accept_p_den: 1,
         }
@@ -458,6 +510,8 @@ pub fn fold_witness_linf_cap(
             let ln_term = fold_witness_linf_ln_term(
                 config.num_fold_coeffs,
                 num_fold_blocks,
+                config.grind_target_accept_num,
+                config.grind_target_accept_den,
                 config.op_norm_accept_p_num,
                 config.op_norm_accept_p_den,
             )?;
@@ -637,16 +691,28 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_rejects_zero_p_num() {
-        assert!(fold_witness_linf_ln_term(16, 16, 0, 1).is_err());
+    fn fold_witness_linf_ln_term_rejects_zero_grind_target() {
+        assert!(fold_witness_linf_ln_term(16, 16, 0, 4, 1, 1).is_err());
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_p_one_matches_ln_4n() {
-        let term_16 = fold_witness_linf_ln_term(1 << 16, 16, 1, 1).unwrap();
+    fn fold_witness_linf_ln_term_grind_half_matches_ln_4n() {
+        let term_16 = fold_witness_linf_ln_term(1 << 16, 16, 1, 2, 1, 1).unwrap();
         assert!((13..=15).contains(&term_16));
-        let term_max = fold_witness_linf_ln_term(1u128 << 32, 16, 1, 1).unwrap();
+        let term_max = fold_witness_linf_ln_term(1u128 << 32, 16, 1, 2, 1, 1).unwrap();
         assert!((24..=26).contains(&term_max));
+    }
+
+    #[test]
+    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+        let n = 1u128 << 16;
+        let blocks = 16u128;
+        let half = fold_witness_linf_ln_term(n, blocks, 1, 2, 1, 1).unwrap();
+        let eighth = fold_witness_linf_ln_term(n, blocks, 1, 8, 1, 1).unwrap();
+        assert!(eighth < half, "eighth={eighth} half={half}");
+        let t_half = fold_witness_linf_tail_bound_sq(blocks, 78, 1, half).unwrap();
+        let t_eighth = fold_witness_linf_tail_bound_sq(blocks, 78, 1, eighth).unwrap();
+        assert!(t_eighth < t_half);
     }
 
     #[test]
@@ -659,7 +725,7 @@ mod tests {
         let tight_beta = fold_witness_beta(4, 1, challenge, witness).unwrap();
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
-        let ln_term = fold_witness_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
+        let ln_term = fold_witness_linf_ln_term(1u128 << 16, 16, 1, 8, 1, 1).unwrap();
         let t_sq = fold_witness_linf_tail_bound_sq(16, 78, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(

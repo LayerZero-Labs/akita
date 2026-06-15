@@ -1,6 +1,9 @@
 //! Fold-l∞ rejection protocol identity bound into every transcript preamble.
 
-use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
+use crate::sis::{
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
+};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -9,8 +12,11 @@ use std::io::{Read, Write};
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
-    /// Tail-bound formula tag (`1` = integer `t*` from fold-linf-rejection spec).
+    /// Tail-bound formula tag (`2` = integer `t*` with explicit grind accept target).
     pub formula_tag: u8,
+    /// Per-challenge grind acceptance target `p_grind = NUM / DEN` in the union bound.
+    pub grind_target_accept_prob_num: u32,
+    pub grind_target_accept_prob_den: u32,
     /// Fiat-Shamir reroll cap per fold level.
     pub max_grind_attempts: u32,
     /// Wire width of `fold_grind_nonce` on every fold level proof.
@@ -22,11 +28,22 @@ pub struct FoldLinfProtocolBinding {
 impl FoldLinfProtocolBinding {
     /// Active fold-l∞ rejection cutover parameters.
     pub const CURRENT: Self = Self {
-        formula_tag: 1,
+        formula_tag: 2,
+        grind_target_accept_prob_num: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+        grind_target_accept_prob_den: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
         grind_nonce_wire_bytes: 4,
         grind_entropy_bits_per_level: 12,
     };
+
+    /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
+    #[inline]
+    pub const fn grind_target_accept_prob(&self) -> (u128, u128) {
+        (
+            self.grind_target_accept_prob_num as u128,
+            self.grind_target_accept_prob_den as u128,
+        )
+    }
 }
 
 impl Valid for FoldLinfProtocolBinding {
@@ -48,6 +65,10 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
     ) -> Result<(), SerializationError> {
         self.formula_tag
             .serialize_with_mode(&mut writer, compress)?;
+        self.grind_target_accept_prob_num
+            .serialize_with_mode(&mut writer, compress)?;
+        self.grind_target_accept_prob_den
+            .serialize_with_mode(&mut writer, compress)?;
         self.max_grind_attempts
             .serialize_with_mode(&mut writer, compress)?;
         self.grind_nonce_wire_bytes
@@ -59,6 +80,8 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.formula_tag.serialized_size(compress)
+            + self.grind_target_accept_prob_num.serialized_size(compress)
+            + self.grind_target_accept_prob_den.serialized_size(compress)
             + self.max_grind_attempts.serialized_size(compress)
             + self.grind_nonce_wire_bytes.serialized_size(compress)
             + self.grind_entropy_bits_per_level.serialized_size(compress)
@@ -76,6 +99,18 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
     ) -> Result<Self, SerializationError> {
         let out = Self {
             formula_tag: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            grind_target_accept_prob_num: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            grind_target_accept_prob_den: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
             max_grind_attempts: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             grind_nonce_wire_bytes: u8::deserialize_with_mode(
                 &mut reader,

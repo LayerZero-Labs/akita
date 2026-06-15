@@ -328,6 +328,8 @@ impl LevelParams {
         let ln_term = crate::sis::fold_witness_linf_ln_term(
             cap_config.num_fold_coeffs,
             num_fold_blocks,
+            cap_config.grind_target_accept_num,
+            cap_config.grind_target_accept_den,
             cap_config.op_norm_accept_p_num,
             cap_config.op_norm_accept_p_den,
         )?;
