@@ -288,10 +288,7 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &FlatRingVec<F>) -
 pub fn tail_golomb_rice_z_params(
     lp: &LevelParams,
     num_t_vectors: usize,
-    num_public_rows: usize,
-    field_bits: u32,
 ) -> Result<(u32, u32), AkitaError> {
-    let _ = (num_public_rows, field_bits);
     let challenge = FoldChallengeNorms {
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,
@@ -311,11 +308,8 @@ pub fn z_fold_decoded_from_segment<F: FieldCore>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
     num_t_vectors: usize,
-    num_public_rows: usize,
-    field_bits: u32,
 ) -> Result<Vec<i64>, AkitaError> {
-    let (rice_k, zigzag_w) =
-        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let (rice_k, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     golomb_rice_decode_vec(
         &witness.z_payload,
         witness.layout.z_coords,
@@ -333,12 +327,10 @@ pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
     num_t_vectors: usize,
-    num_public_rows: usize,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let z_values =
-        z_fold_decoded_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)?;
-    let (_, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let z_values = z_fold_decoded_from_segment(witness, lp, num_t_vectors)?;
+    let (_, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let challenge = FoldChallengeNorms {
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,
@@ -486,7 +478,6 @@ pub fn tail_segment_multiplicities_from_layout(
     Ok((num_w_vectors, num_t_vectors, num_public_rows))
 }
 
-/// Planner byte budget for the Golomb-Rice `z` segment.
 /// Planner byte budget for the Golomb-coded `z` segment.
 ///
 /// Uses the public `β_inf`-derived Golomb rate (`k + O(1)` bits per coordinate),
@@ -499,11 +490,8 @@ pub fn segment_typed_z_payload_bytes(
     lp: &LevelParams,
     layout: &TailSegmentLayout,
     num_t_vectors: usize,
-    num_public_rows: usize,
-    field_bits: u32,
-    _bits_per_elem: u32,
 ) -> Result<usize, AkitaError> {
-    let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let bits_per_coord = golomb_rice_planner_bits_per_z_coord(rice_k);
     Ok(layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8))
 }
@@ -523,14 +511,6 @@ pub fn segment_typed_witness_upper_bound_bytes(
         .saturating_mul(field_bytes(field_bits))
         .saturating_add(z_payload_bytes)
         .saturating_add(8)
-}
-
-/// Exact serialized byte length for a constructed segment-typed witness.
-#[must_use]
-pub fn segment_typed_witness_exact_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
-    witness: &SegmentTypedWitness<F>,
-) -> usize {
-    witness.serialized_size(Compress::No)
 }
 
 /// Recompose balanced digit planes into a signed integer.
@@ -620,8 +600,7 @@ where
         num_commitment_groups,
         field_bits,
     )?;
-    let (rice_k, zigzag_w_z) =
-        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let depth_commit = lp.num_digits_commit;
     let z_payload = encode_z_segment_from_centered(
         z_folded_centered,
@@ -689,9 +668,6 @@ pub fn validate_segment_typed_z_payload<F: FieldCore>(
 pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
-    _num_w_vectors: usize,
-    _num_t_vectors: usize,
-    _num_public_rows: usize,
     num_commitment_groups: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
@@ -719,8 +695,7 @@ where
     let depth_commit = lp.num_digits_commit;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let levels = compute_num_digits_full_field(field_bits, log_basis);
-    let (rice_k, zigzag_w_z) =
-        tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
+    let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
 
     let z_values = golomb_rice_decode_vec(
         &witness.z_payload,
@@ -926,19 +901,17 @@ mod tests {
     }
 
     #[test]
-    fn segment_typed_z_budget_ignores_packed_digit_width() {
+    fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
         let lp = test_lp();
         let field_bits = F::modulus_bits();
         let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
-        let at_five = segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
-        let at_eight = segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 8).unwrap();
-        assert_eq!(at_five, at_eight);
+        let z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
         let depth_fold = lp.num_digits_fold(1, field_bits).unwrap();
         let packed_z = crate::layout::proof_size::packed_digits_bytes(
             layout.z_coords.saturating_mul(depth_fold),
             8,
         );
-        assert_ne!(at_five, packed_z);
+        assert_ne!(z_bytes, packed_z);
     }
 
     #[test]
@@ -949,13 +922,12 @@ mod tests {
         let lp = test_lp();
         let field_bits = F::modulus_bits();
         let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
-        let scheduled_z_bytes =
-            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
+        let scheduled_z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
         assert!(
             scheduled_z_bytes > 16,
             "test expects scheduled z budget to exceed a tight payload"
         );
-        let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1, 1, field_bits).unwrap();
+        let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
         let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
         let z_payload =
             encode_z_segment_from_centered(&centered, 1, lp.num_digits_commit, rice_k, zigzag_w_z)

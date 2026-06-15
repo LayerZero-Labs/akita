@@ -213,14 +213,14 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
     let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
     let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
     let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, num_public_rows)) =
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout)
     else {
         return Err(akita_field::AkitaError::InvalidSetup(
             "tail segment multiplicities".to_string(),
         ));
     };
-    z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+    z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
 }
 
 fn emit_z_golomb_k_sweep<FF: FieldCore>(
@@ -235,18 +235,15 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         return;
     };
     let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, num_public_rows)) =
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout)
     else {
         return;
     };
-    let Ok(z_values) =
-        z_fold_decoded_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
-    else {
+    let Ok(z_values) = z_fold_decoded_from_segment(witness, lp, num_t_vectors) else {
         return;
     };
-    let Ok(stats) =
-        z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, num_public_rows, field_bits)
+    let Ok(stats) = z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
     else {
         return;
     };

@@ -109,9 +109,6 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     pub fn logical_i8_digits<const D: usize>(
         &self,
         lp: &LevelParams,
-        num_w_vectors: usize,
-        num_t_vectors: usize,
-        num_public_rows: usize,
         num_commitment_groups: usize,
     ) -> Result<Vec<i8>, AkitaError>
     where
@@ -119,14 +116,9 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     {
         match self {
             Self::PackedDigits(_) => self.packed_i8_digits(),
-            Self::SegmentTyped(witness) => expand_segment_typed_to_i8_digits::<D, F>(
-                witness,
-                lp,
-                num_w_vectors,
-                num_t_vectors,
-                num_public_rows,
-                num_commitment_groups,
-            ),
+            Self::SegmentTyped(witness) => {
+                expand_segment_typed_to_i8_digits::<D, F>(witness, lp, num_commitment_groups)
+            }
             Self::FieldElements(_) => Err(AkitaError::InvalidProof),
         }
     }
@@ -234,7 +226,7 @@ pub fn terminal_direct_witness_shape(
     }
     #[cfg(not(feature = "zk"))]
     {
-        let _ = current_w_len;
+        let _ = (current_w_len, terminal_log_basis);
         segment_typed_witness_shape(
             terminal_lp,
             field_bits,
@@ -242,7 +234,6 @@ pub fn terminal_direct_witness_shape(
             num_t_vectors,
             num_public_rows,
             num_commitment_groups,
-            terminal_log_basis,
         )
     }
 }
@@ -288,7 +279,6 @@ pub fn segment_typed_witness_shape(
     num_t_vectors: usize,
     num_public_rows: usize,
     num_commitment_groups: usize,
-    terminal_bits_per_elem: u32,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     let layout = tail_segment_layout(
         terminal_lp,
@@ -298,14 +288,7 @@ pub fn segment_typed_witness_shape(
         num_commitment_groups,
         field_bits,
     )?;
-    let z_payload_bytes = segment_typed_z_payload_bytes(
-        terminal_lp,
-        &layout,
-        num_t_vectors,
-        num_public_rows,
-        field_bits,
-        terminal_bits_per_elem,
-    )?;
+    let z_payload_bytes = segment_typed_z_payload_bytes(terminal_lp, &layout, num_t_vectors)?;
     Ok(CleartextWitnessShape::SegmentTyped(
         SegmentTypedWitnessShape {
             layout,

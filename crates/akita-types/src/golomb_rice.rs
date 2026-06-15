@@ -121,14 +121,6 @@ pub fn zigzag_decode(u: u64, width: u32) -> Result<i64, AkitaError> {
     Ok(n)
 }
 
-/// Worst-case Golomb-Rice bit length for one coordinate at public `(k, w)`.
-#[must_use]
-pub fn golomb_rice_max_bits_per_coord(rice_k: u32, zigzag_w_z: u32) -> usize {
-    let normal_max = 32usize.saturating_add(rice_k as usize);
-    let escape_max = 33usize.saturating_add(zigzag_w_z as usize);
-    normal_max.max(escape_max)
-}
-
 /// Rice parameter `k` from a per-coordinate magnitude scale (e.g. `β_inf` for `z`).
 #[must_use]
 pub fn optimal_rice_k(scale: u128) -> u32 {
@@ -136,13 +128,6 @@ pub fn optimal_rice_k(scale: u128) -> u32 {
         return 0;
     }
     u128::BITS - 1 - scale.leading_zeros()
-}
-
-/// Signed zigzag width for the folded `z` segment from public digit bounds.
-#[must_use]
-pub fn golomb_rice_zigzag_width_z(num_digits_fold: usize, log_basis: u32) -> u32 {
-    let digit_bits = num_digits_fold.saturating_mul(log_basis as usize);
-    digit_bits.saturating_add(1).max(1) as u32
 }
 
 /// Signed zigzag width for fold-response coefficients bounded by `beta_inf`.

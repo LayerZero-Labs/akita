@@ -792,9 +792,8 @@ mod tests {
             1,
         )
         .expect("segment witness");
-        let expanded =
-            expand_segment_typed_to_i8_digits::<D, F>(&segment, &level_params, 1, 1, 1, 1)
-                .expect("expand segment typed");
+        let expanded = expand_segment_typed_to_i8_digits::<D, F>(&segment, &level_params, 1)
+            .expect("expand segment typed");
         assert_eq!(
             expanded, logical_digits,
             "segment-typed expand must match ring_switch_build_w digit stream"

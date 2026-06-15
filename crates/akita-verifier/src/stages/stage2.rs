@@ -158,16 +158,8 @@ where
             }
             Stage2CleartextSource::Packed(packed)
         }
-        CleartextWitnessProof::SegmentTyped(segment) => {
-            let (num_w_vectors, num_t_vectors, num_public_rows) =
-                akita_types::tail_segment_multiplicities_from_layout(lp, &segment.layout)?;
-            let digits = witness.logical_i8_digits::<D>(
-                lp,
-                num_w_vectors,
-                num_t_vectors,
-                num_public_rows,
-                num_commitment_groups,
-            )?;
+        CleartextWitnessProof::SegmentTyped(_) => {
+            let digits = witness.logical_i8_digits::<D>(lp, num_commitment_groups)?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }
