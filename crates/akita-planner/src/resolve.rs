@@ -20,17 +20,14 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-#[cfg(not(feature = "zk"))]
 use akita_types::LevelParams;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
+    root_extension_opening_partials, terminal_direct_witness_shape_for_key,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    MRowLayout, Schedule, Step,
 };
-
-#[cfg(not(feature = "zk"))]
-use crate::schedule_params::segment_typed_direct_witness_shape;
 
 use crate::find_schedule;
 // @generated schedule table cfg imports begin
@@ -414,41 +411,30 @@ pub fn schedule_from_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    let witness_shape = {
-                        #[cfg(feature = "zk")]
-                        {
-                            CleartextWitnessShape::PackedDigits((len, current_log_basis))
-                        }
+                    let terminal_fold_level = fold_level.saturating_sub(1);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    #[cfg(feature = "zk")]
+                    let terminal_lp_stub = LevelParams::log_basis_stub(current_log_basis);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_log_basis = terminal_lp.log_basis;
+                    #[cfg(feature = "zk")]
+                    let terminal_log_basis = current_log_basis;
+                    let witness_shape = terminal_direct_witness_shape_for_key(
                         #[cfg(not(feature = "zk"))]
-                        {
-                            let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "terminal direct step missing predecessor fold params"
-                                        .to_string(),
-                                )
-                            })?;
-                            let terminal_fold_level = fold_level.saturating_sub(1);
-                            let (
-                                num_w_vectors,
-                                num_t_vectors,
-                                num_public_rows,
-                                num_commitment_groups,
-                            ) = if terminal_fold_level == 0 {
-                                (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
-                            } else {
-                                (1, 1, 1, 1)
-                            };
-                            segment_typed_direct_witness_shape(
-                                terminal_lp,
-                                field_bits,
-                                num_w_vectors,
-                                num_t_vectors,
-                                num_public_rows,
-                                num_commitment_groups,
-                                terminal_lp.log_basis,
-                            )?
-                        }
-                    };
+                        terminal_lp,
+                        #[cfg(feature = "zk")]
+                        &terminal_lp_stub,
+                        field_bits,
+                        key,
+                        terminal_fold_level,
+                        len,
+                        terminal_log_basis,
+                    )?;
                     (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);

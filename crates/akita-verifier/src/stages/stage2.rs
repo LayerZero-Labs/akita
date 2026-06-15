@@ -14,6 +14,7 @@ use akita_types::{
     eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
     RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
+use std::borrow::Cow;
 use std::marker::PhantomData;
 
 fn witness_eval_by_index<E, V>(
@@ -62,6 +63,7 @@ fn cleartext_witness_eval<F, E, const D: usize>(
     lp: Option<&akita_types::LevelParams>,
     _num_claims: usize,
     num_commitment_groups: usize,
+    preexpanded_digits: Option<&[i8]>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -101,15 +103,19 @@ where
         }
         CleartextWitnessProof::SegmentTyped(witness) => {
             let lp = lp.ok_or(AkitaError::InvalidProof)?;
-            let (num_w_vectors, num_t_vectors, num_public_rows) =
-                akita_types::tail_segment_multiplicities_from_layout(lp, &witness.layout)?;
-            let digits = cleartext_witness.logical_i8_digits::<D>(
-                lp,
-                num_w_vectors,
-                num_t_vectors,
-                num_public_rows,
-                num_commitment_groups,
-            )?;
+            let digits: Cow<'_, [i8]> = if let Some(cached) = preexpanded_digits {
+                Cow::Borrowed(cached)
+            } else {
+                let (num_w_vectors, num_t_vectors, num_public_rows) =
+                    akita_types::tail_segment_multiplicities_from_layout(lp, &witness.layout)?;
+                Cow::Owned(cleartext_witness.logical_i8_digits::<D>(
+                    lp,
+                    num_w_vectors,
+                    num_t_vectors,
+                    num_public_rows,
+                    num_commitment_groups,
+                )?)
+            };
             if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
                 return Err(AkitaError::InvalidProof);
             }
@@ -136,12 +142,60 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
         lp: Option<&'a akita_types::LevelParams>,
         num_claims: usize,
         num_commitment_groups: usize,
+        /// Pre-expanded digit hypercube for segment-typed terminal witnesses.
+        /// Built once at oracle construction; packed digits stay lazily indexed.
+        expanded_i8_digits: Option<Vec<i8>>,
     },
     ClaimedEval {
         eval: E,
         #[cfg(feature = "zk")]
         mask: ZkR1csLinearCombination<E>,
     },
+}
+
+/// Build a cleartext stage-2 oracle, expanding segment-typed witnesses once.
+pub(crate) fn stage2_cleartext_oracle<'a, F, E, const D: usize>(
+    witness: &'a CleartextWitnessProof<F>,
+    physical_w_len: usize,
+    lp: &'a akita_types::LevelParams,
+    num_claims: usize,
+    num_commitment_groups: usize,
+) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + HalvingField,
+    E: FieldCore,
+{
+    let expanded_i8_digits = if witness.as_segment_typed().is_some() {
+        let (num_w_vectors, num_t_vectors, num_public_rows) =
+            akita_types::tail_segment_multiplicities_from_layout(
+                lp,
+                &witness
+                    .as_segment_typed()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .layout,
+            )?;
+        let digits = witness.logical_i8_digits::<D>(
+            lp,
+            num_w_vectors,
+            num_t_vectors,
+            num_public_rows,
+            num_commitment_groups,
+        )?;
+        if digits.len() != physical_w_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        Some(digits)
+    } else {
+        None
+    };
+    Ok(Stage2WitnessOracle::Cleartext {
+        witness,
+        physical_w_len,
+        lp: Some(lp),
+        num_claims,
+        num_commitment_groups,
+        expanded_i8_digits,
+    })
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
@@ -256,6 +310,7 @@ where
                 lp,
                 num_claims,
                 num_commitment_groups,
+                expanded_i8_digits,
             } => cleartext_witness_eval::<F, E, D>(
                 witness,
                 *physical_w_len,
@@ -265,6 +320,7 @@ where
                 *lp,
                 *num_claims,
                 *num_commitment_groups,
+                expanded_i8_digits.as_deref(),
             ),
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
@@ -487,6 +543,7 @@ mod tests {
             None,
             1,
             1,
+            None,
         )
         .expect("valid packed witness");
 
@@ -522,6 +579,7 @@ mod tests {
             None,
             1,
             1,
+            None,
         )
         .expect("valid witness");
 
@@ -540,6 +598,7 @@ mod tests {
             None,
             1,
             1,
+            None,
         )
         .expect_err("wrong arity");
         assert!(matches!(err, AkitaError::InvalidSize { .. }));
@@ -562,6 +621,7 @@ mod tests {
             None,
             1,
             1,
+            None,
         )
         .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));

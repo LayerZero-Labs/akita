@@ -186,6 +186,94 @@ impl CleartextWitnessShape {
     }
 }
 
+/// Batch multiplicities for segment layout at the terminal fold predecessor.
+pub fn terminal_fold_segment_counts(
+    key: crate::AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+) -> (usize, usize, usize, usize) {
+    if terminal_fold_level == 0 {
+        (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
+    } else {
+        (1, 1, 1, 1)
+    }
+}
+
+/// Canonical terminal direct witness shape for planner and table materialization.
+///
+/// Non-zk builds use segment-typed encoding; zk builds keep legacy `PackedDigits`.
+///
+/// # Errors
+///
+/// Propagates [`segment_typed_witness_shape`] errors on the non-zk path.
+#[allow(clippy::too_many_arguments)]
+pub fn terminal_direct_witness_shape(
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    current_w_len: usize,
+    terminal_log_basis: u32,
+    num_w_vectors: usize,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    num_commitment_groups: usize,
+) -> Result<CleartextWitnessShape, AkitaError> {
+    #[cfg(feature = "zk")]
+    {
+        let _ = (
+            terminal_lp,
+            field_bits,
+            current_w_len,
+            num_w_vectors,
+            num_t_vectors,
+            num_public_rows,
+            num_commitment_groups,
+        );
+        Ok(CleartextWitnessShape::PackedDigits((
+            current_w_len,
+            terminal_log_basis,
+        )))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        let _ = current_w_len;
+        segment_typed_witness_shape(
+            terminal_lp,
+            field_bits,
+            num_w_vectors,
+            num_t_vectors,
+            num_public_rows,
+            num_commitment_groups,
+            terminal_log_basis,
+        )
+    }
+}
+
+/// [`terminal_direct_witness_shape`] with multiplicities derived from a schedule key.
+///
+/// # Errors
+///
+/// Propagates [`terminal_direct_witness_shape`] errors.
+pub fn terminal_direct_witness_shape_for_key(
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    key: crate::AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+    current_w_len: usize,
+    terminal_log_basis: u32,
+) -> Result<CleartextWitnessShape, AkitaError> {
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+        terminal_fold_segment_counts(key, terminal_fold_level);
+    terminal_direct_witness_shape(
+        terminal_lp,
+        field_bits,
+        current_w_len,
+        terminal_log_basis,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+    )
+}
+
 /// Build the segment-typed terminal witness shape from public schedule data.
 ///
 /// `e`, `t`, and `r` are raw field segments; only `z` is Golomb-Rice coded.

@@ -40,7 +40,9 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{
-    segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape, PackedDigits,
+    segment_typed_witness_shape, terminal_direct_witness_shape,
+    terminal_direct_witness_shape_for_key, terminal_fold_segment_counts, CleartextWitnessProof,
+    CleartextWitnessShape, PackedDigits,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -91,8 +93,8 @@ pub use tail_segments::{
     segment_typed_witness_exact_bytes, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout,
     tail_segment_multiplicities_from_layout, validate_segment_typed_z_payload,
-    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessShape,
-    TailSegmentLayout,
+    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,
+    SegmentTypedWitnessShape, TailSegmentLayout,
 };
 pub use terminal_witness::{
     i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,

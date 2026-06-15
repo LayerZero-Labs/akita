@@ -13,7 +13,7 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{AkitaStage2Verifier, Stage2WitnessOracle};
+use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
@@ -547,13 +547,13 @@ where
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => Stage2WitnessOracle::Cleartext {
-            witness: &proof.final_witness,
+        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E, D>(
+            &proof.final_witness,
             physical_w_len,
-            lp: Some(lp),
+            lp,
             num_claims,
             num_commitment_groups,
-        },
+        )?,
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
             #[cfg(feature = "zk")]

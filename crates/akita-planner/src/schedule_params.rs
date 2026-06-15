@@ -12,8 +12,6 @@ use std::collections::{BTreeMap, HashMap};
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
-#[cfg(not(feature = "zk"))]
-use akita_types::segment_typed_witness_shape;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
@@ -22,9 +20,10 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    root_extension_opening_partials, terminal_direct_witness_shape, terminal_fold_segment_counts,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -369,39 +368,7 @@ impl SuffixResult {
     }
 }
 
-fn terminal_segment_counts(
-    key: AkitaScheduleLookupKey,
-    terminal_fold_level: usize,
-) -> (usize, usize, usize, usize) {
-    if terminal_fold_level == 0 {
-        (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
-    } else {
-        (1, 1, 1, 1)
-    }
-}
-
-#[cfg(not(feature = "zk"))]
-pub(crate) fn segment_typed_direct_witness_shape(
-    terminal_lp: &LevelParams,
-    field_bits: u32,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_public_rows: usize,
-    num_commitment_groups: usize,
-    terminal_bits_per_elem: u32,
-) -> Result<CleartextWitnessShape, AkitaError> {
-    segment_typed_witness_shape(
-        terminal_lp,
-        field_bits,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_commitment_groups,
-        terminal_bits_per_elem,
-    )
-}
-
-#[allow(clippy::too_many_arguments, unused_variables)]
+#[allow(clippy::too_many_arguments)]
 fn make_terminal_direct_step(
     current_w_len: usize,
     terminal_lp: &LevelParams,
@@ -410,26 +377,18 @@ fn make_terminal_direct_step(
     num_t_vectors: usize,
     num_public_rows: usize,
     num_commitment_groups: usize,
-    #[allow(unused_variables)] terminal_log_basis: u32,
+    terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
-    let witness_shape = {
-        #[cfg(feature = "zk")]
-        {
-            CleartextWitnessShape::PackedDigits((current_w_len, terminal_log_basis))
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            segment_typed_direct_witness_shape(
-                terminal_lp,
-                field_bits,
-                num_w_vectors,
-                num_t_vectors,
-                num_public_rows,
-                num_commitment_groups,
-                terminal_log_basis,
-            )?
-        }
-    };
+    let witness_shape = terminal_direct_witness_shape(
+        terminal_lp,
+        field_bits,
+        current_w_len,
+        terminal_log_basis,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_commitment_groups,
+    )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
         current_w_len,
@@ -450,7 +409,7 @@ fn patch_suffix_terminal_direct(
     terminal_log_basis: u32,
 ) -> Result<usize, AkitaError> {
     let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
-        terminal_segment_counts(key, terminal_fold_level);
+        terminal_fold_segment_counts(key, terminal_fold_level);
     let Step::Direct(direct) = suffix_sched
         .last_mut()
         .ok_or_else(|| AkitaError::InvalidSetup("empty suffix schedule".into()))?
@@ -540,7 +499,7 @@ fn derive_optimal_suffix_schedule(
         {
             let terminal_fold_level = level.saturating_sub(1);
             let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
-                terminal_segment_counts(key, terminal_fold_level);
+                terminal_fold_segment_counts(key, terminal_fold_level);
             let step = make_terminal_direct_step(
                 current_witness_len_terminal,
                 &terminal_lp,
