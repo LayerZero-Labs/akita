@@ -42,6 +42,23 @@ REQUIRED_RUN_METRICS = (
 )
 REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
 
+# Byte columns emitted by `crates/akita-pcs/examples/profile/report.rs` for each
+# fold level. Their sum must match `total_bytes` (terminal levels omit absent
+# wire fields; the parser defaults missing keys to zero).
+PROOF_LEVEL_BYTE_FIELDS = (
+    "extension_opening_partials_bytes",
+    "extension_opening_sumcheck_bytes",
+    "fold_grind_nonce_bytes",
+    "v_bytes",
+    "stage1_sumcheck_bytes",
+    "stage1_interstage_claims_bytes",
+    "stage1_s_claim_bytes",
+    "stage2_sumcheck_bytes",
+    "stage3_sumcheck_bytes",
+    "next_w_commitment_bytes",
+    "next_w_eval_bytes",
+)
+
 
 @dataclass(frozen=True)
 class BenchmarkCaseSpec:
@@ -429,18 +446,13 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "level": level,
                 "d": int(kvs["d"]),
                 "total_bytes": int(kvs["total_bytes"]),
-                "v_bytes": int(kvs.get("v_bytes", "0")),
-                "stage1_sumcheck_bytes": int(kvs.get("stage1_sumcheck_bytes", "0")),
-                "stage1_interstage_claims_bytes": int(
-                    kvs.get("stage1_interstage_claims_bytes", "0")
-                ),
-                "stage1_s_claim_bytes": int(kvs.get("stage1_s_claim_bytes", "0")),
-                "stage2_sumcheck_bytes": int(kvs.get("stage2_sumcheck_bytes", "0")),
-                "next_w_commitment_bytes": int(kvs.get("next_w_commitment_bytes", "0")),
-                "next_w_eval_bytes": int(kvs.get("next_w_eval_bytes", "0")),
+                **{
+                    field: int(kvs.get(field, "0"))
+                    for field in PROOF_LEVEL_BYTE_FIELDS
+                },
             }
             if "grind_nonce" in kvs:
-                proof_levels[level]["grind_nonce"] = int(kvs["grind_nonce"])
+                proof_levels[level]["grind_nonce_val"] = int(kvs["grind_nonce"])
             if "grind_attempts" in kvs:
                 proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
             if "root_variant" in kvs:
@@ -1092,46 +1104,46 @@ def render_planned_levels(levels: list[dict[str, object]]) -> None:
     print("</details>")
 
 
+def proof_level_component_bytes(level: dict[str, object]) -> int:
+    return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
+
+
+def fmt_level_grind_field(value: object) -> str:
+    if value is None:
+        return "n/a"
+    return fmt_count(float(value))
+
+
 def render_proof_levels(levels: list[dict[str, object]]) -> None:
     print("<details>")
     print("<summary>Per-level proof-size breakdown</summary>")
     print()
-    has_grind = any("grind_attempts" in level for level in levels)
-    if has_grind:
+    print(
+        "| L | total | eor partials | eor sc | grind nonce B | grind nonce val | "
+        "grind tries | v | stage1 sc | interstage | s_claim | stage2 sc | stage3 sc | "
+        "next_w_commit | next_w_eval |"
+    )
+    print(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "---: | ---: | ---: | ---: | ---: |"
+    )
+    for level in levels:
         print(
-            "| L | total | grind nonce | grind tries | v | stage1 sc | interstage | s_claim | "
-            "stage2 sc | next_w_commit | next_w_eval |"
+            f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+            f"{fmt_bytes(float(level['extension_opening_partials_bytes']))} | "
+            f"{fmt_bytes(float(level['extension_opening_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['fold_grind_nonce_bytes']))} | "
+            f"{fmt_level_grind_field(level.get('grind_nonce_val'))} | "
+            f"{fmt_level_grind_field(level.get('grind_attempts'))} | "
+            f"{fmt_bytes(float(level['v_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
+            f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['stage3_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
+            f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
         )
-        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-        for level in levels:
-            print(
-                f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
-                f"{level.get('grind_nonce', 'n/a')} | {level.get('grind_attempts', 'n/a')} | "
-                f"{fmt_bytes(float(level['v_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
-                f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
-                f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
-                f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
-            )
-    else:
-        print(
-            "| L | total | v | stage1 sc | interstage | s_claim | "
-            "stage2 sc | next_w_commit | next_w_eval |"
-        )
-        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-        for level in levels:
-            print(
-                f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
-                f"{fmt_bytes(float(level['v_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
-                f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
-                f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
-                f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
-                f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
-            )
     print()
     print("</details>")
 
@@ -1169,6 +1181,13 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             raise ValueError(
                 f"planned/proof D mismatch at L{planned_level}: "
                 f"planned={planned_d}, proof={proof_d}"
+            )
+        component_bytes = proof_level_component_bytes(proof)
+        total_bytes = int(proof["total_bytes"])
+        if component_bytes != total_bytes:
+            raise ValueError(
+                f"proof level component sum mismatch at L{proof_level}: "
+                f"total_bytes={total_bytes}, component_sum={component_bytes}"
             )
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
