@@ -467,7 +467,7 @@ mod tests {
     use akita_field::{AkitaError, FieldCore};
     use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
-    use akita_types::{FlatRingVec, PackedDigits};
+    use akita_types::PackedDigits;
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;
