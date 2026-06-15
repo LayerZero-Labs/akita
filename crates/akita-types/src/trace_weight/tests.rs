@@ -251,15 +251,15 @@ fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
 mod ring_block_weights {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector};
-    use akita_field::{AkitaError, Ext2, Fp32, LiftBase, RingSubfieldFpExt4, RingSubfieldFpExt8};
+    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8, LiftBase};
     use std::marker::PhantomData;
 
     type F2 = Fp32<251>;
     type E2 = Ext2<F2>;
     type F4 = Fp32<251>;
-    type E4 = RingSubfieldFpExt4<F4>;
+    type E4 = FpExt4<F4>;
     type F8 = Fp32<251>;
-    type E8 = RingSubfieldFpExt8<F8>;
+    type E8 = FpExt8<F8>;
 
     const LOG_BASIS: u32 = 3;
 
@@ -298,7 +298,7 @@ mod ring_block_weights {
     fn packed_inner_point<F, E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<F, D>
     where
         F: akita_field::FieldCore + akita_field::FromPrimitiveInt,
-        E: akita_field::ExtField<F> + crate::RingSubfieldEncoding<F> + akita_field::FieldCore,
+        E: akita_field::ExtField<F> + crate::FpExtEncoding<F> + akita_field::FieldCore,
     {
         let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
         embed_ring_subfield_vector(
@@ -349,7 +349,7 @@ mod ring_block_weights {
             + akita_field::FromPrimitiveInt
             + akita_field::Invertible
             + akita_field::RandomSampling,
-        E: crate::RingSubfieldEncoding<F>
+        E: crate::FpExtEncoding<F>
             + akita_field::ExtField<F>
             + akita_field::FieldCore
             + akita_field::FromPrimitiveInt
@@ -400,7 +400,7 @@ mod ring_block_weights {
             + akita_field::FromPrimitiveInt
             + akita_field::Invertible
             + akita_field::RandomSampling,
-        E: crate::RingSubfieldEncoding<F>
+        E: crate::FpExtEncoding<F>
             + akita_field::ExtField<F>
             + akita_field::FieldCore
             + akita_field::FromPrimitiveInt
@@ -559,12 +559,12 @@ mod ring_block_weights {
 mod closed_terms {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector, reduce_inner_opening_to_ring_element};
-    use akita_field::{AkitaError, Ext2, Fp32, RingSubfieldFpExt4, RingSubfieldFpExt8};
+    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8};
 
     type Fk = Fp32<251>;
     type E2 = Ext2<Fk>;
-    type E4 = RingSubfieldFpExt4<Fk>;
-    type E8 = RingSubfieldFpExt8<Fk>;
+    type E4 = FpExt4<Fk>;
+    type E8 = FpExt8<Fk>;
 
     const LB: u32 = 3;
 
@@ -581,7 +581,7 @@ mod closed_terms {
 
     fn packed_inner<E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<Fk, D>
     where
-        E: akita_field::ExtField<Fk> + crate::RingSubfieldEncoding<Fk> + akita_field::FieldCore,
+        E: akita_field::ExtField<Fk> + crate::FpExtEncoding<Fk> + akita_field::FieldCore,
     {
         let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
         embed_ring_subfield_vector(
@@ -594,7 +594,7 @@ mod closed_terms {
     /// One random single-claim K>1 round: closed form must equal the dense MLE.
     fn run_single_ring<E, const D: usize>(seed: u64, layout: &TraceWeightLayout)
     where
-        E: crate::RingSubfieldEncoding<Fk>
+        E: crate::FpExtEncoding<Fk>
             + akita_field::ExtField<Fk>
             + akita_field::FieldCore
             + akita_field::FromPrimitiveInt

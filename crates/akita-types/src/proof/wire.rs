@@ -147,7 +147,7 @@ where
     Ok(Some(SetupSumcheckProof { claim, sumcheck }))
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaLevelProof<F, L>
 {
     fn serialize_with_mode<W: Write>(
@@ -488,7 +488,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for TerminalLevelProof<F, L>
 {
     fn serialize_with_mode<W: Write>(
@@ -574,6 +574,7 @@ impl<
         validate: Validate,
         ctx: &TerminalLevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let extension_opening_reduction = deserialize_extension_opening_reduction(
             &mut reader,
             compress,
@@ -617,7 +618,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaBatchedFoldRoot<F, L>
 {
     fn serialize_with_mode<W: Write>(
@@ -861,7 +862,7 @@ impl<
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaBatchedRootProof<F, L>
 {
     fn serialize_with_mode<W: Write>(
@@ -934,7 +935,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaBatchedProof<F, L>
 {
     fn serialize_with_mode<W: Write>(

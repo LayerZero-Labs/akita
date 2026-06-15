@@ -1,18 +1,20 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_terms_closed, relation_claim_from_rows_extension, AkitaExpandedSetup,
-    CleartextWitnessProof, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
-    TraceClaim,
+    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
+    PackedDigits, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
+use std::borrow::Cow;
 use std::marker::PhantomData;
 
 fn witness_eval_by_index<E, V>(
@@ -51,15 +53,25 @@ where
     Ok(acc)
 }
 
-fn cleartext_witness_eval<F, E, const D: usize>(
-    cleartext_witness: &CleartextWitnessProof<F>,
+/// Stage-2 sumcheck operates on the logical witness hypercube, not the wire encoding.
+pub(crate) enum Stage2CleartextSource<'a, F: FieldCore> {
+    /// Lazily indexed packed digits (zk / legacy terminal).
+    Packed(&'a PackedDigits),
+    /// Expanded balanced digit planes (segment-typed terminal after decode).
+    LogicalDigits(Cow<'a, [i8]>),
+    /// Root-direct cleartext field coefficients.
+    FieldElements(&'a [F]),
+}
+
+fn cleartext_source_eval<F, E, const D: usize>(
     physical_w_len: usize,
+    source: &Stage2CleartextSource<'_, F>,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
     let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -79,8 +91,8 @@ where
             })?,
         )
         .ok_or(AkitaError::InvalidProof)?;
-    match cleartext_witness {
-        CleartextWitnessProof::PackedDigits(packed_witness) => {
+    match source {
+        Stage2CleartextSource::Packed(packed_witness) => {
             if packed_witness.num_elems != physical_w_len
                 || D == 0
                 || !physical_w_len.is_multiple_of(D)
@@ -94,8 +106,15 @@ where
                     .ok_or(AkitaError::InvalidProof)
             })
         }
-        CleartextWitnessProof::FieldElements(field_witness) => {
-            let field_witness = field_witness.coeffs();
+        Stage2CleartextSource::LogicalDigits(digits) => {
+            if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
+                return Err(AkitaError::InvalidProof);
+            }
+            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
+                Ok(E::from_i64(digits[idx] as i64))
+            })
+        }
+        Stage2CleartextSource::FieldElements(field_witness) => {
             if field_witness.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -108,14 +127,56 @@ where
 
 pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     Cleartext {
-        witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
+        source: Stage2CleartextSource<'a, F>,
     },
     ClaimedEval {
         eval: E,
         #[cfg(feature = "zk")]
         mask: ZkR1csLinearCombination<E>,
     },
+}
+
+/// Decode a terminal cleartext witness into the stage-2 digit oracle.
+///
+/// Segment-typed wire payloads expand to logical `i8` digits once here; stage-2
+/// never sees the segment encoding again.
+pub(crate) fn stage2_cleartext_oracle<'a, F, E, const D: usize>(
+    witness: &'a CleartextWitnessProof<F>,
+    physical_w_len: usize,
+    lp: &'a akita_types::LevelParams,
+    num_commitment_groups: usize,
+) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + HalvingField,
+    E: FieldCore,
+{
+    let source = match witness {
+        CleartextWitnessProof::PackedDigits(packed) => {
+            if packed.num_elems != physical_w_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            Stage2CleartextSource::Packed(packed)
+        }
+        CleartextWitnessProof::SegmentTyped(_) => {
+            let digits = witness.logical_i8_digits::<D>(lp, num_commitment_groups)?;
+            if digits.len() != physical_w_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            Stage2CleartextSource::LogicalDigits(Cow::Owned(digits))
+        }
+        CleartextWitnessProof::FieldElements(field_elems) => {
+            let coeffs = field_elems.coeffs();
+            if coeffs.len() != physical_w_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            Stage2CleartextSource::FieldElements(coeffs)
+        }
+    };
+    Ok(Stage2WitnessOracle::Cleartext {
+        physical_w_len,
+        source,
+    })
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
@@ -134,8 +195,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     prepared_row_eval: RingSwitchDeferredRowEval<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
-    opening_points: &'a [RingOpeningPoint<F>],
-    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+    opening_point: &'a RingOpeningPoint<F>,
+    ring_multiplier_point: &'a RingMultiplierOpeningPoint<F, D>,
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -146,8 +207,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + HalvingField,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -165,8 +226,8 @@ where
         prepared_row_eval: RingSwitchDeferredRowEval<E>,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
+        opening_point: &'a RingOpeningPoint<F>,
+        ring_multiplier_point: &'a RingMultiplierOpeningPoint<F, D>,
         relation_claim: E,
         alpha: E,
         col_bits: usize,
@@ -211,8 +272,8 @@ where
             prepared_row_eval,
             setup_claim,
             setup,
-            opening_points,
-            ring_multiplier_points,
+            opening_point,
+            ring_multiplier_point,
             alpha,
             col_bits,
             ring_bits,
@@ -222,132 +283,14 @@ where
         })
     }
 
-    /// Construct a verifier that evaluates the final cleartext witness locally.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_cleartext_witness")]
-    pub(crate) fn new_with_cleartext_witness(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
-        cleartext_witness: &'a CleartextWitnessProof<F>,
-        physical_w_len: usize,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
-        setup_claim: Option<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            #[cfg(feature = "zk")]
-            trace_claim_mask,
-            Stage2WitnessOracle::Cleartext {
-                witness: cleartext_witness,
-                physical_w_len,
-            },
-            stage1_point,
-            alpha_evals_y,
-            prepared_row_eval,
-            setup_claim,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            match relation_claim_override {
-                Some(claim) => claim,
-                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
-            },
-            alpha,
-            col_bits,
-            ring_bits,
-            trace,
-        )
-    }
-
-    /// Construct a verifier that consumes an already claimed next-witness eval.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
-    pub(crate) fn new_with_claimed_w_eval(
-        batching_coeff: E,
-        s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
-        w_eval: E,
-        #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
-        stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
-        setup_claim: Option<E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
-        tau1: &[E],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
-        relation_claim_override: Option<E>,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            batching_coeff,
-            s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            #[cfg(feature = "zk")]
-            trace_claim_mask,
-            Stage2WitnessOracle::ClaimedEval {
-                eval: w_eval,
-                #[cfg(feature = "zk")]
-                mask: w_eval_mask,
-            },
-            stage1_point,
-            alpha_evals_y,
-            prepared_row_eval,
-            setup_claim,
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            match relation_claim_override {
-                Some(claim) => claim,
-                None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u)?,
-            },
-            alpha,
-            col_bits,
-            ring_bits,
-            trace,
-        )
-    }
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Cleartext {
-                witness,
                 physical_w_len,
-            } => cleartext_witness_eval::<F, E, D>(
-                witness,
+                source,
+            } => cleartext_source_eval::<F, E, D>(
                 *physical_w_len,
+                source,
                 challenges,
                 self.col_bits,
                 self.ring_bits,
@@ -360,8 +303,8 @@ where
         self.prepared_row_eval.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
-            self.opening_points,
-            self.ring_multiplier_points,
+            self.opening_point,
+            self.ring_multiplier_point,
             self.alpha,
             self.setup_claim,
         )
@@ -370,8 +313,8 @@ where
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + HalvingField,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -430,8 +373,8 @@ where
 #[cfg(feature = "zk")]
 impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + HalvingField,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Record the deferred relation tying the stage-2 masked input to the
     /// stage-1 masked `s_claim` handoff.
@@ -512,11 +455,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::cleartext_witness_eval;
+    use super::{cleartext_source_eval, Stage2CleartextSource};
     use akita_field::{AkitaError, FieldCore};
     use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
-    use akita_types::{CleartextWitnessProof, FlatRingVec, PackedDigits};
+    use akita_types::PackedDigits;
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;
@@ -564,15 +507,45 @@ mod tests {
         assert_eq!(col_bits + ring_bits, challenges.len());
 
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let actual = cleartext_witness_eval::<F, F, 4>(
-            &CleartextWitnessProof::PackedDigits(packed),
+        let source = Stage2CleartextSource::Packed(&packed);
+        let actual = cleartext_source_eval::<F, F, 4>(
             w_digits.len(),
+            &source,
             &challenges,
             col_bits,
             ring_bits,
         )
         .expect("valid packed witness");
 
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn logical_digits_eval_matches_materialized_table() {
+        let d = 4usize;
+        let w_digits = vec![3, -1, 2, 0, -2, 1, 4, -3, 1, 0, -4, 2];
+        let w_field: Vec<F> = w_digits
+            .iter()
+            .map(|&digit| F::from_i64(digit as i64))
+            .collect();
+        let (w_evals, col_bits, ring_bits) =
+            build_w_evals(&w_field, d).expect("valid witness shape");
+        let challenges = vec![
+            F::from_u64(2),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
+        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
+        let actual = cleartext_source_eval::<F, F, 4>(
+            w_digits.len(),
+            &source,
+            &challenges,
+            col_bits,
+            ring_bits,
+        )
+        .expect("valid logical digits");
         assert_eq!(actual, expected);
     }
 
@@ -596,14 +569,10 @@ mod tests {
             .collect();
         let expected =
             multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
-        let actual = cleartext_witness_eval::<F, E, D>(
-            &CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(field_witness.clone())),
-            field_witness.len(),
-            &challenges,
-            1,
-            1,
-        )
-        .expect("valid witness");
+        let source = Stage2CleartextSource::FieldElements(&field_witness);
+        let actual =
+            cleartext_source_eval::<F, E, D>(field_witness.len(), &source, &challenges, 1, 1)
+                .expect("valid witness");
 
         assert_eq!(actual, expected);
     }
@@ -611,14 +580,9 @@ mod tests {
     #[test]
     fn packed_witness_eval_rejects_challenge_dimension_mismatch() {
         let packed = PackedDigits::from_i8_digits(&[1, -1, 0, 2], 3);
-        let err = cleartext_witness_eval::<F, E, D>(
-            &CleartextWitnessProof::PackedDigits(packed),
-            1,
-            &[E::zero()],
-            1,
-            1,
-        )
-        .expect_err("wrong arity");
+        let source = Stage2CleartextSource::Packed(&packed);
+        let err = cleartext_source_eval::<F, E, D>(1, &source, &[E::zero()], 1, 1)
+            .expect_err("wrong arity");
         assert!(matches!(err, AkitaError::InvalidSize { .. }));
     }
 
@@ -630,14 +594,9 @@ mod tests {
             data: vec![],
         };
         let challenges = vec![E::zero(), E::zero()];
-        let err = cleartext_witness_eval::<F, E, D>(
-            &CleartextWitnessProof::PackedDigits(packed),
-            4,
-            &challenges,
-            1,
-            1,
-        )
-        .expect_err("truncated packed witness");
+        let source = Stage2CleartextSource::Packed(&packed);
+        let err = cleartext_source_eval::<F, E, D>(4, &source, &challenges, 1, 1)
+            .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

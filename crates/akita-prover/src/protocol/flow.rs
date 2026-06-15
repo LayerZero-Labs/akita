@@ -41,9 +41,9 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
-    batched_eval_target_from_incidence, build_trace_table_scaled,
+    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
+    append_opening_batch_shape_to_transcript, basis_weights,
+    batched_eval_target_from_opening_batch, build_trace_table_scaled,
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape, prepare_opening_point,
@@ -54,19 +54,21 @@ use akita_types::{
     schedule_root_fold_step, stage2_trace_coeff, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
     tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, terminal_witness_segment_layout,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingRelationSegmentLayout, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    tensor_row_partials_from_columns, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_weight_layout_from_segment, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
+    BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput,
+    OpeningBatchLimits, OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
-use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
+use akita_types::{
+    stage1_tree_stage_shapes, sumcheck_rounds, terminal_witness_segment_layout, PackedDigits,
+    ZkHidingProof,
+};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 use std::sync::Arc;
@@ -79,18 +81,17 @@ mod suffix;
 mod tests;
 
 pub use inputs::{
-    batched_prove, build_terminal_root_batched_proof, prepare_batched_prove_inputs,
-    prove_folded_batched, prove_root_direct,
+    batched_prove, prepare_batched_prove_inputs, prove_folded_batched, prove_root_direct,
 };
 pub(in crate::protocol::flow) use root_extension::*;
-pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_points;
-pub use root_fold::{prove_root_fold, prove_terminal_root_fold_with_params};
-pub use suffix::prove_suffix;
+pub(in crate::protocol::flow) use root_fold::evaluate_claims_at_prepared_point;
+pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 #[cfg(test)]
 pub(in crate::protocol::flow) use suffix::{
     prove_extension_opening_reduction, recursive_witness_base_evals,
 };
 pub(in crate::protocol::flow) use suffix::{prove_fold, PreparedFold};
+pub use suffix::{prove_suffix, SuffixProverState};
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     lp: &LevelParams,
@@ -118,7 +119,7 @@ fn build_recursive_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
@@ -129,7 +130,7 @@ where
 fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F, D>,
-    prepared_points: &[PreparedOpeningPoint<F, E, D>],
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
     output_scale: E,
@@ -139,10 +140,10 @@ fn build_root_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let num_trace_blocks = instance
-        .incidence()
+        .opening_batch()
         .num_claims()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
@@ -150,44 +151,12 @@ where
         trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
     let public_weights = trace_public_weights_root_terms::<F, E, D>(
         lp,
-        instance.incidence(),
-        prepared_points,
+        instance.opening_batch(),
+        prepared_point,
         row_coefficients,
         trace_claim_scales,
     )?;
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
-}
-
-/// Runtime state carried between recursive prove levels.
-pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
-    /// Current committed recursive witness representation.
-    pub w: RecursiveWitnessFlat,
-    /// Logical recursive witness when it differs from the committed representation.
-    pub logical_w: Option<RecursiveWitnessFlat>,
-    /// Current recursive witness commitment.
-    pub commitment: FlatRingVec<F>,
-    /// D-erased recursive commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
-    /// Current digit basis, as `log2(b)`.
-    pub log_basis: u32,
-    /// Sumcheck challenges that become the next recursive opening point.
-    pub sumcheck_challenges: Vec<L>,
-    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
-    pub opening: L,
-    /// Transcript-visible masked handle for `opening`.
-    #[cfg(feature = "zk")]
-    pub opening_public: L,
-    /// Proof-level ZK hiding material fixed at batched-prove startup.
-    #[cfg(feature = "zk")]
-    pub zk_hiding: ZkHidingProverState<F>,
-}
-
-impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
-    /// Logical witness represented by the carried opening claim.
-    #[inline]
-    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
-        self.logical_w.as_ref().unwrap_or(&self.w)
-    }
 }
 
 /// Cursor into the proof-level hiding witness allocated at batched-prove start.
@@ -368,8 +337,8 @@ fn masked_sumcheck_final_claim<E: FieldCore>(
 pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     /// Fold proof produced at this level.
     pub level_proof: AkitaLevelProof<F, L>,
-    /// Recursive prover state for the next level.
-    pub next_state: RecursiveProverState<F, L>,
+    /// Suffix prover state for the next level.
+    pub next_state: SuffixProverState<F, L>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.
@@ -399,7 +368,7 @@ fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
     L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
@@ -447,7 +416,7 @@ fn row_coefficient_rings<F, L, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>,
+    L: FpExtEncoding<F>,
 {
     coefficients
         .iter()
@@ -465,18 +434,16 @@ where
 
 /// Config-free flattened view of batched prover claims.
 pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
-    /// Distinct opening points in caller order.
-    pub opening_points: Vec<&'a [E]>,
-    /// Commitments flattened in point/group order.
-    pub commitments_by_point: Vec<RingCommitment<F, D>>,
-    /// Normalized incidence summary that owns canonical root claim routing.
-    pub incidence_summary: ClaimIncidenceSummary,
+    /// Shared opening point.
+    pub opening_point: &'a [E],
+    /// Commitments in commitment-group order.
+    pub commitments: Vec<RingCommitment<F, D>>,
+    /// Normalized opening-batch summary that owns canonical root claim routing.
+    pub opening_batch: OpeningBatch,
     /// Polynomials flattened in claim order.
     pub flat_polys: Vec<&'a P>,
-    /// Polynomials flattened in committed-group order.
-    pub group_polys: Vec<&'a P>,
-    /// Commitment hints flattened in claim-group order.
-    pub flat_hints: Vec<AkitaCommitmentHint<F, D>>,
+    /// Commitment hints in commitment-group order.
+    pub commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
 }
 
 #[cfg(feature = "zk")]
@@ -566,8 +533,8 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    L: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F>,
+    E: FpExtEncoding<F>,
+    L: FpExtEncoding<F> + ExtField<F>,
     B: ProverComputeBackend<F>,
 {
     let mut rng = OsRng;

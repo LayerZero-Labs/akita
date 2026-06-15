@@ -428,7 +428,7 @@ the new nv40 robustness run.
 ### Current state (precise)
 
 ```
-prove_root_fold_with_params / prove_recursive_*_root_fold      (root_fold.rs:288, :663)
+prove_root / prove_recursive_*_root_fold                       (root_fold.rs:288, :663)
 ├─ prove_prepared_root_extension_opening_reduction             (root_extension.rs:174)
 │   ├─ sparse (onehot)   root_extension.rs:267-341
 │   │     tensor_packed_extension_sparse_linear_combination     (onehot/ops.rs:251)

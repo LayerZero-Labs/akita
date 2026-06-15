@@ -785,7 +785,7 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
 /// * `Terminal` — 1-fold case where the root itself is the terminal level.
 ///   No recursive-suffix steps follow.
 /// * `ZeroFold` — 0-fold batched fast path: one cleartext field-element
-///   witness per claim, in the normalized incidence claim order
+///   witness per claim, in the normalized opening batch claim order
 ///   used by the prover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
@@ -794,7 +794,7 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
     /// 1-fold root: the root level is itself the terminal fold level.
     Terminal(TerminalLevelProof<F, L>),
     /// Zero-fold batched fast path: one cleartext field-element witness per
-    /// claim, in the normalized incidence claim order used by the prover.
+    /// claim, in the normalized opening batch claim order used by the prover.
     ZeroFold {
         /// Per-claim cleartext witnesses.
         witnesses: Vec<CleartextWitnessProof<F>>,
@@ -1155,7 +1155,9 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaBatchedProof<F, L> {
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    AkitaBatchedProof<F, L>
+{
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         self.serialized_size(Compress::No)

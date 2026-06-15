@@ -138,7 +138,7 @@ pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     n_b: usize,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    num_polys_per_point: &[usize],
+    num_polys_per_commitment_group: &[usize],
     blocks_per_claim: usize,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -146,12 +146,12 @@ where
     F: FieldCore + CanonicalField,
     B: CyclicRowsComputeBackend<F>,
 {
-    if num_polys_per_point.is_empty() || blocks_per_claim == 0 {
+    if num_polys_per_commitment_group.is_empty() || blocks_per_claim == 0 {
         return Err(AkitaError::InvalidProof);
     }
     let mut num_group_polys = 0usize;
     let mut max_group_poly_count = 0usize;
-    for &group_poly_count in num_polys_per_point {
+    for &group_poly_count in num_polys_per_commitment_group {
         if group_poly_count == 0 {
             return Err(AkitaError::InvalidProof);
         }
@@ -171,15 +171,19 @@ where
         .checked_mul(planes_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
     #[cfg(not(feature = "zk"))]
-    let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_point.len()];
-    if b_blinding_digits.len() != num_polys_per_point.len() {
+    let b_blinding_digits =
+        vec![FlatDigitBlocks::<D>::empty(); num_polys_per_commitment_group.len()];
+    if b_blinding_digits.len() != num_polys_per_commitment_group.len() {
         return Err(AkitaError::InvalidProof);
     }
 
-    let mut groups = Vec::with_capacity(num_polys_per_point.len());
+    let mut groups = Vec::with_capacity(num_polys_per_commitment_group.len());
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for (&group_poly_count, blinding) in num_polys_per_point.iter().zip(b_blinding_digits.iter()) {
+    for (&group_poly_count, blinding) in num_polys_per_commitment_group
+        .iter()
+        .zip(b_blinding_digits.iter())
+    {
         let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
@@ -212,7 +216,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let mut rows = Vec::with_capacity(num_polys_per_point.len() * n_b);
+    let mut rows = Vec::with_capacity(num_polys_per_commitment_group.len() * n_b);
     for (start, end, blinding) in groups {
         #[cfg(not(feature = "zk"))]
         let _ = blinding;
@@ -262,11 +266,16 @@ mod tests {
         type F = Fp64<4294967197>;
         const D: usize = 32;
         let n_b = 2;
-        let num_polys_per_point = [2usize, 1usize];
+        let num_polys_per_commitment_group = [2usize, 1usize];
         let blocks_per_claim = 1;
         let block_width = 3;
         let log_basis = 3;
-        let row_width = num_polys_per_point.iter().copied().max().unwrap() * block_width;
+        let row_width = num_polys_per_commitment_group
+            .iter()
+            .copied()
+            .max()
+            .unwrap()
+            * block_width;
         let setup_rows: Vec<CyclotomicRing<F, D>> = (0..(n_b * row_width))
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
@@ -278,7 +287,6 @@ mod tests {
             AkitaSetupSeed {
                 max_num_vars: 8,
                 max_num_batched_polys: 3,
-                max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
                 #[cfg(feature = "zk")]
@@ -304,7 +312,7 @@ mod tests {
             .collect();
         let t_hat = FlatDigitBlocks::from_blocks(blocks);
         #[cfg(feature = "zk")]
-        let b_blinding = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_point.len()];
+        let b_blinding = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_commitment_group.len()];
         let got = repeated_b_commitment_rows::<F, _, D>(
             &CpuBackend,
             &prepared,
@@ -312,7 +320,7 @@ mod tests {
             &t_hat,
             #[cfg(feature = "zk")]
             &b_blinding,
-            &num_polys_per_point,
+            &num_polys_per_commitment_group,
             blocks_per_claim,
             log_basis,
         )
@@ -364,7 +372,7 @@ mod tests {
             &nonuniform_t_hat,
             #[cfg(feature = "zk")]
             &b_blinding,
-            &num_polys_per_point,
+            &num_polys_per_commitment_group,
             blocks_per_claim,
             log_basis,
         )
@@ -404,12 +412,12 @@ mod tests {
         type F = Fp64<4294967197>;
         const D: usize = 32;
         let n_b = 2;
-        let num_polys_per_point = [2usize, 1usize];
+        let num_polys_per_commitment_group = [2usize, 1usize];
         let blocks_per_claim = 1;
         let block_width = 3;
         let blinding_width = 2;
         let log_basis = 3;
-        let row_width = num_polys_per_point
+        let row_width = num_polys_per_commitment_group
             .iter()
             .map(|&count| count * block_width)
             .max()
@@ -432,7 +440,6 @@ mod tests {
             AkitaSetupSeed {
                 max_num_vars: 8,
                 max_num_batched_polys: 3,
-                max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
                 #[cfg(feature = "zk")]
@@ -457,7 +464,7 @@ mod tests {
             })
             .collect();
         let t_hat = FlatDigitBlocks::from_blocks(blocks);
-        let b_blinding: Vec<FlatDigitBlocks<D>> = (0..num_polys_per_point.len())
+        let b_blinding: Vec<FlatDigitBlocks<D>> = (0..num_polys_per_commitment_group.len())
             .map(|group| {
                 FlatDigitBlocks::new(
                     (0..blinding_width)
@@ -476,7 +483,7 @@ mod tests {
             n_b,
             &t_hat,
             &b_blinding,
-            &num_polys_per_point,
+            &num_polys_per_commitment_group,
             blocks_per_claim,
             log_basis,
         )

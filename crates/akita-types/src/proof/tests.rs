@@ -182,6 +182,22 @@ fn terminal_shape_deserialization_validates_shape() {
     ));
 }
 
+#[test]
+fn terminal_level_proof_deserialization_validates_context_shape() {
+    let shape = TerminalLevelProofShape {
+        extension_opening_reduction: None,
+        stage2_sumcheck: vec![0; MAX_PROOF_SHAPE_SEQUENCE_LEN + 1],
+        final_witness: CleartextWitnessShape::FieldElements(0),
+    };
+
+    let err = TerminalLevelProof::<F, F>::deserialize_compressed(&[][..], &shape)
+        .expect_err("oversized terminal proof context shape must be rejected");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
+}
+
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),

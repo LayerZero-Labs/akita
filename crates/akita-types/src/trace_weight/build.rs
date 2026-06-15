@@ -2,7 +2,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use crate::field_reduction::trace_open_ring_row;
-use crate::{gadget_row_scalars, RingSubfieldEncoding};
+use crate::{gadget_row_scalars, FpExtEncoding};
 
 use super::eval::{TraceFieldBlockOpening, TraceRingBlockOpening};
 use super::layout::TraceWeightLayout;
@@ -201,7 +201,7 @@ pub fn build_trace_weight_table_ring_block_weights<F, E, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let term = TraceRingBlockOpening {
         block_offset: 0,
@@ -218,7 +218,7 @@ pub fn build_trace_weight_table_ring_terms<F, E, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -264,7 +264,7 @@ pub(crate) fn build_trace_weight_compact_ring_terms_scaled<F, E, const D: usize>
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(

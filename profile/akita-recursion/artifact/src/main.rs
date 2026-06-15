@@ -72,8 +72,8 @@ struct Args {
 type F = fp128::Field;
 const D: usize = 32;
 type Cfg = fp128::D32OneHot;
-type Claim = <Cfg as CommitmentConfig>::ClaimField;
-type Challenge = <Cfg as CommitmentConfig>::ChallengeField;
+type Claim = <Cfg as CommitmentConfig>::ExtField;
+type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = 256;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d32";
@@ -255,7 +255,7 @@ fn run() -> Result<(), String> {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
@@ -303,11 +303,11 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
-                nv, 1, 1,
+                nv, 1,
             )
         }
     }
@@ -339,14 +339,14 @@ fn run() -> Result<(), String> {
         &prover_setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitment,
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -364,13 +364,13 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            akita_types::CommittedOpenings {
+            vec![akita_types::CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            },
-        )],
+            }],
+        ),
         setup_contribution_mode,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
