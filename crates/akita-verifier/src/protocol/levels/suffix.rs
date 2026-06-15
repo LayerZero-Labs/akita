@@ -400,7 +400,10 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            if final_witness.shape() != terminal_direct.witness_shape {
+            if !terminal_direct
+                .witness_shape
+                .admits_realized(&final_witness.shape())
+            {
                 return Err(AkitaError::InvalidProof);
             }
             verify_root::<F, E, T, D>(
@@ -439,12 +442,15 @@ where
                     AkitaLevelProof::Intermediate { .. } => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;
-            if terminal_step
-                .stage2()
-                .final_witness()
-                .ok_or(AkitaError::InvalidProof)?
-                .shape()
-                != terminal_direct.witness_shape
+            if !terminal_direct
+                .witness_shape
+                .admits_realized(
+                    &terminal_step
+                        .stage2()
+                        .final_witness()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .shape(),
+                )
             {
                 return Err(AkitaError::InvalidProof);
             }

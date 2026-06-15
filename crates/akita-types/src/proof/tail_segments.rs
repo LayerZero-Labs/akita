@@ -8,8 +8,10 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid};
 
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_zigzag_width_z, optimal_rice_k,
+    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_planner_bits_per_z_coord,
+    golomb_rice_zigzag_width_from_beta, optimal_rice_k,
 };
+use crate::sis::{fold_witness_beta, FoldChallengeNorms};
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
@@ -267,10 +269,20 @@ pub fn tail_golomb_rice_z_params(
     num_public_rows: usize,
     field_bits: u32,
 ) -> Result<(u32, u32), AkitaError> {
+    let _ = field_bits;
     let sigma = lp.fold_response_sigma(num_t_vectors, num_public_rows)?;
     let k = optimal_rice_k(sigma);
-    let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
-    let w = golomb_rice_zigzag_width_z(depth_fold, lp.log_basis);
+    let challenge = FoldChallengeNorms {
+        infinity_norm: lp.challenge_infinity_norm() as u128,
+        l1_norm: lp.challenge_l1_mass() as u128,
+    };
+    let beta = fold_witness_beta(
+        lp.r_vars,
+        num_t_vectors,
+        challenge,
+        lp.fold_witness_norms(),
+    )?;
+    let w = golomb_rice_zigzag_width_from_beta(beta);
     Ok((k, w))
 }
 
@@ -407,36 +419,25 @@ pub fn tail_segment_multiplicities_from_layout(
 
 /// Planner byte budget for the Golomb-Rice `z` segment.
 ///
-/// Matches the legacy `PackedDigits` `z` digit planes at `bits_per_elem`: each
-/// recomposed `z` coordinate expands to `num_digits_fold` planes in the packed
-/// layout, so the budget is `z_coords * num_digits_fold * bits_per_elem` bits.
+/// Uses the public `sigma`-derived Golomb rate (`~log2(sigma) + 2.05` bits per
+/// coordinate per `specs/tail-wire-encoding.md`), not the legacy packed-digit
+/// plane width (`num_digits_fold * bits_per_elem` per coordinate).
 ///
 /// # Errors
 ///
-/// Propagates [`LevelParams::num_digits_fold`] errors.
+/// Propagates [`LevelParams::fold_response_sigma`] errors.
 pub fn segment_typed_z_payload_bytes(
     lp: &LevelParams,
     layout: &TailSegmentLayout,
     num_t_vectors: usize,
     num_public_rows: usize,
     field_bits: u32,
-    bits_per_elem: u32,
+    _bits_per_elem: u32,
 ) -> Result<usize, AkitaError> {
-    let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
-    let z_plane_elems = layout
-        .z_coords
-        .checked_mul(depth_fold)
-        .ok_or_else(|| AkitaError::InvalidSetup("tail z plane elem overflow".to_string()))?;
-    let packed_z = crate::layout::proof_size::packed_digits_bytes(z_plane_elems, bits_per_elem);
+    let sigma = lp.fold_response_sigma(num_t_vectors, num_public_rows)?;
     let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
-    let zigzag_w_z = golomb_rice_zigzag_width_z(depth_fold, lp.log_basis);
-    // Conservative Golomb budget: zigzag width plus Rice unary headroom, not the
-    // escape-path worst case used for decode totality.
-    let bits_per_coord = (zigzag_w_z as usize)
-        .saturating_add(rice_k as usize)
-        .saturating_add(2);
-    let golomb_budget = layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8);
-    Ok(packed_z.max(golomb_budget))
+    let bits_per_coord = golomb_rice_planner_bits_per_z_coord(sigma, rice_k);
+    Ok(layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8))
 }
 
 /// Serialized byte size for a segment-typed tail witness at a fixed `z` budget.
@@ -464,6 +465,7 @@ pub fn segment_typed_witness_exact_bytes<F: FieldCore + CanonicalField + AkitaSe
 }
 
 /// Recompose balanced digit planes into a signed integer.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64 {
     let b = 1i128 << log_basis;
@@ -502,8 +504,6 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
-    num_digits_fold: usize,
-    log_basis: u32,
     rice_k: u32,
     zigzag_w_z: u32,
 ) -> Result<Vec<u8>, AkitaError> {
@@ -514,34 +514,12 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
         ));
     }
     let mut values = Vec::with_capacity(centered.len() * D);
-    let mut planes = vec![[0i8; D]; num_digits_fold];
     for z_j in centered {
-        balanced_decompose_centered_i32(z_j, &mut planes, log_basis);
-        values.extend((0..D).map(|coeff_idx| {
-            let digits: Vec<i8> = (0..num_digits_fold).map(|p| planes[p][coeff_idx]).collect();
-            recompose_balanced_i8_digits(&digits, log_basis)
-        }));
-    }
-    golomb_rice_encode_vec(&values, rice_k, zigzag_w_z)
-}
-
-fn balanced_decompose_centered_i32<const D: usize>(
-    centered: &[i32; D],
-    out: &mut [[i8; D]],
-    log_basis: u32,
-) {
-    let half_b = 1i128 << (log_basis - 1);
-    let b = half_b << 1;
-    let mask = b - 1;
-    for coeff_idx in 0..D {
-        let mut c = i128::from(centered[coeff_idx]);
-        for plane in out.iter_mut() {
-            let d = c & mask;
-            let balanced = if d >= half_b { d - b } else { d };
-            c = (c - balanced) >> log_basis;
-            plane[coeff_idx] = balanced as i8;
+        for &coeff in z_j.iter() {
+            values.push(i64::from(coeff));
         }
     }
+    golomb_rice_encode_vec(&values, rice_k, zigzag_w_z)
 }
 
 /// Construct a segment-typed terminal witness from ring-switch outputs.
@@ -576,13 +554,10 @@ where
     let (rice_k, zigzag_w_z) =
         tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
     let depth_commit = lp.num_digits_commit;
-    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let z_payload = encode_z_segment_from_centered(
         z_folded_centered,
         lp.block_len,
         depth_commit,
-        num_digits_fold,
-        lp.log_basis,
         rice_k,
         zigzag_w_z,
     )?;
@@ -622,9 +597,9 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error when the encoded payload already exceeds `budget_bytes`.
-pub fn pad_segment_typed_z_payload<F: FieldCore>(
-    witness: &mut SegmentTypedWitness<F>,
+/// Returns an error when the encoded `z` payload exceeds the schedule budget.
+pub fn validate_segment_typed_z_payload<F: FieldCore>(
+    witness: &SegmentTypedWitness<F>,
     budget_bytes: usize,
 ) -> Result<(), AkitaError> {
     if witness.z_payload.len() > budget_bytes {
@@ -633,7 +608,6 @@ pub fn pad_segment_typed_z_payload<F: FieldCore>(
             witness.z_payload.len()
         )));
     }
-    witness.z_payload.resize(budget_bytes, 0);
     Ok(())
 }
 
@@ -850,6 +824,7 @@ use akita_serialization::Validate;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::golomb_rice::golomb_rice_decode_vec;
     use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
@@ -882,10 +857,38 @@ mod tests {
     }
 
     #[test]
-    fn tail_segment_layout_is_non_empty() {
+    fn segment_typed_z_budget_ignores_packed_digit_width() {
         let lp = test_lp();
-        let layout = tail_segment_layout(&lp, 1, 1, 1, 1, F::modulus_bits()).unwrap();
-        assert!(layout.logical_num_elems > 0);
-        assert!(layout.z_coords > 0);
+        let field_bits = F::modulus_bits();
+        let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
+        let at_five =
+            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
+        let at_eight =
+            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 8).unwrap();
+        assert_eq!(at_five, at_eight);
+        let depth_fold = lp.num_digits_fold(1, field_bits).unwrap();
+        let packed_z = crate::layout::proof_size::packed_digits_bytes(
+            layout.z_coords.saturating_mul(depth_fold),
+            8,
+        );
+        assert_ne!(at_five, packed_z);
+    }
+
+    #[test]
+    fn encode_z_centered_round_trip() {
+        let lp = test_lp();
+        let field_bits = F::modulus_bits();
+        let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1, 1, field_bits).unwrap();
+        let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
+        let payload =
+            encode_z_segment_from_centered(&centered, 1, lp.num_digits_commit, rice_k, zigzag_w_z)
+                .unwrap();
+        let decoded = golomb_rice_decode_vec(&payload, centered.len() * 8, rice_k, zigzag_w_z)
+            .unwrap();
+        let expected: Vec<i64> = centered
+            .iter()
+            .flat_map(|row| row.iter().map(|&c| i64::from(c)))
+            .collect();
+        assert_eq!(decoded, expected);
     }
 }

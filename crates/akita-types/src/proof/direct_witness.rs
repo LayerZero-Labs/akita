@@ -165,6 +165,26 @@ pub enum CleartextWitnessShape {
     SegmentTyped(SegmentTypedWitnessShape),
 }
 
+impl CleartextWitnessShape {
+    /// Whether `realized` is admitted by the scheduled witness shape.
+    ///
+    /// Segment-typed tails may serialize the Golomb `z` segment at its exact
+    /// encoded length while the schedule carries the public upper bound.
+    #[must_use]
+    pub fn admits_realized(&self, realized: &Self) -> bool {
+        match (self, realized) {
+            (
+                Self::SegmentTyped(scheduled),
+                Self::SegmentTyped(SegmentTypedWitnessShape {
+                    layout,
+                    z_payload_bytes,
+                }),
+            ) => layout == &scheduled.layout && *z_payload_bytes <= scheduled.z_payload_bytes,
+            (scheduled, other) => scheduled == other,
+        }
+    }
+}
+
 /// Build the segment-typed terminal witness shape from public schedule data.
 ///
 /// `e`, `t`, and `r` are raw field segments; only `z` is Golomb-Rice coded.

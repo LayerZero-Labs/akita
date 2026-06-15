@@ -70,7 +70,7 @@ pub use proof::{
     derive_public_matrix_flat, emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
     expand_segment_typed_to_i8_digits, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, generate_y, i8_digits_to_bytes,
-    pad_segment_typed_z_payload, padded_setup_prefix_len, prepare_opening_point,
+    validate_segment_typed_z_payload, padded_setup_prefix_len, prepare_opening_point,
     relation_claim_from_rows, relation_claim_from_rows_extension, ring_column_z_first,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,

@@ -141,6 +141,35 @@ pub fn golomb_rice_zigzag_width_z(num_digits_fold: usize, log_basis: u32) -> u32
     digit_bits.saturating_add(1).max(1) as u32
 }
 
+/// Signed zigzag width for fold-response coefficients bounded by `beta_inf`.
+///
+/// Mirrors the `[-β, β]` envelope priced by [`crate::sis::fold_witness_beta`].
+#[must_use]
+pub fn golomb_rice_zigzag_width_from_beta(beta: u128) -> u32 {
+    if beta == 0 {
+        return 1;
+    }
+    128u32
+        .saturating_sub(beta.leading_zeros())
+        .saturating_add(1)
+        .max(1)
+}
+
+/// Conservative planner bit budget per `z` coordinate from public `sigma`.
+///
+/// Matches `specs/tail-wire-encoding.md` (~`log2(sigma) + 2.05` expected) with a
+/// small integer margin for unary+Rice stop/remainder bits.
+#[must_use]
+pub fn golomb_rice_planner_bits_per_z_coord(sigma: u128, rice_k: u32) -> usize {
+    let _ = rice_k;
+    let log_sigma = if sigma <= 1 {
+        1usize
+    } else {
+        (128u32.saturating_sub(sigma.leading_zeros())) as usize
+    };
+    log_sigma.saturating_add(3)
+}
+
 fn golomb_rice_encode_one_into(
     writer: &mut BitWriter,
     n: i64,

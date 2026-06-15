@@ -6,7 +6,7 @@ use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 #[cfg(not(feature = "zk"))]
 use akita_types::build_segment_typed_witness;
 #[cfg(not(feature = "zk"))]
-use akita_types::pad_segment_typed_z_payload;
+use akita_types::validate_segment_typed_z_payload;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 #[cfg(not(feature = "zk"))]
@@ -625,7 +625,7 @@ where
                         lp,
                         &scheduled_shape.layout,
                     )?;
-                let mut segment = build_segment_typed_witness::<D, F>(
+                let segment = build_segment_typed_witness::<D, F>(
                     &artifacts.e_folded,
                     &artifacts.recomposed_inner_rows,
                     &artifacts.z_folded_centered,
@@ -641,7 +641,7 @@ where
                         "segment-typed witness layout does not match schedule".to_string(),
                     ));
                 }
-                pad_segment_typed_z_payload(&mut segment, scheduled_shape.z_payload_bytes)?;
+                validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
                 let expanded = segment.layout.logical_num_elems;
                 let digits = akita_types::expand_segment_typed_to_i8_digits::<D, F>(
                     &segment,

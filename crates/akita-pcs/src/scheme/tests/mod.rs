@@ -133,7 +133,7 @@ fn expected_same_point_batched_shape(
 
     // Terminal fold step (always present in the multi-fold case): its params
     // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
-    // immediately following Direct step encodes the final packed-digit basis.
+    // immediately following Direct step encodes the terminal witness shape.
     let terminal_scheduled = schedule
         .get_execution_schedule(current_level)
         .expect("scheduled terminal fold");
@@ -166,10 +166,9 @@ fn expected_same_point_batched_shape(
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         extension_opening_reduction: None,
         stage2_sumcheck: terminal_stage2,
-        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-            terminal_next_w_len,
-            terminal_next_params.log_basis,
-        )),
+        final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+            .expect("terminal direct witness shape")
+            .clone(),
     }));
 
     AkitaBatchedProofShape::Fold {

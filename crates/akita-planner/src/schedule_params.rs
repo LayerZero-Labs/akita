@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
+#[cfg(not(feature = "zk"))]
+use akita_types::segment_typed_witness_shape;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
@@ -20,13 +22,10 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, Step,
+    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
-#[cfg(not(feature = "zk"))]
-use akita_types::segment_typed_witness_shape;
 
 use crate::PlannerPolicy;
 
