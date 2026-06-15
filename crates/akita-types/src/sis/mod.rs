@@ -36,7 +36,7 @@ pub use decomposition_digits::{
     decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
     num_digits_s_commit,
 };
-pub use fold_witness_grind::FoldWitnessGrindContract;
+pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use four_square::four_squares;
 pub use norm_bound::{
     committed_fold_collision_l2_sq, fold_witness_beta, fold_witness_linf_cap,

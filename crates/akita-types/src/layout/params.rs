@@ -61,7 +61,6 @@ pub struct LevelParams {
     /// Per-block variable count. Stored explicitly because at recursive
     /// levels `block_len` is not necessarily `2^r_vars`.
     pub r_vars: usize,
-    /// Stage-1 sparse challenge family sampled at this level.
     pub stage1_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
@@ -307,6 +306,20 @@ impl LevelParams {
             witness_linf_cap,
             max_nonce_exclusive,
         })
+    }
+
+    /// Domain-separated preview absorb payload for one fold-level grind search.
+    pub fn fold_grind_probe_order_absorb_buf(&self, num_claims: usize) -> Vec<u8> {
+        let num_claims = u32::try_from(num_claims).unwrap_or(u32::MAX);
+        let mut buf = Vec::with_capacity(48);
+        buf.extend_from_slice(crate::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
+        buf.extend_from_slice(&(self.ring_dimension as u64).to_le_bytes());
+        buf.extend_from_slice(&self.log_basis.to_le_bytes());
+        buf.extend_from_slice(&(self.m_vars as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.r_vars as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.num_blocks as u64).to_le_bytes());
+        buf.extend_from_slice(&num_claims.to_le_bytes());
+        buf
     }
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {

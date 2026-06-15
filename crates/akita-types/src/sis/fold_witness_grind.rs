@@ -4,6 +4,9 @@ use akita_field::AkitaError;
 
 use super::FoldWitnessLinfCapPolicy;
 
+/// Preview absorb label for ZK grind probe permutations (prover-only).
+pub const FOLD_GRIND_PROBE_ORDER_ABSORB: &[u8] = b"ak/a/fgpo";
+
 /// Per-fold-level grind policy: acceptance threshold and nonce cap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldWitnessGrindContract {

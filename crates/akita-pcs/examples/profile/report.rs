@@ -183,6 +183,9 @@ fn fold_grind_nonce_wire_bytes() -> usize {
 /// Prover-side attempts for one fold level under the current sequential
 /// `0..MAX` search (`nonce + 1`).
 fn fold_grind_attempts_from_nonce(nonce: u32) -> u32 {
+    // Under `sequential_min`, probe count equals `nonce + 1`. Under
+    // `transcript_shuffle` this is diagnostic only (true probe count needs
+    // prover tracing).
     nonce.saturating_add(1)
 }
 

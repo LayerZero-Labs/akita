@@ -294,53 +294,44 @@ num_fold_blocks = num_claims · 2^r_vars
 `LevelParams::num_digits_fold(num_claims, field_bits)` are the shared accessors
 used by planner/prover/verifier paths.
 
-### ZK: grind probe order (deferred)
+### ZK: grind probe order
 
 The wire contract fixes only the **accepted** `fold_grind_nonce` (`u32`) and its
 absorb point in `sparse_challenge_absorb_buf`. It does **not** mandate how the
 prover searches for an accepting nonce.
 
-**Current non-ZK prover (`akita-prover::fold_grind`).** The implementation probes
+**Plain presets (`grind_probe_order = sequential_min`).** The prover probes
 `nonce = 0, 1, 2, …` and commits the **minimum** accepting index. This is
 deterministic, easy to reason about for completeness tests, and sufficient for
 soundness: the verifier never treats the nonce as evidence of `‖z‖_inf ≤ t*`.
 
-**Why ZK needs a different search order.** The accepted nonce is public on every
-fold level. Under minimum-nonce sequential search, its distribution is a
-function of the secret witness (witnesses that pass at smaller indices publish
-smaller nonces). That is not a soundness defect, but it is a potential
+**ZK presets (`grind_probe_order = transcript_shuffle`).** The accepted nonce is
+public on every fold level. Minimum-nonce sequential search would let its
+distribution depend on the secret witness (witnesses that pass at smaller indices
+publish smaller nonces). That is not a soundness defect, but it is a potential
 **witness-hiding / side-channel** leak once ZK presets ship with
-`TailBoundWithGrind`. The published value should not always be the minimum
-accepting nonce.
+`TailBoundWithGrind`.
 
-**Planned ZK cut (no wire change).** Before production ZK enables tail-bound
-grind, switch the prover to a **transcript-seeded pseudorandom probe order**
-over `[0, MAX_FOLD_GRIND_ATTEMPTS)` (e.g. Fisher–Yates shuffle keyed by Fiat–Shamir
-bytes absorbed immediately before the grind loop, with level/claim domain
-separation). Properties:
+ZK builds therefore probe a **transcript-seeded uniform permutation** of
+`[0, MAX_FOLD_GRIND_ATTEMPTS)` (Fisher–Yates over the full range, equivalent to
+sampling without replacement). The seed is derived via
+`preview_challenge_bytes_after_absorb` on the grind-entry sponge state with a
+domain-separated payload (`ak/a/fgpo` + level fingerprint); it does **not**
+advance the production transcript. The tag is pinned in
+[`FoldLinfProtocolBinding::grind_probe_order`](../../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs).
+
+Properties:
 
 - **Soundness/completeness unchanged:** any accepting nonce in range remains valid;
   the attempt cap and `t*` threshold are unchanged.
 - **Verifier unchanged:** still replays the single published nonce.
-- **Descriptor:** when the probe-order rule lands, pin it in
-  `FoldLinfProtocolBinding` / instance-descriptor bytes so prover and verifier
-  agree on the grinding model (sequential-min vs transcript-shuffled).
+- **Conditional on accept:** the published nonce is uniform over the accepting
+  subset (not independent of the witness unless acceptance is witness-independent).
 
 **Profile bench note.** CI profile runs collect accepted nonces from the finalized
-proof (`grind_nonce`, `grind_attempts = nonce + 1` under the current sequential
-search). Those metrics describe the **committed** grind difficulty, not prover CPU
-in failed attempts beyond what the winning nonce implies.
-
-**Out of scope for the first plain cut.** Randomized probe order is explicitly
-deferred to the ZK milestone; non-ZK benches and e2e tests may keep sequential
-minimum-nonce search until then.
-
-**Profile measurement under ZK (planned).** Distinguish **wire nonce**
-(verifier-replay index) from **probe count** (prover work). Under `sequential_min`,
-probe count may be inferred as `nonce + 1`. Under `transcript_shuffle`, only
-prover-emitted `grind_probe_count` is valid; wire-nonce aggregates are diagnostic
-only. ZK profile runs must pin mask RNG seeds for comparable regression tracking.
-See execution slice F11 and the observer/tracing sketch in the fold-linf PR thread.
+proof. Under `sequential_min`, `grind_attempts = nonce + 1` approximates probe
+count. Under `transcript_shuffle`, wire nonce is diagnostic only; true probe
+count requires prover-side tracing (`grind_probe_count`, planned).
 
 ### Tail bound (statement)
 
@@ -615,8 +606,8 @@ W4
   F10 e2e tamper / termination / ZK parity tests             (all)
 
 W5 (ZK milestone, after plain cut)
-  F11 transcript-seeded grind probe order in ZK prover paths   [akita-prover]
-      (no wire change; pin probe-order tag in descriptor when landed)
+  F11 transcript-seeded grind probe order in ZK prover paths   [akita-prover]  (done)
+      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic

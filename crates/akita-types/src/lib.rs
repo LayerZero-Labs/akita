@@ -45,6 +45,7 @@ pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
     FoldLinfProtocolBinding, PlanSection, ProtocolFeatureSet, SetupSection,
+    FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,

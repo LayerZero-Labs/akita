@@ -9,6 +9,12 @@ use akita_serialization::{
 };
 use std::io::{Read, Write};
 
+/// Probe `nonce = 0, 1, …` and publish the minimum accepting index (plain presets).
+pub const FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN: u8 = 0;
+
+/// Probe a transcript-seeded uniform permutation of `[0, cap)` (ZK presets).
+pub const FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE: u8 = 1;
+
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
@@ -23,6 +29,8 @@ pub struct FoldLinfProtocolBinding {
     pub grind_nonce_wire_bytes: u8,
     /// Challenge-entropy budget per fold level: `log2(max_grind_attempts)`.
     pub grind_entropy_bits_per_level: u8,
+    /// Prover grind search order (`FOLD_GRIND_PROBE_ORDER_*`).
+    pub grind_probe_order: u8,
 }
 
 impl FoldLinfProtocolBinding {
@@ -34,6 +42,16 @@ impl FoldLinfProtocolBinding {
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
         grind_nonce_wire_bytes: 4,
         grind_entropy_bits_per_level: 12,
+        grind_probe_order: {
+            #[cfg(feature = "zk")]
+            {
+                FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN
+            }
+        },
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
@@ -75,6 +93,8 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.grind_entropy_bits_per_level
             .serialize_with_mode(&mut writer, compress)?;
+        self.grind_probe_order
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -85,6 +105,7 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             + self.max_grind_attempts.serialized_size(compress)
             + self.grind_nonce_wire_bytes.serialized_size(compress)
             + self.grind_entropy_bits_per_level.serialized_size(compress)
+            + self.grind_probe_order.serialized_size(compress)
     }
 }
 
@@ -119,6 +140,12 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
                 &(),
             )?,
             grind_entropy_bits_per_level: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            grind_probe_order: u8::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

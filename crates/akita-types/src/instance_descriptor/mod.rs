@@ -9,7 +9,10 @@ mod fold_linf_binding;
 #[cfg(test)]
 mod tests;
 
-pub use fold_linf_binding::FoldLinfProtocolBinding;
+pub use fold_linf_binding::{
+    FoldLinfProtocolBinding, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
+    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
+};
 
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
