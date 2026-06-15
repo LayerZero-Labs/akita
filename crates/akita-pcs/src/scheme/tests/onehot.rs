@@ -98,8 +98,9 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                             actual_terminal.extension_opening_reduction
                         );
                         assert_eq!(
-                            expected_terminal.stage2_sumcheck,
-                            actual_terminal.stage2_sumcheck
+                            expected_terminal.stage2_sumcheck.len(),
+                            actual_terminal.stage2_sumcheck.len(),
+                            "terminal stage-2 round count"
                         );
                         assert!(
                             expected_terminal

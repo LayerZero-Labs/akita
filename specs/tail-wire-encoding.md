@@ -172,7 +172,7 @@ pub enum TailSegmentModel {
 }
 ```
 
-The wire carries only concatenated segment payloads, with no per-segment header.
+The wire carries only concatenated segment payloads, with no per-segment header beyond a fixed `usize` length prefix on the variable-length Golomb `z` segment (so decoders can use the schedule's `z_payload_bytes` upper bound while reading the exact encoded payload).
 Segment boundaries and emission order are derived by both sides from `LevelParams` + incidence.
 For the final `t`-state tail, derive segment **coordinate counts** from the same public layout inputs as `terminal_witness_segment_layout` (`crates/akita-types/src/proof/terminal_witness.rs:204-229`).
 Let `D = ring_dimension`.

@@ -100,11 +100,15 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for SegmentT
         self.append_wire_segments(&mut writer, compress)
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        self.z_payload.len().saturating_add(
-            (self.layout.e_field_elems + self.layout.t_field_elems + self.layout.r_field_elems)
-                .saturating_mul(field_bytes(F::modulus_bits())),
-        )
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.z_payload
+            .len()
+            .serialized_size(compress)
+            .saturating_add(self.z_payload.len())
+            .saturating_add(
+                (self.layout.e_field_elems + self.layout.t_field_elems + self.layout.r_field_elems)
+                    .saturating_mul(field_bytes(F::modulus_bits())),
+            )
     }
 }
 
@@ -122,7 +126,14 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         if matches!(validate, Validate::Yes) {
             ctx.check()?;
         }
-        let mut z_payload = vec![0u8; ctx.z_payload_bytes];
+        let z_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if z_len > ctx.z_payload_bytes {
+            return Err(SerializationError::InvalidData(format!(
+                "segment-typed z payload length {z_len} exceeds scheduled budget {}",
+                ctx.z_payload_bytes
+            )));
+        }
+        let mut z_payload = vec![0u8; z_len];
         let e_fields;
         let t_fields;
         let r_fields;
@@ -195,14 +206,21 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
         writer: &mut W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        if self.layout.z_first {
+        let write_z = |writer: &mut W| -> Result<(), SerializationError> {
+            self.z_payload
+                .len()
+                .serialize_with_mode(&mut *writer, compress)?;
             writer.write_all(&self.z_payload)?;
+            Ok(())
+        };
+        if self.layout.z_first {
+            write_z(writer)?;
             append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
             append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
             append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
         } else {
             append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
-            writer.write_all(&self.z_payload)?;
+            write_z(writer)?;
             append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
             append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
         }
@@ -452,10 +470,10 @@ pub fn tail_segment_multiplicities_from_layout(
 }
 
 /// Planner byte budget for the Golomb-Rice `z` segment.
+/// Planner byte budget for the Golomb-coded `z` segment.
 ///
-/// Uses the public `sigma`-derived Golomb rate (`~log2(sigma) + 2.05` bits per
-/// coordinate per `specs/tail-wire-encoding.md`), not the legacy packed-digit
-/// plane width (`num_digits_fold * bits_per_elem` per coordinate).
+/// Uses the public `β_inf`-derived Golomb rate (`k + O(1)` bits per coordinate),
+/// not the legacy packed-digit plane width (`num_digits_fold * bits_per_elem`).
 ///
 /// # Errors
 ///
@@ -487,6 +505,7 @@ pub fn segment_typed_witness_upper_bound_bytes(
     raw_elems
         .saturating_mul(field_bytes(field_bits))
         .saturating_add(z_payload_bytes)
+        .saturating_add(8)
 }
 
 /// Exact serialized byte length for a constructed segment-typed witness.
@@ -857,9 +876,9 @@ use akita_serialization::Validate;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::golomb_rice::golomb_rice_decode_vec;
     use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
+    use akita_field::CanonicalField;
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -906,20 +925,47 @@ mod tests {
     }
 
     #[test]
-    fn encode_z_centered_round_trip() {
+    fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
+        use akita_field::CanonicalField;
+        use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+
         let lp = test_lp();
         let field_bits = F::modulus_bits();
+        let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
+        let scheduled_z_bytes =
+            segment_typed_z_payload_bytes(&lp, &layout, 1, 1, field_bits, 5).unwrap();
+        assert!(
+            scheduled_z_bytes > 16,
+            "test expects scheduled z budget to exceed a tight payload"
+        );
         let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1, 1, field_bits).unwrap();
         let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
-        let payload =
+        let z_payload =
             encode_z_segment_from_centered(&centered, 1, lp.num_digits_commit, rice_k, zigzag_w_z)
                 .unwrap();
-        let decoded =
-            golomb_rice_decode_vec(&payload, centered.len() * 8, rice_k, zigzag_w_z).unwrap();
-        let expected: Vec<i64> = centered
-            .iter()
-            .flat_map(|row| row.iter().map(|&c| i64::from(c)))
-            .collect();
-        assert_eq!(decoded, expected);
+        assert!(z_payload.len() < scheduled_z_bytes);
+        let witness = SegmentTypedWitness {
+            layout,
+            z_payload,
+            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+        };
+        let scheduled_shape = SegmentTypedWitnessShape {
+            layout,
+            z_payload_bytes: scheduled_z_bytes,
+        };
+        let mut bytes = Vec::new();
+        witness
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .expect("serialize segment witness");
+        let decoded = SegmentTypedWitness::<F>::deserialize_with_mode(
+            &bytes[..],
+            Compress::No,
+            Validate::Yes,
+            &scheduled_shape,
+        )
+        .expect("deserialize with scheduled z budget");
+        assert_eq!(decoded, witness);
     }
 }

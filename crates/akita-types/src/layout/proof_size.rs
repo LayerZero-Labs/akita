@@ -46,6 +46,7 @@ pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> u
             raw_elems
                 .saturating_mul(field_bytes(field_bits))
                 .saturating_add(segment_shape.z_payload_bytes)
+                .saturating_add(8)
         }
     }
 }

@@ -169,7 +169,8 @@ impl CleartextWitnessShape {
     /// Whether `realized` is admitted by the scheduled witness shape.
     ///
     /// Segment-typed tails may serialize the Golomb `z` segment at its exact
-    /// encoded length while the schedule carries the public upper bound.
+    /// encoded length (prefixed on the wire) while the schedule carries the
+    /// public upper bound.
     #[must_use]
     pub fn admits_realized(&self, realized: &Self) -> bool {
         match (self, realized) {
