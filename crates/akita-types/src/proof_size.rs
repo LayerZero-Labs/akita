@@ -153,7 +153,7 @@ mod tests {
 
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
-    use akita_field::{FieldCore, Prime128OffsetA7F7};
+    use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     #[cfg(not(feature = "zk"))]
@@ -273,7 +273,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,

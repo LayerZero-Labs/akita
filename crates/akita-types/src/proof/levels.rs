@@ -1193,7 +1193,9 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaBatchedProof<F, L> {
+impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    AkitaBatchedProof<F, L>
+{
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         self.serialized_size(Compress::No)

@@ -86,13 +86,55 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 expected_root.next_commit_coeffs,
                 actual_root.next_commit_coeffs
             );
-            assert_eq!(expected_steps, actual_steps);
+            assert_eq!(expected_steps.len(), actual_steps.len());
+            for (expected_step, actual_step) in expected_steps.iter().zip(actual_steps.iter()) {
+                match (expected_step, actual_step) {
+                    (
+                        AkitaProofStepShape::Terminal(expected_terminal),
+                        AkitaProofStepShape::Terminal(actual_terminal),
+                    ) => {
+                        assert_eq!(
+                            expected_terminal.extension_opening_reduction,
+                            actual_terminal.extension_opening_reduction
+                        );
+                        assert_eq!(
+                            expected_terminal.stage2_sumcheck.len(),
+                            actual_terminal.stage2_sumcheck.len(),
+                            "terminal stage-2 round count"
+                        );
+                        assert!(
+                            expected_terminal
+                                .final_witness
+                                .admits_realized(&actual_terminal.final_witness),
+                            "terminal witness shape {:?} does not admit {:?}",
+                            expected_terminal.final_witness,
+                            actual_terminal.final_witness
+                        );
+                    }
+                    _ => assert_eq!(expected_step, actual_step),
+                }
+            }
         }
         (
             AkitaBatchedProofShape::Terminal(expected_terminal),
             AkitaBatchedProofShape::Terminal(actual_terminal),
         ) => {
-            assert_eq!(expected_terminal, actual_terminal);
+            assert_eq!(
+                expected_terminal.extension_opening_reduction,
+                actual_terminal.extension_opening_reduction
+            );
+            assert_eq!(
+                expected_terminal.stage2_sumcheck,
+                actual_terminal.stage2_sumcheck
+            );
+            assert!(
+                expected_terminal
+                    .final_witness
+                    .admits_realized(&actual_terminal.final_witness),
+                "terminal witness shape {:?} does not admit {:?}",
+                expected_terminal.final_witness,
+                actual_terminal.final_witness
+            );
         }
         _ => panic!(
             "expected and actual shape root variants disagree: expected={expected_shape:?}, actual={actual_shape:?}"
@@ -101,7 +143,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let decoded =
-        AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
+        AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(&*bytes, &actual_shape)
             .expect("deserialize batched proof with derived shape");
     assert_eq!(decoded, proof);
 

@@ -15,14 +15,14 @@ use crate::protocol::ring_switch::{
 use crate::stages::stage1::{
     derive_stage1_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
 };
-use crate::stages::stage2::{AkitaStage2Verifier, Stage2WitnessOracle};
+use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    PseudoMersenneField, RandomSampling,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
 #[cfg(feature = "zk")]
 use akita_r1cs::{
@@ -529,6 +529,8 @@ fn verify_stage2<F, E, T, const D: usize>(
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
+    lp: &LevelParams,
+    num_commitment_groups: usize,
     #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
@@ -539,7 +541,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -547,10 +549,12 @@ where
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => Stage2WitnessOracle::Cleartext {
-            witness: &proof.final_witness,
+        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E, D>(
+            &proof.final_witness,
             physical_w_len,
-        },
+            lp,
+            num_commitment_groups,
+        )?,
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
             #[cfg(feature = "zk")]
@@ -643,7 +647,7 @@ fn verify_fold<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -827,6 +831,11 @@ where
         stage1_replay,
         &rs,
         relation_claim,
+        prepared.lp,
+        relation_instance
+            .opening_batch()
+            .num_polys_per_commitment_group()
+            .len(),
         #[cfg(feature = "zk")]
         relation_claim_mask,
         setup_claim,

@@ -32,6 +32,30 @@ pub fn ring_product_infinity_norm_bound(
         .min(lhs_l1_norm.saturating_mul(rhs_infinity_norm))
 }
 
+/// Smallest integer `s` with `s^2 >= v`.
+#[inline]
+#[must_use]
+pub fn isqrt_ceil(v: u128) -> u128 {
+    if v == 0 {
+        return 0;
+    }
+    let mut lo = 1u128;
+    let mut hi = v;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if mid.saturating_mul(mid) <= v {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if lo.saturating_mul(lo) < v {
+        lo.saturating_add(1)
+    } else {
+        lo
+    }
+}
+
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
 /// already accounting for the fold-challenge shape (flat vs tensor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,34 +548,6 @@ pub fn fold_witness_linf_cap(
             Ok(beta.min(isqrt_ceil(t_sq)))
         }
     }
-}
-
-/// Integer ceiling `⌈√x⌉` for `x > 0` without floating point.
-#[inline]
-pub fn isqrt_ceil(x: u128) -> u128 {
-    if x <= 1 {
-        return 1;
-    }
-    let root = integer_sqrt(x);
-    if root.saturating_mul(root) < x {
-        root.saturating_add(1)
-    } else {
-        root
-    }
-}
-
-#[inline]
-fn integer_sqrt(n: u128) -> u128 {
-    if n < 2 {
-        return n;
-    }
-    let mut x0 = n / 2;
-    let mut x1 = (x0 + n / x0) / 2;
-    while x1 < x0 {
-        x0 = x1;
-        x1 = (x0 + n / x0) / 2;
-    }
-    x0
 }
 
 // --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------

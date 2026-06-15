@@ -20,11 +20,13 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+use akita_types::LevelParams;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
+    root_extension_opening_partials, terminal_direct_witness_shape_for_key,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    MRowLayout, Schedule, Step,
 };
 
 use crate::find_schedule;
@@ -246,8 +248,11 @@ pub fn schedule_from_entry(
     let mut total = 0usize;
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
+    #[cfg(feature = "zk")]
     let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
+    #[cfg(not(feature = "zk"))]
+    let mut last_fold_lp: Option<LevelParams> = None;
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
@@ -350,6 +355,10 @@ pub fn schedule_from_entry(
                 total = total.checked_add(level_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
+                #[cfg(not(feature = "zk"))]
+                {
+                    last_fold_lp = Some(lp.clone());
+                }
                 steps.push(Step::Fold(FoldStep {
                     params: lp,
                     current_w_len,
@@ -358,10 +367,13 @@ pub fn schedule_from_entry(
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
-                current_log_basis = match next {
-                    GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(_) => level.log_basis,
-                };
+                #[cfg(feature = "zk")]
+                {
+                    current_log_basis = match next {
+                        GeneratedStep::Fold(next_level) => next_level.log_basis,
+                        GeneratedStep::Direct(_) => level.log_basis,
+                    };
+                }
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
@@ -399,11 +411,31 @@ pub fn schedule_from_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    (
-                        CleartextWitnessShape::PackedDigits((len, current_log_basis)),
+                    let terminal_fold_level = fold_level.saturating_sub(1);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    #[cfg(feature = "zk")]
+                    let terminal_lp_stub = LevelParams::log_basis_stub(current_log_basis);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_log_basis = terminal_lp.log_basis;
+                    #[cfg(feature = "zk")]
+                    let terminal_log_basis = current_log_basis;
+                    let witness_shape = terminal_direct_witness_shape_for_key(
+                        #[cfg(not(feature = "zk"))]
+                        terminal_lp,
+                        #[cfg(feature = "zk")]
+                        &terminal_lp_stub,
+                        field_bits,
+                        key,
+                        terminal_fold_level,
                         len,
-                        None,
-                    )
+                        terminal_log_basis,
+                    )?;
+                    (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
                 total = total.checked_add(direct_bytes).ok_or_else(|| {

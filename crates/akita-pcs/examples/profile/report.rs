@@ -1,14 +1,286 @@
-use akita_field::FieldCore;
+use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, LevelParams,
-    Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
+    layout::proof_size::field_bytes,
+    schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
+    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
+    LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
+
+const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+/// Structured tail witness report for profile bench / CI (`scripts/profile_bench_report.py`).
+pub(crate) fn emit_proof_tail_report<FF, L>(
+    label: &str,
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+    field_bits: u32,
+) where
+    FF: FieldCore + CanonicalField + AkitaSerialize,
+    L: FieldCore,
+{
+    if proof.is_root_direct() {
+        tracing::info!(
+            label,
+            tail_bytes = 0u32,
+            final_w_encoding = "none",
+            final_w_policy = "root_direct",
+            "proof tail summary"
+        );
+        eprintln!("[{label}]   final_w: none (root-direct zero-fold; no cleartext tail witness)");
+        return;
+    }
+
+    let final_w = proof.final_witness();
+    let tail_bytes = final_w.serialized_size(Compress::No);
+    let num_elems = final_w.num_elems();
+
+    if let Some(packed) = final_w.as_packed_digits() {
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_encoding = "packed_digits",
+            final_w_policy = "zk_fallback",
+            final_w_bits_per_elem = packed.bits_per_elem,
+            "proof tail summary"
+        );
+        eprintln!(
+            "[{label}]   final_w: encoding=packed_digits (zk fallback), total={tail_bytes} bytes, \
+             elems={num_elems}, bits/elem={}",
+            packed.bits_per_elem,
+        );
+        return;
+    }
+
+    if let Some(segment) = final_w.as_segment_typed() {
+        let field_sz = field_bytes(FF::modulus_bits());
+        let ring_dim = segment.layout.ring_dimension;
+        let z_golomb_bytes = segment.z_payload.len();
+        let z_field_elems = segment.layout.z_coords;
+        let z_ring_elems = z_field_elems / ring_dim.max(1);
+        let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
+        let e_field_elems = segment.e_fields.coeff_len();
+        let t_field_elems = segment.t_fields.coeff_len();
+        let r_field_elems = segment.r_fields.coeff_len();
+        let e_ring_elems = e_field_elems / ring_dim.max(1);
+        let t_ring_elems = t_field_elems / ring_dim.max(1);
+        let r_ring_elems = r_field_elems / ring_dim.max(1);
+        let e_bytes = e_field_elems.saturating_mul(field_sz);
+        let t_bytes = t_field_elems.saturating_mul(field_sz);
+        let r_bytes = r_field_elems.saturating_mul(field_sz);
+        let z_budget_bytes = schedule_terminal_direct_witness_shape(schedule)
+            .ok()
+            .and_then(|shape| match shape {
+                CleartextWitnessShape::SegmentTyped(scheduled) => Some(scheduled.z_payload_bytes),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
+        let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
+        let z_beta_inf = z_stats.as_ref().map(|s| s.beta_inf).unwrap_or(0);
+        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_beta).unwrap_or(0);
+        let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
+        let z_bits_per_coord_golomb = z_stats
+            .as_ref()
+            .map(|s| s.bits_per_coord_k_beta)
+            .unwrap_or(0.0);
+        let z_bits_per_coord_packed = z_stats
+            .as_ref()
+            .map(|s| s.bits_per_coord_packed_digits)
+            .unwrap_or(0.0);
+        let z_packed_hypothetical_bytes = z_stats
+            .as_ref()
+            .map(|s| s.total_bits_packed_digits.div_ceil(8))
+            .unwrap_or(0);
+        let z_golomb_savings_bytes = z_packed_hypothetical_bytes.saturating_sub(z_golomb_bytes);
+
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_encoding = "segment_typed",
+            final_w_policy = "non_zk_default",
+            tail_log_basis = segment.layout.log_basis,
+            tail_z_first = segment.layout.z_first as u8,
+            tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
+            tail_z_golomb_bytes = z_golomb_bytes,
+            tail_z_bytes = z_wire_bytes,
+            tail_z_field_elems = z_field_elems,
+            tail_z_ring_elems = z_ring_elems,
+            tail_z_budget_bytes = z_budget_bytes,
+            tail_z_slack_bytes = z_slack_bytes,
+            tail_e_field_elems = e_field_elems,
+            tail_e_ring_elems = e_ring_elems,
+            tail_t_field_elems = t_field_elems,
+            tail_t_ring_elems = t_ring_elems,
+            tail_r_field_elems = r_field_elems,
+            tail_r_ring_elems = r_ring_elems,
+            tail_e_bytes = e_bytes,
+            tail_t_bytes = t_bytes,
+            tail_r_bytes = r_bytes,
+            z_beta_inf,
+            z_rice_k,
+            z_coords = z_stats_coords,
+            z_bits_per_coord_golomb,
+            z_bits_per_coord_packed,
+            z_packed_hypothetical_bytes,
+            z_golomb_savings_bytes,
+            "proof tail summary"
+        );
+
+        let golomb_line = z_stats
+            .map(|stats| {
+                format!(
+                    " Golomb z: beta_inf={} k_beta={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@k_beta vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
+                     (hypothetical packed z={} B, savings={} B); \
+                     planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
+                     dist max={} median={} p90={} p99={}",
+                    stats.beta_inf,
+                    stats.rice_k_beta,
+                    stats.rice_k_empirical,
+                    stats.coord_count,
+                    stats.bits_per_coord_k_beta,
+                    stats.bits_per_coord_k_empirical,
+                    stats.bits_per_coord_packed_digits,
+                    stats.total_bits_packed_digits.div_ceil(8),
+                    stats
+                        .total_bits_packed_digits
+                        .div_ceil(8)
+                        .saturating_sub(z_golomb_bytes),
+                    stats.observed_max_abs,
+                    stats.median_abs,
+                    stats.p90_abs,
+                    stats.p99_abs,
+                )
+            })
+            .unwrap_or_default();
+
+        eprintln!(
+            "[{label}]   final_w: encoding=segment_typed (non-zk default), total={tail_bytes} bytes, \
+             logical_elems={num_elems}, log_basis={}, z_first={}{}",
+            segment.layout.log_basis,
+            segment.layout.z_first,
+            golomb_line,
+        );
+        eprintln!(
+            "[{label}]     z: {z_wire_bytes} B (len_prefix={TAIL_Z_LENGTH_PREFIX_BYTES} + golomb={z_golomb_bytes}), \
+             field_coeffs={z_field_elems}, ring_elems={z_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     e: {e_bytes} B, field_coeffs={e_field_elems}, ring_elems={e_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     r: {r_bytes} B, field_coeffs={r_field_elems}, ring_elems={r_ring_elems}",
+        );
+        if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
+            emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
+        }
+        return;
+    }
+
+    tracing::info!(
+        label,
+        tail_bytes,
+        final_w_num_elems = num_elems,
+        final_w_encoding = "field_elements",
+        final_w_policy = "root_direct_witness",
+        "proof tail summary"
+    );
+    eprintln!(
+        "[{label}]   final_w: encoding=field_elements (root-direct witness), \
+         total={tail_bytes} bytes, field_elems={num_elems}",
+    );
+}
+
+fn segment_typed_z_fold_stats<FF: FieldCore>(
+    witness: &akita_types::SegmentTypedWitness<FF>,
+    schedule: &Schedule,
+    field_bits: u32,
+) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return Err(akita_field::AkitaError::InvalidSetup(
+            "tail segment multiplicities".to_string(),
+        ));
+    };
+    z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
+}
+
+fn emit_z_golomb_k_sweep<FF: FieldCore>(
+    label: &str,
+    witness: &akita_types::SegmentTypedWitness<FF>,
+    schedule: &Schedule,
+    field_bits: u32,
+    actual_z_payload_bytes: usize,
+) {
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let Ok(terminal_scheduled) = schedule.get_execution_schedule(terminal_fold_level) else {
+        return;
+    };
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return;
+    };
+    let Ok(z_values) = z_fold_decoded_from_segment(witness, lp, num_t_vectors) else {
+        return;
+    };
+    let Ok(stats) = z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
+    else {
+        return;
+    };
+    let k_hi = stats
+        .rice_k_beta
+        .saturating_add(4)
+        .max(stats.rice_k_empirical);
+    let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
+        return;
+    };
+    let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
+    eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
+    for &(k, bytes) in &sweep {
+        let marker = if k == stats.rice_k_beta {
+            "  <-- public k_beta (sound)"
+        } else if k == stats.rice_k_empirical {
+            "  <-- empirical min on this witness"
+        } else if k == k_observed {
+            "  <-- k from observed max only (NOT sound)"
+        } else {
+            ""
+        };
+        let delta = bytes as i64 - actual_z_payload_bytes as i64;
+        eprintln!(
+            "[{label}]     k={k:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
+            (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
+        );
+    }
+    if let Some((k, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
+        let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
+        eprintln!(
+            "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
+             (vs actual {actual_z_payload_bytes} B at k_beta={}, delta {save_vs_beta} B; \
+             sound tightening needs public k <= k_beta)",
+            stats.rice_k_beta,
+        );
+    }
 }
 
 /// Surface the prepared-setup memory footprint: the plain shared setup vector
@@ -157,7 +429,7 @@ fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
 /// stage-3 proof and contribute zero.
 pub(crate) fn observed_stage3_setup_product_bytes<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_bytes = proof.root.as_fold().map_or(0, |fold| {
@@ -269,7 +541,7 @@ fn print_akita_level_breakdown<FF, L, const D: usize>(
     obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
@@ -389,8 +661,8 @@ trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
     fn fold_grind_nonce_value(&self) -> u32;
 }
 
-impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
-    for TerminalLevelProof<FF, L>
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for TerminalLevelProof<FF, L>
 {
     fn extension_opening_reduction(
         &self,
@@ -411,8 +683,8 @@ impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProo
     }
 }
 
-impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
-    for AkitaLevelProof<FF, L>
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for AkitaLevelProof<FF, L>
 {
     fn extension_opening_reduction(
         &self,
@@ -444,7 +716,7 @@ fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
     obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
     P: TerminalProofView<FF, L>,
 {
@@ -527,7 +799,7 @@ fn print_batched_root_breakdown<FF, L, const D: usize>(
     obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
@@ -670,7 +942,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     proof: &AkitaBatchedProof<FF, L>,
     grind_observations: &[FoldGrindObservation],
 ) where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
@@ -758,7 +1030,6 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         }
     }
     if !proof.is_root_direct() {
-        emit_observed_tail_summary(label, proof.final_witness());
         assert_eq!(
             obs_idx,
             grind_observations.len(),
@@ -775,39 +1046,6 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         );
     }
     emit_fold_grind_summary(label, grind_observations);
-}
-
-fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
-    label: &str,
-    final_w: &CleartextWitnessProof<FF>,
-) {
-    let tail_bytes = final_w.serialized_size(Compress::No);
-    let num_elems = final_w.num_elems();
-    if let Some(packed) = final_w.as_packed_digits() {
-        tracing::info!(
-            label,
-            tail_bytes,
-            final_w_num_elems = num_elems,
-            final_w_bits_per_elem = packed.bits_per_elem,
-            final_w_encoding = "packed_digits",
-            "proof tail summary"
-        );
-        eprintln!(
-            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem={}",
-            packed.bits_per_elem,
-        );
-    } else {
-        tracing::info!(
-            label,
-            tail_bytes,
-            final_w_num_elems = num_elems,
-            final_w_encoding = "field_elements",
-            "proof tail summary"
-        );
-        eprintln!(
-            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem=field"
-        );
-    }
 }
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {

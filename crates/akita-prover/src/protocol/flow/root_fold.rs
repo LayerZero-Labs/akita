@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(not(feature = "zk"))]
+use akita_types::CleartextWitnessShape;
 
 fn append_shared_opening_point_to_transcript<F, E, T>(
     shared_opening_point: &[E],
@@ -429,6 +431,8 @@ where
         prepared_fold,
         setup_contribution_mode,
         false,
+        #[cfg(not(feature = "zk"))]
+        None,
     )?
     .get_intermediate()
 }
@@ -458,6 +462,7 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
     scheduled: &ExecutionSchedule,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -528,6 +533,8 @@ where
         prepared_fold,
         setup_contribution_mode,
         true,
+        #[cfg(not(feature = "zk"))]
+        Some(terminal_direct_witness_shape),
     )?
     .get_terminal()?;
 

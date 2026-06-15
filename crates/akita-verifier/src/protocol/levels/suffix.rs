@@ -47,7 +47,7 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -214,7 +214,7 @@ fn verify_suffix<'a, F, L, T>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -360,7 +360,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -402,7 +402,10 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            if final_witness.shape() != terminal_direct.witness_shape {
+            if !terminal_direct
+                .witness_shape
+                .admits_realized(&final_witness.shape())
+            {
                 return Err(AkitaError::InvalidProof);
             }
             verify_root::<F, E, T, D>(
@@ -441,13 +444,13 @@ where
                     AkitaLevelProof::Intermediate { .. } => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;
-            if terminal_step
-                .stage2()
-                .final_witness()
-                .ok_or(AkitaError::InvalidProof)?
-                .shape()
-                != terminal_direct.witness_shape
-            {
+            if !terminal_direct.witness_shape.admits_realized(
+                &terminal_step
+                    .stage2()
+                    .final_witness()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .shape(),
+            ) {
                 return Err(AkitaError::InvalidProof);
             }
 

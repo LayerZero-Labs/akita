@@ -31,7 +31,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {

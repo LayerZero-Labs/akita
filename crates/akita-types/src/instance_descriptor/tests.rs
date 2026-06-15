@@ -67,7 +67,6 @@ fn rejects_removed_q16_sis_family_tag() {
 }
 
 #[cfg(not(feature = "zk"))]
-#[cfg(not(feature = "zk"))]
 #[test]
 fn fold_linf_descriptor_canonical_digest_pinned() {
     let bytes = sample_descriptor()

@@ -115,17 +115,18 @@ fn expected_same_point_batched_shape(
     // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
     // shape with no recursive-suffix steps.
     if num_fold_levels == 1 {
-        // The terminal fold's `next` parameters live at `schedule.steps[1]`,
-        // which is a `Direct` step encoding the final packed-digit basis.
-        let terminal_next_params =
-            scheduled_next_level_params(&schedule, 1).expect("terminal next params");
+        let mut stage2_sumcheck = vec![3; root_rounds];
+        let fold_basis = 1usize << root_step.params.log_basis;
+        let ring_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if root_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
+            stage2_sumcheck[0] = 2;
+        }
         let mut shape = AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
-            stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-                root_step.next_w_len,
-                terminal_next_params.log_basis,
-            )),
+            stage2_sumcheck,
+            final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+                .expect("1-fold schedule should end in a direct step")
+                .clone(),
         });
         sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
         return shape;
@@ -174,7 +175,7 @@ fn expected_same_point_batched_shape(
 
     // Terminal fold step (always present in the multi-fold case): its params
     // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
-    // immediately following Direct step encodes the final packed-digit basis.
+    // immediately following Direct step encodes the terminal witness shape.
     let terminal_scheduled = schedule
         .get_execution_schedule(current_level)
         .expect("scheduled terminal fold");
@@ -182,7 +183,6 @@ fn expected_same_point_batched_shape(
         .validate_current_w_len(current_w_len)
         .expect("scheduled terminal fold current witness length");
     let terminal_params = terminal_scheduled.params;
-    let terminal_next_params = terminal_scheduled.next_params;
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
@@ -198,14 +198,18 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_params.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
-    let terminal_stage2 = vec![3; terminal_rounds];
+    let mut terminal_stage2 = vec![3; terminal_rounds];
+    let fold_basis = 1usize << terminal_params.log_basis;
+    let ring_bits = terminal_params.ring_dimension.trailing_zeros() as usize;
+    if terminal_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
+        terminal_stage2[0] = 2;
+    }
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         extension_opening_reduction: None,
         stage2_sumcheck: terminal_stage2,
-        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-            terminal_next_w_len,
-            terminal_next_params.log_basis,
-        )),
+        final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+            .expect("terminal direct witness shape")
+            .clone(),
     }));
 
     let mut shape = AkitaBatchedProofShape::Fold {
