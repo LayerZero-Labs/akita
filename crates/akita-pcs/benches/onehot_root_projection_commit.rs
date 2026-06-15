@@ -6,13 +6,13 @@ use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling,
+    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{ClaimIncidenceSummary, RingSubfieldEncoding};
+use akita_types::{FpExtEncoding, OpeningBatch};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -97,10 +97,9 @@ where
         + 'static,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: FrobeniusExtField<F> + RingSubfieldEncoding<F> + AkitaSerialize,
-    Cfg::ChallengeField: FrobeniusExtField<F>
-        + RingSubfieldEncoding<F>
-        + ExtField<Cfg::ClaimField>
+    Cfg::ExtField: FrobeniusExtField<F> + FpExtEncoding<F> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<F>
+        + FpExtEncoding<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,
@@ -115,16 +114,16 @@ where
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
     let transformed_polys = onehot_polys
         .iter()
-        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1).unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let incidence =
-        ClaimIncidenceSummary::same_point(num_vars, num_polys).expect("benchmark incidence");
-    let params =
-        Cfg::get_params_for_batched_commitment(&incidence).expect("benchmark commitment params");
+    let opening_batch =
+        OpeningBatch::same_point(num_vars, num_polys).expect("benchmark opening_batch");
+    let params = Cfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("benchmark commitment params");
 
     let mut group = c.benchmark_group(format!(
         "onehot_root_projection_commit/{label}/nv{num_vars}_np{num_polys}"
@@ -139,7 +138,7 @@ where
                 let start = Instant::now();
                 let projected = polys
                     .iter()
-                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
                     .collect::<Result<Vec<_>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();

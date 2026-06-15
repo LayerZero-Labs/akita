@@ -107,14 +107,14 @@ fn onehot_lagrange_opening(indices: &[Option<usize>], onehot_k: usize, point: &[
 /// the batch-capacity axis can reuse the same builder).
 fn run_dense_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
 
@@ -127,7 +127,6 @@ where
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
-        1,
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -182,13 +181,13 @@ where
 /// practice we set `K = D` so `(total_ring * K) == 2^poly_nv`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     // The committed poly's one-hot chunk size must match the config's required
@@ -219,7 +218,6 @@ where
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
-        1,
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -279,14 +277,14 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
@@ -308,7 +306,6 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
-        1,
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -371,7 +368,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
@@ -410,7 +407,6 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
-        1,
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();

@@ -45,12 +45,11 @@ pub(crate) struct SetupContributionShape {
     pub n_a: usize,
     pub n_d: usize,
     pub n_b: usize,
-    pub num_polys_per_point: Vec<usize>,
+    pub num_polys_per_commitment_group: Vec<usize>,
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
-    pub claim_to_point_poly: Vec<(usize, usize)>,
-    pub claim_to_point: Vec<usize>,
+    pub claim_to_commitment_group_poly: Vec<(usize, usize)>,
     /// Tiered split factor `f` (`1` = single-tier).
     pub tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
@@ -70,12 +69,11 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 1,
             n_b: 2,
-            num_polys_per_point: vec![1],
+            num_polys_per_commitment_group: vec![1],
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_to_point_poly: vec![(0, 0)],
-            claim_to_point: vec![0],
+            claim_to_commitment_group_poly: vec![(0, 0)],
             tier_split: 1,
             n_f: 0,
         }
@@ -105,12 +103,11 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 2,
             n_b: 2,
-            num_polys_per_point: vec![2, 1],
-            num_public_rows: 2,
+            num_polys_per_commitment_group: vec![3],
+            num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
-            claim_to_point: vec![1, 0, 1],
+            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             tier_split: 1,
             n_f: 0,
         }
@@ -133,8 +130,7 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
-        shape.claim_to_point_poly = vec![(0, 0), (0, 0), (0, 0), (0, 0)];
-        shape.claim_to_point = vec![0, 0, 0, 0];
+        shape.claim_to_commitment_group_poly = vec![(0, 0), (0, 0), (0, 0), (0, 0)];
         shape
     }
 
@@ -157,8 +153,8 @@ impl SetupContributionShape {
 
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
-        let num_points = shape.num_polys_per_point.len();
-        let num_t_vectors = shape.num_polys_per_point.iter().sum();
+        let num_points = shape.num_polys_per_commitment_group.len();
+        let num_t_vectors = shape.num_polys_per_commitment_group.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
@@ -178,7 +174,13 @@ impl SetupContributionFixture {
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
-        let n_cols_t = shape.num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
+        let n_cols_t = shape
+            .num_polys_per_commitment_group
+            .iter()
+            .copied()
+            .max()
+            .unwrap()
+            * cols_per_poly_t;
         // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
         // commits `tier_split·n_b·depth_open` decomposed digits.
         let f_stride = shape.tier_split * shape.n_b * shape.depth_open;
@@ -235,8 +237,7 @@ impl SetupContributionFixture {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: shape.num_polys_per_point.iter().sum(),
-                max_num_points: num_points,
+                max_num_batched_polys: shape.num_polys_per_commitment_group.iter().sum(),
                 gen_ring_dim: TEST_RING_DIM,
                 max_setup_len,
                 #[cfg(feature = "zk")]
@@ -283,13 +284,10 @@ impl SetupContributionFixture {
             n_b: shape.n_b,
             tier_split: shape.tier_split,
             n_f: shape.n_f,
-            num_points,
             rows,
-            claim_to_commitment_group_poly: shape.claim_to_point_poly.clone(),
-            num_polys_per_commitment_group: shape.num_polys_per_point.clone(),
-            num_public_rows: shape.num_public_rows,
+            claim_to_commitment_group_poly: shape.claim_to_commitment_group_poly.clone(),
+            num_polys_per_commitment_group: shape.num_polys_per_commitment_group.clone(),
             gamma: vec![TestField::one(); shape.num_claims],
-            claim_to_point: shape.claim_to_point.clone(),
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,

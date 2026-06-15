@@ -37,8 +37,7 @@ REQUIRED_RUN_METRICS = (
     "crt_limb_bits",
     "balanced_digit_safe_width",
     "raw_i8_safe_width",
-    "claim_ext_degree",
-    "challenge_ext_degree",
+    "ext_degree",
     "akita_levels",
 )
 REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
@@ -388,9 +387,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
-        elif "profile field roles" in line and kvs.get("label") == mode:
-            summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
-            summary["challenge_ext_degree"] = int(kvs["challenge_ext_degree"])
+        elif "profile extension field" in line and kvs.get("label") == mode:
+            summary["ext_degree"] = int(kvs["ext_degree"])
         elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
             summary["extension_root_direct_fallback"] = True
         elif "planned fold level" in line and kvs.get("label") == mode:
@@ -536,8 +534,7 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "crt_limb_bits": "CRT profile",
         "balanced_digit_safe_width": "CRT capacity",
         "raw_i8_safe_width": "CRT capacity",
-        "claim_ext_degree": "field roles",
-        "challenge_ext_degree": "field roles",
+        "ext_degree": "field role",
         "akita_levels": "proof levels",
         "planned_levels": "planned levels",
         "proof_levels": "proof levels",
@@ -585,6 +582,7 @@ SUMMARY_CSV_COLUMNS = (
     "crt_limb_bits",
     "balanced_digit_safe_width",
     "raw_i8_safe_width",
+    "ext_degree",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -1337,15 +1335,12 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("akita_levels") is not None:
             print(f"- Akita levels: `{current['akita_levels']}`")
-        if current.get("claim_ext_degree") is not None or current.get("challenge_ext_degree") is not None:
-            print(
-                f"- Field roles: `claim_ext_degree={current.get('claim_ext_degree', 'n/a')}`, "
-                f"`challenge_ext_degree={current.get('challenge_ext_degree', 'n/a')}`"
-            )
+        if current.get("ext_degree") is not None:
+            print(f"- Field role: `ext_degree={current['ext_degree']}`")
         if current.get("extension_root_direct_fallback"):
             print(
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
-                "do not apply until the Frobenius/multipoint optimization is wired."
+                "do not apply until the Frobenius optimization is wired."
             )
         if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
             print(

@@ -1,8 +1,13 @@
+//! Akita's only degree-4 extension field (cyclotomic ring-subfield basis).
+//!
+//! Coefficients are stored in the `[1, e1, e2, e3]` basis used by trace reduction
+//! and production fp32 presets.
+
 use super::*;
 
 /// Multiply ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
 #[inline]
-pub(crate) fn ring_subfield_fp_ext4_mul_coeffs<F, A>(a: [A; 4], b: [A; 4]) -> [A; 4]
+pub(crate) fn fp_ext4_mul_coeffs<F, A>(a: [A; 4], b: [A; 4]) -> [A; 4]
 where
     F: FieldCore,
     A: ExtensionCoeff<F>,
@@ -20,7 +25,7 @@ where
 
 /// Square ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
 #[inline]
-pub(crate) fn ring_subfield_fp_ext4_square_coeffs<F, A>(a: [A; 4]) -> [A; 4]
+pub(crate) fn fp_ext4_square_coeffs<F, A>(a: [A; 4]) -> [A; 4]
 where
     F: FieldCore,
     A: ExtensionCoeff<F>,
@@ -82,26 +87,26 @@ fn fp32_modulus_bits<const P: u32>() -> u32 {
 /// The default is the generic coefficient formula. Concrete base fields can
 /// override this when their representation supports fusing product sums before
 /// reduction.
-pub trait RingSubfieldFpExt4MulBackend: FieldCore {
+pub trait FpExt4MulBackend: FieldCore {
     /// Multiply two ring-subfield coefficient arrays in `[1, e1, e2, e3]` basis.
     #[inline(always)]
-    fn ring_subfield_fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
-        ring_subfield_fp_ext4_mul_coeffs::<Self, Self>(a, b)
+    fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        fp_ext4_mul_coeffs::<Self, Self>(a, b)
     }
 
     /// Square one ring-subfield coefficient array in `[1, e1, e2, e3]` basis.
     #[inline(always)]
-    fn ring_subfield_fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
-        ring_subfield_fp_ext4_square_coeffs::<Self, Self>(a)
+    fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
+        fp_ext4_square_coeffs::<Self, Self>(a)
     }
 }
 
-impl<const P: u64> RingSubfieldFpExt4MulBackend for Fp64<P> {}
-impl<const P: u128> RingSubfieldFpExt4MulBackend for Fp128<P> {}
+impl<const P: u64> FpExt4MulBackend for Fp64<P> {}
+impl<const P: u128> FpExt4MulBackend for Fp128<P> {}
 
-impl<const P: u32> RingSubfieldFpExt4MulBackend for Fp32<P> {
+impl<const P: u32> FpExt4MulBackend for Fp32<P> {
     #[inline(always)]
-    fn ring_subfield_fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+    fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
         let [b0, b1, b2, b3] = b;
         let modulus_square = fp32_modulus_square::<P>();
@@ -140,9 +145,9 @@ impl<const P: u32> RingSubfieldFpExt4MulBackend for Fp32<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
+    fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
         if fp32_modulus_bits::<P>() != 32 {
-            return Self::ring_subfield_fp_ext4_mul(a, a);
+            return Self::fp_ext4_mul(a, a);
         }
 
         let [a0, a1, a2, a3] = a;
@@ -167,16 +172,16 @@ impl<const P: u32> RingSubfieldFpExt4MulBackend for Fp32<P> {
     }
 }
 
-/// Widening `RingSubfieldFpExt4<Fp32<P>>` multiplication that skips per-coefficient
-/// Solinas reduction, returning `RingSubfieldFpExt4Fp32ProductAccum` instead.
+/// Widening `FpExt4<Fp32<P>>` multiplication that skips per-coefficient
+/// Solinas reduction, returning `FpExt4Fp32ProductAccum` instead.
 ///
 /// The φ(X) ring reduction is already fused into the formulas — only the
 /// base-field modular reduction is deferred.
 #[inline(always)]
-pub(crate) fn ring_subfield_fp_ext4_mul_to_accum_fp32<const P: u32>(
+pub(crate) fn fp_ext4_mul_to_accum_fp32<const P: u32>(
     a: [Fp32<P>; 4],
     b: [Fp32<P>; 4],
-) -> RingSubfieldFpExt4Fp32ProductAccum {
+) -> FpExt4Fp32ProductAccum {
     #[inline(always)]
     fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
         (a.to_limbs() as u128) * (b.to_limbs() as u128)
@@ -185,7 +190,7 @@ pub(crate) fn ring_subfield_fp_ext4_mul_to_accum_fp32<const P: u32>(
     let [a0, a1, a2, a3] = a;
     let [b0, b1, b2, b3] = b;
     let modulus_square = (P as u128) * (P as u128);
-    RingSubfieldFpExt4Fp32ProductAccum([
+    FpExt4Fp32ProductAccum([
         product(a0, b0) + 2 * (product(a1, b1) + product(a2, b2) + product(a3, b3)),
         product(a0, b1)
             + product(a1, b0)
@@ -213,12 +218,12 @@ pub(crate) fn ring_subfield_fp_ext4_mul_to_accum_fp32<const P: u32>(
 /// cyclotomic ring. The scalar arithmetic is independent of the concrete ring
 /// dimension `D`.
 #[repr(transparent)]
-pub struct RingSubfieldFpExt4<F: FieldCore> {
+pub struct FpExt4<F: FieldCore> {
     /// Coefficients in basis `[1, e1, e2, e3]`.
     pub coeffs: [F; 4],
 }
 
-impl<F: FieldCore> RingSubfieldFpExt4<F> {
+impl<F: FieldCore> FpExt4<F> {
     /// Construct from ring-subfield basis coefficients `[c0, c1, c2, c3]`.
     #[inline]
     pub fn new(coeffs: [F; 4]) -> Self {
@@ -293,37 +298,37 @@ impl<F: FieldCore> RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for FpExt4<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RingSubfieldFpExt4")
+        f.debug_struct("FpExt4")
             .field("coeffs", &self.coeffs)
             .finish()
     }
 }
 
-impl<F: FieldCore> Clone for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> Clone for FpExt4<F> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: FieldCore> Copy for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore> Copy for FpExt4<F> {}
 
-impl<F: FieldCore> Default for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> Default for FpExt4<F> {
     fn default() -> Self {
         Self::zero()
     }
 }
 
-impl<F: FieldCore> PartialEq for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> PartialEq for FpExt4<F> {
     fn eq(&self, other: &Self) -> bool {
         self.coeffs == other.coeffs
     }
 }
 
-impl<F: FieldCore> Eq for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore> Eq for FpExt4<F> {}
 
-impl<F: FieldCore> Add for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> Add for FpExt4<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -337,7 +342,7 @@ impl<F: FieldCore> Add for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore> Sub for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> Sub for FpExt4<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -351,7 +356,7 @@ impl<F: FieldCore> Sub for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore> Neg for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> Neg for FpExt4<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -365,7 +370,7 @@ impl<F: FieldCore> Neg for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore> AddAssign for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> AddAssign for FpExt4<F> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.coeffs[0] = self.coeffs[0] + rhs.coeffs[0];
@@ -375,7 +380,7 @@ impl<F: FieldCore> AddAssign for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore> SubAssign for RingSubfieldFpExt4<F> {
+impl<F: FieldCore> SubAssign for FpExt4<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         self.coeffs[0] = self.coeffs[0] - rhs.coeffs[0];
@@ -385,23 +390,23 @@ impl<F: FieldCore> SubAssign for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: RingSubfieldFpExt4MulBackend> Mul for RingSubfieldFpExt4<F> {
+impl<F: FpExt4MulBackend> Mul for FpExt4<F> {
     type Output = Self;
 
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        Self::new(F::ring_subfield_fp_ext4_mul(self.coeffs, rhs.coeffs))
+        Self::new(F::fp_ext4_mul(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F: RingSubfieldFpExt4MulBackend> MulAssign for RingSubfieldFpExt4<F> {
+impl<F: FpExt4MulBackend> MulAssign for FpExt4<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFpExt4<F> {
+impl<'a, F: FieldCore> Add<&'a Self> for FpExt4<F> {
     type Output = Self;
 
     fn add(self, rhs: &'a Self) -> Self::Output {
@@ -409,7 +414,7 @@ impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFpExt4<F> {
+impl<'a, F: FieldCore> Sub<&'a Self> for FpExt4<F> {
     type Output = Self;
 
     fn sub(self, rhs: &'a Self) -> Self::Output {
@@ -417,7 +422,7 @@ impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<'a, F: RingSubfieldFpExt4MulBackend> Mul<&'a Self> for RingSubfieldFpExt4<F> {
+impl<'a, F: FpExt4MulBackend> Mul<&'a Self> for FpExt4<F> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -425,7 +430,7 @@ impl<'a, F: RingSubfieldFpExt4MulBackend> Mul<&'a Self> for RingSubfieldFpExt4<F
     }
 }
 
-impl<F: FieldCore + Valid> Valid for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + Valid> Valid for FpExt4<F> {
     fn check(&self) -> Result<(), SerializationError> {
         for coeff in self.coeffs {
             coeff.check()?;
@@ -434,7 +439,7 @@ impl<F: FieldCore + Valid> Valid for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FpExt4<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -454,9 +459,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFpExt4<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for RingSubfieldFpExt4<F>
-{
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FpExt4<F> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -479,14 +482,14 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> RingCore for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + Valid + FpExt4MulBackend> RingCore for FpExt4<F> {
     #[inline(always)]
     fn square(&self) -> Self {
-        Self::new(F::ring_subfield_fp_ext4_square(self.coeffs))
+        Self::new(F::fp_ext4_square(self.coeffs))
     }
 }
 
-impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> Invertible for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + Valid + FpExt4MulBackend> Invertible for FpExt4<F> {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -515,16 +518,14 @@ impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> Invertible for RingSub
     }
 }
 
-impl<F: HalvingField + Valid + RingSubfieldFpExt4MulBackend> HalvingField
-    for RingSubfieldFpExt4<F>
-{
+impl<F: HalvingField + Valid + FpExt4MulBackend> HalvingField for FpExt4<F> {
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + RandomSampling + Valid> RandomSampling for FpExt4<F> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self::new([
             F::random(rng),
@@ -535,7 +536,7 @@ impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFpExt
     }
 }
 
-impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldFpExt4<F> {
+impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for FpExt4<F> {
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }
@@ -553,16 +554,16 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldF
     }
 }
 
-impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for FpExt4<F> {}
 
-impl<const P: u32> HasUnreducedOps for RingSubfieldFpExt4<Fp32<P>> {
+impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     type MulU64Accum = Self;
-    type ProductAccum = RingSubfieldFpExt4Fp32ProductAccum;
+    type ProductAccum = FpExt4Fp32ProductAccum;
 
-    // `ring_subfield_fp_ext4_mul_to_accum_fp32` widens each Fp32 limb product
+    // `fp_ext4_mul_to_accum_fp32` widens each Fp32 limb product
     // (< 7·p² ≈ 2^65) into a u128 slot with no `mod 2^128` wrap, so summing a
     // batch and reducing once matches per-limb reduce-then-add exactly. Covered
-    // by `ring_subfield_fp_ext4_fp32_accum_summation`.
+    // by `fp_ext4_fp32_accum_summation`.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
 
     #[inline]
@@ -573,7 +574,7 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFpExt4<Fp32<P>> {
 
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
-        ring_subfield_fp_ext4_mul_to_accum_fp32(self.coeffs, other.coeffs)
+        fp_ext4_mul_to_accum_fp32(self.coeffs, other.coeffs)
     }
 
     #[inline]
@@ -587,7 +588,7 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFpExt4<Fp32<P>> {
     }
 }
 
-impl<const P: u32> MulBaseUnreduced<Fp32<P>> for RingSubfieldFpExt4<Fp32<P>> {
+impl<const P: u32> MulBaseUnreduced<Fp32<P>> for FpExt4<Fp32<P>> {
     #[inline]
     fn mul_base_to_product_accum(self, x: Fp32<P>) -> Self::ProductAccum {
         // E × F has no cross terms: scale each base coordinate into its own
@@ -595,7 +596,7 @@ impl<const P: u32> MulBaseUnreduced<Fp32<P>> for RingSubfieldFpExt4<Fp32<P>> {
         // exactly (see `DELAYED_PRODUCT_SUM_IS_EXACT`).
         let x = x.to_limbs() as u128;
         let [a0, a1, a2, a3] = self.coeffs;
-        RingSubfieldFpExt4Fp32ProductAccum([
+        FpExt4Fp32ProductAccum([
             (a0.to_limbs() as u128) * x,
             (a1.to_limbs() as u128) * x,
             (a2.to_limbs() as u128) * x,
@@ -604,7 +605,7 @@ impl<const P: u32> MulBaseUnreduced<Fp32<P>> for RingSubfieldFpExt4<Fp32<P>> {
     }
 }
 
-impl<const P: u32> HasOptimizedFold for RingSubfieldFpExt4<Fp32<P>> {
+impl<const P: u32> HasOptimizedFold for FpExt4<Fp32<P>> {
     type FoldCtx = FoldMatrixFp32;
 
     #[inline]
@@ -661,13 +662,13 @@ impl<const P: u32> HasOptimizedFold for RingSubfieldFpExt4<Fp32<P>> {
                 Fp32::<P>::from_canonical_u128_reduced(acc) + even.coeffs[row]
             })
         };
-        RingSubfieldFpExt4::new(folded)
+        FpExt4::new(folded)
     }
 }
 
-macro_rules! impl_ring_subfield_fp_ext4_unreduced_identity {
+macro_rules! impl_fp_ext4_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty> HasUnreducedOps for RingSubfieldFpExt4<$base<$p>> {
+        impl<const $p: $pty> HasUnreducedOps for FpExt4<$base<$p>> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
 
@@ -690,16 +691,16 @@ macro_rules! impl_ring_subfield_fp_ext4_unreduced_identity {
             }
         }
 
-        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for RingSubfieldFpExt4<$base<$p>> {}
+        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for FpExt4<$base<$p>> {}
     };
 }
 
-impl_ring_subfield_fp_ext4_unreduced_identity!(Fp64<P: u64>);
-impl_ring_subfield_fp_ext4_unreduced_identity!(Fp128<P: u128>);
+impl_fp_ext4_unreduced_identity!(Fp64<P: u64>);
+impl_fp_ext4_unreduced_identity!(Fp128<P: u128>);
 
-macro_rules! impl_ring_subfield_fp_ext4_default_optimized_fold {
+macro_rules! impl_fp_ext4_default_optimized_fold {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty> HasOptimizedFold for RingSubfieldFpExt4<$base<$p>> {
+        impl<const $p: $pty> HasOptimizedFold for FpExt4<$base<$p>> {
             type FoldCtx = Self;
             #[inline]
             fn precompute_fold(r: Self) -> Self {
@@ -713,5 +714,5 @@ macro_rules! impl_ring_subfield_fp_ext4_default_optimized_fold {
     };
 }
 
-impl_ring_subfield_fp_ext4_default_optimized_fold!(Fp64<P: u64>);
-impl_ring_subfield_fp_ext4_default_optimized_fold!(Fp128<P: u128>);
+impl_fp_ext4_default_optimized_fold!(Fp64<P: u64>);
+impl_fp_ext4_default_optimized_fold!(Fp128<P: u128>);

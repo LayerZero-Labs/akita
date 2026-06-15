@@ -12,8 +12,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
-use akita_types::ClaimIncidenceSummary;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::OpeningBatch;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -46,7 +46,7 @@ type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
-mod fp32_ring_subfield;
+mod fp32_ext4;
 mod layout;
 mod onehot;
 mod single;
@@ -68,9 +68,10 @@ fn expected_same_point_batched_shape(
     num_claims: usize,
     _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
-    let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
-        .expect("incidence");
-    let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("batched root runtime plan");
+    let opening_batch =
+        akita_types::OpeningBatch::same_point(max_num_vars, num_claims).expect("opening_batch");
+    let schedule =
+        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
@@ -190,8 +191,8 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let incidence = ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
-    C::get_params_for_batched_commitment(&incidence).expect("singleton commitment layout")
+    let opening_batch = OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+    C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 
 type VerifyFixture = (
@@ -209,7 +210,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
@@ -237,14 +238,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

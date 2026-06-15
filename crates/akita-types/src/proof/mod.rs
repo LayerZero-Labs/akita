@@ -9,7 +9,7 @@
 
 pub mod batch;
 pub mod commitment;
-pub mod incidence;
+pub mod opening_batch;
 pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
@@ -28,11 +28,11 @@ mod tests;
 mod wire;
 
 pub use batch::{
-    append_batched_commitments_to_transcript, append_claim_points_to_transcript,
-    append_claim_values_to_transcript, checked_total_claims, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
+    checked_total_claims, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    prepare_opening_point, ring_subfield_packed_extension_opening_point,
+    root_tensor_projection_enabled, validate_batched_inputs, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
@@ -40,17 +40,17 @@ pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
-pub use incidence::{
-    append_claim_incidence_shape_to_transcript, batched_eval_target_from_incidence,
-    sample_public_row_coefficients, verifier_claims_to_incidence, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentRouting, IncidenceClaim,
-    PublicOpeningRow,
-};
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
     TerminalLevelProof,
+};
+pub use opening_batch::{
+    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
+    sample_public_row_coefficients, verifier_claims_to_opening_batch, OpeningBatch,
+    OpeningBatchInput, OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot,
+    OpeningClaimSlotShape,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

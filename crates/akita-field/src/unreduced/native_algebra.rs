@@ -11,7 +11,7 @@ use num_traits::Zero;
 
 use super::{
     AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
-    Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, RingSubfieldFpExt4Fp32ProductAccum,
+    Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, FpExt4Fp32ProductAccum,
 };
 use crate::AdditiveGroup;
 
@@ -58,10 +58,7 @@ impl_wide_native_additive!(Fp32ProductAccum, Fp32ProductAccum([0; 2]));
 impl_wide_native_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
 impl_wide_native_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
 impl_wide_native_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
-impl_wide_native_additive!(
-    RingSubfieldFpExt4Fp32ProductAccum,
-    RingSubfieldFpExt4Fp32ProductAccum([0; 4])
-);
+impl_wide_native_additive!(FpExt4Fp32ProductAccum, FpExt4Fp32ProductAccum([0; 4]));
 impl_wide_native_additive!(FpExt2Fp64ProductAccum, FpExt2Fp64ProductAccum([0; 4]));
 
 impl<A: AdditiveGroup> Zero for AccumPair<A> {

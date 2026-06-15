@@ -60,12 +60,6 @@ pub struct AkitaSetupSeed {
     pub max_num_vars: usize,
     /// Maximum number of batched polynomials supported by setup.
     pub max_num_batched_polys: usize,
-    /// Maximum number of distinct opening points.
-    ///
-    /// Together with `max_num_batched_polys` this bounds the outer/D matrix
-    /// widths the setup can serve; a multi-point batched opening that exceeds
-    /// this bound would otherwise silently read past the shared matrix prefix.
-    pub max_num_points: usize,
     /// Ring dimension used to generate `shared_matrix`.
     pub gen_ring_dim: usize,
     /// Number of generated ring elements at `gen_ring_dim`.
@@ -497,11 +491,6 @@ impl Valid for AkitaSetupSeed {
                 "setup seed max_num_batched_polys must be at least 1".to_string(),
             ));
         }
-        if self.max_num_points == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_num_points must be at least 1".to_string(),
-            ));
-        }
         if self.gen_ring_dim == 0 {
             return Err(SerializationError::InvalidData(
                 "setup seed gen_ring_dim must be non-zero".to_string(),
@@ -544,8 +533,6 @@ impl AkitaSerialize for AkitaSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_batched_polys
             .serialize_with_mode(&mut writer, compress)?;
-        self.max_num_points
-            .serialize_with_mode(&mut writer, compress)?;
         self.gen_ring_dim
             .serialize_with_mode(&mut writer, compress)?;
         self.max_setup_len
@@ -563,7 +550,6 @@ impl AkitaSerialize for AkitaSetupSeed {
     fn serialized_size(&self, compress: Compress) -> usize {
         let base = self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
-            + self.max_num_points.serialized_size(compress)
             + self.gen_ring_dim.serialized_size(compress)
             + self.max_setup_len.serialized_size(compress)
             + 32;
@@ -590,7 +576,6 @@ impl AkitaDeserialize for AkitaSetupSeed {
         let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_setup_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         #[cfg(feature = "zk")]
@@ -602,7 +587,6 @@ impl AkitaDeserialize for AkitaSetupSeed {
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
-            max_num_points,
             gen_ring_dim,
             max_setup_len,
             #[cfg(feature = "zk")]
@@ -802,7 +786,6 @@ mod tests {
         AkitaSetupSeed {
             max_num_vars: 8,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len: 2,
             #[cfg(feature = "zk")]
@@ -948,7 +931,6 @@ mod tests {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
             #[cfg(feature = "zk")]
@@ -967,7 +949,6 @@ mod tests {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
             #[cfg(feature = "zk")]

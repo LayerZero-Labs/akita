@@ -2,10 +2,7 @@ use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
 use akita_field::RandomSampling;
-use akita_field::{
-    Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4,
-    TwoNr, UnitNr,
-};
+use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use akita_types::FlatMatrix;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -213,7 +210,7 @@ fn onehot_poly_rejects_non_divisible_k_d() {
 #[test]
 fn tensor_column_partials_match_dense_reference() {
     type F = Prime24Offset3;
-    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    type E = FpExt4<F>;
     const D: usize = 16;
 
     let poly = OneHotPoly::<F, D>::new(
@@ -250,7 +247,7 @@ fn tensor_column_partials_match_dense_reference() {
 #[test]
 fn batched_tensor_column_partials_match_individual() {
     type F = Prime24Offset3;
-    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    type E = FpExt4<F>;
     const D: usize = 16;
 
     let polys = [
@@ -315,7 +312,7 @@ fn batched_tensor_column_partials_match_individual() {
 #[test]
 fn batched_tensor_column_partials_multi_block_match_dense() {
     type F = Prime24Offset3;
-    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    type E = FpExt4<F>;
     const D: usize = 16;
     const ONEHOT_K: usize = 8;
     // hi_vars = NUM_VARS - log2(ONEHOT_K) = 18 - 3 = 15 > inner-bit cap, so the
@@ -377,9 +374,9 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
 }
 
 #[test]
-fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp_ext4() {
+fn batched_tensor_column_partials_match_dense_for_fp_ext4() {
     type F = Prime32Offset99;
-    type E = RingSubfieldFpExt4<F>;
+    type E = FpExt4<F>;
     const D: usize = 32;
     const ONEHOT_K: usize = 16;
     const NUM_VARS: usize = 10;
@@ -436,7 +433,7 @@ fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp_ext4() {
 #[test]
 fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     type F = Prime24Offset3;
-    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    type E = FpExt4<F>;
     const D: usize = 16;
 
     let polys = [
@@ -529,7 +526,7 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
 fn np1_offset_distribution_and_plateau() {
     use rand::Rng;
     type F = Prime24Offset3;
-    type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+    type E = FpExt4<F>;
     const D: usize = 16;
 
     let onehot_k = 256usize;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::DensePoly;
 use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr};
 use akita_transcript::AkitaTranscript;
 #[cfg(feature = "zk")]
@@ -13,7 +14,6 @@ fn setup() -> AkitaExpandedSetup<F> {
         AkitaSetupSeed {
             max_num_vars: 3,
             max_num_batched_polys: 4,
-            max_num_points: 2,
             gen_ring_dim: 1,
             max_setup_len: 1,
             #[cfg(feature = "zk")]
@@ -36,7 +36,12 @@ fn prover_claim_preparation_accepts_extension_points() {
         E::new(F::from_u64(1), F::from_u64(2)),
         E::new(F::from_u64(3), F::from_u64(4)),
     ];
-    let polys = [10usize, 11usize];
+    let polys = [
+        DensePoly::<F, 2>::from_field_evals(2, &[F::from_u64(10), F::zero(), F::zero(), F::zero()])
+            .expect("poly"),
+        DensePoly::<F, 2>::from_field_evals(2, &[F::from_u64(11), F::zero(), F::zero(), F::zero()])
+            .expect("poly"),
+    ];
     let commitment = RingCommitment::<F, 2>::default();
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
@@ -46,26 +51,26 @@ fn prover_claim_preparation_accepts_extension_points() {
     );
     #[cfg(not(feature = "zk"))]
     let hint = AkitaCommitmentHint::new(Vec::new());
-    let claims = vec![(
+    let claims = (
         &point[..],
-        crate::CommittedPolynomials {
+        vec![crate::CommittedPolynomials {
             polynomials: &polys[..],
             commitment: &commitment,
             hint,
-        },
-    )];
+        }],
+    );
 
-    let prepared = prepare_batched_prove_inputs::<F, E, usize, 2>(&setup(), claims)
+    let prepared = prepare_batched_prove_inputs::<F, E, DensePoly<F, 2>, 2>(&setup(), claims)
         .expect("extension-valued prover points should validate by shape");
 
-    assert_eq!(prepared.opening_points, vec![&point[..]]);
-    assert_eq!(prepared.incidence_summary.num_claims(), 2);
-    assert_eq!(prepared.incidence_summary.num_points(), 1);
-    assert_eq!(prepared.incidence_summary.num_public_rows(), 1);
-    assert_eq!(prepared.incidence_summary.num_polys_per_point(), &[2]);
-    assert_eq!(prepared.incidence_summary.claim_to_point(), &[0, 0]);
+    assert_eq!(prepared.opening_point, &point[..]);
+    assert_eq!(prepared.opening_batch.num_claims(), 2);
+    assert_eq!(
+        prepared.opening_batch.num_polys_per_commitment_group(),
+        &[2]
+    );
+    assert_eq!(prepared.opening_batch.claim_to_commitment_group(), &[0, 0]);
     assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
-    assert_eq!(prepared.group_polys, vec![&polys[0], &polys[1]]);
 }
 
 #[test]

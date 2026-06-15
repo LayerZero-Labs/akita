@@ -21,7 +21,7 @@ fn run_single_onehot_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
@@ -44,7 +44,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1)
+        >>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
@@ -179,7 +179,7 @@ fn run_single_dense_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
@@ -202,7 +202,7 @@ fn run_single_dense_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1)
+        >>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =

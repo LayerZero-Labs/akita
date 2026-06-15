@@ -15,7 +15,7 @@ use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
-use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
+use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
@@ -38,9 +38,9 @@ const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let incidence =
-        akita_types::ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
-    Cfg::get_params_for_batched_commitment(&incidence).expect("singleton commitment layout")
+    let opening_batch =
+        akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+    Cfg::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
@@ -111,14 +111,14 @@ fn prove_input<'a, FF: FieldCore, P, C, H>(
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
+    (
         point,
-        CommittedPolynomials {
+        vec![CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        },
-    )]
+        }],
+    )
 }
 
 fn verify_input<'a, FF: FieldCore, C>(
@@ -126,13 +126,13 @@ fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
+    (
         point,
-        CommittedOpenings {
+        vec![CommittedOpenings {
             openings,
             commitment,
-        },
-    )]
+        }],
+    )
 }
 
 type DenseFixture<FField, E, L, const D: usize> = (
@@ -185,20 +185,20 @@ fn make_dense_fixture<
 >(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<FField, Cfg::ClaimField, Cfg::ChallengeField, D>
+) -> DenseFixture<FField, Cfg::ExtField, Cfg::ExtField, D>
 where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
         ProverSetup = AkitaProverSetup<FField, D>,
-        ClaimField = Cfg::ClaimField,
+        ExtField = Cfg::ExtField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,
-        BatchedProof = AkitaBatchedProof<FField, Cfg::ChallengeField>,
+        BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
-    Cfg::ClaimField: RingSubfieldEncoding<FField> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
@@ -208,16 +208,14 @@ where
         .collect();
 
     let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_claim_point::<FField, Cfg::ClaimField>(nv);
-    let expected_opening =
-        dense_lagrange_opening_from_evals::<FField, Cfg::ClaimField>(&evals, &pt);
+    let pt = random_claim_point::<FField, Cfg::ExtField>(nv);
+    let expected_opening = dense_lagrange_opening_from_evals::<FField, Cfg::ExtField>(&evals, &pt);
 
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1)
-            .unwrap();
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1)
+        .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
@@ -386,7 +384,6 @@ fn full_d64_prove_verify() {
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             FULL_TEST_NV,
             1,
-            1,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -509,8 +506,8 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(NV, 2).expect("incidence");
-        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = akita_types::OpeningBatch::same_point(NV, 2).expect("opening_batch");
+        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -537,8 +534,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         purge_setup_cache(NV);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -764,8 +760,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -950,8 +945,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1090,15 +1084,15 @@ fn batched_onehot_same_point_round_trip() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         // NV=20 is large enough to include a recursive suffix, while the
-        // two-claim incidence still misses singleton/4-batch generated tables
+        // two-claim opening batch still misses singleton/4-batch generated tables
         // and routes through the planner DP fallback in `runtime_schedule`.
         type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
         let nv = NV;
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 2).expect("incidence");
-        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = akita_types::OpeningBatch::same_point(nv, 2).expect("opening_batch");
+        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1126,8 +1120,7 @@ fn batched_onehot_same_point_round_trip() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1245,7 +1238,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             nv,
             SAME_POINT_ONEHOT_BATCH_SIZE,
-            1,
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
