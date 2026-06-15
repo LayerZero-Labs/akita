@@ -15,6 +15,7 @@ orchestration lives in `akita-pcs`.
 graph TD
   Ser["akita-serialization"]
   Field["akita-field"]
+  Witness["akita-witness"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]
@@ -29,6 +30,7 @@ graph TD
   Pcs["akita-pcs"]
 
   Field --> Ser
+  Witness --> Field
   Algebra --> Field
   Algebra --> Ser
   Transcript --> Field
@@ -95,6 +97,11 @@ Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
 
 ## Ownership Rules
 
+- `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
+  (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
+  It depends only on `akita-field`. At the time of this graph, it is a workspace
+  member without downstream `Cargo.toml` edges; cite it from `AGENTS.md` and the
+  polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
 - `akita-planner` is the `Cfg`-free schedule owner: shipped generated tables,
   on-demand compact→`LevelParams` expansion, and the schedule-search DP. It sits
   **below** `akita-config` and names no `CommitmentConfig` type. It depends only

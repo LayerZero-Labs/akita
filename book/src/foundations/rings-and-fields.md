@@ -31,7 +31,7 @@ the closed-form trace decode).
 **Sources to fold in**
 
 - Paper §2.1 ("Extension-field embedding", "Ring-subfield coordinates"; Hachi Thm 2 / Lemma 4), App B.1.4 `sec:akita-ext-fields` (degree-2/4 multiplication tables, tower squaring/inversion, the \\( K=4 \\) trace map).
-- `crates/akita-field/src/ext/` (`fp_ext2.rs`, `tower_fp_ext4.rs`, `ring_subfield_fp_ext4.rs`, `ring_subfield_fp_ext8.rs`).
+- `crates/akita-field/src/ext/` (`fp_ext2.rs`, `fp_ext4.rs`, `fp_ext8.rs`, `lift.rs`, `native_algebra.rs`).
 
 ## Base-field coefficients vs extension evaluation points
 

@@ -11,8 +11,8 @@
 | Book-chapter  |                                |
 
 `Status` must be one of the lifecycle values below. Keep it accurate after the
-spec lands; stale `proposed`/`in progress` headers on shipped work are the main
-signal `scripts/check-spec-references.sh` and the quarterly audit look for. See
+spec lands; stale `proposed` headers on shipped work are the main signal the
+quarterly audit looks for. See
 [`specs/PRUNING.md`](PRUNING.md) for the full lifecycle and archive workflow.
 
 | Status        | Meaning |
@@ -26,7 +26,8 @@ signal `scripts/check-spec-references.sh` and the quarterly audit look for. See
 | `archived`    | Moved to `specs/archive/`; the book owns the durable content |
 
 Fill `Book-chapter` with the Akita Book page that owns this spec's durable
-content once it is folded in (e.g. `book/src/how/security/security.md`).
+content once it is folded in. Use either `book/src/how/security.md` or the bare
+path under `book/src/` (e.g. `how/security.md`). Do not prefix with `src/`.
 
 ## Summary
 

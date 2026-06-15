@@ -57,6 +57,18 @@ live_specs=(
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
 # specs/akita-compute-backend-metal.md, specs/transcript-immediate-fixes.md
 
+missing_live=()
+for f in "${live_specs[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    missing_live+=("$f")
+  fi
+done
+if [[ ${#missing_live[@]} -gt 0 ]]; then
+  echo "error: live_specs entries missing from tree:" >&2
+  printf '  %s\n' "${missing_live[@]}" >&2
+  exit 1
+fi
+
 search_paths=()
 if [[ "$scope" == "live" ]]; then
   for f in "${live_specs[@]}"; do

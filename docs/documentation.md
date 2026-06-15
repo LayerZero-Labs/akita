@@ -34,7 +34,11 @@ Every implementation PR must do **all** that apply:
    the immediately stacked follow-up). Set `Book-chapter:` first.
 
 Direct doc-only PRs skip (1) when no spec exists. Trivial bugfixes with no
-API/contract change skip (2)–(4) when the blast-radius comment agrees.
+API/contract change may skip (2)–(4) when the PR touches no paths in
+`docs/doc-blast-radius.json` and does not change public API or verifier contracts.
+
+`Book-chapter` paths use `book/src/how/foo.md` or bare `how/foo.md` under
+`book/src/`. Do not write `src/how/foo.md`.
 
 ## Hard checks (CI, blocking)
 
@@ -45,8 +49,8 @@ Run locally: `./scripts/check-doc-guardrails.sh`
 | Dead symbols in live specs | `check-spec-references.sh` | References to removed crates/types (`akita-scheme`, `PlannerConfig`, …) in `specs/` outside `archive/` |
 | Dead symbols in `docs/` | `check-doc-dead-symbols.sh` | Removed crates/types in non-historical `docs/*.md` (`README`/`AGENTS` by review) |
 | `Book-chapter:` paths exist | `check-book-chapter-paths.sh` | Spec headers pointing at missing book pages |
+| Book source paths exist | `check-book-source-paths.sh` | Stale `crates/` / `specs/` / `docs/` citations in `book/src/` |
 | Book builds | `mdbook build` (in CI) | Broken internal links, preprocessor errors |
-| Rust / crate hygiene | existing `check-crate-deps.sh`, etc. | Dependency boundary drift (indirect doc signal) |
 
 Add a symbol to the dead-pattern list in **both** check scripts when a rename or
 cutover removes it from the codebase.
@@ -76,6 +80,7 @@ python3 scripts/doc_blast_radius.py --base origin/main --head HEAD
 ```
 
 The comment is advisory. Reviewers use it as a checklist, not a merge gate.
+Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 
 ## When to update what
 

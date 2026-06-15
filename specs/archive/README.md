@@ -12,4 +12,8 @@ to track current behavior; update the owning book chapter instead.
 
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
-| _(none yet — the first archive pass lands in a PR stacked on the book scaffold)_ | | | |
+| `2026-Q2/w-to-e-notation.md` | archived | `book/src/foundations/glossary.md` | 2026-Q2 |
+| `2026-Q2/planner-refactor.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/planner-owns-schedule-expansion.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/planner-config-consolidation.md` | superseded | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/rust-file-line-cap.md` | archived | _(policy in CI)_ | 2026-Q2 |

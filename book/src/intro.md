@@ -46,7 +46,7 @@ contributed" story belong here.
 - Paper §3 `sec:akita-recap` ("From Hachi to Basic Akita": Greyhound relation
   matrix, Hachi's three contributions, Akita's contributions).
 - `crates/akita-types/src/sis/norm_bound.rs:1-2` (Hachi Lemma 7 reference).
-- `specs/w-to-e-notation.md` (paper ↔ code naming).
+- `specs/archive/2026-Q2/w-to-e-notation.md` (paper ↔ code naming).
 - External: Hachi, Greyhound, LaBRADOR, SuperNeo (ePrint 2026/242). See [References](./foundations/references.md).
 
 ## Security status (honest)
@@ -65,8 +65,16 @@ L2-MSIS), and what is asserted vs proven. The canonical narrative lives in
 
 ## How to read this book
 
-Reading orders by audience: application developer (Usage), contributor
-(How it works, lead with the lifecycle), and reviewer (Foundations + Security).
+Reading orders by audience:
+
+- **Application developer (integrating Jolt or another host):** start with
+  [Usage](./usage/usage.md). While chapters are stubs, use
+  [`profile/akita-recursion/README.md`](../../profile/akita-recursion/README.md),
+  [`specs/single-point-opening-batch.md`](../../specs/single-point-opening-batch.md),
+  and [`AGENTS.md`](../../AGENTS.md) for the current API contracts.
+- **Contributor:** [How it works](./how/how-it-works.md), lead with the lifecycle.
+- **Reviewer:** [Foundations](./foundations/foundations.md) + [Security model](./how/security.md).
+
 Surface the hardest newcomer questions early.
 
 **Sources to fold in**

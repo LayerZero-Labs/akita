@@ -63,6 +63,26 @@ class TestLoadMap(unittest.TestCase):
         self.assertGreater(len(regions), 5)
         self.assertTrue(all("id" in r for r in regions))
 
+    def test_opening_batch_region(self) -> None:
+        regions = mod.load_map()
+        opening = next(r for r in regions if r["id"] == "opening-batch")
+        self.assertTrue(
+            mod.path_matches_glob(
+                "crates/akita-types/src/proof/opening_batch.rs",
+                opening["code"][0],
+            )
+        )
+
+    def test_witness_region(self) -> None:
+        regions = mod.load_map()
+        witness = next(r for r in regions if r["id"] == "witness-polyops")
+        self.assertTrue(
+            mod.path_matches_glob(
+                "crates/akita-witness/src/lib.rs",
+                witness["code"][0],
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -130,10 +130,11 @@ Use these targets (not the pre-consolidation folder paths):
 | w-to-e notation | `book/src/foundations/glossary.md` |
 | Setup product sumcheck | `book/src/how/proving/sumcheck-stages.md` |
 
-## 2026-Q2 audit (archive pass — follow-up PR)
+## 2026-Q2 audit (archive pass — partial)
 
-Classification from the initial book scaffold. **Execute in a stacked PR** after
-the scaffold lands.
+Classification from the initial book scaffold. Five specs moved to
+`specs/archive/2026-Q2/` on the book scaffold PR; the remaining rows below are
+for a stacked follow-up.
 
 ### Fold into book, then archive
 

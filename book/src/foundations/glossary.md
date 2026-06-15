@@ -4,7 +4,7 @@
 
 Two reference tables a newcomer keeps open while reading: the glossary of Akita
 terms, and the symbol table mapping paper notation to code names. Keep both in
-sync with `specs/w-to-e-notation.md`.
+sync with `specs/archive/2026-Q2/w-to-e-notation.md`.
 
 ## Glossary
 
@@ -15,7 +15,7 @@ roles, weak binding, fold price.
 
 **Sources to fold in**
 
-- `specs/w-to-e-notation.md:49-68`, `docs/block-order.md`.
+- `specs/archive/2026-Q2/w-to-e-notation.md:49-68`, `docs/block-order.md`.
 - Council newcomer report (full glossary table).
 
 ## Notation
@@ -27,5 +27,5 @@ The symbol table: \\( q, d, k, R_q, \mathbf{G}_{b,n}, \delta, \beta, \Gamma(c),
 **Sources to fold in**
 
 - Paper §2 (notation introduced section by section), `preamble.tex` (macro definitions).
-- `specs/w-to-e-notation.md` (canonical post-cutover symbols).
+- `specs/archive/2026-Q2/w-to-e-notation.md` (canonical post-cutover symbols).
 - `crates/akita-types/src/layout/params.rs`, `crates/akita-prover/src/protocol/ring_relation.rs`.

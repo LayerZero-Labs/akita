@@ -21,14 +21,40 @@
         "crates/akita-types/src/schedule*",
         "crates/akita-types/src/**/schedule*",
         "crates/akita-types/src/proof_size.rs",
-        "crates/akita-types/src/**/proof_size*",
-        "crates/akita-types/src/proof/**"
+        "crates/akita-types/src/**/proof_size*"
       ],
       "consider_updating": [
         "book/src/how/configuration.md",
         "AGENTS.md",
         "specs/planner-*.md",
         "specs/PRUNING.md"
+      ]
+    },
+    {
+      "id": "opening-batch",
+      "description": "Single-point opening batch descriptor and layout",
+      "code": [
+        "crates/akita-types/src/proof/opening_batch.rs",
+        "crates/akita-types/src/layout/opening_point.rs"
+      ],
+      "consider_updating": [
+        "book/src/how/proving/opening-points-block-order.md",
+        "book/src/usage/commitment-api.md",
+        "AGENTS.md",
+        "specs/single-point-opening-batch.md",
+        "docs/block-order.md"
+      ]
+    },
+    {
+      "id": "witness-polyops",
+      "description": "Shared witness/polynomial view vocabulary",
+      "code": ["crates/akita-witness/**"],
+      "consider_updating": [
+        "AGENTS.md",
+        "book/src/how/architecture.md",
+        "book/src/how/proving/sumcheck-stages.md",
+        "specs/akita-polyops-cutover.md",
+        "specs/akita-sumcheck-unification.md"
       ]
     },
     {

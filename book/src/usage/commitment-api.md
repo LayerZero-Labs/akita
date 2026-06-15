@@ -8,15 +8,18 @@ verify, plus the setup and transcript objects those calls thread through.
 ## Commit, prove, verify
 
 The `commit` / `prove` / `verify` entry points, the `CommitmentProver` and
-`CommitmentVerifier` traits, single vs batched (multi-point) openings, and the
-shapes of the inputs and proof objects.
+`CommitmentVerifier` traits, single-point batched openings via `OpeningBatch`
+(one shared evaluation point per call; multipoint removed), and the shapes of
+the inputs and proof objects.
 
 **Sources to fold in**
 
 - `crates/akita-pcs/src/scheme/mod.rs`.
 - `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
-- `crates/akita-pcs/tests/multipoint_batched_e2e.rs`, `batched_aggregated_e2e.rs`.
+- `crates/akita-types/src/proof/opening_batch.rs` (`OpeningBatch`, `OpeningBatchInput`).
+- `specs/single-point-opening-batch.md`.
+- `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching
 

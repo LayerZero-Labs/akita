@@ -14,6 +14,9 @@ echo "==> check-doc-dead-symbols.sh"
 echo "==> check-book-chapter-paths.sh"
 "$repo_root/scripts/check-book-chapter-paths.sh"
 
+echo "==> check-book-source-paths.sh"
+"$repo_root/scripts/check-book-source-paths.sh"
+
 if command -v mdbook >/dev/null 2>&1; then
   echo "==> mdbook build"
   (cd book && mdbook build)

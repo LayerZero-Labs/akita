@@ -8,16 +8,17 @@ the fold's contribution to the verifier evaluation succinct.
 
 ## The root fold
 
-The batched root relation (incidence of polynomials and claims), the
+The batched root relation (`OpeningBatch` routing polynomials to claims), the
 commitment/claim/fold rows, and how the level-0 root fold differs from a
 recursive fold.
 
 **Sources to fold in**
 
-- `crates/akita-prover/src/protocol/flow/root_fold.rs:1066-1310`.
+- `crates/akita-prover/src/protocol/flow/root_fold.rs:352-544` (`prove_root`, terminal root fold).
 - `crates/akita-prover/src/protocol/ring_relation.rs`.
+- `crates/akita-types/src/proof/opening_batch.rs`.
 - Paper §3.2 `sec:akita-layout` (the batched root relation; `eq:batched-root-*`), §3.5 `sec:akita-one-step`.
-- `specs/w-to-e-notation.md` (w / e / v naming).
+- `specs/archive/2026-Q2/w-to-e-notation.md` (w / e / v naming).
 
 ## Ring switching
 

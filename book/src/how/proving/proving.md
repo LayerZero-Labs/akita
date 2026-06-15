@@ -12,7 +12,7 @@ mirror.
 This is the one part of "How it works" that stays a multi-page section, because
 the per-level interactive protocol is large. Subpages:
 
-- [Opening points and block order](./opening-points-block-order.md)
+- [Opening batches, points, and block order](./opening-points-block-order.md)
 - [Root fold and ring switching](./root-fold-ring-switch.md)
 - [Sumcheck stages](./sumcheck-stages.md)
 - [Extension-opening reduction](./extension-opening-reduction.md)

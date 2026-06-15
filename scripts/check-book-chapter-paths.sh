@@ -24,6 +24,7 @@ while IFS= read -r line; do
   fi
   # Allow book/src/... or bare relative paths under book/src.
   if [[ "$path" != book/* ]]; then
+    path="${path#src/}"
     path="book/src/${path#book/src/}"
   fi
   if [[ ! -f "$path" ]]; then
