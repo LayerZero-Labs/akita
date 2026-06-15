@@ -1,4 +1,4 @@
-use akita_field::FieldCore;
+use akita_field::{CanonicalField, FieldCore};
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
@@ -157,7 +157,7 @@ fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
 /// stage-3 proof and contribute zero.
 pub(crate) fn observed_stage3_setup_product_bytes<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_bytes = proof.root.as_fold().map_or(0, |fold| {
@@ -182,7 +182,7 @@ fn print_akita_level_breakdown<FF, L, const D: usize>(
     level: &AkitaLevelProof<FF, L>,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
@@ -291,8 +291,8 @@ trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
     fn final_witness(&self) -> &CleartextWitnessProof<FF>;
 }
 
-impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
-    for TerminalLevelProof<FF, L>
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for TerminalLevelProof<FF, L>
 {
     fn extension_opening_reduction(
         &self,
@@ -309,8 +309,8 @@ impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProo
     }
 }
 
-impl<FF: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> TerminalProofView<FF, L>
-    for AkitaLevelProof<FF, L>
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for AkitaLevelProof<FF, L>
 {
     fn extension_opening_reduction(
         &self,
@@ -336,7 +336,7 @@ fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
     root_variant: &'static str,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
     P: TerminalProofView<FF, L>,
 {
@@ -408,7 +408,7 @@ fn print_batched_root_breakdown<FF, L, const D: usize>(
     root: &AkitaBatchedRootProof<FF, L>,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
@@ -534,7 +534,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, L>,
 ) where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
@@ -612,7 +612,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     }
 }
 
-fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
+fn emit_observed_tail_summary<FF: FieldCore + CanonicalField + AkitaSerialize>(
     label: &str,
     final_w: &CleartextWitnessProof<FF>,
 ) {

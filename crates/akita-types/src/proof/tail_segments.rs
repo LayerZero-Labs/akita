@@ -778,7 +778,6 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
-    const D: usize = 8;
 
     fn test_lp() -> LevelParams {
         LevelParams::params_only(
