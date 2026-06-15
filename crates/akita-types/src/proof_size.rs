@@ -10,7 +10,7 @@
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
 
-/// Fixed wire size of [`AkitaLevelProof::Intermediate`] `fold_grind_nonce`.
+/// Fixed wire size of intermediate `AkitaLevelProof` `fold_grind_nonce`.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
