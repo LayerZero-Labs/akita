@@ -16,7 +16,7 @@ inside a larger PIOP, so ZK must hold through the whole stack, not just the PCS.
 
 **Sources to fold in**
 
-- Paper §6 `sec:zk` ("Where the difficulty lies"; `sections/akita/6_zero_knowledge.tex`).
+- Paper §6 `sec:zk` ("Where the difficulty lies").
 
 ## The pipeline (prefix / seam / suffix)
 

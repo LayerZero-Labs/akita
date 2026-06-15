@@ -104,7 +104,7 @@ Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 
 ## Relationship to the paper
 
-The Akita paper (`lattice-jolt` repo) is upstream narrative for **Foundations**
-and parts of **How it works**. Book chapters cite paper sections in their stubs;
-when paper and code diverge, **code + specs win** until the paper is updated.
+The Akita paper is upstream narrative for **Foundations** and parts of **How it
+works**. Book chapters cite paper sections in their stubs; when paper and code
+diverge, **code + specs win** until the paper is updated.
 Do not fork long proofs into the book; summarize and link.

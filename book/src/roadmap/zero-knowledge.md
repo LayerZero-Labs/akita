@@ -2,11 +2,11 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-End-to-end zero-knowledge for Akita is defined in the lattice-jolt paper
-(§6, `sec:zk`): close three leakage channels (sum-check round messages,
-level-transition commitments, terminal witness opening) via a **prefix / seam /
-suffix** pipeline. Zero knowledge is **sealed at the seam**; everything after is
-an ordinary non-ZK opening of a masked response.
+End-to-end zero-knowledge for Akita (Paper §6, `sec:zk`) closes three leakage
+channels: sum-check round messages, level-transition commitments, and terminal
+witness opening. The construction is a **prefix / seam / suffix** pipeline. Zero
+knowledge is **sealed at the seam**; everything after is an ordinary non-ZK
+opening of a masked response.
 
 | Region | Paper | Role |
 |--------|-------|------|
@@ -20,14 +20,13 @@ R1CS recording) and currently discharges tail rows by a **plain opening** of the
 masking witness, not the paper's committed-response seam. Replacing that plain
 opening with `sec:zk-joint-sigma` is the main remaining ZK step.
 
-**Out of scope for this PCS chapter.** Jolt-specific outer-PIOP glue (e.g.
-Spartan placement, `Com_aux1`) lives in the companion lattice-jolt paper, not in
-the core Akita PCS ZK construction.
+**Out of scope for this chapter.** Host zkVM / outer-PIOP integration (extra
+auxiliary commitments, fused outer sumchecks) is not part of the standalone PCS
+ZK construction; it belongs in host integration docs, not here.
 
 **Sources to fold in**
 
-- Paper §6 `sec:zk` (`sections/akita/6_zero_knowledge.tex` in lattice-jolt);
-  especially `sec:zk-pipeline`, `fig:zk-pipeline`, `sec:zk-joint-sigma`,
+- Paper §6 `sec:zk`, `sec:zk-pipeline`, `fig:zk-pipeline`, `sec:zk-joint-sigma`,
   `sec:zk-open`.
 - [Foundations → Zero-knowledge background](../foundations/zero-knowledge.md)
   (leakage + masking background).
