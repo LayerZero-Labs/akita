@@ -38,8 +38,8 @@ pub use extension_opening_reduction::{
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
-    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
-    RingSubfieldEncoding, SubfieldParams,
+    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
+    SubfieldParams,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,

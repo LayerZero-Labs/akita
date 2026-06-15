@@ -18,8 +18,9 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder, LevelParams,
-    OpeningBatch, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
+    FpExtEncoding, LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode,
+    Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -332,8 +333,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         + HasWide
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
@@ -477,8 +478,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let original_pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
@@ -568,8 +569,8 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
@@ -660,8 +661,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    Cfg::ExtField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 

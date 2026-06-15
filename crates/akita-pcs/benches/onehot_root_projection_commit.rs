@@ -12,7 +12,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{OpeningBatch, RingSubfieldEncoding};
+use akita_types::{FpExtEncoding, OpeningBatch};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -97,9 +97,9 @@ where
         + 'static,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ExtField: FrobeniusExtField<F> + RingSubfieldEncoding<F> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<F> + FpExtEncoding<F> + AkitaSerialize,
     Cfg::ExtField: FrobeniusExtField<F>
-        + RingSubfieldEncoding<F>
+        + FpExtEncoding<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,

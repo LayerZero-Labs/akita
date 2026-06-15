@@ -15,7 +15,7 @@ use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
-use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
+use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
@@ -197,8 +197,8 @@ where
         CommitHint = AkitaCommitmentHint<FField, D>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
-    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 

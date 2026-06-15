@@ -3,8 +3,8 @@
 use crate::{
     basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
-    RingSubfieldEncoding,
+    AppendToTranscript, BasisMode, BlockOrder, FpExtEncoding, LevelParams, RingCommitment,
+    RingOpeningPoint,
 };
 use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -188,7 +188,7 @@ fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     embed_ring_subfield_scalar::<F, E, D>(value, error)
 }
@@ -202,7 +202,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
 ) -> Result<RingMultiplierOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let expected_len = r_vars
         .checked_add(m_vars)
@@ -367,7 +367,7 @@ pub fn prepare_opening_point<F, L, const D: usize>(
 ) -> Result<PreparedOpeningPoint<F, L, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>,
+    L: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
     let target_num_vars = lp
@@ -588,11 +588,11 @@ mod tests {
     use super::*;
     use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, RingSubfieldFpExt4};
+    use akita_field::{Fp32, FpExt2, FpExt4, LiftBase, NegOneNr};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
-    type L = RingSubfieldFpExt4<F>;
+    type L = FpExt4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

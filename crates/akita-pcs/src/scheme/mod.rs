@@ -13,9 +13,7 @@ use akita_prover::{
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
-use akita_types::{
-    validate_ring_subfield_role, BasisMode, RingSubfieldEncoding, SetupContributionMode,
-};
+use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
 use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
@@ -39,7 +37,7 @@ where
         + Valid
         + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ExtField: RingSubfieldEncoding<F>,
+    Cfg::ExtField: FpExtEncoding<F>,
     Cfg::ExtField: FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
@@ -162,7 +160,7 @@ where
         + Valid
         + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ExtField: RingSubfieldEncoding<F>,
+    Cfg::ExtField: FpExtEncoding<F>,
     Cfg::ExtField: FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;

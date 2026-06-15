@@ -55,12 +55,12 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `new_unchecked` so the layout carries real buckets instead of the
 /// `0` `params_only` default. The fixture scales batched B/D widths
 /// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
-fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
+fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
     // Commit ring dimension must equal the static `D` the scheme dispatches
     // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
-    // fixtures pin `D = 32`. `ring_subfield = 2` below is `RingSubfieldFpExt4`'s
+    // fixtures pin `D = 32`. `ring_subfield = 2` below is `FpExt4`'s
     // embedding norm bound (a claim-field property), not `D / d`, so the
     // collision buckets are independent of this dimension.
     let d: usize = 32;
@@ -83,11 +83,11 @@ fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
 
 impl Fp32RingSubfieldRootFoldCfg {
     fn root_lp() -> LevelParams {
-        fp32_ring_subfield_root_lp(0)
+        fp32_ext4_root_lp(0)
     }
 }
 
-fn fp32_ring_subfield_setup_matrix_size<F>(
+fn fp32_ext4_setup_matrix_size<F>(
     lp: &LevelParams,
     max_num_claims: usize,
 ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError>
@@ -148,7 +148,7 @@ where
 ///
 /// Setup sizing is driven by the maximum number of claims a single shared
 /// opening can carry, bounded by `max_num_batched_polys`.
-fn fp32_ring_subfield_max_claims(max_num_batched_polys: usize) -> Result<usize, AkitaError> {
+fn fp32_ext4_max_claims(max_num_batched_polys: usize) -> Result<usize, AkitaError> {
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -159,7 +159,7 @@ fn fp32_ring_subfield_max_claims(max_num_batched_polys: usize) -> Result<usize, 
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
-    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
+    type ExtField = akita_field::FpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -189,8 +189,8 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         max_num_batched_polys: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys)?;
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
+        let max_num_claims = fp32_ext4_max_claims(max_num_batched_polys)?;
+        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -237,13 +237,13 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
 
 impl Fp32RingSubfieldOuterFallbackCfg {
     fn root_lp() -> LevelParams {
-        fp32_ring_subfield_root_lp(1)
+        fp32_ext4_root_lp(1)
     }
 }
 
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
-    type ExtField = akita_field::RingSubfieldFpExt4<Self::Field>;
+    type ExtField = akita_field::FpExt4<Self::Field>;
 
     const D: usize = 32;
 
@@ -273,8 +273,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         max_num_batched_polys: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys)?;
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
+        let max_num_claims = fp32_ext4_max_claims(max_num_batched_polys)?;
+        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -324,14 +324,14 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
 }
 
 #[test]
-fn fp32_ring_subfield_setup_sizing_uses_total_claim_limit() {
+fn fp32_ext4_setup_sizing_uses_total_claim_limit() {
     let one_point = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2).unwrap();
     let two_points = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2).unwrap();
     assert_eq!(one_point.max_setup_len, two_points.max_setup_len);
 }
 
 #[test]
-fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
+fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     type SmallCfg = Fp32RingSubfieldRootFoldCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
@@ -510,7 +510,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 }
 
 #[test]
-fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
+fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
@@ -641,7 +641,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 }
 
 #[test]
-fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
+fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
@@ -757,7 +757,7 @@ fn fp32_ring_subfield_extension_rejects_tampered_reduction_partial() {
 }
 
 #[test]
-fn fp32_ring_subfield_batched_extension_uses_root_tensor_projection() {
+fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;

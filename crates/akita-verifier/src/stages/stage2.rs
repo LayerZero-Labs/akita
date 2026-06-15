@@ -9,8 +9,8 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding, TraceClaim,
+    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
+    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::marker::PhantomData;
 
@@ -146,7 +146,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -252,7 +252,7 @@ where
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -312,7 +312,7 @@ where
 impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
 {
     /// Record the deferred relation tying the stage-2 masked input to the
     /// stage-1 masked `s_claim` handoff.

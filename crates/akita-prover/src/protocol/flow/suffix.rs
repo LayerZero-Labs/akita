@@ -123,7 +123,7 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -268,7 +268,7 @@ where
         + Invertible
         + PseudoMersenneField,
     L: ExtField<F>
-        + RingSubfieldEncoding<F>
+        + FpExtEncoding<F>
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
@@ -697,7 +697,7 @@ pub(in crate::protocol::flow) fn prove_stage3<F, L, T, const D: usize>(
 ) -> Result<Option<SetupSumcheckProof<L>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: RingSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    L: FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
@@ -910,7 +910,7 @@ fn compute_trace_target<F, L, const D: usize>(
 ) -> Result<(L, L), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
-    L: ExtField<F> + RingSubfieldEncoding<F>,
+    L: ExtField<F> + FpExtEncoding<F>,
 {
     #[cfg(not(feature = "zk"))]
     {
@@ -1009,7 +1009,7 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
+    L: FpExtEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold

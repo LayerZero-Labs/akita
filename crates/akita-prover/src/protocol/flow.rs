@@ -60,11 +60,10 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits, OpeningClaimKind,
-    OpeningClaimSlot, PackedDigits, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
-    TraceTable,
+    FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits,
+    OpeningClaimKind, OpeningClaimSlot, PackedDigits, PreparedOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -118,7 +117,7 @@ fn build_recursive_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
@@ -139,7 +138,7 @@ fn build_root_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let num_trace_blocks = instance
         .opening_batch()
@@ -367,7 +366,7 @@ fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
     L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
@@ -415,7 +414,7 @@ fn row_coefficient_rings<F, L, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>,
+    L: FpExtEncoding<F>,
 {
     coefficients
         .iter()
@@ -532,8 +531,8 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    L: RingSubfieldEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F>,
+    L: FpExtEncoding<F> + ExtField<F>,
     B: ProverComputeBackend<F>,
 {
     let mut rng = OsRng;

@@ -15,8 +15,8 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, LevelParams,
-    OpeningBatch, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
+    LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode, Step,
     VerifierClaims,
 };
 use std::array::from_fn;
@@ -74,7 +74,7 @@ fn effective_batched_schedule<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.num_vars();
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
@@ -449,8 +449,8 @@ pub fn verify_batched<'a, Cfg, T, const D: usize>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + FromPrimitiveInt
         + AkitaSerialize,
