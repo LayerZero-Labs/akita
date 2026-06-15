@@ -24,6 +24,48 @@ This prototype does not make that replacement in the recursive flow.
 The prototype is built as standalone, well-tested library code that is not wired into the recursive prove/verify flow.
 The goal is to land reusable JL primitives, exercise the consistency-sumcheck mechanics across representative fields and ring dimensions, and document the fusion roadmap so later protocol-integration work can measure any proof-size or rank impact on the real flow.
 
+## Motivation: why JL projection (the per-fold cost lever)
+
+The proof is dominated by the cleartext terminal witness.
+For `onehot_fp128_d64` at `nv=32` the tail is 80,032 B of a 112,016 B proof (71%); the eight fold levels together are only ~32 KB (PR #189 bench artifact).
+The terminal is reached when the planner decides another fold level costs more than sending the witness in cleartext, so the tail size is set by the recursion's stopping point, which is set by the **per-fold cost**.
+
+**The per-fold cost is the lever, and the stage-1 inf-norm range check is the tax.**
+Each fold level pays a stage-1 range-check sumcheck that certifies every digit lies in `[-b/2, b/2)`; its first stage has degree `b/2 = 2^(lb-1)` (`crates/akita-types/src/proof/stage1.rs:130`, priced in `proof_size.rs:100-101`), so the range-check transcript grows as `2^lb`.
+This expensive per-fold tax is what makes the planner stop folding early and leave a large terminal, and it is also why the planner declines a high basis (each extra fold at high `lb` would pay a huge range tree).
+
+**JL removes the tax and changes fold economics.**
+JL replaces the per-digit range check with a single global Euclidean-norm certificate: sample `J` from the transcript, reveal `p = J w`, check `||p||_2` over the integers, at a fixed `~n_rows * d` cost independent of `lb`.
+With the `2^lb` tax gone, the marginal cost of a fold level drops, so the fold-vs-cleartext crossover moves: more fold levels become worthwhile, contracting the terminal to **fewer ring elements** (lower entropy) and reducing total bytes.
+This is the JL tail win, and it is about **fold count / contraction**, driven by per-fold cost, not the decomposition basis itself.
+
+**The basis itself is byte-neutral; do not claim otherwise.**
+It is tempting to say "JL unlocks a larger basis, which shrinks the tail." That is *not* the mechanism, and the main-worktree specs are right to push back on the bytes claim.
+Under fixed-width packing the cleartext bytes are magnitude-locked (`delta * lb ~ magnitude_bits`, `akita-jl-norm-check-resolutions.md` 3.1), and under entropy coding (the live `tail-wire-encoding.md` plan) the basis is byte-*irrelevant* because the wire carries entropy, not digit-planes, and re-decomposes verifier-side (`akita-jl-norm-check-resolutions.md:250`).
+Re-basing a *fixed* terminal witness does not change its bytes. What changes the bytes is contracting to a *smaller* terminal (fewer ring elements / lower entropy), which JL enables by cheapening folds, not by re-bucketing digits.
+
+**What the basis is genuinely good for: recursion depth and prover time.**
+A larger basis means fewer digit planes per level, hence fewer sumcheck variables per level and fewer recursion levels.
+That directly reduces prover time and the verifier-circuit recursion depth (fewer cycles for the Jolt-embedded verifier), which is a real win on objectives *other* than proof bytes.
+The per-term-basis freedom belongs here: because JL certifies only the global L2 norm and not per-digit ranges, there is no shared range-check structure forcing one common basis, so each term (`e_hat`, `t_hat`, `z_hat`, `r_hat`) can pick its own basis to minimize the next-level witness length and drop a variable.
+This shrinks variables/depth, not entropy-coded bytes.
+
+**SIS rank scaling (why a high basis is affordable when wanted).**
+Raising `lb` raises the per-digit L-infinity collision (`2^lb - 1` for B/D roles, `~b/2` for dense A) and the L2 collision bound, which raises the A-matrix module rank `n_a`.
+But the generated SIS floor table makes `n_a ~ (ln(W * beta^2) / c)^2`: quadratic in the *log* of (width x squared-collision).
+For fixed `(family, d, rank)` the supported width is `~ 1/collision^2`, and each added module rank multiplies the supported width by `~370x` (Q32) to `~10^4-10^5x` (Q64/Q128) (`crates/akita-types/src/sis/generated_sis_table/`), so `n_a` grows only `~0.2` ranks per `+1` of `lb`.
+Rank growth is far slower than the basis rise, so the depth/prover-time basis lever is not throttled by SIS; the remaining ceiling on the basis is the i8-packing datatype (`MAX_I8_LOG_BASIS = 6`), which JL does not lift on its own (widening to i16+ and re-deriving the CRT-NTT safe widths in `crates/akita-prover/src/kernels/linear/capacity.rs` is the knock-on engineering cost).
+
+**The separate committed-level SIS win.**
+Independently of the tail, JL tightens the A-role weak-binding price by replacing the deterministic envelope `beta_inf` with a realized norm (the `30-200x` slack, about 1-2 module ranks; see D4).
+This shrinks committed-level commitment bytes and is basis-independent.
+
+**Status of the prior DP "basis is byte-neutral" retraction.**
+The DP measurement in `akita-jl-norm-check-resolutions.md` 3.2 (cap lifted 6 -> 16, byte-flat at `nv >= 28`) is correct *for what it measured*: raising the basis while still paying the inf-norm range tax, where the terminal savings and the growing range tree cancel.
+It does **not** refute the JL tail win, because it never priced a JL-cheapened fold (a fixed `~n_rows * d` check instead of the `2^lb` tree), so it could not see the fold-count shift that contracts the terminal.
+Its `delta * lb ~ magnitude_bits` and entropy-coding arguments correctly establish that the *basis* is byte-neutral, but the JL win is fold economics, not the basis.
+The correct experiment is a DP re-run with the stage-1 tree replaced by the JL check and per-term bases allowed; the direction (cheaper folds -> more contraction -> smaller terminal) is well-supported, the magnitude unmeasured.
+
 ## Background and rationale
 
 This section makes the spec self-contained. It states the protocol facts the prototype depends on and the design choice it implements.
@@ -43,8 +85,8 @@ u'         commits the next witness w_next (which embeds z and the other roles)
 ```
 
 Soundness needs the extractor to recover a witness whose Euclidean norm is bounded.
-The current protocol certifies the fold response `z`; the proposed JL direction wants, if the anchored extraction argument works, to certify the committed blocks `s_i` directly.
-Those are not automatically equivalent for soundness, because the existing CWSS extraction naturally produces fold-response quotients.
+The current protocol certifies the fold response `z` with a range check; the JL direction certifies the realized norm of the committed blocks statistically, replacing the loose deterministic envelope.
+JL certifies only objects fixed before `J` is sampled (the committed blocks, pinned by their commitment), not the post-fold quotient the extractor naturally produces; the operator-norm weak-binding price is unchanged, as in LaBRADOR (see D4).
 Today that certificate is **stage 1**: the balanced base-`2^lb` digits of `z` are committed and a range-check sumcheck of degree `2^lb` proves each digit lies in the digit set, giving an infinity-norm bound `||z||_inf <= beta_inf`, converted to Euclidean via `||z||_2 <= sqrt(d) * beta_inf`.
 The deterministic envelope `beta_inf = num_claims * 2^r_vars * min(||c||_inf*||s||_1, ||c||_1*||s||_inf)` is what the SIS accounting prices today (see the A-role collision below).
 Prior calibration notes report that this deterministic envelope is often 30 to 200 times larger than the realized `||z||_2`.
@@ -81,7 +123,7 @@ Prior internal analysis flagged three things that constrain how this prototype i
 
 1. **JL at the tail does not replace the terminal cleartext send.** The terminal direct opening is the PCS base case: something must still verify the final evaluation claim. The reveal projection may delete stage 1 at a tail level and may shrink the last one or two committed levels (replace a full-witness reveal with a small image plus birth-certification of `w_next`), but it does not eliminate the terminal witness. Frame this as "delete stage 1 plus reveal a small image," not "shrink the terminal 3-4x."
 2. **JL is not a decomposition-basis byte win.** Lifting the decomposition basis was hypothesized to shrink the tail under JL; a planner sweep showed total proof size changes by at most 1 percent at small sizes and 0 percent at `num_vars >= 28`, because the digit-packing identity `delta * lb ~ field_bits` magnitude-locks every cleartext segment while the module rank `n_a(lb)` grows. So the candidate byte case for JL rests on deleting stage 1, possible tail-payload changes, and any proven SIS-rank repricing, not on a basis lever.
-3. **The clean A-role repricing is not established by this prototype.** Replacing `8*omega*beta_inf*nu` with `2*T_s` requires a proof that the extracted A-object is the committed block pinned before `J`, not the post-fold quotient. That is the "R-A" item below. Without it, only a weaker fallback price may be available. This is the gating soundness item and is deferred; the prototype does not touch SIS pricing.
+3. **JL does not drop the operator-norm factor from the A-role; it tightens the certified norm.** An earlier framing hoped JL could replace `8*omega*beta_inf*nu` with a clean `2*T_s` by certifying the extracted block `s_i` short and colliding two openings via the bare kernel `s_i - s'_i`. That is **circular** (see D4): bounding `s_i - s'_i` needs `s_i, s'_i` themselves JL-certified short, which requires them fixed before `J` is sampled (Lemma 4.2), which requires A-binding to pin them, and the only non-circular A-binding is the operator-norm/response collision LaBRADOR and akita already use. What JL actually buys, exactly as in LaBRADOR (Thm 5.1, whose A-binding keeps the `T` factor as `4*T*sqrt(128/30)*beta`), is a **realized-norm certificate**: it bounds the realized recursive-witness norm (and through it `||z||_2`), replacing the deterministic envelope `beta_inf` that calibration shows is 30-200x loose. The A-role binding keeps its operator-norm factor; the win is `beta_inf -> realized`, the same realized-norm tightening the exact-l2 certificate targets, but with no no-wrap gate. The prototype does not touch SIS pricing.
 
 ### Reusable prior code
 
@@ -118,7 +160,7 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 
 - **No wiring into the recursive flow.** No new `Step` variant, no `Schedule`/planner change, no serialized proof-type change, no `prove_batched` / `verify_batched` change.
 - **No structured / ring-granular committed-image (mid-level) projection.** Only the dense reveal projection is built.
-- **No anchored-extraction soundness lemma and no SIS repricing.** The clean A-role price requires the extraction re-architecture; not needed to prototype mechanics.
+- **No weak-binding repricing write-up and no SIS repricing.** The realized-norm A-role price (operator factor retained, D4) is a security-accounting task, not needed to prototype mechanics.
 - **No ZK masking of the revealed image.** The revealed image leaks `n_rows` linear functionals; the prototype targets non-ZK builds.
 - **No exact `n_J` / `c(n_rows)` derivation.** `n_rows` (default 256) and the norm bound are configurable parameters.
 - **No removal of the terminal cleartext base case.**
@@ -234,53 +276,55 @@ The natural home is an extension of `PlanSection` (the effective per-level sched
 **What.** Deleting stage 1 removes the degree-`2^lb` range tree, the carried `s_claim`, and the stage-1 transcript at JL levels.
 It also reprices the SIS roles in `akita-types/src/sis/norm_bound.rs`:
 
-- A-role (`rounded_up_collision_norm_s`) today is `committed_fold_collision_l2_sq` with `collision_linf = 8 * omega * beta_inf * nu`. Under anchored extraction this becomes `2 * T_s` (clean, requires D4) or a fallback (also D4). This is the main candidate rank lever.
+- A-role (`rounded_up_collision_norm_s`) today is `committed_fold_collision_l2_sq` with `collision_linf = 8 * omega * beta_inf * nu`. Under a JL realized-norm certificate this keeps the operator-norm factor and becomes `2 * Gamma_bar * beta_bar_2` with `beta_bar_2` the JL-certified realized response (not the deterministic `sqrt(d)*beta_inf`); see D4. The rank lever is the 30-200x realized-vs-envelope tightening of `beta_inf`, not removal of the operator norm.
 - B-role (`rounded_up_collision_norm_t`, the `t_hat` opening digits) and D-role (`rounded_up_collision_norm_w`) are digit-range collisions `2^lb - 1`; they are unchanged by JL but must be re-audited once stage 1 no longer certifies "digits are range-checked" (a comment in `norm_bound.rs` and several consumers assume this).
 - The revealed image norm bound `T_p` and the coordinate-injectivity window must be added to pricing/sizing.
 
-**Why deferred.** Repricing is only meaningful with the anchored-extraction lemma (D4) decided, and it regenerates the SIS floor tables and planner schedules.
+**Why deferred.** Repricing is only meaningful with the weak-binding price (D4) settled, and it regenerates the SIS floor tables and planner schedules.
 
 **Open questions.** Which `norm_bound.rs` consumers implicitly rely on the stage-1 range guarantee (audit needed); the exact `T_p` to bucket; table regen scope.
 
-### D4. The anchored-extraction lemma (the gating soundness item)
+### D4. The weak-binding price under JL (operator norm retained; realized-norm certificate)
 
-**What.** The clean A-role price `eta_A = 2 * T_s` holds only if the object the CWSS extractor recovers is the witness block `s_i` that was pinned in `u_l` before `J` was sampled.
-The conversion from image bound `T_p` to source bound `T_s` depends on the final Akita JL lower-tail constant (for example a `sqrt(30)` denominator in the LaBRADOR-style 256-row statement), and must be re-derived with D6.
-The natural CWSS extractor instead produces a fold-response quotient `s_i^ext = (z-difference) / c_i`, and division by the ring unit `c_i` is not norm-preserving, so a bound on the image of the quotient does not transfer to `||s_i^ext||`.
-Two resolutions:
+**What.** Determine the A-role collision price under a JL norm certificate, and the soundness argument that licenses it. The conclusion is the LaBRADOR weak-binding argument: JL certifies the realized recursive-witness norm, but the operator-norm factor in the A-binding stays.
 
-- **R-A (clean).** Re-architect the projection consistency to bind the committed blocks directly (`p_i = J s_i` against `w_l`'s opening), not the post-fold response, so the extracted A-object is the pinned block. If proved, this delivers `eta_A = 2 T_s`. This is the gating write-up item.
-- **R-B (fallback).** Keep the collision on the fold quotient; JL may still tighten the fold-response bound to a realized-style `||z||_2 <= Gamma_fold * T_s`, giving a price of the form `eta_A = 2 * Gamma_bar * 2 * Gamma_fold * T_s`. This still carries challenge-mass factors and must be checked against the actual CWSS extraction and SIS tables before being advertised as a win.
+**The weak-binding collision (LaBRADOR Thm 5.1; akita `lem:batched-weak-binding`).** Two distinct weak openings of the same inner commitment collide. With `t_hat = t_hat'` (B-binding), `A(s_i - s'_i) = 0` for the block where they differ. The reduction outputs the kernel
+`z_A = c_bar' (c_bar s_i) - c_bar (c_bar' s'_i)`, with `A z_A = 0` and
+`||z_A||_2 <= 2 * Gamma_bar * beta_resp`,
+where `beta_resp` bounds the response difference `||c_bar s_i||_2 = ||z^{(i)} - z^0||_2`. The operator-norm factor `Gamma_bar` enters because the kernel cross-multiplies the two openings' challenge differences; `beta_resp` is available per transcript from the `||z|| <= gamma` check, with no pinning required. This is the only non-circular A-binding.
 
-The pinning order itself is not circular: the blocks `s_i` are committed in `u_l` before `J` is sampled.
-What remains unproved is that the consistency row and extraction route make the pinned block, rather than a post-fold quotient or an adaptively switched opening, the object whose norm enters the A-role collision.
+**Why the clean `2 * T_s` (drop the operator norm) is circular and does not work.** The tempting argument: certify `||s_i||_2 <= T_s` for the extracted block, then bound the bare kernel `s_i - s'_i` (the `A(s-s')=0` identity is already there) by `2 T_s`, with no operator norm. The flaw: to JL-certify `||s_i||_2`, Lemma 4.2 requires `s_i` fixed **before** `J` is sampled. The extracted `s_i = (z^{(i)} - z^0)/c_bar` is recovered from transcripts whose fold challenges are sampled **after** `J`, so a priori it is a function of `J`. Pinning it to the pre-`J` inner commitment requires A-binding (uniqueness of the weak opening). If that A-binding is the very `2 T_s` we are proving, the argument assumes its conclusion. `prop:committed-fold-price` is the structural restatement: the extracted quotient need not equal any range-checked committed block, so the committed witness's pinning never transfers to it. Confirmation from LaBRADOR: even its JL term in the rank-`kappa` binding is `4 * T * sqrt(128/30) * beta` (Thm 5.1) -- operator norm `T` **times** the JL-certified norm, never the bare JL norm.
 
-**Why deferred.** It is a soundness proof, not code; it decides clean vs fallback pricing for D3; the prototype's mechanics are independent of which resolution is chosen.
+**What JL actually buys (the realized-norm certificate).** JL replaces the deterministic response envelope `beta_inf` (which `sqrt(d)*beta_inf` over-prices `||z||_2` by a calibrated 30-200x) with a realized bound, so the A-role becomes
+`eta_A = 2 * Gamma_bar * beta_bar_2`
+with `beta_bar_2` the JL-certified realized response, keeping the operator factor. This is the same realized-norm tightening the exact-l2 certificate targets; JL's advantage over exact-l2 is the absence of a no-wrap gate (it works at the root), not a smaller `eta_A`. The certified norm is also the recursion's next-level input bound `beta'` -- otherwise unbounded, since the extracted quotient has no norm bound without it. This is exactly LaBRADOR's order: the response-based binding pins the witness (operator factor retained), then JL certifies its realized norm for the next level.
 
-**Open questions.** Whether R-A's "consistency against the committed blocks, not the fold response" is compatible with akita's fused stage-2 trace structure without an extra commitment; the precise statement of the uniqueness-bootstrap order in the recursive-tree extraction; how the signed-coordinate injectivity condition enters the JL-to-field consistency argument.
+**Project the committed blocks, not the fold response.** JL can certify only objects fixed before `J`. The committed witness blocks are pre-`J` (pinned by their commitment); the fold response `z` is post-fold-challenge, hence post-`J`, so it cannot be the projected object for a Lemma-4.2 argument. Reaching `||z||_2` from the certified block norm costs a second operator factor `Gamma_fold` (`||z||_2 <= Gamma_fold * ||s||_2`). Whether the A-binding then carries one or two operator factors depends on akita's CWSS extraction details (whether `beta_resp` is bounded by a separate direct `||z||` check or only through the block norm) and is an open item; the load-bearing correction is that it carries **at least one** -- the clean zero-factor `2 T_s` is unavailable.
+
+**Global projection (no per-block, no union).** A single JL projection of the concatenated committed object (one `n_rows x N_coeff` matrix, one image `p`, one norm check) certifies one global Euclidean norm, exactly as LaBRADOR projects the whole folded witness once. There is **no** per-block projection and **no** union over blocks: `beta_resp` / the next-level input norm is a single global bound, and a single block's norm is at most the whole vector's. `n_rows` is sized by the single-projection lower tail (LaBRADOR's 256-row `2^{-128}` constant), not by a `#blocks` union (see D6).
+
+**Why deferred.** It is the soundness argument, not code; the prototype's mechanics (project, reveal, check norm, consistency sumcheck) are identical regardless of the final operator-factor count.
+
+**Open questions.** Whether akita's CWSS extraction yields one or two operator factors in `eta_A`; whether the response bound `beta_resp` is supplied by a retained direct `||z||` check or derived from the JL block-norm; the precise uniqueness-bootstrap order in the recursive-tree extraction (response-priced A-binding pins, then Lemma 4.2 certifies); how the signed-coordinate injectivity condition enters the JL-to-field consistency argument.
 
 ### D5. Completeness: nonce regrind and the norm-threshold policy
 
 **What.** An honest witness occasionally projects to an over-threshold image (the JL window has an upper tail).
 The backup handles this with a nonce-regrind loop: the prover searches a small nonce on a cloned transcript, only commits the accepted nonce, and the verifier absorbs that one nonce.
-LaBRADOR's check-and-retry analysis gives a small constant in its setting; the Akita threshold and slack must be restated with the chosen `n_rows`, signed-coordinate window, and union-bound model.
+LaBRADOR's check-and-retry analysis gives a small constant in its setting; the Akita threshold and slack must be restated with the chosen `n_rows` and signed-coordinate window (single global projection, so no union model; see D6).
 Fusion needs: a bounded regrind nonce in the proof/transcript, a schedule-fixed honest bucket `T_p` sized from calibrated RMS image norms, and a liveness cap (no-panic on exhaustion).
 
 **Why deferred.** The standalone prototype can pick a single transcript draw and a generous `T_p` for tests; regrind is a completeness optimization for the wired path.
 
 **Open questions.** Nonce search budget; how the regrind nonce binds in the descriptor/transcript; interaction with the per-draw 128-bit entropy floor.
 
-### D6. The union bound and sizing `n_rows` (`n_J`) per level
+### D6. Sizing `n_rows` for the single global projection (no union)
 
-**What.** The JL failure probability is a union over the projected objects: `kappa_JL = (#objects) * 2^{-c(n_rows)}`, with the 256-row LaBRADOR statement often summarized as about 128 bits for its exact setting.
-The local resolution note suggests that, under Akita's current convention of targeting a per-level `2^{-128}` term and leaving Fiat-Shamir query count symbolic, a linear extrapolation would give `n_rows ~ 256 + 2*log2(#objects)`.
-That extrapolation is not yet a theorem.
-At tail levels `#objects` is expected to be small, so `n_rows` near 256 may be enough; root-level JL remains disfavored because both the union and live dense-verifier cost are largest there, and because the algebraic range check has no JL statistical failure mode.
-The constant `c(n_rows)`, the exact object count, and any Fiat-Shamir grinding multiplier must be re-derived explicitly.
+**What.** With a single global projection (D4), the JL failure probability is the **single-shot** lower tail of the modular-JL lemma, not a union over blocks. LaBRADOR's Lemma 4.2 gives `Pr_J[||J s mod q||_2 < sqrt(30) * b] <= 2^{-128}` at `n_rows = 256` for one vector `s in [+-q/2]^N` with `||s||_2 >= b <= q/125`. The `q/125` precondition is engineered for `q ~ 2^32` (fp32), so it transplants directly. Because the whole concatenated object is projected once and a single global Euclidean norm is certified, there is **no** `#objects` union and no `n_rows ~ 256 + 2*log2(#objects)` inflation -- that earlier framing was an artifact of a per-block design the spec no longer pursues.
 
-**Why deferred.** The prototype uses a configurable `n_rows` (default 256) and a generous bound; exact sizing is a security-accounting task that feeds D3 pricing.
+**Why deferred.** The prototype uses a configurable `n_rows` (default 256) and a generous bound; the exact slack and constant feed D3/D4 pricing.
 
-**Open questions.** The exact `c(n_rows)`; whether the union is over blocks, coefficient slices, whole revealed images, or extraction branches in the final proof; whether to size per level from that count or fix one conservative `n_rows` for all JL levels.
+**Open questions.** Whether akita keeps `n_rows = 256` with LaBRADOR's `2^{-128}` constant or re-derives the lower-tail exponent at a different `n_rows` (LaBRADOR states the bound only for 256 rows -- the binding lower tail is GHL21 Cor 3.2, not proven for general `n_rows` there); the `sqrt(128/30) ~ 2.07` slack vs a tighter threshold with nonce regrind (D5); whether root-level JL is used at all (the algebraic range check has no JL statistical failure mode and the live dense-verifier cost is largest at the root).
 
 ### D7. ZK masking of the revealed image
 
@@ -302,13 +346,13 @@ This is a separate, more complex variant (no reveal, no leak, smaller image over
 
 ### Suggested ordering for fusion
 
-D6 and D4 (security: size `n_rows`, prove the extraction route, and settle coordinate injectivity) settle pricing inputs; D3 (delete stage 1, reprice, regen tables) and D1 (descriptor) are the type/accounting changes; D2 (Step, payload, stage-2 fusion) is the protocol cutover; D5 (regrind) and D7 (ZK) are completeness/ZK work; D8 is a separate mid-level project.
+D6 and D4 (security: size `n_rows` for the single projection, settle the weak-binding price with the operator factor retained, and settle coordinate injectivity) settle pricing inputs; D3 (delete stage 1, reprice, regen tables) and D1 (descriptor) are the type/accounting changes; D2 (Step, payload, stage-2 fusion) is the protocol cutover; D5 (regrind) and D7 (ZK) are completeness/ZK work; D8 is a separate mid-level project.
 
 ## Documentation
 
 - This spec is the primary design record for the prototype and the fusion roadmap.
 - New crate-level module docs (`//!`) on `akita-challenges::jl` and `akita-prover::protocol::jl`.
-- No public book or security-doc changes until fusion (the prototype changes no shipped behavior). When fusion lands, the security-model and norm-bounds pages need the JL paradigm-schedule and the anchored-extraction pricing.
+- No public book or security-doc changes until fusion (the prototype changes no shipped behavior). When fusion lands, the security-model and norm-bounds pages need the JL paradigm-schedule and the weak-binding realized-norm pricing (operator factor retained).
 
 ## Execution
 
@@ -329,9 +373,9 @@ Risks to resolve first:
 ## References
 
 - `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`: reusable dense reveal projection implementation ideas (packed ternary, SHAKE seed expansion, centering, projection, nonce regrind). Port contracts, not constants or overflow return types, without re-auditing them.
-- LaBRADOR (eprint 2023/1729): modular-JL lemma, the 256-row setting, and the check-and-retry threshold policy. Re-derive Akita's `c(n_rows)`, slack, union bound, and coordinate-injectivity conditions before using them for soundness.
+- LaBRADOR (eprint 2023/1729): modular-JL lemma (Lemma 4.1/4.2), the 256-row single-projection setting, the weak-binding A-price (Thm 5.1, where the JL term is `4*T*sqrt(128/30)*beta` -- operator norm retained), and the check-and-retry threshold policy. The weak-binding argument is the template (D4): JL certifies the realized output norm; the operator factor in the A-binding is structural and does not drop. Akita's relation being linear in the blocks does **not** remove it (the circularity in D4).
 - Grand Danois (eprint 2026/1196): structured-projection-in-relation and the nested lever (for the deferred mid-level variant); constants must be re-derived.
-- `akita-types/src/sis/norm_bound.rs`: A/B/D-role collision pricing the anchored repricing (D3, D4) targets.
+- `akita-types/src/sis/norm_bound.rs`: A/B/D-role collision pricing the realized-norm repricing (D3, D4) targets.
 - `akita-types/src/instance_descriptor.rs`: the transcript preamble that must bind JL geometry (D1).
 - `akita-types/src/schedule.rs`, `akita-types/src/proof/levels.rs`, `akita-prover/src/protocol/sumcheck/akita_stage2`: the `Step`, proof payload, and fused stage-2 surfaces fusion touches (D2).
 - Profiling (for the fusion measurement): `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.
