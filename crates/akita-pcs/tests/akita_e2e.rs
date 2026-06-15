@@ -17,8 +17,9 @@ use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
 use akita_types::{
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup,
-    BasisMode, CleartextWitnessProof, CleartextWitnessShape, RingCommitment, Schedule,
+    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
+    AkitaVerifierSetup, BasisMode, CleartextWitnessProof, CleartextWitnessShape, RingCommitment,
+    Schedule,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
