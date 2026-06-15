@@ -24,9 +24,10 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::eval_poly;
 use akita_types::{
-    combine_polys, linear_combination, sis::FoldLinfGrindContract, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
+    combine_polys, linear_combination, sis::FoldWitnessGrindContract,
+    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
+    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
+    MRowLayout, RingSliceSerializer,
 };
 
 #[cfg(feature = "zk")]
@@ -44,7 +45,7 @@ type Stage1VerifyOutput<E> = Vec<E>;
 ///
 /// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
 pub(crate) fn validate_fold_grind_nonce(
-    contract: &FoldLinfGrindContract,
+    contract: &FoldWitnessGrindContract,
     fold_grind_nonce: u32,
 ) -> Result<(), AkitaError> {
     contract.validate_nonce(fold_grind_nonce)
@@ -526,11 +527,11 @@ mod fold_grind_nonce_tests {
     fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(TensorChallengeShape::Tensor);
         let contract = lp
-            .fold_linf_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
+            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
         assert_eq!(
             contract.policy,
-            akita_types::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly
+            akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
         );
         assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
         assert!(validate_fold_grind_nonce(&contract, 1).is_err());
@@ -540,11 +541,11 @@ mod fold_grind_nonce_tests {
     fn tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(TensorChallengeShape::Flat);
         let contract = lp
-            .fold_linf_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
+            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
         assert_eq!(
             contract.policy,
-            akita_types::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
+            akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
         );
         let cap = contract.max_nonce_exclusive;
         assert!(validate_fold_grind_nonce(&contract, 0).is_ok());

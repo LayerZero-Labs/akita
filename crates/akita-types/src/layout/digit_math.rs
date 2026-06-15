@@ -11,7 +11,7 @@ use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
     committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
-    FoldChallengeNorms, FoldLinfDigitSizing, FoldWitnessNorms, SisModulusFamily,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
 };
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
@@ -135,7 +135,7 @@ pub fn optimal_m_r_split(
 
         // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
         // from min(β_inf, t*) rather than β_inf alone.
-        let linf_sizing = FoldLinfDigitSizing::for_fold_level(
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             stage1_config,
             fold_challenge_shape,
             d as usize,
@@ -148,7 +148,7 @@ pub fn optimal_m_r_split(
             log_basis,
             fold_challenge,
             fold_witness,
-            linf_sizing,
+            cap_config,
         ) else {
             continue;
         };

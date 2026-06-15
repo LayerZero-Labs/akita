@@ -35,8 +35,8 @@ only replays the accepted Fiat–Shamir challenge stream.
 | `K` | `num_digits_fold` (digit planes for `z_hat`) |
 | `challenge_l2_sq_max` | family worst-case `max ‖c‖_2²` (per logical block); math shorthand `c_l2_sq_max` |
 
-| `TailBoundWithGrind` | `FoldLinfThresholdPolicy` variant: `cap = min(β_inf, t*)`, grind allowed |
-| `WorstCaseBetaOnly` | `FoldLinfThresholdPolicy` variant: `cap = β_inf` only, nonce must be 0 |
+| `TailBoundWithGrind` | `FoldWitnessLinfCapPolicy` variant: `cap = min(β_inf, t*)`, grind allowed |
+| `WorstCaseBetaOnly` | `FoldWitnessLinfCapPolicy` variant: `cap = β_inf` only, nonce must be 0 |
 
 This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
 binding rank** (operator norm + Euclidean MSIS); this spec tightens the **fold
@@ -69,7 +69,7 @@ The feature introduces or modifies:
   (`SparseChallengeConfig::challenge_l2_sq_max`), the only new family-level
   quantity. Exact integer for every shipping family.
 - A pure **tail-bound primitive**
-  `fold_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term)` in
+  `fold_witness_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term)` in
   `akita-types::sis::norm_bound` (squared domain, no floats on the
   verifier-reachable path).
 - A **digit-sizing path** `num_digits_fold` that takes `K` from
@@ -145,7 +145,7 @@ The feature introduces or modifies:
 - [ ] `SparseChallengeConfig::challenge_l2_sq_max()` returns the exact
   worst-case `‖c‖_2²` for `Uniform`, `ExactShell`, `BoundedL1Norm`, validated by
   a unit test against hand-computed values.
-- [ ] `fold_linf_tail_bound_sq(...)` is integer-only, total, monotone in
+- [ ] `fold_witness_linf_tail_bound_sq(...)` is integer-only, total, monotone in
   each argument; digit sizing uses `min(β_inf, t*)` (raw `t*` may exceed the
   tight `fold_witness_beta`; the applied cap is always the minimum).
 - [ ] `num_digits_fold` returns `K_reject <= K_worstcase` for every tail-bound-with-grind
@@ -179,7 +179,7 @@ New tests:
   `effective_l2_sq_max` (flat = `challenge_l2_sq_max`, tensor = factor product) for future
   policy binding, while the first digit-sizing cutover enables only flat shapes.
 - `akita-types::sis`: tail-bound monotonicity, overflow/no-panic,
-  `min(β_inf, t*)` sizing table; `fold_linf_ln_term` reference checks for the
+  `min(β_inf, t*)` sizing table; `fold_witness_linf_ln_term` reference checks for the
   largest supported `num_fold_coeffs` and for a nontrivial `p_num/p_den` case.
 - `akita-prover`: reroll-loop termination (statistical, sampled re-fold count);
   capped-loop error path; `LoggingTranscript` equality.
@@ -218,7 +218,7 @@ SparseChallengeConfig.challenge_l2_sq_max                         [akita-challen
         ▼
 LevelParams (witness_linf via fold_witness_norms, num_fold_blocks,
              num_fold_coeffs, p, policy)
-        │  fold_linf_tail_bound_sq → t*
+        │  fold_witness_linf_tail_bound_sq → t*
         ▼
 num_digits_fold = min(β_inf, t*) → K                     [akita-types::sis]
         │
@@ -289,7 +289,7 @@ num_fold_coeffs = inner_width · D
 num_fold_blocks = num_claims · 2^r_vars
 ```
 
-`LevelParams::fold_linf_tail_bound_sq(num_claims)` and
+`LevelParams::fold_witness_linf_tail_bound_sq(num_claims)` and
 `LevelParams::num_digits_fold(num_claims, field_bits)` are the shared accessors
 used by planner/prover/verifier paths.
 
@@ -302,7 +302,7 @@ challenge call; let `witness_linf = ‖s‖_inf` be the per-block committed-witn
 coefficients covered by the shared nonce.
 
 The prover rerolls the fold challenge until `‖z‖_inf <= t*`, where `t*` is the
-integer square root of `fold_linf_tail_bound_sq(...)`. Digit sizing uses
+integer square root of `fold_witness_linf_tail_bound_sq(...)`. Digit sizing uses
 `min(β_inf, t*)` so a loose raw `t*` never widens `K` beyond the existing
 worst-case bound.
 
@@ -379,7 +379,7 @@ For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`: `≈ 0.4
   sign-independent), but the production sampler uses a fixed `2^128` rank prefix.
   This spec does not claim the prefix has the conditional sign-independence needed
   for (T). Its `challenge_l2_sq_max` value is exposed and tested, but
-  `fold_linf_threshold_policy` returns `WorstCaseBetaOnly` for `BoundedL1Norm`
+  `fold_witness_linf_cap_policy` returns `WorstCaseBetaOnly` for `BoundedL1Norm`
   until a separate certificate proves a tail bound for the truncated support.
 
 **Tensor folds.** A tensor fold materializes the product `c = α_p · β_q`; the
@@ -434,10 +434,10 @@ worst-case path is generalized in place):
 **`akita-types`**
 
 - `src/sis/norm_bound.rs`: add
-  `fold_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
+  `fold_witness_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
   returning `t*²` (squared domain, exact `u128`, saturating/no-panic). The only
   irrational input is `ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p)`; pass it
-  as a conservative integer `ln_term` via `fold_linf_ln_term(num_fold_coeffs,
+  as a conservative integer `ln_term` via `fold_witness_linf_ln_term(num_fold_coeffs,
   num_fold_blocks, p_num, p_den)` (table-bounded for `num_fold_coeffs <= 2^32`,
   `ln 4·num_fold_coeffs <= 24`). Document that the real sqrt is taken only at
   the digit-sizing boundary.
@@ -449,7 +449,7 @@ worst-case path is generalized in place):
 - `src/layout/params.rs`: `LevelParams::num_digits_fold` passes the new inputs
   (`challenge_l2_sq_max` via `stage1_config`, `inner_width()·D`, the op-norm
   acceptance `p`, and the threshold policy). Add
-  `fold_linf_tail_bound_sq(num_claims)` so the prover reads the identical value
+  `fold_witness_linf_tail_bound_sq(num_claims)` so the prover reads the identical value
   (invariant 4).
 - `src/proof/levels.rs`: add `fold_grind_nonce: u32` to intermediate and terminal
   fold level proofs and to `TerminalLevelProof`; update constructors and
@@ -471,7 +471,7 @@ worst-case path is generalized in place):
 - `src/protocol/ring_relation.rs`: replace `validate_decompose_fold`'s abort with
   a capped reroll loop around `sample_folding_challenges` →
   `build_point_decompose_fold_witness`/`decompose_fold` → accept first `z` with
-  `‖z‖_inf <= t*` (read from `lp.fold_linf_tail_bound_sq(num_claims)`). Record
+  `‖z‖_inf <= t*` (read from `lp.fold_witness_linf_tail_bound_sq(num_claims)`). Record
   the accepted nonce into the level proof. Unsupported policies skip the loop and
   use nonce `0`. The nonce is absorbed before the challenge squeeze (already the
   absorb point in `sample_folding_challenges`).
@@ -530,7 +530,7 @@ Slices (each independently reviewable; W0 are pure and unblock the rest):
 ```text
 W0 (pure, parallel)
   F1  challenge_l2_sq_max + effective_l2_sq_max              [akita-challenges]
-  F2  threshold policy + fold_linf_tail_bound_sq + ln term   [akita-types::sis]
+  F2  threshold policy + fold_witness_linf_tail_bound_sq + ln term   [akita-types::sis]
 
 W1
   F3  num_digits_fold sizes K from min(β_inf, t*)            [akita-types::sis]  (F2)

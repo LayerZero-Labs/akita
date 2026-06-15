@@ -153,7 +153,7 @@ impl SparseChallengeConfig {
     /// Worst-case squared ℓ₂ norm `max ‖c‖_2²` over the challenge family.
     ///
     /// Used by the folded-witness `‖z‖_inf` tail bound (`t*`) in
-    /// `akita-types::sis::fold_linf_tail_bound_sq`. Exact integers for every
+    /// `akita-types::sis::fold_witness_linf_tail_bound_sq`. Exact integers for every
     /// shipping preset; see `specs/fold-linf-rejection.md`.
     #[inline]
     #[must_use]

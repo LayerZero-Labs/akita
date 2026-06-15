@@ -41,8 +41,8 @@ fn run_tail_bound_with_grind_onehot_roundtrip(
     )
     .expect("layout");
     assert_eq!(
-        layout.fold_linf_threshold_policy(),
-        akita_types::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
+        layout.fold_witness_linf_cap_policy(),
+        akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
     );
 
     let poly = make_onehot_poly(&layout, seed);

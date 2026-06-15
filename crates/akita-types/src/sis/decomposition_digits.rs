@@ -34,7 +34,7 @@
 use akita_field::AkitaError;
 
 use super::norm_bound::{
-    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldLinfDigitSizing,
+    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
     FoldWitnessNorms,
 };
 use crate::DecompositionParams;
@@ -166,8 +166,8 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
-/// norms. Under [`FoldLinfThresholdPolicy::TailBoundWithGrind`], the signed range is
-/// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_linf_tail_bound_sq`];
+/// norms. Under [`FoldWitnessLinfCapPolicy::TailBoundWithGrind`], the signed range is
+/// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_witness_linf_tail_bound_sq`];
 /// deterministic policies use `β_inf` alone.
 ///
 /// # Errors
@@ -183,7 +183,7 @@ pub fn num_digits_fold(
     log_basis: u32,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
-    linf_sizing: FoldLinfDigitSizing,
+    cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
     let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
     if beta == 0 {
@@ -199,7 +199,7 @@ pub fn num_digits_fold(
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
-    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &linf_sizing)?;
+    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &cap_config)?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
@@ -336,7 +336,7 @@ mod tests {
             3,
             challenge,
             dense,
-            FoldLinfDigitSizing::deterministic(),
+            FoldWitnessLinfCapConfig::worst_case_beta_only(),
         )
         .unwrap();
         let onehot_digits = num_digits_fold(
@@ -346,7 +346,7 @@ mod tests {
             3,
             challenge,
             onehot,
-            FoldLinfDigitSizing::deterministic(),
+            FoldWitnessLinfCapConfig::worst_case_beta_only(),
         )
         .unwrap();
         assert!(dense_digits > 0 && onehot_digits > 0);
@@ -360,7 +360,7 @@ mod tests {
                 3,
                 challenge,
                 dense,
-                FoldLinfDigitSizing::deterministic()
+                FoldWitnessLinfCapConfig::worst_case_beta_only()
             )
             .unwrap()
                 >= dense_digits
@@ -382,7 +382,7 @@ mod tests {
             3,
             challenge,
             witness,
-            FoldLinfDigitSizing::deterministic()
+            FoldWitnessLinfCapConfig::worst_case_beta_only()
         )
         .is_err());
         // num_claims == 0 ⇒ β = 0 is rejected.
@@ -393,7 +393,7 @@ mod tests {
             3,
             challenge,
             witness,
-            FoldLinfDigitSizing::deterministic()
+            FoldWitnessLinfCapConfig::worst_case_beta_only()
         )
         .is_err());
     }

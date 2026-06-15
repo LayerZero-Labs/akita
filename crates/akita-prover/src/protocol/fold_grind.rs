@@ -8,7 +8,7 @@ use akita_challenges::{
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    sis::{FoldLinfGrindContract, FoldLinfThresholdPolicy},
+    sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     FoldLinfProtocolBinding, LevelParams,
 };
 
@@ -37,12 +37,16 @@ where
 {
 }
 
-fn accepts_witness(contract: &FoldLinfGrindContract, centered_inf_norm: u32) -> bool {
-    contract.policy == FoldLinfThresholdPolicy::WorstCaseBetaOnly
-        || u128::from(centered_inf_norm) <= contract.inf_threshold
+fn accepts_witness(contract: &FoldWitnessGrindContract, centered_inf_norm: u32) -> bool {
+    contract.policy == FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
+        || u128::from(centered_inf_norm) <= contract.witness_linf_cap
 }
 
 /// Probe fold challenges off-sponge, accept the first witness under `t*`, then commit.
+///
+/// Plain presets probe `nonce = 0, 1, …` (minimum accepting nonce). ZK presets
+/// must switch to transcript-seeded probe order before production; see
+/// `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
 pub(crate) fn sample_fold_decompose_witness<F, P, T, const D: usize>(
     transcript: &mut T,
     polys: &[&P],
@@ -54,7 +58,7 @@ where
     P: AkitaPolyOps<F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let contract = lp.fold_linf_grind_contract(
+    let contract = lp.fold_witness_grind_contract(
         num_claims,
         FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
     )?;
@@ -89,6 +93,6 @@ where
 
     Err(AkitaError::InvalidInput(format!(
         "fold grind exceeded {} attempts (threshold={})",
-        contract.max_nonce_exclusive, contract.inf_threshold
+        contract.max_nonce_exclusive, contract.witness_linf_cap
     )))
 }

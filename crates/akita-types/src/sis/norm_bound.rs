@@ -255,7 +255,7 @@ pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 /// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FoldLinfThresholdPolicy {
+pub enum FoldWitnessLinfCapPolicy {
     /// Proved sub-Gaussian tail: flat `ExactShell` at `D = 64` or
     /// `Uniform{[-1,1]}` at `D ∈ {128, 256}`; `cap = min(β_inf, t*)` and grind allowed.
     TailBoundWithGrind,
@@ -268,25 +268,25 @@ pub enum FoldLinfThresholdPolicy {
 /// degree `ring_dimension` with the given fold-challenge shape.
 #[inline]
 #[must_use]
-pub fn fold_linf_threshold_policy(
+pub fn fold_witness_linf_cap_policy(
     stage1_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     ring_dimension: usize,
-) -> FoldLinfThresholdPolicy {
+) -> FoldWitnessLinfCapPolicy {
     if !matches!(fold_shape, TensorChallengeShape::Flat) {
-        return FoldLinfThresholdPolicy::WorstCaseBetaOnly;
+        return FoldWitnessLinfCapPolicy::WorstCaseBetaOnly;
     }
     match stage1_config {
         SparseChallengeConfig::ExactShell { .. } if ring_dimension == 64 => {
-            FoldLinfThresholdPolicy::TailBoundWithGrind
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind
         }
         SparseChallengeConfig::Uniform { nonzero_coeffs, .. }
             if (ring_dimension == 128 || ring_dimension == 256)
                 && nonzero_coeffs.iter().all(|c| c.unsigned_abs() == 1) =>
         {
-            FoldLinfThresholdPolicy::TailBoundWithGrind
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind
         }
-        _ => FoldLinfThresholdPolicy::WorstCaseBetaOnly,
+        _ => FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
     }
 }
 
@@ -315,7 +315,7 @@ fn ceil_natural_log(x: u128) -> u128 {
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `num_fold_coeffs == 0`, `p_den == 0`,
 /// `p_num == 0`, or `p_num > p_den`.
-pub fn fold_linf_ln_term(
+pub fn fold_witness_linf_ln_term(
     num_fold_coeffs: u128,
     num_fold_blocks: u128,
     p_num: u128,
@@ -323,22 +323,22 @@ pub fn fold_linf_ln_term(
 ) -> Result<u128, AkitaError> {
     if num_fold_coeffs == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_ln_term: num_fold_coeffs must be positive".to_string(),
+            "fold_witness_linf_ln_term: num_fold_coeffs must be positive".to_string(),
         ));
     }
     if p_den == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_ln_term: p_den must be positive".to_string(),
+            "fold_witness_linf_ln_term: p_den must be positive".to_string(),
         ));
     }
     if p_num == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_ln_term: p_num must be positive".to_string(),
+            "fold_witness_linf_ln_term: p_num must be positive".to_string(),
         ));
     }
     if p_num > p_den {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_ln_term: acceptance probability exceeds 1".to_string(),
+            "fold_witness_linf_ln_term: acceptance probability exceeds 1".to_string(),
         ));
     }
     let ln_4n = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
@@ -366,7 +366,7 @@ pub fn fold_linf_ln_term(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when any argument is zero or the product
 /// overflows `u128`.
-pub fn fold_linf_tail_bound_sq(
+pub fn fold_witness_linf_tail_bound_sq(
     num_fold_blocks: u128,
     challenge_l2_sq_max: u128,
     witness_linf_sq: u128,
@@ -374,7 +374,7 @@ pub fn fold_linf_tail_bound_sq(
 ) -> Result<u128, AkitaError> {
     if num_fold_blocks == 0 || challenge_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_linf_tail_bound_sq: arguments must be positive".to_string(),
+            "fold_witness_linf_tail_bound_sq: arguments must be positive".to_string(),
         ));
     }
     let two = 2u128;
@@ -383,18 +383,19 @@ pub fn fold_linf_tail_bound_sq(
         .and_then(|v| v.checked_mul(witness_linf_sq))
         .and_then(|v| v.checked_mul(ln_term))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("fold_linf_tail_bound_sq: t*² overflows u128".to_string())
+            AkitaError::InvalidSetup(
+                "fold_witness_linf_tail_bound_sq: t*² overflows u128".to_string(),
+            )
         })
 }
 
-/// Inputs for fold-linf-aware gadget digit sizing in [`crate::sis::num_digits_fold`].
+/// Level-static configuration for [`fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
 ///
-/// When the policy is [`WorstCaseBetaOnly`](FoldLinfThresholdPolicy::WorstCaseBetaOnly),
-/// tail-bound fields are ignored and sizing uses `β_inf` alone.
+/// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FoldLinfDigitSizing {
-    pub policy: FoldLinfThresholdPolicy,
+pub struct FoldWitnessLinfCapConfig {
+    pub policy: FoldWitnessLinfCapPolicy,
     /// Family worst-case `max ‖c‖_2²` (per logical block); see
     /// [`SparseChallengeConfig::challenge_l2_sq_max`].
     pub challenge_l2_sq_max: u128,
@@ -403,12 +404,12 @@ pub struct FoldLinfDigitSizing {
     pub op_norm_accept_p_den: u128,
 }
 
-impl FoldLinfDigitSizing {
+impl FoldWitnessLinfCapConfig {
     /// Worst-case `β_inf` sizing only (no tail certificate).
     #[inline]
-    pub const fn deterministic() -> Self {
+    pub const fn worst_case_beta_only() -> Self {
         Self {
-            policy: FoldLinfThresholdPolicy::WorstCaseBetaOnly,
+            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
             challenge_l2_sq_max: 0,
             num_fold_coeffs: 0,
             op_norm_accept_p_num: 1,
@@ -426,7 +427,11 @@ impl FoldLinfDigitSizing {
         inner_width: usize,
     ) -> Self {
         Self {
-            policy: fold_linf_threshold_policy(stage1_config, fold_challenge_shape, ring_dimension),
+            policy: fold_witness_linf_cap_policy(
+                stage1_config,
+                fold_challenge_shape,
+                ring_dimension,
+            ),
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs: (inner_width as u128).saturating_mul(ring_dimension as u128),
             op_norm_accept_p_num: 1,
@@ -440,25 +445,25 @@ impl FoldLinfDigitSizing {
 ///
 /// # Errors
 ///
-/// Propagates [`fold_linf_ln_term`] / [`fold_linf_tail_bound_sq`] rejections.
+/// Propagates [`fold_witness_linf_ln_term`] / [`fold_witness_linf_tail_bound_sq`] rejections.
 pub fn fold_witness_linf_cap(
     beta: u128,
     num_fold_blocks: u128,
     witness_linf_sq: u128,
-    sizing: &FoldLinfDigitSizing,
+    config: &FoldWitnessLinfCapConfig,
 ) -> Result<u128, AkitaError> {
-    match sizing.policy {
-        FoldLinfThresholdPolicy::WorstCaseBetaOnly => Ok(beta),
-        FoldLinfThresholdPolicy::TailBoundWithGrind => {
-            let ln_term = fold_linf_ln_term(
-                sizing.num_fold_coeffs,
+    match config.policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
+            let ln_term = fold_witness_linf_ln_term(
+                config.num_fold_coeffs,
                 num_fold_blocks,
-                sizing.op_norm_accept_p_num,
-                sizing.op_norm_accept_p_den,
+                config.op_norm_accept_p_num,
+                config.op_norm_accept_p_den,
             )?;
-            let t_sq = fold_linf_tail_bound_sq(
+            let t_sq = fold_witness_linf_tail_bound_sq(
                 num_fold_blocks,
-                sizing.challenge_l2_sq_max,
+                config.challenge_l2_sq_max,
                 witness_linf_sq,
                 ln_term,
             )?;
@@ -589,15 +594,15 @@ mod tests {
     }
 
     #[test]
-    fn fold_linf_tail_bound_sq_monotone_and_clamped_inputs() {
-        let base = fold_linf_tail_bound_sq(16, 78, 1, 24).unwrap();
-        assert!(fold_linf_tail_bound_sq(32, 78, 1, 24).unwrap() >= base);
-        assert!(fold_linf_tail_bound_sq(16, 78, 4, 24).unwrap() >= base);
-        assert!(fold_linf_tail_bound_sq(0, 78, 1, 24).is_err());
+    fn fold_witness_linf_tail_bound_sq_monotone_and_clamped_inputs() {
+        let base = fold_witness_linf_tail_bound_sq(16, 78, 1, 24).unwrap();
+        assert!(fold_witness_linf_tail_bound_sq(32, 78, 1, 24).unwrap() >= base);
+        assert!(fold_witness_linf_tail_bound_sq(16, 78, 4, 24).unwrap() >= base);
+        assert!(fold_witness_linf_tail_bound_sq(0, 78, 1, 24).is_err());
     }
 
     #[test]
-    fn fold_linf_threshold_policy_certifies_production_flat_families() {
+    fn fold_witness_linf_cap_policy_certifies_production_flat_families() {
         use akita_challenges::TensorChallengeShape;
 
         let shell = SparseChallengeConfig::ExactShell {
@@ -606,41 +611,41 @@ mod tests {
             operator_norm_threshold: 54,
         };
         assert_eq!(
-            fold_linf_threshold_policy(&shell, TensorChallengeShape::Flat, 64),
-            FoldLinfThresholdPolicy::TailBoundWithGrind,
+            fold_witness_linf_cap_policy(&shell, TensorChallengeShape::Flat, 64),
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
         );
         let uni = SparseChallengeConfig::Uniform {
             weight: 31,
             nonzero_coeffs: vec![-1, 1],
         };
         assert_eq!(
-            fold_linf_threshold_policy(&uni, TensorChallengeShape::Flat, 128),
-            FoldLinfThresholdPolicy::TailBoundWithGrind,
+            fold_witness_linf_cap_policy(&uni, TensorChallengeShape::Flat, 128),
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
         );
         assert_eq!(
-            fold_linf_threshold_policy(&uni, TensorChallengeShape::Tensor, 128),
-            FoldLinfThresholdPolicy::WorstCaseBetaOnly,
+            fold_witness_linf_cap_policy(&uni, TensorChallengeShape::Tensor, 128),
+            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
         );
         assert_eq!(
-            fold_linf_threshold_policy(
+            fold_witness_linf_cap_policy(
                 &SparseChallengeConfig::BoundedL1Norm,
                 TensorChallengeShape::Flat,
                 32
             ),
-            FoldLinfThresholdPolicy::WorstCaseBetaOnly,
+            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
         );
     }
 
     #[test]
-    fn fold_linf_ln_term_rejects_zero_p_num() {
-        assert!(fold_linf_ln_term(16, 16, 0, 1).is_err());
+    fn fold_witness_linf_ln_term_rejects_zero_p_num() {
+        assert!(fold_witness_linf_ln_term(16, 16, 0, 1).is_err());
     }
 
     #[test]
-    fn fold_linf_ln_term_p_one_matches_ln_4n() {
-        let term_16 = fold_linf_ln_term(1 << 16, 16, 1, 1).unwrap();
+    fn fold_witness_linf_ln_term_p_one_matches_ln_4n() {
+        let term_16 = fold_witness_linf_ln_term(1 << 16, 16, 1, 1).unwrap();
         assert!((13..=15).contains(&term_16));
-        let term_max = fold_linf_ln_term(1u128 << 32, 16, 1, 1).unwrap();
+        let term_max = fold_witness_linf_ln_term(1u128 << 32, 16, 1, 1).unwrap();
         assert!((24..=26).contains(&term_max));
     }
 
@@ -654,8 +659,8 @@ mod tests {
         let tight_beta = fold_witness_beta(4, 1, challenge, witness).unwrap();
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
-        let ln_term = fold_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
-        let t_sq = fold_linf_tail_bound_sq(16, 78, 1, ln_term).unwrap();
+        let ln_term = fold_witness_linf_ln_term(1u128 << 16, 16, 1, 1).unwrap();
+        let t_sq = fold_witness_linf_tail_bound_sq(16, 78, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(
             t < pessimistic_linf_envelope,

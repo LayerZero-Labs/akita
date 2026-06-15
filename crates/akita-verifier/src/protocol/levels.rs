@@ -648,7 +648,7 @@ where
     T: Transcript<F>,
 {
     validate_fold_grind_nonce(
-        &prepared.lp.fold_linf_grind_contract(
+        &prepared.lp.fold_witness_grind_contract(
             prepared.opening_batch.num_claims(),
             akita_types::FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?,

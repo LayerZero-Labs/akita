@@ -240,20 +240,20 @@ impl LevelParams {
         (1, 1)
     }
 
-    /// Fold-linf threshold policy for this level's sparse family and fold shape.
+    /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
     #[inline]
-    pub fn fold_linf_threshold_policy(&self) -> crate::sis::FoldLinfThresholdPolicy {
-        crate::sis::fold_linf_threshold_policy(
+    pub fn fold_witness_linf_cap_policy(&self) -> crate::sis::FoldWitnessLinfCapPolicy {
+        crate::sis::fold_witness_linf_cap_policy(
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
         )
     }
 
-    /// Inputs threaded into [`crate::sis::num_digits_fold`] for tail-aware sizing.
+    /// Level-static config for [`crate::sis::fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
     #[inline]
-    pub fn fold_linf_digit_sizing(&self) -> crate::sis::FoldLinfDigitSizing {
-        crate::sis::FoldLinfDigitSizing::for_fold_level(
+    pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
+        crate::sis::FoldWitnessLinfCapConfig::for_fold_level(
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
@@ -278,15 +278,15 @@ impl LevelParams {
     /// # Errors
     ///
     /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
-    pub fn fold_linf_grind_contract(
+    pub fn fold_witness_grind_contract(
         &self,
         num_claims: usize,
         max_grind_attempts: u32,
-    ) -> Result<crate::sis::FoldLinfGrindContract, AkitaError> {
-        let policy = self.fold_linf_threshold_policy();
+    ) -> Result<crate::sis::FoldWitnessGrindContract, AkitaError> {
+        let policy = self.fold_witness_linf_cap_policy();
         let max_nonce_exclusive = match policy {
-            crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind => max_grind_attempts,
+            crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
         };
         let witness = self.fold_witness_norms();
         let witness_linf = witness.infinity_norm();
@@ -296,43 +296,44 @@ impl LevelParams {
             l1_norm: self.challenge_l1_mass() as u128,
         };
         let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
-        let inf_threshold = crate::sis::fold_witness_linf_cap(
+        let witness_linf_cap = crate::sis::fold_witness_linf_cap(
             beta,
             self.num_fold_blocks(num_claims)?,
             witness_linf_sq,
-            &self.fold_linf_digit_sizing(),
+            &self.fold_witness_linf_cap_config(),
         )?;
-        Ok(crate::sis::FoldLinfGrindContract {
+        Ok(crate::sis::FoldWitnessGrindContract {
             policy,
-            inf_threshold,
+            witness_linf_cap,
             max_nonce_exclusive,
         })
     }
 
-    pub fn fold_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let sizing = self.fold_linf_digit_sizing();
-        if sizing.policy != crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind {
+    pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
+        let cap_config = self.fold_witness_linf_cap_config();
+        if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
             return Err(AkitaError::InvalidSetup(
-                "fold_linf_tail_bound_sq: deterministic policy has no tail bound".to_string(),
+                "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
+                    .to_string(),
             ));
         }
-        if sizing.num_fold_coeffs == 0 {
+        if cap_config.num_fold_coeffs == 0 {
             return Err(AkitaError::InvalidSetup(
-                "fold_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
+                "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
         let num_fold_blocks = self.num_fold_blocks(num_claims)?;
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let ln_term = crate::sis::fold_linf_ln_term(
-            sizing.num_fold_coeffs,
+        let ln_term = crate::sis::fold_witness_linf_ln_term(
+            cap_config.num_fold_coeffs,
             num_fold_blocks,
-            sizing.op_norm_accept_p_num,
-            sizing.op_norm_accept_p_den,
+            cap_config.op_norm_accept_p_num,
+            cap_config.op_norm_accept_p_den,
         )?;
-        crate::sis::fold_linf_tail_bound_sq(
+        crate::sis::fold_witness_linf_tail_bound_sq(
             num_fold_blocks,
-            sizing.challenge_l2_sq_max,
+            cap_config.challenge_l2_sq_max,
             witness_linf_sq,
             ln_term,
         )
@@ -362,7 +363,7 @@ impl LevelParams {
             self.log_basis,
             challenge,
             self.fold_witness_norms(),
-            self.fold_linf_digit_sizing(),
+            self.fold_witness_linf_cap_config(),
         )
     }
 
@@ -416,7 +417,7 @@ impl LevelParams {
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
-        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_linf_threshold_policy());
+        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
@@ -803,11 +804,11 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
 
 fn append_fold_linf_policy_descriptor_bytes(
     bytes: &mut Vec<u8>,
-    policy: crate::sis::FoldLinfThresholdPolicy,
+    policy: crate::sis::FoldWitnessLinfCapPolicy,
 ) {
     bytes.push(match policy {
-        crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind => 0,
-        crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly => 1,
+        crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
+        crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
     });
 }
 

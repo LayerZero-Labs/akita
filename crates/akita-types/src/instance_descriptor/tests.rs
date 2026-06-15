@@ -145,12 +145,12 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     .with_decomp(4, 2, 2, 2, 0)
     .expect("deterministic params");
     assert_eq!(
-        certified.fold_linf_threshold_policy(),
-        crate::sis::FoldLinfThresholdPolicy::TailBoundWithGrind
+        certified.fold_witness_linf_cap_policy(),
+        crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
     );
     assert_eq!(
-        deterministic.fold_linf_threshold_policy(),
-        crate::sis::FoldLinfThresholdPolicy::WorstCaseBetaOnly
+        deterministic.fold_witness_linf_cap_policy(),
+        crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
     );
 
     let schedule_certified = Schedule {
