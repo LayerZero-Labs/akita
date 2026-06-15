@@ -1,6 +1,7 @@
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
+use std::marker::PhantomData;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
 #[cfg(not(feature = "zk"))]
@@ -17,6 +18,8 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
     pub w: RecursiveWitnessFlat,
     #[cfg(not(feature = "zk"))]
     pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    #[cfg(feature = "zk")]
+    _marker: PhantomData<F>,
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -35,6 +38,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 /// constructor rejects an empty vector (an invariant of the type).
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(feature = "zk", allow(unused_variables))]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
@@ -115,6 +119,7 @@ where
             FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
         }
     };
+    #[cfg(not(feature = "zk"))]
     let z_centered = z_folded_rings.centered_coeffs.clone();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
@@ -148,6 +153,8 @@ where
         w,
         #[cfg(not(feature = "zk"))]
         terminal_artifacts,
+        #[cfg(feature = "zk")]
+        _marker: PhantomData,
     })
 }
 

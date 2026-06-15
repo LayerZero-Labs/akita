@@ -51,7 +51,7 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_current_w_len, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, schedule_terminal_direct_witness_shape, stage2_trace_coeff,
+    schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
@@ -61,10 +61,12 @@ use akita_types::{
     AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
     BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
     FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput,
-    OpeningBatchLimits, OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
+    OpeningBatchLimits,     OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
+#[cfg(feature = "zk")]
+use akita_types::{PackedDigits, terminal_witness_segment_layout};
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
 #[cfg(feature = "zk")]

@@ -3,9 +3,13 @@ use cfg_if::cfg_if;
 
 #[cfg(not(feature = "zk"))]
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
+#[cfg(not(feature = "zk"))]
 use akita_types::build_segment_typed_witness;
+#[cfg(not(feature = "zk"))]
 use akita_types::pad_segment_typed_z_payload;
+#[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 /// Prover state carried between suffix fold levels.
@@ -150,6 +154,7 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
+    #[cfg(not(feature = "zk"))]
     let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
@@ -183,6 +188,7 @@ where
                 prepared_fold,
                 setup_contribution_mode,
                 is_terminal_level,
+                #[cfg(not(feature = "zk"))]
                 if is_terminal_level {
                     Some(terminal_direct_witness_shape)
                 } else {
@@ -214,6 +220,7 @@ where
                     prepared_fold,
                     setup_contribution_mode,
                     is_terminal_level,
+                    #[cfg(not(feature = "zk"))]
                     if is_terminal_level {
                         Some(terminal_direct_witness_shape)
                     } else {
@@ -276,6 +283,7 @@ pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
+    #[cfg(not(feature = "zk"))]
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
@@ -337,6 +345,7 @@ where
         },
         #[cfg(not(feature = "zk"))]
         build_output.terminal_artifacts,
+        #[cfg(not(feature = "zk"))]
         terminal_direct_witness_shape,
     )?;
     let m_row_layout = if is_terminal_fold {
@@ -572,7 +581,7 @@ pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
     #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
-    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
