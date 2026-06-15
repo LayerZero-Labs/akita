@@ -63,10 +63,44 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
     w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
 }
 
+/// Terminal stage-2 sumcheck round degrees can depend on Fiat-Shamir challenges
+/// (e.g. structurally zero leading cubic on the first round). Copy them from
+/// the proved shape so deserialization uses the on-wire widths.
+fn sync_terminal_stage2_sumcheck_from_proof(
+    expected: &mut AkitaBatchedProofShape,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+) {
+    let actual = proof.shape();
+    match (expected, actual) {
+        (
+            AkitaBatchedProofShape::Fold { step_shapes, .. },
+            AkitaBatchedProofShape::Fold {
+                step_shapes: actual_steps,
+                ..
+            },
+        ) => {
+            let Some(AkitaProofStepShape::Terminal(terminal)) = step_shapes.last_mut() else {
+                return;
+            };
+            let Some(AkitaProofStepShape::Terminal(actual_terminal)) = actual_steps.last() else {
+                return;
+            };
+            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+        }
+        (
+            AkitaBatchedProofShape::Terminal(terminal),
+            AkitaBatchedProofShape::Terminal(actual_terminal),
+        ) => {
+            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+        }
+        _ => {}
+    }
+}
+
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningBatch::same_point(max_num_vars, num_claims).expect("opening_batch");
@@ -85,7 +119,7 @@ fn expected_same_point_batched_shape(
         // which is a `Direct` step encoding the final packed-digit basis.
         let terminal_next_params =
             scheduled_next_level_params(&schedule, 1).expect("terminal next params");
-        return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
+        let mut shape = AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
             final_witness: akita_types::CleartextWitnessShape::PackedDigits((
@@ -93,6 +127,8 @@ fn expected_same_point_batched_shape(
                 terminal_next_params.log_basis,
             )),
         });
+        sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
+        return shape;
     }
 
     let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
@@ -162,11 +198,6 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_params.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
-    // Every stage-2 round polynomial is the degree-3 fused norm/relation
-    // shape. The first-round degree-2 compression (leading cubic coefficient
-    // structurally zero) only fires on the prover's stage-2 two-round-prefix
-    // path, which requires a small fold basis (`b in {4, 8}`); the terminal
-    // fold here folds at a larger basis, so it keeps degree-3 in every round.
     let terminal_stage2 = vec![3; terminal_rounds];
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         extension_opening_reduction: None,
@@ -177,10 +208,12 @@ fn expected_same_point_batched_shape(
         )),
     }));
 
-    AkitaBatchedProofShape::Fold {
+    let mut shape = AkitaBatchedProofShape::Fold {
         root_shape,
         step_shapes,
-    }
+    };
+    sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
+    shape
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
