@@ -125,13 +125,13 @@ pub fn golomb_rice_max_bits_per_coord(rice_k: u32, zigzag_w_z: u32) -> usize {
     normal_max.max(escape_max)
 }
 
-/// Rice parameter `k` from public fold-response `sigma`.
+/// Rice parameter `k` from a per-coordinate magnitude scale (e.g. `β_inf` for `z`).
 #[must_use]
-pub fn optimal_rice_k(sigma: u128) -> u32 {
-    if sigma <= 1 {
+pub fn optimal_rice_k(scale: u128) -> u32 {
+    if scale <= 1 {
         return 0;
     }
-    u128::BITS - 1 - sigma.leading_zeros()
+    u128::BITS - 1 - scale.leading_zeros()
 }
 
 /// Signed zigzag width for the folded `z` segment from public digit bounds.
@@ -155,19 +155,13 @@ pub fn golomb_rice_zigzag_width_from_beta(beta: u128) -> u32 {
         .max(1)
 }
 
-/// Conservative planner bit budget per `z` coordinate from public `sigma`.
+/// Conservative planner bit budget per `z` coordinate from public Rice `k`.
 ///
-/// Matches `specs/tail-wire-encoding.md` (~`log2(sigma) + 2.05` expected) with a
-/// small integer margin for unary+Rice stop/remainder bits.
+/// `k` is `optimal_rice_k(β_inf)`; each codeword needs at most `k + 1` unary/Rice
+/// bits for in-range coefficients plus a small margin.
 #[must_use]
-pub fn golomb_rice_planner_bits_per_z_coord(sigma: u128, rice_k: u32) -> usize {
-    let _ = rice_k;
-    let log_sigma = if sigma <= 1 {
-        1usize
-    } else {
-        (128u32.saturating_sub(sigma.leading_zeros())) as usize
-    };
-    log_sigma.saturating_add(3)
+pub fn golomb_rice_planner_bits_per_z_coord(rice_k: u32) -> usize {
+    (rice_k as usize).saturating_add(4)
 }
 
 fn golomb_rice_encode_one_into(
@@ -257,6 +251,17 @@ pub fn golomb_rice_decode_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optimal_rice_k_tracks_per_coefficient_scale() {
+        let beta = 6_912u128;
+        assert_eq!(optimal_rice_k(beta), 12);
+        let level_sigma = 6_189_618u128;
+        assert!(
+            optimal_rice_k(beta) < optimal_rice_k(level_sigma),
+            "per-coordinate k must use β_inf, not the level variance envelope"
+        );
+    }
 
     #[test]
     fn golomb_rice_round_trip_and_canonicality() {

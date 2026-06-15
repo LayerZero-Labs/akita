@@ -260,18 +260,21 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &FlatRingVec<F>) -
 
 /// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
 ///
+/// Rice `k` and zigzag width `W` are priced from the per-coefficient fold-response
+/// bound `β_inf` ([`fold_witness_beta`]), not the level variance envelope
+/// [`LevelParams::fold_response_sigma`], which aggregates `T_level · ρ²` and is
+/// far too loose for per-coordinate coding.
+///
 /// # Errors
 ///
-/// Propagates [`LevelParams::fold_response_sigma`] and [`LevelParams::num_digits_fold`] errors.
+/// Propagates [`fold_witness_beta`] setup errors.
 pub fn tail_golomb_rice_z_params(
     lp: &LevelParams,
     num_t_vectors: usize,
     num_public_rows: usize,
     field_bits: u32,
 ) -> Result<(u32, u32), AkitaError> {
-    let _ = field_bits;
-    let sigma = lp.fold_response_sigma(num_t_vectors, num_public_rows)?;
-    let k = optimal_rice_k(sigma);
+    let _ = (num_public_rows, field_bits);
     let challenge = FoldChallengeNorms {
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,
@@ -282,6 +285,7 @@ pub fn tail_golomb_rice_z_params(
         challenge,
         lp.fold_witness_norms(),
     )?;
+    let k = optimal_rice_k(beta);
     let w = golomb_rice_zigzag_width_from_beta(beta);
     Ok((k, w))
 }
@@ -425,7 +429,7 @@ pub fn tail_segment_multiplicities_from_layout(
 ///
 /// # Errors
 ///
-/// Propagates [`LevelParams::fold_response_sigma`] errors.
+/// Propagates [`tail_golomb_rice_z_params`] errors.
 pub fn segment_typed_z_payload_bytes(
     lp: &LevelParams,
     layout: &TailSegmentLayout,
@@ -434,9 +438,8 @@ pub fn segment_typed_z_payload_bytes(
     field_bits: u32,
     _bits_per_elem: u32,
 ) -> Result<usize, AkitaError> {
-    let sigma = lp.fold_response_sigma(num_t_vectors, num_public_rows)?;
     let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors, num_public_rows, field_bits)?;
-    let bits_per_coord = golomb_rice_planner_bits_per_z_coord(sigma, rice_k);
+    let bits_per_coord = golomb_rice_planner_bits_per_z_coord(rice_k);
     Ok(layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8))
 }
 
