@@ -435,6 +435,7 @@ impl Valid for CleartextWitnessShape {
                 checked_shape_len(*num_elems)?;
             }
             Self::FieldElements(coeff_len) => checked_shape_len(*coeff_len)?,
+            Self::SegmentTyped(shape) => shape.check()?,
         }
         Ok(())
     }
@@ -456,6 +457,10 @@ impl AkitaSerialize for CleartextWitnessShape {
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 coeff_len.serialize_with_mode(&mut writer, compress)?;
             }
+            Self::SegmentTyped(shape) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                shape.serialize_with_mode(&mut writer, compress)?;
+            }
         }
         Ok(())
     }
@@ -467,6 +472,7 @@ impl AkitaSerialize for CleartextWitnessShape {
                 tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
             }
             Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
+            Self::SegmentTyped(shape) => tag + shape.serialized_size(compress),
         }
     }
 }
@@ -491,6 +497,14 @@ impl AkitaDeserialize for CleartextWitnessShape {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self::FieldElements(coeff_len)
             }
+            2 => Self::SegmentTyped(
+                crate::proof::SegmentTypedWitnessShape::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?,
+            ),
             other => {
                 return Err(SerializationError::InvalidData(format!(
                     "unknown CleartextWitnessShape tag {other}"

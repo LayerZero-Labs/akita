@@ -23,6 +23,7 @@ mod direct_witness;
 mod hints;
 mod levels;
 mod shapes;
+mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
@@ -38,7 +39,11 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
-pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
+pub use direct_witness::{
+    segment_typed_witness_shape, terminal_direct_witness_shape,
+    terminal_direct_witness_shape_for_key, terminal_fold_segment_counts, CleartextWitnessProof,
+    CleartextWitnessShape, PackedDigits,
+};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
@@ -82,6 +87,15 @@ pub use stage1::{
     stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
+pub use tail_segments::{
+    build_segment_typed_witness, e_folded_segment_bytes, emit_witness_planes_block_inner,
+    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    tail_golomb_rice_z_params, tail_segment_layout, tail_segment_multiplicities_from_layout,
+    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessShape,
+    TailSegmentLayout,
+};
 pub use terminal_witness::{
     i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
@@ -91,7 +105,7 @@ pub use terminal_witness::{
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
