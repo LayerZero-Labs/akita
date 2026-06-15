@@ -53,7 +53,7 @@ contributed" story belong here.
 
 State the audited reality separately from the marketing claim: which hardness
 assumption, which norm model is live (anchored → committed-fold L∞ → proposed
-L2-MSIS), and what is asserted vs proven. The canonical narrative lives in
+Euclidean model), and what is asserted vs proven. The canonical narrative lives in
 [How it works → Security model](./how/security.md).
 
 **Sources to fold in**

@@ -41,4 +41,4 @@ width reduction used by the masked sum-check tail.
 **Sources to fold in**
 
 - Paper §2.7 (`lem:rejection-sampling`, `lem:iterative-rejection`).
-- Cross-link: [Zero-knowledge background](./zero-knowledge.md), [Roadmap → ZK](../roadmap/zk-whiteout.md).
+- Cross-link: [Zero-knowledge background](./zero-knowledge.md), [Roadmap → Zero-knowledge](../roadmap/zero-knowledge.md).

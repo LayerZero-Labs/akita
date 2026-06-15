@@ -165,7 +165,9 @@
       ],
       "consider_updating": [
         "book/src/foundations/zero-knowledge.md",
-        "book/src/roadmap/zk-whiteout.md",
+        "book/src/roadmap/zero-knowledge.md",
+        "book/src/roadmap/verifier-offloading.md",
+        "book/src/roadmap/euclidean-security.md",
         "specs/akita-zk-*.md"
       ]
     },

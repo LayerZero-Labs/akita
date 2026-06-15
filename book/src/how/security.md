@@ -5,8 +5,8 @@
 One canonical security narrative (not parallel truths): the hardness assumption,
 how Ajtai ranks connect to security bits, the weak-binding fold-price story, and
 a changelog footnote for the evolving norm regimes (anchored → committed-fold L∞
-→ proposed L2-MSIS). Keep the marketing claim separate from audited reality (see
-[Introduction → Security status](../intro.md#security-status-honest)).
+→ proposed Euclidean model). Keep the marketing claim separate from audited
+reality (see [Introduction → Security status](../intro.md#security-status-honest)).
 
 ## SIS / MSIS and Ajtai sizing
 
@@ -32,12 +32,13 @@ norm. Keep the fold-reprice correction explicit.
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
 
-## L2-MSIS roadmap
+## Euclidean security model
 
-The proposed Euclidean-model cutover: operator-norm-capped folding challenges,
+The proposed Euclidean-model upgrade: operator-norm-capped folding challenges,
 the four-square norm witness, and the accepted-support floor that keeps the
 challenge set large. Cross-link the operator-norm certification background in
-[Foundations](../foundations/operator-norm-certification.md).
+[Foundations](../foundations/operator-norm-certification.md) and the roadmap
+page [Euclidean security model](../roadmap/euclidean-security.md).
 
 **Sources to fold in**
 

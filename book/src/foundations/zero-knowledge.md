@@ -4,8 +4,8 @@
 
 The background needed to follow Akita's zero-knowledge work: why ZK is hard over
 lattices, the two masking strategies, and the Gaussian + MSIS-support reasoning
-they rest on. Akita's concrete ZK construction (Whiteout) is mostly in-flight;
-see [Roadmap → Zero-knowledge](../roadmap/zk-whiteout.md).
+they rest on. Akita's concrete full-ZK construction is mostly in-flight; see
+[Roadmap → Zero-knowledge](../roadmap/zero-knowledge.md).
 
 ## Why ZK is hard over lattices
 

@@ -2,7 +2,7 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-The L2-MSIS security model prices the folded response by an operator-norm cap
+The Euclidean security model prices the folded response by an operator-norm cap
 \\( \Gamma(c) \le \Gamma \\) on every accepted folding challenge (see
 [rings and fields](./rings-and-fields.md#the-operator-norm-of-a-ring-element)).
 Enforcing that cap inside Fiat-Shamir rejection sampling is delicate, because
