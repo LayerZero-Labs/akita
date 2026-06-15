@@ -32,7 +32,7 @@ impl<F> ProverTranscriptGrind<F> for AkitaTranscript<F, TranscriptSponge> where
 #[cfg(feature = "logging-transcript")]
 impl<F, T> ProverTranscriptGrind<F> for akita_transcript::LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge,
     T: ProverTranscriptGrind<F>,
 {
 }

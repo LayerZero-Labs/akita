@@ -176,6 +176,10 @@ where
     root_bytes + step_bytes
 }
 
+fn fold_grind_nonce_wire_bytes() -> usize {
+    0u32.serialized_size(Compress::No)
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
@@ -238,6 +242,8 @@ where
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+
     tracing::info!(
         label,
         level = level_idx,
@@ -246,6 +252,7 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -257,6 +264,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -272,6 +280,7 @@ where
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
@@ -356,6 +365,7 @@ where
         }
     };
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -375,6 +385,7 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -391,12 +402,14 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + fold_grind_nonce_size
             + stage2_sumcheck_size
             + final_witness_size
     );
@@ -476,6 +489,7 @@ where
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
 
     tracing::info!(
         label,
@@ -485,6 +499,7 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -504,6 +519,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -519,6 +535,7 @@ where
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
