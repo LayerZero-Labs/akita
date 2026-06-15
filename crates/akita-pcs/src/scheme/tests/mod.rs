@@ -141,7 +141,6 @@ fn expected_same_point_batched_shape(
         .validate_current_w_len(current_w_len)
         .expect("scheduled terminal fold current witness length");
     let terminal_params = terminal_scheduled.params;
-    let terminal_next_params = terminal_scheduled.next_params;
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
