@@ -1,5 +1,27 @@
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
+use akita_serialization::AkitaSerialize;
+#[cfg(feature = "zk")]
+use std::marker::PhantomData;
+
+/// Prover-side ring artifacts retained for segment-typed terminal encoding.
+#[cfg(not(feature = "zk"))]
+pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
+    pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
+    pub recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>,
+    pub z_folded_centered: Vec<[i32; D]>,
+    pub r: Vec<akita_algebra::CyclotomicRing<F, D>>,
+    pub u_concat_planes: usize,
+}
+
+/// Output of [`ring_switch_build_w`].
+pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
+    pub w: RecursiveWitnessFlat,
+    #[cfg(not(feature = "zk"))]
+    pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    #[cfg(feature = "zk")]
+    _marker: PhantomData<F>,
+}
 
 /// Build the witness vector `w` from the ring-relation witness.
 ///
@@ -17,6 +39,7 @@ use crate::validation::validate_i8_setup_log_basis;
 /// constructor rejects an empty vector (an invariant of the type).
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(feature = "zk", allow(unused_variables))]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
@@ -24,12 +47,18 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
-) -> Result<RecursiveWitnessFlat, AkitaError>
+    retain_terminal_artifacts: bool,
+) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + AkitaSerialize,
     B: RingSwitchComputeBackend<F>,
 {
-    let num_claims = instance.claim_to_point().len();
+    let num_claims = instance.opening_batch().num_claims();
     {
         let x: u8 = 0;
         tracing::trace!(
@@ -54,7 +83,7 @@ where
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
-    let routing = instance.commitment_routing();
+    let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
         backend,
@@ -69,15 +98,14 @@ where
         &b_blinding_digits,
         &recomposed_inner_rows,
         &e_folded,
-        instance.ring_multiplier_points(),
-        instance.claim_to_point(),
-        routing.claim_to_commitment_group(),
-        routing.claim_poly_in_commitment_group(),
+        instance.ring_multiplier_point(),
+        opening_batch.claim_to_commitment_group(),
+        opening_batch.claim_poly_indices(),
         instance.row_coefficient_rings(),
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,
         instance.y(),
-        routing.num_polys_per_commitment_group(),
+        opening_batch.num_polys_per_commitment_group(),
         lp.num_blocks,
         lp.inner_width(),
         instance.m_row_layout(),
@@ -92,6 +120,8 @@ where
             FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
         }
     };
+    #[cfg(not(feature = "zk"))]
+    let z_centered = z_folded_rings.centered_coeffs.clone();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
@@ -108,7 +138,25 @@ where
             num_claims,
         )
     };
-    Ok(w)
+    #[cfg(not(feature = "zk"))]
+    let terminal_artifacts = if retain_terminal_artifacts {
+        Some(RingSwitchTerminalArtifacts {
+            e_folded,
+            recomposed_inner_rows,
+            z_folded_centered: z_centered,
+            r,
+            u_concat_planes: u_concat_digits.len(),
+        })
+    } else {
+        None
+    };
+    Ok(RingSwitchBuildOutput {
+        w,
+        #[cfg(not(feature = "zk"))]
+        terminal_artifacts,
+        #[cfg(feature = "zk")]
+        _marker: PhantomData,
+    })
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
@@ -141,29 +189,6 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     }
 }
 
-/// Transpose block-major digit planes to digit-major order (block index
-/// innermost): for each compound digit index, emit all blocks in order.
-fn emit_planes_block_inner<const D: usize>(
-    out: &mut Vec<i8>,
-    flat: &[[i8; D]],
-    total_blocks: usize,
-    planes_per_block: usize,
-) {
-    debug_assert_eq!(
-        flat.len(),
-        total_blocks * planes_per_block,
-        "emit_planes_block_inner: flat.len()={} != total_blocks({}) * planes_per_block({})",
-        flat.len(),
-        total_blocks,
-        planes_per_block
-    );
-    for compound_dig in 0..planes_per_block {
-        for blk in 0..total_blocks {
-            out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
-        }
-    }
-}
-
 /// Emit flat digit planes contiguously (no block transpose). Used for the
 /// tiered `û_concat` segment; a no-op for the single-tier path (empty slice).
 fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
@@ -184,14 +209,7 @@ fn emit_blinding_planes<const D: usize>(
     }
 }
 
-/// Decompose z_folded_rings elements and emit in digit-major order.
-///
-/// z_folded_rings has `num_points * block_len * depth_commit` elements indexed as
-/// `z[point * inner_width + blk * depth_commit + dc]`. Each decomposes into
-/// `num_digits_fold` planes.
-///
-/// Output order: for each `(dc, df)`, emit all `(point, blk)` pairs with
-/// the global block index `point * block_len + blk` innermost.
+/// Decompose centered `z` fold response coeffs and emit digit-major planes.
 fn emit_z_folded_block_inner<const D: usize>(
     out: &mut Vec<i8>,
     z_folded_centered: &[[i32; D]],
@@ -207,7 +225,6 @@ fn emit_z_folded_block_inner<const D: usize>(
         0,
         "z_folded_rings length {total_elems} not divisible by inner_width {inner_width}",
     );
-    let num_points = total_elems / inner_width;
 
     let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
     for (k, z_j) in z_folded_centered.iter().enumerate() {
@@ -217,17 +234,14 @@ fn emit_z_folded_block_inner<const D: usize>(
             log_basis,
         );
     }
-
-    for dc in 0..depth_commit {
-        for df in 0..num_digits_fold {
-            for pt in 0..num_points {
-                for blk in 0..block_len {
-                    let k = pt * inner_width + blk * depth_commit + dc;
-                    out.extend_from_slice(&all_planes[k * num_digits_fold + df]);
-                }
-            }
-        }
-    }
+    akita_types::emit_witness_z_folded_planes_inner::<D>(
+        out,
+        &all_planes,
+        block_len,
+        depth_commit,
+        num_digits_fold,
+        total_elems,
+    );
 }
 
 /// Build the committed witness polynomial from ring-domain digit planes.
@@ -345,8 +359,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             num_digits_fold,
             log_basis,
         );
-        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
-        emit_planes_block_inner(
+        akita_types::emit_witness_planes_block_inner(
+            &mut out,
+            e_hat.flat_digits(),
+            w_block_count,
+            depth_open,
+        );
+        akita_types::emit_witness_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),
             t_block_count,
@@ -358,8 +377,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
-        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
-        emit_planes_block_inner(
+        akita_types::emit_witness_planes_block_inner(
+            &mut out,
+            e_hat.flat_digits(),
+            w_block_count,
+            depth_open,
+        );
+        akita_types::emit_witness_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),
             t_block_count,

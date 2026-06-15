@@ -314,8 +314,7 @@ Affected crates and the change at each boundary:
     terminal levels (no D-block rows to sum).
   - Dispatch (`batched_prove` root loop): 1-fold schedule routes the
     root through `prove_terminal_root_fold_with_params`; multi-fold
-    routes the root through `prove_root_fold_with_params` and uses
-    the suffix policy in `prove_suffix_with_policy` to
+    routes the root through `prove_root` and uses `prove_suffix` to
     request a `Terminal` request at the last suffix level.
 
 - **akita-verifier / `protocol/levels.rs`**

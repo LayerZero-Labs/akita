@@ -10,7 +10,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{FieldCore, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -92,8 +92,8 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Proof shape descriptor; needed to deserialize `proof` without
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
-    /// The Akita batched proof itself. The claim/challenge field collapses to
-    /// `F` for the fp128 D32OneHot profile (`CLAIM_EXT_DEGREE == 1`).
+    /// The Akita batched proof itself. The extension field collapses to `F`
+    /// for the fp128 D32OneHot profile (`EXT_DEGREE == 1`).
     pub proof: AkitaBatchedProof<F, F>,
 }
 
@@ -107,13 +107,13 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
         &'a self,
         openings: &'a [F; 1],
     ) -> VerifierClaims<'a, F, RingCommitment<F, D>> {
-        vec![(
+        (
             &self.opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &self.commitment,
-            },
-        )]
+            }],
+        )
     }
 
     fn validate_blob_header_bounds(
@@ -144,7 +144,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize,
+    F: FieldCore + CanonicalField + AkitaSerialize,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -559,6 +559,9 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
         2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+        setup_mode_to_u8(SetupContributionMode::Direct)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
         3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
         let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
@@ -571,7 +574,6 @@ mod tests {
         let seed = AkitaSetupSeed {
             max_num_vars: 8,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: TEST_D,
             max_setup_len: 2,
             public_matrix_seed,

@@ -131,7 +131,7 @@ The test-coverage cleanup touches:
    Loaded summaries are normalized from `(mode, nv, np)` using the new naming
    scheme. This intentionally does not preserve or compare legacy IDs.
 5. Each successful case must emit setup, commit, prove, verify, proof-size,
-   proof-accounting, proof-level, planned-level, field-role, tail-shape, and
+   proof-accounting, proof-level, planned-level, field-role, tail-encoding, and
    RSS metrics. Missing required metrics turn that case into a benchmark
    failure.
 6. The dense D32 runtime fallback path must still emit schedule summaries and

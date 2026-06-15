@@ -20,12 +20,9 @@ use rand_core::RngCore;
 
 use crate::unreduced::{
     AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
-    Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, RingSubfieldFpExt4Fp32ProductAccum,
+    Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, FpExt4Fp32ProductAccum,
 };
-use crate::{
-    Fp128, Fp32, Fp64, FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config,
-    RingSubfieldFpExt4, RingSubfieldFpExt8, TowerBasisFpExt4, TowerBasisFpExt4Config,
-};
+use crate::{Fp128, Fp32, Fp64, FpExt2, FpExt2Config, FpExt4, FpExt8};
 
 macro_rules! impl_prime_jolt_traits {
     ($ty:ident<$p:ident: $p_ty:ty>, $fixed_bytes:literal) => {
@@ -186,16 +183,8 @@ macro_rules! forward_ext_jolt_traits {
 }
 
 forward_ext_jolt_traits!([F: crate::FieldCore, C: FpExt2Config<F>], FpExt2<F, C>);
-forward_ext_jolt_traits!(
-    [F: crate::FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>],
-    TowerBasisFpExt4<F, C2, C4>
-);
-forward_ext_jolt_traits!(
-    [F: crate::FieldCore, C: PowerBasisFpExt4Config<F>],
-    PowerBasisFpExt4<F, C>
-);
-forward_ext_jolt_traits!([F: crate::FieldCore], RingSubfieldFpExt4<F>);
-forward_ext_jolt_traits!([F: crate::FieldCore], RingSubfieldFpExt8<F>);
+forward_ext_jolt_traits!([F: crate::FieldCore], FpExt4<F>);
+forward_ext_jolt_traits!([F: crate::FieldCore], FpExt8<F>);
 
 // --- Wide accumulators ------------------------------------------------------
 
@@ -206,7 +195,7 @@ impl jf::AdditiveGroup for Fp32ProductAccum {}
 impl jf::AdditiveGroup for Fp64ProductAccum {}
 impl jf::AdditiveGroup for Fp128MulU64Accum {}
 impl jf::AdditiveGroup for Fp128ProductAccum {}
-impl jf::AdditiveGroup for RingSubfieldFpExt4Fp32ProductAccum {}
+impl jf::AdditiveGroup for FpExt4Fp32ProductAccum {}
 impl jf::AdditiveGroup for FpExt2Fp64ProductAccum {}
 
 impl<A: crate::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}

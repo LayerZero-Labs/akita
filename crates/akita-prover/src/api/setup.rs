@@ -38,7 +38,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     pub fn generate_with_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-        max_num_points: usize,
         setup_envelope: SetupMatrixEnvelope,
     ) -> Result<Self, AkitaError>
     where
@@ -48,7 +47,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
-            max_num_points,
             gen_ring_dim: D,
             max_setup_len: setup_envelope.max_setup_len,
             #[cfg(feature = "zk")]
@@ -237,7 +235,6 @@ mod tests {
         let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(
             8,
             1,
-            1,
             SetupMatrixEnvelope {
                 max_setup_len: 1,
                 #[cfg(feature = "zk")]
@@ -259,7 +256,6 @@ mod tests {
     fn generate_with_capacity_rejects_zero_setup_len() {
         let zero_len = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
             8,
-            1,
             1,
             SetupMatrixEnvelope {
                 max_setup_len: 0,
@@ -283,7 +279,6 @@ mod tests {
 
         let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
             8,
-            1,
             1,
             SetupMatrixEnvelope {
                 max_setup_len: 1,

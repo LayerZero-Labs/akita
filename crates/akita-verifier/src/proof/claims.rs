@@ -2,20 +2,20 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, AkitaExpandedSetup, ClaimIncidenceSummary, VerifierClaims,
+    validate_batched_inputs, verifier_claims_to_opening_batch, AkitaExpandedSetup, OpeningBatch,
+    OpeningBatchLimits, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
 pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
-    /// Distinct opening points in caller order.
-    pub opening_points: Vec<&'a [E]>,
-    /// Commitments in opening-point order (one per point under the
-    /// one-commitment-per-point invariant).
+    /// Shared opening point.
+    pub opening_point: &'a [E],
+    /// Commitments in commitment-group order.
     pub commitments: Vec<C>,
     /// Claimed openings flattened by opening point, then by polynomial index.
     pub openings: Vec<E>,
-    /// Normalized incidence summary that owns canonical root claim routing.
-    pub incidence_summary: ClaimIncidenceSummary,
+    /// Normalized opening-batch summary that owns canonical root claim routing.
+    pub opening_batch: OpeningBatch,
 }
 
 /// Validate and flatten verifier claims into the canonical batch layout.
@@ -34,33 +34,36 @@ where
     E: FieldCore,
     C: Clone,
 {
-    validate_batched_inputs(setup, claims, |payload| payload.openings.len(), false)?;
+    validate_batched_inputs(
+        setup,
+        claims,
+        |payloads| payloads.iter().map(|payload| payload.openings.len()).sum(),
+        false,
+    )?;
 
-    // `validate_batched_inputs` already enforces the same limits and shape
-    // constraints that `ClaimIncidence::validate` would, and verifier claims
-    // are canonical by construction (each point lists its polys 0..k dense,
-    // no duplicate edges), so skip the generic edge-set validation and
-    // build the routing summary directly from per-point counts.
-    let num_vars = claims[0].0.len();
-    let num_polys_per_point: Vec<usize> = claims.iter().map(|(_, p)| p.openings.len()).collect();
-    let summary = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
+    let (opening_point, payloads) = claims;
+    let batch = verifier_claims_to_opening_batch(claims);
+    let summary = batch
+        .validate(OpeningBatchLimits {
+            max_num_vars: setup.seed().max_num_vars,
+            max_num_claims: setup.seed().max_num_batched_polys,
+        })
         .map_err(|_| AkitaError::InvalidProof)?;
 
-    let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let commitments = claims
+    let openings = payloads
         .iter()
-        .map(|(_, payload)| (*payload.commitment).clone())
+        .flat_map(|payload| payload.openings.iter().copied())
         .collect();
-    let openings = claims
+    let commitments = payloads
         .iter()
-        .flat_map(|(_, payload)| payload.openings.iter().copied())
+        .map(|payload| (*payload.commitment).clone())
         .collect();
 
     Ok(PreparedVerifierClaims {
-        opening_points,
+        opening_point,
         commitments,
         openings,
-        incidence_summary: summary,
+        opening_batch: summary,
     })
 }
 
@@ -78,7 +81,6 @@ mod tests {
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
-                max_num_points: 2,
                 gen_ring_dim: 1,
                 max_setup_len: 1,
                 #[cfg(feature = "zk")]
@@ -106,21 +108,20 @@ mod tests {
             E::new(F::from_u64(7), F::from_u64(8)),
         ];
         let commitment = 11usize;
-        let claims = vec![(
+        let claims = (
             &point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            },
-        )];
+            }],
+        );
 
         let prepared = prepare_verifier_claims(&setup(), &claims)
             .expect("extension-valued verifier claims should validate by shape");
 
-        assert_eq!(prepared.opening_points, vec![&point[..]]);
+        assert_eq!(prepared.opening_point, &point[..]);
         assert_eq!(prepared.openings, openings);
         assert_eq!(prepared.commitments, vec![11usize]);
-        assert_eq!(prepared.incidence_summary.num_claims(), 2);
-        assert_eq!(prepared.incidence_summary.num_points(), 1);
+        assert_eq!(prepared.opening_batch.num_claims(), 2);
     }
 }

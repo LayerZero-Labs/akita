@@ -32,7 +32,7 @@ fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -49,7 +49,7 @@ fn run_single_onehot(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1, 1).unwrap();
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -117,7 +117,7 @@ fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = DenseCfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
 
@@ -128,7 +128,7 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(nv, 1, 1).unwrap();
+            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -242,8 +242,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1)
-                .expect("singleton incidence"),
+            &akita_types::OpeningBatch::same_point(poly_nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -260,7 +259,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(setup_nv, 1, 1).unwrap();
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
