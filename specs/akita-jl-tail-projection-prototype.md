@@ -24,25 +24,28 @@ This prototype does not make that replacement in the recursive flow.
 The prototype is built as standalone, well-tested library code that is not wired into the recursive prove/verify flow.
 The goal is to land reusable JL primitives, exercise the consistency-sumcheck mechanics across representative fields and ring dimensions, and document the fusion roadmap so later protocol-integration work can measure any proof-size or rank impact on the real flow.
 
-## Motivation: why JL projection (the per-fold cost lever)
+## Motivation: why JL projection (and what it does *not* do)
 
 The proof is dominated by the cleartext terminal witness.
 For `onehot_fp128_d64` at `nv=32` the tail is 80,032 B of a 112,016 B proof (71%); the eight fold levels together are only ~32 KB (PR #189 bench artifact).
-The terminal is reached when the planner decides another fold level costs more than sending the witness in cleartext, so the tail size is set by the recursion's stopping point, which is set by the **per-fold cost**.
+It is natural to hope JL shrinks that tail by lifting the low-basis requirement of the inf-norm range check.
+After working it through, that specific hope is **not** substantiated by the bytes evidence below; this section records why, so future work targets JL's real wins (committed-level rank, protocol simplicity, prover-time/recursion-depth) rather than the tail.
 
-**The per-fold cost is the lever, and the stage-1 inf-norm range check is the tax.**
-Each fold level pays a stage-1 range-check sumcheck that certifies every digit lies in `[-b/2, b/2)`; its first stage has degree `b/2 = 2^(lb-1)` (`crates/akita-types/src/proof/stage1.rs:130`, priced in `proof_size.rs:100-101`), so the range-check transcript grows as `2^lb`.
-This expensive per-fold tax is what makes the planner stop folding early and leave a large terminal, and it is also why the planner declines a high basis (each extra fold at high `lb` would pay a huge range tree).
+**The stage-1 inf-norm range check grows linearly in `lb`, not exponentially.**
+Each fold level pays a stage-1 range-check sumcheck that certifies every digit lies in `[-b/2, b/2)`.
+It is **not** a single degree-`b` product: the `s = w(w+1)` trick halves the degree-`b` range product, and `stage1_tree_stage_arities` then GKR-decomposes the result into `~(lb-1)/2` product stages of constant arity (2 or 4) plus a quartic leaf (`crates/akita-types/src/proof/stage1.rs:103-151`).
+So the transcript grows **linearly in `lb`** (one stage per ~2 binary levels); the interstage-claim count only reaches `~b/8` asymptotically and is negligible at the operating `lb <= 5` (bench `stage1_interstage_claims_bytes = 0-32`).
+(An earlier draft of this section read the `b <= 8` base case at `stage1.rs:130` (degree `b/2`) and wrongly generalized it to a `2^lb` tax — that is corrected here.)
 
-**JL removes the tax and changes fold economics.**
-JL replaces the per-digit range check with a single global Euclidean-norm certificate: sample `J` from the transcript, reveal `p = J w`, check `||p||_2` over the integers, at a fixed `~n_rows * d` cost independent of `lb`.
-With the `2^lb` tax gone, the marginal cost of a fold level drops, so the fold-vs-cleartext crossover moves: more fold levels become worthwhile, contracting the terminal to **fewer ring elements** (lower entropy) and reducing total bytes.
-This is the JL tail win, and it is about **fold count / contraction**, driven by per-fold cost, not the decomposition basis itself.
+**What JL changes per fold is therefore modest, and a tail-byte win is not established.**
+JL replaces the range check with a global Euclidean-norm certificate (reveal `p = J w`, check `||p||_2`), but that image plus its consistency row has its own per-level cost, and the range check it removes is only linear in `lb`.
+So JL is roughly **per-fold cost-neutral**: there is no exponential tax to remove.
+The hope that "cheaper folds shift the fold-vs-cleartext crossover and contract the terminal" is **not established** and must not be claimed without a JL-priced DP run; with the range check only linear, the effect is likely small.
 
 **The basis itself is byte-neutral; do not claim otherwise.**
 It is tempting to say "JL unlocks a larger basis, which shrinks the tail." That is *not* the mechanism, and the main-worktree specs are right to push back on the bytes claim.
 Under fixed-width packing the cleartext bytes are magnitude-locked (`delta * lb ~ magnitude_bits`, `akita-jl-norm-check-resolutions.md` 3.1), and under entropy coding (the live `tail-wire-encoding.md` plan) the basis is byte-*irrelevant* because the wire carries entropy, not digit-planes, and re-decomposes verifier-side (`akita-jl-norm-check-resolutions.md:250`).
-Re-basing a *fixed* terminal witness does not change its bytes. What changes the bytes is contracting to a *smaller* terminal (fewer ring elements / lower entropy), which JL enables by cheapening folds, not by re-bucketing digits.
+Re-basing a *fixed* terminal witness does not change its bytes. The only thing that would shrink it is contracting to a *smaller* terminal (fewer ring elements / lower entropy), which requires more fold levels to be worthwhile — and per the per-fold analysis above, JL does not clearly make them worthwhile.
 
 **What the basis is genuinely good for: recursion depth and prover time.**
 A larger basis means fewer digit planes per level, hence fewer sumcheck variables per level and fewer recursion levels.
@@ -60,11 +63,16 @@ Rank growth is far slower than the basis rise, so the depth/prover-time basis le
 Independently of the tail, JL tightens the A-role weak-binding price by replacing the deterministic envelope `beta_inf` with a realized norm (the `30-200x` slack, about 1-2 module ranks; see D4).
 This shrinks committed-level commitment bytes and is basis-independent.
 
-**Status of the prior DP "basis is byte-neutral" retraction.**
-The DP measurement in `akita-jl-norm-check-resolutions.md` 3.2 (cap lifted 6 -> 16, byte-flat at `nv >= 28`) is correct *for what it measured*: raising the basis while still paying the inf-norm range tax, where the terminal savings and the growing range tree cancel.
-It does **not** refute the JL tail win, because it never priced a JL-cheapened fold (a fixed `~n_rows * d` check instead of the `2^lb` tree), so it could not see the fold-count shift that contracts the terminal.
-Its `delta * lb ~ magnitude_bits` and entropy-coding arguments correctly establish that the *basis* is byte-neutral, but the JL win is fold economics, not the basis.
-The correct experiment is a DP re-run with the stage-1 tree replaced by the JL check and per-term bases allowed; the direction (cheaper folds -> more contraction -> smaller terminal) is well-supported, the magnitude unmeasured.
+**Status of the prior DP "basis is byte-neutral" retraction (it stands).**
+The DP measurement in `akita-jl-norm-check-resolutions.md` 3.2 (cap lifted 6 -> 16, byte-flat at `nv >= 28`) is essentially correct for proof size.
+A previous version of this section objected that the DP "did not price a JL-cheapened fold (it priced a `2^lb` range tree)"; with the range check now understood to be only **linear** in `lb`, that objection is weak — replacing a linear range check with a JL image of comparable cost does not materially move the per-fold price, so the DP would not see a large fold-count shift either.
+Combined with the `delta * lb ~ magnitude_bits` packing identity and the entropy-coding argument (the wire carries entropy, not digit-planes), the basis is **not** a proof-size lever, and removing the range check via JL does not obviously make it one.
+A JL-priced DP re-run (with per-term bases) is still the right experiment to settle the magnitude, but the expected direction is "small", not the large contraction an earlier draft claimed.
+
+**Open question for the tail.**
+The original motivation for JL was to shrink the 71% tail by lifting the basis cap.
+On the bytes evidence above (packing + entropy + linear range check) I cannot substantiate a tail-byte win from JL, and the honest position is that JL's proof-size value is the committed-level rank below, not the tail.
+If there is a tail mechanism beyond fold economics (e.g. a structural change to what the terminal encodes), it is not captured here and should be added explicitly rather than asserted.
 
 ## Background and rationale
 
