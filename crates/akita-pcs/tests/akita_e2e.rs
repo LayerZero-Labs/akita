@@ -343,17 +343,22 @@ fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
     layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
-    let akita_types::CleartextWitnessProof::PackedDigits(packed) = witness else {
-        panic!("trace tamper fixture should use packed terminal digits");
-    };
-    let mut digits = (0..packed.num_elems)
-        .map(|idx| packed.digit_at(idx).expect("packed digit index"))
-        .collect::<Vec<_>>();
-    let digit = digits
-        .get_mut(layout.e_hat_digit_offset)
-        .expect("terminal e_hat offset must be in range");
-    *digit = if *digit == -1 { 0 } else { -1 };
-    *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+    match witness {
+        akita_types::CleartextWitnessProof::PackedDigits(packed) => {
+            let mut digits = (0..packed.num_elems)
+                .map(|idx| packed.digit_at(idx).expect("packed digit index"))
+                .collect::<Vec<_>>();
+            let digit = digits
+                .get_mut(layout.e_hat_digit_offset)
+                .expect("terminal e_hat offset must be in range");
+            *digit = if *digit == -1 { 0 } else { -1 };
+            *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+        }
+        akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
+            bump_flat_ring_vec(&mut segment.e_fields);
+        }
+        _ => panic!("trace tamper fixture expects packed or segment-typed terminal witness"),
+    }
 }
 
 #[cfg(not(feature = "zk"))]

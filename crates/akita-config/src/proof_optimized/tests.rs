@@ -653,13 +653,19 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 #[test]
 #[cfg(feature = "zk")]
 fn batched_4x15_terminal_witness_is_packed_digits() {
-    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape};
+    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape, Step};
     let key = AkitaScheduleLookupKey::new(15, 4, 4, 1);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
         .expect("config schedule should succeed");
+    let terminal_log_basis = match schedule.steps.last() {
+        Some(Step::Direct(direct)) => {
+            direct.log_basis(fp128::D64OneHot::decomposition().field_bits())
+        }
+        _ => panic!("zk schedule should end in a terminal direct step"),
+    };
     match schedule_terminal_direct_witness_shape(&schedule).expect("terminal direct") {
         CleartextWitnessShape::PackedDigits((len, bits)) => {
-            assert_eq!(*bits, 6);
+            assert_eq!(*bits, terminal_log_basis);
             assert!(*len > 0, "terminal witness len must be positive");
         }
         other => panic!("expected packed terminal witness for zk build, got {other:?}"),
