@@ -7,7 +7,7 @@ use crate::protocol::levels::verify_folded_batched_proof;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
@@ -448,7 +448,7 @@ pub fn verify_batched<'a, Cfg, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>

@@ -32,6 +32,30 @@ pub fn ring_product_infinity_norm_bound(
         .min(lhs_l1_norm.saturating_mul(rhs_infinity_norm))
 }
 
+/// Smallest integer `s` with `s^2 >= v`.
+#[inline]
+#[must_use]
+pub fn isqrt_ceil(v: u128) -> u128 {
+    if v == 0 {
+        return 0;
+    }
+    let mut lo = 1u128;
+    let mut hi = v;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if mid.saturating_mul(mid) <= v {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if lo.saturating_mul(lo) < v {
+        lo.saturating_add(1)
+    } else {
+        lo
+    }
+}
+
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
 /// already accounting for the fold-challenge shape (flat vs tensor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
