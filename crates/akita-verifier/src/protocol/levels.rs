@@ -647,7 +647,13 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    validate_fold_grind_nonce(prepared.lp, prepared.fold_grind_nonce)?;
+    validate_fold_grind_nonce(
+        &prepared.lp.fold_linf_grind_contract(
+            prepared.opening_batch.num_claims(),
+            akita_types::FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
+        )?,
+        prepared.fold_grind_nonce,
+    )?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         &prepared.v,

@@ -31,7 +31,7 @@ pub(crate) use xof::XofCursor;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
-use akita_transcript::{GrindTranscript, Transcript};
+use akita_transcript::Transcript;
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
@@ -79,23 +79,13 @@ pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     Ok(challenges)
 }
 
-/// Preview sparse challenges for a grind nonce without advancing the transcript.
-pub(crate) fn preview_sparse_challenges<F, T, const D: usize>(
-    transcript: &T,
-    label: &[u8],
+/// Expand sparse challenges from a fixed 32-byte PRG seed (fold-grind preview path).
+pub fn sparse_challenges_from_seed<const D: usize>(
+    seed: &[u8],
     n: usize,
     cfg: &SparseChallengeConfig,
-    grind_nonce: u32,
-) -> Result<Vec<SparseChallenge>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F> + GrindTranscript<F>,
-{
-    cfg.validate::<D>()
-        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
-    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
-    let seed = transcript.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
-    let mut cursor = XofCursor::from_seed(&seed);
+) -> Result<Vec<SparseChallenge>, AkitaError> {
+    let mut cursor = XofCursor::from_seed(seed);
     sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
 }
 
@@ -121,8 +111,8 @@ fn parse_challenge<const D: usize>(
     }
 }
 
-#[inline]
-pub(crate) fn sparse_challenge_absorb_buf<const D: usize>(
+/// Build the absorb buffer for one sparse-challenge Fiat–Shamir draw.
+pub fn sparse_challenge_absorb_buf<const D: usize>(
     label: &[u8],
     instance_tag: u64,
     cfg: &SparseChallengeConfig,

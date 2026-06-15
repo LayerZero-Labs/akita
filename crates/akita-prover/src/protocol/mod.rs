@@ -2,6 +2,7 @@
 
 pub mod extension_opening_reduction;
 pub mod flow;
+pub mod fold_grind;
 #[cfg(feature = "zk")]
 pub(crate) mod masking;
 pub mod prg;
@@ -18,6 +19,7 @@ pub use flow::{
     prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState,
 };
+pub use fold_grind::ProverTranscriptGrind;
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{commit_next_w, RingSwitchOutput};

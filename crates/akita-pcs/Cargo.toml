@@ -45,7 +45,10 @@ parallel = [
   "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
-logging-transcript = ["akita-transcript/logging-transcript"]
+logging-transcript = [
+  "akita-transcript/logging-transcript",
+  "akita-prover/logging-transcript",
+]
 zk = [
   "akita-config/zk",
   "akita-prover/zk",

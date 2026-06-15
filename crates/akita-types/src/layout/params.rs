@@ -270,6 +270,45 @@ impl LevelParams {
     ///
     /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
     /// `num_fold_coeffs`, or overflow in the tail-bound formula.
+    /// Fiat–Shamir grind contract for this fold level (prover reroll + verifier nonce check).
+    ///
+    /// `max_grind_attempts` must match the active
+    /// [`crate::FoldLinfProtocolBinding::max_grind_attempts`] bound in setup.
+    ///
+    /// # Errors
+    ///
+    /// Propagates fold-beta / tail-bound rejections for certified-flat levels.
+    pub fn fold_linf_grind_contract(
+        &self,
+        num_claims: usize,
+        max_grind_attempts: u32,
+    ) -> Result<crate::sis::FoldLinfGrindContract, AkitaError> {
+        let policy = self.fold_linf_threshold_policy();
+        let max_nonce_exclusive = match policy {
+            crate::sis::FoldLinfThresholdPolicy::DeterministicBetaInf => 1,
+            crate::sis::FoldLinfThresholdPolicy::CertifiedFlat => max_grind_attempts,
+        };
+        let witness = self.fold_witness_norms();
+        let witness_linf = witness.infinity_norm();
+        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
+        let inf_threshold = crate::sis::fold_witness_linf_cap(
+            beta,
+            self.num_fold_blocks(num_claims)?,
+            witness_linf_sq,
+            &self.fold_linf_digit_sizing(),
+        )?;
+        Ok(crate::sis::FoldLinfGrindContract {
+            policy,
+            inf_threshold,
+            max_nonce_exclusive,
+        })
+    }
+
     pub fn fold_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let sizing = self.fold_linf_digit_sizing();
         if sizing.policy != crate::sis::FoldLinfThresholdPolicy::CertifiedFlat {

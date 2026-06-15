@@ -21,6 +21,7 @@
 
 pub mod ajtai_key;
 pub mod decomposition_digits;
+pub mod fold_linf_grind;
 pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
@@ -35,6 +36,7 @@ pub use decomposition_digits::{
     decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
     num_digits_s_commit,
 };
+pub use fold_linf_grind::FoldLinfGrindContract;
 pub use four_square::four_squares;
 pub use norm_bound::{
     committed_fold_collision_l2_sq, fold_linf_ln_term, fold_linf_tail_bound_sq,

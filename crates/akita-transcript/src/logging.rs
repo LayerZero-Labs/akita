@@ -1,6 +1,6 @@
 //! Logging transcript wrapper and test-time smell checks.
 
-use crate::{labels, GrindTranscript, Transcript};
+use crate::{labels, Transcript};
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use blake2::digest::consts::U32;
@@ -311,26 +311,6 @@ where
             len,
         });
         self.inner.challenge_bytes(label, len)
-    }
-}
-
-impl<F, T> GrindTranscript<F> for LoggingTranscript<T>
-where
-    F: FieldCore + CanonicalField,
-    T: GrindTranscript<F>,
-{
-    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
-        self.inner
-            .preview_challenge_bytes_after_absorb(absorb_payload, len)
-    }
-
-    fn preview_challenge_bytes_after_absorb_chain(
-        &self,
-        absorbs: &[&[u8]],
-        squeeze_lens: &[usize],
-    ) -> Vec<u8> {
-        self.inner
-            .preview_challenge_bytes_after_absorb_chain(absorbs, squeeze_lens)
     }
 }
 

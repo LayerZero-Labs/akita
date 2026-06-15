@@ -123,7 +123,7 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<F> + akita_transcript::GrindTranscript<F>,
+    T: Transcript<F> + crate::ProverTranscriptGrind<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
 {
@@ -186,7 +186,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + akita_transcript::GrindTranscript<F>,
+    T: Transcript<F> + crate::ProverTranscriptGrind<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
 {
@@ -374,7 +374,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + akita_transcript::GrindTranscript<F>,
+    T: Transcript<F> + crate::ProverTranscriptGrind<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
@@ -471,7 +471,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + akita_transcript::GrindTranscript<F>,
+    T: Transcript<F> + crate::ProverTranscriptGrind<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,

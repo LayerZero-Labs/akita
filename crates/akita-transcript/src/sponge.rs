@@ -1,7 +1,7 @@
 //! Spongefish-backed Akita transcript substrate.
 
 use crate::Label;
-use crate::{GrindTranscript, Transcript};
+use crate::Transcript;
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
 use spongefish::{
@@ -322,23 +322,6 @@ where
 
     fn challenge_bytes(&mut self, _label: &[u8], len: usize) -> Vec<u8> {
         self.squeeze_bytes(crate::label!("compat_squeeze_bytes"), len)
-    }
-}
-
-impl<F> GrindTranscript<F> for AkitaTranscript<F, TranscriptSponge>
-where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
-{
-    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
-        AkitaTranscript::preview_challenge_bytes_after_absorb(self, absorb_payload, len)
-    }
-
-    fn preview_challenge_bytes_after_absorb_chain(
-        &self,
-        absorbs: &[&[u8]],
-        squeeze_lens: &[usize],
-    ) -> Vec<u8> {
-        AkitaTranscript::preview_challenge_bytes_after_absorb_chain(self, absorbs, squeeze_lens)
     }
 }
 

@@ -130,7 +130,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
-    T: Transcript<Cfg::Field> + akita_transcript::GrindTranscript<Cfg::Field>,
+    T: Transcript<Cfg::Field> + crate::ProverTranscriptGrind<Cfg::Field>,
     B: ProverComputeBackend<Cfg::Field>,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
@@ -1020,7 +1020,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_transcript::GrindTranscript<F>,
+    T: Transcript<F> + crate::ProverTranscriptGrind<F>,
     B: ProverComputeBackend<F>,
 {
     {
