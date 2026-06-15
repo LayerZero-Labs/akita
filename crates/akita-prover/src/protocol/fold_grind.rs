@@ -89,7 +89,9 @@ where
     let labels = stage1_fold_challenge_labels();
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
+    let mut grind_probe_count = 0u32;
     for nonce in probe_nonces {
+        grind_probe_count = grind_probe_count.saturating_add(1);
         let challenges = preview_folding_challenges::<D>(
             transcript,
             lp.num_blocks,
@@ -102,6 +104,7 @@ where
         let witness =
             build_point_decompose_fold_witness::<F, P, D>(&challenges, polys, &point_indices, lp)?;
         if accepts_witness(&contract, witness.centered_inf_norm) {
+            super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
             let challenges = sample_folding_challenges::<F, T, D>(
                 transcript,
                 lp.num_blocks,

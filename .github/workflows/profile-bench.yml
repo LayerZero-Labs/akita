@@ -35,10 +35,9 @@ env:
   # prime caches and lazily-initialized statics; cache misses on the
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
-  # The profile example emits per-fold `grind_nonce` / `grind_attempts` and a
-  # case-level `fold grind summary` (total tries = sum of nonce+1 under the
-  # current sequential-min search). `scripts/profile_bench_report.py` surfaces
-  # these as `Grind Σ` / `Grind max` in the PR matrix.
+  # The profile example installs FoldGrindObserverGuard during prove and emits
+  # per-fold grind_nonce (wire) plus grind_probe_count / grind_attempts (true
+  # prover probes). scripts/profile_bench_report.py surfaces Grind Σ / Grind max.
   # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
   # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
   # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB

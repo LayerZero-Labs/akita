@@ -328,10 +328,10 @@ Properties:
 - **Conditional on accept:** the published nonce is uniform over the accepting
   subset (not independent of the witness unless acceptance is witness-independent).
 
-**Profile bench note.** CI profile runs collect accepted nonces from the finalized
-proof. Under `sequential_min`, `grind_attempts = nonce + 1` approximates probe
-count. Under `transcript_shuffle`, wire nonce is diagnostic only; true probe
-count requires prover-side tracing (`grind_probe_count`, planned).
+**Profile bench note.** CI profile runs install [`FoldGrindObserverGuard`](../../crates/akita-prover/src/protocol/fold_grind_observer.rs)
+during prove and emit per-level `grind_probe_count` (true prover work) alongside
+wire `grind_nonce` (verifier replay index). `grind_attempts_sum` aggregates
+probe counts, not `nonce + 1`.
 
 ### Tail bound (statement)
 
@@ -608,6 +608,7 @@ W4
 W5 (ZK milestone, after plain cut)
   F11 transcript-seeded grind probe order in ZK prover paths   [akita-prover]  (done)
       (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
+  F12 fold grind probe-count observer for profile metrics      [akita-prover]  (done)
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
