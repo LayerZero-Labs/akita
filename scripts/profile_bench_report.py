@@ -539,8 +539,16 @@ def parse_case_spec(spec: str, default_mode: str) -> BenchmarkCaseSpec:
 
 def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
     if args.case:
-        return [parse_case_spec(spec, args.mode) for spec in args.case]
-    return [BenchmarkCaseSpec(mode=args.mode, num_vars=args.num_vars, num_polys=args.num_polys)]
+        cases = [parse_case_spec(spec, args.mode) for spec in args.case]
+    else:
+        cases = [BenchmarkCaseSpec(mode=args.mode, num_vars=args.num_vars, num_polys=args.num_polys)]
+    # case_id is the output dir name and the failure/aggregation key, so
+    # duplicates would collide on disk and pool into one aggregate.
+    case_ids = [case.case_id for case in cases]
+    duplicates = sorted({cid for cid in case_ids if case_ids.count(cid) > 1})
+    if duplicates:
+        raise ValueError("duplicate benchmark case ids: " + ", ".join(duplicates))
+    return cases
 
 
 def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> dict[str, object]:
