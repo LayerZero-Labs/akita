@@ -1,6 +1,6 @@
-use akita_serialization::AkitaSerialize;
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
+use akita_serialization::AkitaSerialize;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
 #[cfg(not(feature = "zk"))]
@@ -45,7 +45,12 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
     retain_terminal_artifacts: bool,
 ) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField + AkitaSerialize,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + AkitaSerialize,
     B: RingSwitchComputeBackend<F>,
 {
     let num_claims = instance.opening_batch().num_claims();
@@ -346,7 +351,12 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             num_digits_fold,
             log_basis,
         );
-        akita_types::emit_witness_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
+        akita_types::emit_witness_planes_block_inner(
+            &mut out,
+            e_hat.flat_digits(),
+            w_block_count,
+            depth_open,
+        );
         akita_types::emit_witness_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),
@@ -359,7 +369,12 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
-        akita_types::emit_witness_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
+        akita_types::emit_witness_planes_block_inner(
+            &mut out,
+            e_hat.flat_digits(),
+            w_block_count,
+            depth_open,
+        );
         akita_types::emit_witness_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),

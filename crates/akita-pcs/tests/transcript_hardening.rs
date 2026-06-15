@@ -254,7 +254,8 @@ impl TerminalTamper {
                     segment.z_payload[0] ^= 1;
                 }
                 Self::WitnessLen => {
-                    segment.layout.logical_num_elems = segment.layout.logical_num_elems.saturating_sub(1);
+                    segment.layout.logical_num_elems =
+                        segment.layout.logical_num_elems.saturating_sub(1);
                 }
                 Self::PackedPayload => {
                     segment.z_payload.pop();

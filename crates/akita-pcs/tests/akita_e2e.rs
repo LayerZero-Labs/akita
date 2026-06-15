@@ -1299,7 +1299,9 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                         segment.z_payload[0] ^= 1;
                     }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
-                        panic!("expected packed-digits or segment-typed final witness for tamper test");
+                        panic!(
+                            "expected packed-digits or segment-typed final witness for tamper test"
+                        );
                     }
                 }
             }

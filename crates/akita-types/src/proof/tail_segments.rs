@@ -98,7 +98,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for SegmentT
         self.append_wire_segments(&mut writer, compress)
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
+    fn serialized_size(&self, _compress: Compress) -> usize {
         self.z_payload.len().saturating_add(
             (self.layout.e_field_elems + self.layout.t_field_elems + self.layout.r_field_elems)
                 .saturating_mul(field_bytes(F::modulus_bits())),
@@ -232,7 +232,9 @@ fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
     for coeff in coeffs {
         coeff
             .serialize_with_mode(&mut *writer, compress)
-            .map_err(|_| SerializationError::InvalidData("field coeff serialize failed".to_string()))?;
+            .map_err(|_| {
+                SerializationError::InvalidData("field coeff serialize failed".to_string())
+            })?;
     }
     Ok(())
 }
@@ -388,7 +390,7 @@ pub fn segment_typed_witness_exact_bytes<F: FieldCore + CanonicalField + AkitaSe
 
 /// Recompose balanced digit planes into a signed integer.
 #[must_use]
-pub fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64 {
+pub(crate) fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64 {
     let b = 1i128 << log_basis;
     let half_b = 1i128 << (log_basis - 1);
     let mut acc = 0i128;
@@ -421,7 +423,7 @@ fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Ve
 }
 
 /// Build Golomb-Rice `z` payload from centered fold-response ring coefficients.
-pub fn encode_z_segment_from_centered<const D: usize>(
+pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
@@ -440,10 +442,10 @@ pub fn encode_z_segment_from_centered<const D: usize>(
     let mut planes = vec![[0i8; D]; num_digits_fold];
     for z_j in centered {
         balanced_decompose_centered_i32(z_j, &mut planes, log_basis);
-        for coeff in 0..D {
-            let digits: Vec<i8> = (0..num_digits_fold).map(|p| planes[p][coeff]).collect();
-            values.push(recompose_balanced_i8_digits(&digits, log_basis));
-        }
+        values.extend((0..D).map(|coeff_idx| {
+            let digits: Vec<i8> = (0..num_digits_fold).map(|p| planes[p][coeff_idx]).collect();
+            recompose_balanced_i8_digits(&digits, log_basis)
+        }));
     }
     golomb_rice_encode_vec(&values, rice_k, zigzag_w_z)
 }
@@ -472,6 +474,7 @@ fn balanced_decompose_centered_i32<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when layout counts do not match the supplied witness parts.
+#[allow(clippy::too_many_arguments)]
 pub fn build_segment_typed_witness<const D: usize, F>(
     e_folded: &[CyclotomicRing<F, D>],
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
@@ -669,10 +672,20 @@ where
             total_z_elems,
         );
         emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
+        emit_witness_planes_block_inner::<D>(
+            &mut out,
+            &t_planes,
+            t_block_count,
+            t_planes_per_block,
+        );
     } else {
         emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
+        emit_witness_planes_block_inner::<D>(
+            &mut out,
+            &t_planes,
+            t_block_count,
+            t_planes_per_block,
+        );
         emit_witness_z_folded_planes_inner::<D>(
             &mut out,
             &all_z_planes,

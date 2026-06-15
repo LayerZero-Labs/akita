@@ -18,7 +18,10 @@ impl<'a> BitReader<'a> {
     }
 
     pub(crate) fn remaining_bits(&self) -> usize {
-        self.bytes.len().saturating_mul(8).saturating_sub(self.bit_pos)
+        self.bytes
+            .len()
+            .saturating_mul(8)
+            .saturating_sub(self.bit_pos)
     }
 
     pub(crate) fn read_bit(&mut self) -> Result<bool, AkitaError> {
@@ -128,7 +131,7 @@ pub fn optimal_rice_k(sigma: u128) -> u32 {
     if sigma <= 1 {
         return 0;
     }
-    (u128::BITS - 1 - sigma.leading_zeros()) as u32
+    u128::BITS - 1 - sigma.leading_zeros()
 }
 
 /// Signed zigzag width for the folded `z` segment from public digit bounds.

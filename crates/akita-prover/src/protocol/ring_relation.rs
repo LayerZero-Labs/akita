@@ -20,12 +20,12 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
+#[cfg(feature = "zk")]
+use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
     RingSliceSerializer,
 };
-#[cfg(feature = "zk")]
-use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 

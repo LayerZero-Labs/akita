@@ -459,10 +459,19 @@ impl AkitaSerialize for CleartextWitnessShape {
             }
             Self::SegmentTyped(shape) => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
-                shape.layout.ring_dimension.serialize_with_mode(&mut writer, compress)?;
-                shape.layout.log_basis.serialize_with_mode(&mut writer, compress)?;
+                shape
+                    .layout
+                    .ring_dimension
+                    .serialize_with_mode(&mut writer, compress)?;
+                shape
+                    .layout
+                    .log_basis
+                    .serialize_with_mode(&mut writer, compress)?;
                 u8::from(shape.layout.z_first).serialize_with_mode(&mut writer, compress)?;
-                shape.layout.z_coords.serialize_with_mode(&mut writer, compress)?;
+                shape
+                    .layout
+                    .z_coords
+                    .serialize_with_mode(&mut writer, compress)?;
                 shape
                     .layout
                     .e_field_elems

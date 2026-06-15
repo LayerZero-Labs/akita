@@ -2,9 +2,8 @@ use akita_field::FieldCore;
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    layout::proof_size::field_bytes,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, LevelParams,
-    Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    layout::proof_size::field_bytes, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -637,8 +636,8 @@ fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
         let e_bytes = segment.e_fields.coeff_len();
         let t_bytes = segment.t_fields.coeff_len();
         let r_bytes = segment.r_fields.coeff_len();
-        let raw_field_bytes = (e_bytes + t_bytes + r_bytes)
-            .saturating_mul(field_bytes(FF::modulus_bits()));
+        let raw_field_bytes =
+            (e_bytes + t_bytes + r_bytes).saturating_mul(field_bytes(FF::modulus_bits()));
         tracing::info!(
             label,
             tail_bytes,

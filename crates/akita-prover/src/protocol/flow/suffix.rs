@@ -592,7 +592,8 @@ where
             if let Some(artifacts) = terminal_artifacts {
                 if artifacts.u_concat_planes != 0 {
                     return Err(AkitaError::InvalidInput(
-                        "segment-typed terminal witness does not support tiered u_concat".to_string(),
+                        "segment-typed terminal witness does not support tiered u_concat"
+                            .to_string(),
                     ));
                 }
                 let num_claims = instance.opening_batch().num_claims();
@@ -614,7 +615,8 @@ where
                 let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                     terminal_direct_witness_shape.ok_or_else(|| {
                         AkitaError::InvalidSetup(
-                            "terminal fold missing scheduled segment-typed witness shape".to_string(),
+                            "terminal fold missing scheduled segment-typed witness shape"
+                                .to_string(),
                         )
                     })?
                 else {
@@ -628,9 +630,7 @@ where
                     ));
                 }
                 pad_segment_typed_z_payload(&mut segment, scheduled_shape.z_payload_bytes)?;
-                let expanded = segment
-                    .layout
-                    .logical_num_elems;
+                let expanded = segment.layout.logical_num_elems;
                 let digits = akita_types::expand_segment_typed_to_i8_digits::<D, F>(
                     &segment,
                     lp,
@@ -641,7 +641,8 @@ where
                 )?;
                 if digits.len() != expanded || digits.as_slice() != logical_w.as_i8_digits() {
                     return Err(AkitaError::InvalidInput(
-                        "segment-typed final witness does not match ring-switch witness".to_string(),
+                        "segment-typed final witness does not match ring-switch witness"
+                            .to_string(),
                     ));
                 }
                 let parts = segment.terminal_transcript_parts()?;
@@ -654,9 +655,11 @@ where
         }
         #[cfg(feature = "zk")]
         {
-            let final_witness = CleartextWitnessProof::PackedDigits(
-                PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
-            );
+            let final_witness =
+                CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits_with_min_bits(
+                    logical_w.as_i8_digits(),
+                    final_log_basis,
+                ));
             let terminal_layout = terminal_witness_segment_layout(
                 lp,
                 instance.opening_batch().num_claims(),

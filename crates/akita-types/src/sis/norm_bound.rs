@@ -42,7 +42,7 @@ pub fn isqrt_ceil(v: u128) -> u128 {
     let mut lo = 1u128;
     let mut hi = v;
     while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
+        let mid = lo + (hi - lo).div_ceil(2);
         if mid.saturating_mul(mid) <= v {
             lo = mid;
         } else {

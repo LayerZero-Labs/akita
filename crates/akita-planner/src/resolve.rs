@@ -248,7 +248,6 @@ pub fn schedule_from_entry(
     let mut total = 0usize;
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
-    let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
     let mut last_fold_lp: Option<LevelParams> = None;
 
@@ -362,10 +361,6 @@ pub fn schedule_from_entry(
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
-                current_log_basis = match next {
-                    GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(_) => level.log_basis,
-                };
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
@@ -423,11 +418,7 @@ pub fn schedule_from_entry(
                         num_public_rows,
                         num_commitment_groups,
                     )?;
-                    (
-                        witness_shape,
-                        len,
-                        None,
-                    )
+                    (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
                 total = total.checked_add(direct_bytes).ok_or_else(|| {

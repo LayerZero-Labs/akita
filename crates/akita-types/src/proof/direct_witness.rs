@@ -65,10 +65,12 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
             Self::FieldElements(field_elems) => {
                 CleartextWitnessShape::FieldElements(field_elems.coeff_len())
             }
-            Self::SegmentTyped(witness) => CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
-                layout: witness.layout,
-                z_payload_bytes: witness.z_payload.len(),
-            }),
+            Self::SegmentTyped(witness) => {
+                CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
+                    layout: witness.layout,
+                    z_payload_bytes: witness.z_payload.len(),
+                })
+            }
         }
     }
 

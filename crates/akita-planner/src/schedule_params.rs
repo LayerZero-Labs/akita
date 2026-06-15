@@ -21,9 +21,10 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     root_extension_opening_partials, segment_typed_witness_upper_bound_bytes,
-    tail_golomb_rice_z_params, tail_segment_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, SegmentTypedWitnessShape, Step,
+    tail_golomb_rice_z_params, tail_segment_layout,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, SegmentTypedWitnessShape, Step,
 };
 
 use crate::PlannerPolicy;
@@ -373,12 +374,7 @@ fn terminal_segment_counts(
     terminal_fold_level: usize,
 ) -> (usize, usize, usize, usize) {
     if terminal_fold_level == 0 {
-        (
-            key.num_w_vectors,
-            1,
-            key.num_w_vectors,
-            1,
-        )
+        (key.num_w_vectors, 1, key.num_w_vectors, 1)
     } else {
         (1, 1, 1, 1)
     }
@@ -402,20 +398,18 @@ pub(crate) fn segment_typed_direct_witness_shape(
     )?;
     let (rice_k, zigzag_w_z) =
         tail_golomb_rice_z_params(terminal_lp, num_t_vectors, num_public_rows, field_bits)?;
-    let z_payload_bytes = segment_typed_witness_upper_bound_bytes(
-        field_bits,
-        &layout,
-        rice_k,
-        zigzag_w_z,
-    )
-    .saturating_sub(
-        (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
-            * akita_types::field_bytes(field_bits),
-    );
-    Ok(CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
-        layout,
-        z_payload_bytes,
-    }))
+    let z_payload_bytes =
+        segment_typed_witness_upper_bound_bytes(field_bits, &layout, rice_k, zigzag_w_z)
+            .saturating_sub(
+                (layout.e_field_elems + layout.t_field_elems + layout.r_field_elems)
+                    * akita_types::field_bytes(field_bits),
+            );
+    Ok(CleartextWitnessShape::SegmentTyped(
+        SegmentTypedWitnessShape {
+            layout,
+            z_payload_bytes,
+        },
+    ))
 }
 
 fn make_terminal_direct_step(

@@ -2,7 +2,9 @@
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
@@ -50,6 +52,7 @@ where
     Ok(acc)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cleartext_witness_eval<F, E, const D: usize>(
     cleartext_witness: &CleartextWitnessProof<F>,
     physical_w_len: usize,
