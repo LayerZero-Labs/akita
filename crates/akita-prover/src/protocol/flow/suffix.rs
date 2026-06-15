@@ -222,6 +222,7 @@ where
     let final_w_len = terminal.final_witness().num_elems();
     steps.push(AkitaLevelProof::Terminal {
         extension_opening_reduction: terminal.extension_opening_reduction,
+        fold_grind_nonce: terminal.fold_grind_nonce,
         stage2: terminal.stage2,
         final_w_len,
     });
@@ -454,6 +455,7 @@ where
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof,
             final_witness,
+            fold_grind_nonce,
         );
         cfg_if! {
             if #[cfg(feature = "zk")] {

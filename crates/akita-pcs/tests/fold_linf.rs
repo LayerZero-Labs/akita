@@ -149,9 +149,9 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
             fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
         }
-        if let Some(AkitaLevelProof::Intermediate {
+        if let Some(AkitaLevelProof::Terminal {
             fold_grind_nonce, ..
-        }) = roundtrip.steps.first_mut()
+        }) = roundtrip.steps.last_mut()
         {
             *fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
         }

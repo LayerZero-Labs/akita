@@ -146,9 +146,9 @@ impl ProtocolFeatureSet {
 pub struct FoldLinfProtocolBinding {
     /// Tail-bound formula tag (`1` = integer `t*` from fold-linf-rejection spec).
     pub formula_tag: u8,
-    /// Fiat-Shamir reroll cap per committed fold level.
+    /// Fiat-Shamir reroll cap per fold level.
     pub max_grind_attempts: u32,
-    /// Wire width of `fold_grind_nonce` on committed fold levels.
+    /// Wire width of `fold_grind_nonce` on every fold level proof.
     pub grind_nonce_wire_bytes: u8,
     /// Challenge-entropy budget per fold level: `log2(max_grind_attempts)`.
     pub grind_entropy_bits_per_level: u8,

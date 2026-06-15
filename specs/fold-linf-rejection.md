@@ -71,10 +71,10 @@ The feature introduces or modifies:
 - A **digit-sizing path** `num_digits_fold` that takes `K` from
   `min(β_inf, t*)` only when the level's threshold policy is certified.
   Unsupported policies return the existing `β_inf` sizing, with no reroll.
-- One per-level **grind nonce** (`u32`) on the wire (`AkitaLevelProof`), absorbed
-  before the fold challenge is squeezed, replayed by the verifier.
-  The nonce cardinality is exactly one per `sample_folding_challenges` call in an
-  intermediate committed fold level.
+- One per-level **grind nonce** (`u32`) on the wire for every fold level that runs
+  stage-1 challenge sampling (root fold, each recursive intermediate, and terminal),
+  absorbed before the fold challenge is squeezed, replayed by the verifier.
+  The nonce cardinality is exactly one per `sample_folding_challenges` call.
   `u32` is ample: rerolls halt in `<= 2` attempts in expectation and are
   hard-capped far below `2^16`.
 - A **prover reroll loop** replacing the `validate_decompose_fold` abort.
@@ -153,9 +153,9 @@ The feature introduces or modifies:
 - [ ] Prover reroll loop terminates with mean attempts `< 2` over `>= 100`
   transcripts for each certified flat production mode at `nv ∈ {16, 28, 30}`.
 - [ ] Headerless serialization is pinned: one `u32` nonce is serialized in every
-  intermediate `AkitaLevelProof`, `LevelProofShape` has no variable nonce length,
-  and serialized proof bytes match `level_proof_bytes` after adding four bytes
-  per intermediate committed fold level.
+  fold level proof, `LevelProofShape` / `TerminalLevelProofShape` have no variable
+  nonce length, and serialized proof bytes match `level_proof_bytes` after adding
+  four bytes per fold level.
 - [ ] e2e prove/verify passes; a tampered `z` exceeding `balanced_digit_max(lb, K)`
   is rejected by the verifier.
 - [ ] `LoggingTranscript` event-stream equality holds across the reroll.
@@ -197,8 +197,7 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
 - Prover cost: `<= 2` expected rerolls per committed level (each reroll is one
   challenge derivation + one fold pass), a small constant overhead, only on
   levels where `t* < β_inf` crosses a digit boundary.
-- No verifier cost beyond consuming one extra nonce per intermediate committed
-  fold level.
+- No verifier cost beyond consuming one extra nonce per fold level.
 - A-role rank, setup size, and the L2 pricing are unchanged.
 
 ## Design
@@ -233,11 +232,19 @@ AkitaInstanceDescriptor binds the threshold policy            [akita-config]
 
 ### Nonce and Wire Contract
 
-The nonce is a fixed scalar field of every intermediate `AkitaLevelProof`:
+The nonce is a fixed `u32` on every fold level that runs `sample_folding_challenges`:
+
+| Level kind | Wire carrier | Nonce position |
+|------------|--------------|----------------|
+| Root fold | `AkitaBatchedFoldRoot.fold_grind_nonce` | after `v`, before stage-1 |
+| Recursive intermediate | `AkitaLevelProof::Intermediate.fold_grind_nonce` | after `v`, before stage-1 |
+| Recursive terminal | `AkitaLevelProof::Terminal.fold_grind_nonce` / `TerminalLevelProof.fold_grind_nonce` | after extension-opening reduction, before stage-2 sumcheck |
+| Terminal-root (1-fold) | `TerminalLevelProof.fold_grind_nonce` on the root | same as terminal |
+
+Intermediate layout:
 
 ```text
-AkitaLevelProof {
-    y_ring,
+AkitaLevelProof::Intermediate {
     extension_opening_reduction,
     v,
     fold_grind_nonce: u32,
@@ -247,12 +254,21 @@ AkitaLevelProof {
 }
 ```
 
-It is serialized immediately after `v` and before any stage-1 proof payload.
-`LevelProofShape` does not carry a variable nonce length because the cardinality
-is fixed at one `u32` per intermediate committed fold level. `level_proof_bytes`
-adds exactly four bytes for every intermediate `AkitaLevelProof`. Terminal direct
-proofs do not get a nonce in this cutover because they do not create a committed
-next witness whose width is selected by `num_digits_fold`.
+Terminal layout:
+
+```text
+AkitaLevelProof::Terminal {
+    extension_opening_reduction,
+    fold_grind_nonce: u32,
+    stage2,
+    final_w_len,
+}
+```
+
+`LevelProofShape` / `TerminalLevelProofShape` do not carry a variable nonce length
+because the cardinality is fixed at one `u32` per fold level. `level_proof_bytes`
+adds exactly four bytes for every fold level (`MRowLayout::WithDBlock` and
+`MRowLayout::WithoutDBlock`).
 
 The nonce is one per `sample_folding_challenges` call. Under the single-point
 opening batch contract (#186), a batched root uses one shared opening point and
@@ -431,9 +447,9 @@ worst-case path is generalized in place):
   acceptance `p`, and the threshold policy). Add
   `fold_linf_tail_bound_sq(num_claims)` so the prover reads the identical value
   (invariant 4).
-- `src/proof/levels.rs`: add `fold_grind_nonce: u32` (one `u32` per intermediate
-  committed fold level) to `AkitaLevelProof`; update constructors and
-  serialization. `TerminalLevelProof` is unchanged in this cutover.
+- `src/proof/levels.rs`: add `fold_grind_nonce: u32` to intermediate and terminal
+  fold level proofs and to `TerminalLevelProof`; update constructors and
+  serialization. Root fold carries the same field on `AkitaBatchedFoldRoot`.
 - `src/proof/shapes.rs` + `src/layout/proof_size.rs`: keep `LevelProofShape`
   nonce-length-free, update shape/serialization tests, and extend the proof-size
   formula by the fixed nonce bytes.
@@ -532,8 +548,8 @@ W4
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
 `β_inf` in the first implementation; `num_fold_coeffs = inner_width · D` under
-the single-point batch contract; the nonce is a fixed `u32` per intermediate
-committed fold level.
+the single-point batch contract; the nonce is a fixed `u32` per fold level that
+runs stage-1 challenge sampling (root, intermediate, and terminal).
 
 ## References
 

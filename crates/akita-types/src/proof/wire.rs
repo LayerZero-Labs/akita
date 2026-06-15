@@ -208,6 +208,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             }
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
+                fold_grind_nonce,
                 stage2,
                 ..
             } => {
@@ -221,6 +222,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     &mut writer,
                     compress,
                 )?;
+                fold_grind_nonce.serialize_with_mode(&mut writer, compress)?;
                 #[cfg(not(feature = "zk"))]
                 stage2
                     .sumcheck_proof
@@ -290,6 +292,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             }
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
+                fold_grind_nonce,
                 stage2,
                 ..
             } => {
@@ -299,16 +302,18 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 extension_opening_reduction_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + {
-                    #[cfg(not(feature = "zk"))]
-                    {
-                        stage2.sumcheck_proof.serialized_size(compress)
+                ) + fold_grind_nonce.serialized_size(compress)
+                    + {
+                        #[cfg(not(feature = "zk"))]
+                        {
+                            stage2.sumcheck_proof.serialized_size(compress)
+                        }
+                        #[cfg(feature = "zk")]
+                        {
+                            stage2.sumcheck_proof_masked.serialized_size(compress)
+                        }
                     }
-                    #[cfg(feature = "zk")]
-                    {
-                        stage2.sumcheck_proof_masked.serialized_size(compress)
-                    }
-                } + stage2.final_witness.serialized_size(compress)
+                    + stage2.final_witness.serialized_size(compress)
             }
         }
     }
@@ -359,6 +364,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             }
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
+                fold_grind_nonce: _,
                 stage2,
                 ..
             } => {
@@ -513,6 +519,8 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             &mut writer,
             compress,
         )?;
+        self.fold_grind_nonce
+            .serialize_with_mode(&mut writer, compress)?;
         #[cfg(not(feature = "zk"))]
         stage2
             .sumcheck_proof
@@ -534,16 +542,18 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         extension_opening_reduction_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + {
-            #[cfg(not(feature = "zk"))]
-            {
-                stage2.sumcheck_proof.serialized_size(compress)
+        ) + self.fold_grind_nonce.serialized_size(compress)
+            + {
+                #[cfg(not(feature = "zk"))]
+                {
+                    stage2.sumcheck_proof.serialized_size(compress)
+                }
+                #[cfg(feature = "zk")]
+                {
+                    stage2.sumcheck_proof_masked.serialized_size(compress)
+                }
             }
-            #[cfg(feature = "zk")]
-            {
-                stage2.sumcheck_proof_masked.serialized_size(compress)
-            }
-        } + stage2.final_witness.serialized_size(compress)
+            + stage2.final_witness.serialized_size(compress)
     }
 }
 
@@ -588,6 +598,7 @@ impl<
             validate,
             ctx.extension_opening_reduction.as_ref(),
         )?;
+        let fold_grind_nonce = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         #[cfg(not(feature = "zk"))]
         let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
             &mut reader,
@@ -610,6 +621,7 @@ impl<
         )?;
         let out = Self {
             extension_opening_reduction,
+            fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
@@ -1084,6 +1096,7 @@ impl<
                             let final_w_len = terminal.final_witness().num_elems();
                             AkitaLevelProof::Terminal {
                                 extension_opening_reduction: terminal.extension_opening_reduction,
+                                fold_grind_nonce: terminal.fold_grind_nonce,
                                 stage2: terminal.stage2,
                                 final_w_len,
                             }

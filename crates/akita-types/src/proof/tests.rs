@@ -331,6 +331,7 @@ fn terminal_level_proof_serde_round_trip() {
         #[cfg(feature = "zk")]
         tiny_terminal_stage2_masked(),
         final_witness.clone(),
+        0,
     );
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
@@ -356,6 +357,7 @@ fn terminal_level_proof_serde_round_trip() {
         #[cfg(feature = "zk")]
         tiny_terminal_stage2_masked(),
         final_witness,
+        0,
     );
     let mut bytes_with_reduction = Vec::new();
     with_reduction

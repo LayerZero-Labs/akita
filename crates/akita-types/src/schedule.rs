@@ -891,6 +891,7 @@ mod tests {
                 #[cfg(feature = "zk")]
                 dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
+                0,
             );
 
             // The planner accounts for the final witness separately
