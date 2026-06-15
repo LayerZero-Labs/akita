@@ -2,7 +2,7 @@
 
 use crate::sampler::{
     sparse_challenge_absorb_buf, sparse_challenges_from_seed, sparse_challenges_from_xof_cursor,
-    XofCursor,
+    validate_sparse_challenge_draw, XofCursor,
 };
 use crate::{
     tensor_left_digest, tensor_split, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
@@ -19,8 +19,6 @@ fn preview_sparse_challenges<const D: usize>(
     cfg: &SparseChallengeConfig,
     grind_nonce: u32,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
-    cfg.validate::<D>()
-        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let seed = preview.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
     sparse_challenges_from_seed::<D>(&seed, n, cfg)
@@ -67,6 +65,7 @@ pub fn preview_folding_challenges<const D: usize>(
     labels: ChallengeLabels<'_>,
     grind_nonce: u32,
 ) -> Result<Challenges, AkitaError> {
+    validate_sparse_challenge_draw::<D>(cfg)?;
     match shape {
         ChallengeShape::Flat => {
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
@@ -139,6 +138,7 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
+    validate_sparse_challenge_draw::<D>(cfg)?;
     match shape {
         ChallengeShape::Flat => {
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {

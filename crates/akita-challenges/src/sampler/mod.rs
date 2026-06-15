@@ -79,6 +79,19 @@ pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     Ok(challenges)
 }
 
+/// Reject sparse draws that exceed stack-sampler limits or fail config validation.
+pub(crate) fn validate_sparse_challenge_draw<const D: usize>(
+    cfg: &SparseChallengeConfig,
+) -> Result<(), AkitaError> {
+    if D > MAX_STACK_RING_DIM {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring dimension {D} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
+        )));
+    }
+    cfg.validate::<D>()
+        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))
+}
+
 /// Expand sparse challenges from a fixed 32-byte PRG seed (fold-grind preview path).
 pub fn sparse_challenges_from_seed<const D: usize>(
     seed: &[u8],
@@ -216,13 +229,7 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    if D > MAX_STACK_RING_DIM {
-        return Err(AkitaError::InvalidInput(format!(
-            "ring dimension {D} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
-        )));
-    }
-    cfg.validate::<D>()
-        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
+    validate_sparse_challenge_draw::<D>(cfg)?;
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
