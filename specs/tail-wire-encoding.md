@@ -4,8 +4,8 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-13                                                |
-| Status      | proposed                                                  |
-| PR          | #187 (umbrella spec; implementation stack in Execution) |
+| Status      | partially implemented (#190: non-zk encoding slice; umbrella elision deferred) |
+| PR          | #190 (spec + encoding implementation, targets `main`; spec-only #187 superseded) |
 
 ## Summary
 
@@ -18,20 +18,22 @@ This spec defines a comprehensive tail wire encoding built on one principle: **e
 It composes four levers, three of which are commitment/quotient *elision* (do not send objects whose information the verifier can reconstruct or check directly) and one of which is *entropy coding* (send norm-bounded witness segments at their true entropy, not at a worst-case fixed width).
 The verifier reconstructs every elided or de-decomposed quantity deterministically, so soundness is unchanged and the wire shrinks to the realized information content.
 
+**Implementation scope (#190).** This PR lands the **transparent non-zk encoding slice** only: `CleartextWitnessProof::SegmentTyped` with Golomb–Rice `z` (`β_inf -> k`), raw field segments for `e`/`t`/`r`, a length-prefixed `z` payload, planner upper-bound sizing, and non-zk production cutover. Commitment elision (`r`-drop, terminal `t`-state / `u`-elision), descriptor binding, zk tail cutover, and Jolt decode measurement remain deferred per Execution below.
+
 ## Intent
 
 ### Goal
 
-Replace the single fixed-width `PackedDigits` terminal witness with a segment-typed, entropy-coded cleartext tail that carries no commitments and no quotient, and whose per-segment models are derived from public/transcript-bound parameters with zero side information on the wire.
+Replace the single fixed-width `PackedDigits` terminal witness with a segment-typed, entropy-coded cleartext tail whose per-segment models are derived from public/transcript-bound parameters with zero side information on the wire. The full umbrella also elides commitments and quotient segments the verifier can reconstruct; **#190 does not ship those elision levers yet** (see Execution).
 
 The feature introduces or modifies:
 
-- A **segment-typed tail witness** representation replacing the single-width `PackedDigits` blob on the transparent recursive terminal tail: a sequence of typed segments (`Gaussian{k}`, `BoundedSmall{k}`, `RawField`), each carrying only its payload bytes, with boundaries derived from the schedule/shape and models from the descriptor policy (headerless, like the rest of the wire format). `k` is never on the wire; both sides derive it from public per-coefficient bounds via the descriptor-bound `β_inf -> k` rule for `z` (and a separate opening-digit bound for `e`).
-- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and a bounded-unary escape, parameterized by the derived integer Rice parameter `k`.
-- A per-level **`β_inf` accessor** via [`fold_witness_beta`](crates/akita-types/src/sis/norm_bound.rs) (the same per-coefficient L∞ bound the fold witness already satisfies) and the deterministic `β_inf -> k` rule for the folded-response `z` segment.
-- **Terminal `t`-state cutover at the last recursive transition**: the penultimate fold does **not** send the outer next-witness commitment `u = B * t_hat`. Instead it sends the inner image `t = A * w_terminal` as raw ring elements, transcript-bound as the terminal input state. The terminal direct relation then checks the revealed clear witness against this public `t` state, so the terminal relation has no B/COMMIT block for `u`.
-- **`r`-elision and terminal-stage-2 elision** via the spec-approved terminal direct ring-relation mode ([PR #141](https://github.com/LayerZero-Labs/akita/pull/141), branch `quang/terminal-direct-ring-relation-spec`), on which this spec depends and which it does not re-specify. These apply only under the direct terminal proof mode that #141 introduces; the current shipped terminal still carries `r_hat` and relation-only stage-2.
-- **Descriptor binding** of the active tail-encoding policy (codec identity, per-segment model identities, the `β_inf -> k` rule for `z`, the terminal `t`-state mode, and r-drop flag) in `AkitaInstanceDescriptor`, and **proof-size/planner accounting** updated to the new tail shape.
+- A **segment-typed tail witness** representation replacing the single-width `PackedDigits` blob on the transparent recursive terminal tail: typed segments (`Gaussian{k}` for `z`, `RawField` for `e`/`t`/`r` in #190; `BoundedSmall{k}` for one-hot `e` deferred). Boundaries derive from the schedule/shape; models derive from public bounds (headerless wire). `k` is never on the wire; both sides derive it from public per-coefficient bounds via the `β_inf -> k` rule for `z`.
+- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and a bounded-unary escape, parameterized by the derived integer Rice parameter `k`. **#190 applies it to `z` only.**
+- A per-level **`β_inf` accessor** via [`fold_witness_beta`](crates/akita-types/src/sis/norm_bound.rs) and the deterministic `β_inf -> k` rule for the folded-response `z` segment.
+- **Terminal `t`-state cutover** *(umbrella S2, deferred)*: the penultimate fold stops sending outer `u = B * t_hat` and binds inner `t = A * w_terminal` as the terminal public state.
+- **`r`-elision and terminal-stage-2 elision** *(umbrella S1, deferred)* via PR #141 direct-terminal mode. **#190 still carries `r` on the wire** as a raw field segment.
+- **Descriptor binding** *(umbrella S5, deferred)* of the tail-encoding policy in `AkitaInstanceDescriptor`. **#190** updates planner proof-size accounting and regenerates non-zk shipped tables under segment-typed sizing.
 
 ### Invariants
 
@@ -41,7 +43,7 @@ The feature introduces or modifies:
 4. **Public models, zero side info.** Every per-segment model parameter (`β_inf`, `k`, segment presence, segment boundaries) is derivable by the verifier from `LevelParams` + descriptor + transcript before the segment is decoded; no model, histogram, or width is transmitted. Protected by: a prover/verifier `β_inf`/`k` agreement test (mirroring the `beta_linf_fold_bound` / `num_digits_fold` mirror invariant of PR #174) and a `LoggingTranscript` event-stream equality test.
 5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from the outer image `u = B * t_hat` to the inner image `t = A * w_terminal`. Soundness does **not** come from simply deleting B rows while keeping `u` as the statement; that would be unsound. It comes from making `t` the transcript-bound public terminal state and checking, in the direct terminal relation, that the revealed clear witness maps to that exact `t` under the A rows. Protected by: the soundness paragraph in Design, plus terminal-root / suffix-terminal row tests extended to the `t`-state layout.
 6. **Descriptor binding distinguishes the policy.** A proof produced under one tail-encoding policy (codec, models, terminal-state mode, r-drop flags) must not verify under another. Protected by: a pinned descriptor-bytes test and a cross-policy verify-fails test.
-7. **Transparent-only.** Entropy coding and the t-reveal apply only to the transparent tail; under `feature = "zk"` the masked tail keeps the existing representation and the new policy rejects with `InvalidSetup`. Protected by: a zk-rejection regression test.
+7. **Transparent-only.** Entropy coding applies only to the transparent tail. **#190:** non-zk builds emit `SegmentTyped`; `feature = "zk"` keeps `PackedDigits` via compile-time gating (`#[cfg(feature = "zk")]`). Umbrella acceptance of `InvalidSetup` on zk policy selection is deferred to the zk tail slice.
 
 ### Non-Goals
 
@@ -57,16 +59,22 @@ The feature introduces or modifies:
 
 ### Acceptance Criteria
 
-- [ ] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint), total (terminates and is no-panic on arbitrary bytes), and bijective on the integer range it admits, verified by unit tests including the escape path.
-- [ ] `fold_witness_beta` and the deterministic `β_inf -> k` rule (`k = optimal_rice_k(β_inf)`) return integers pinned against a reference calculation, and prover/verifier read the identical value.
-- [ ] The transparent terminal `final_witness` serializes as segment-typed payloads with no per-segment header bytes; runtime `direct_witness_bytes` matches the exact serialized tail size, and the profile gate `actual_proof_bytes <= planned_proof_bytes + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` passes (planner uses a documented conservative upper bound on entropy-coded segments, not the realized witness length).
-- [ ] Under PR #141 direct terminal mode, the transparent terminal proof contains no `r_hat` and no terminal stage-2 sumcheck bytes; under terminal `t`-state mode, the last recursive transition sends no parent `u = B * t_hat` commitment and the terminal relation has no B/COMMIT block.
-- [ ] A terminal proof that reveals `t` verifies, and tampering `t`, `e`, or `z` is rejected; the terminal A-row check enforces that the revealed witness maps to the transcript-bound `t` state.
-- [ ] Descriptor bytes change intentionally and are pinned; a proof under the new policy fails to verify under the legacy `PackedDigits` policy and vice versa.
-- [ ] Under `feature = "zk"`, selecting the entropy/t-reveal tail policy rejects with `InvalidSetup`; the masked tail is unchanged.
-- [ ] Net proof-size reduction reported by the profile command at the affected modes. CI (`scripts/profile_bench_report.py`) renders a per-case **Tail encoding** block from the structured `proof tail summary` trace (encoding policy, per-segment wire bytes, Golomb `z` vs legacy `PackedDigits` comparison, planner `z` budget slack). Deferred levers (r-drop, u-drop) stay out of scope until later slices.
-- [ ] In-guest decode cost measured: add a `final_witness_decode` cycle marker in `profile/akita-recursion`; entropy-coded tail decode adds bounded cycles and net `akita_verify` cycles do not regress versus the PR #141 direct-mode baseline at the cited profile cell.
-- [ ] `generated_schedule_tables_match_find_schedule` passes after S5 table regen under the tail policy.
+Encoding slice (#190):
+
+- [x] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint), total (terminates and is no-panic on malformed/truncated bytes), and bijective on the admitted integer range, verified by unit tests including the escape path.
+- [x] `fold_witness_beta` and the deterministic `β_inf -> k` rule (`k = optimal_rice_k(β_inf)`) return integers pinned against a reference calculation; prover and verifier derive the same `k` for `z`.
+- [x] The transparent non-zk terminal `final_witness` serializes as segment-typed payloads (`z` length-prefixed Golomb bytes, then raw `e`/`t`/`r` field segments); `CleartextWitnessShape::admits_realized` accepts exact `z` payloads up to the schedule upper bound; `segment_typed_expand_matches_logical_w` proves expand matches legacy digit layout.
+- [x] Non-zk shipped schedule tables regenerated under segment-typed terminal sizing; `generated_schedule_tables_match_find_schedule` passes for affected families.
+- [x] Net `z` entropy win on cited `onehot_fp128_d64` cells (Golomb at `k = optimal_rice_k(β_inf)` beats legacy `PackedDigits`); profile emits structured tail breakdown (`proof tail summary`, Golomb vs packed `z` stats).
+
+Umbrella items (deferred past #190):
+
+- [ ] Under PR #141 direct terminal mode: no `r_hat` on the wire and no terminal stage-2 sumcheck bytes; under terminal `t`-state mode, the last recursive transition sends no parent `u = B * t_hat` commitment and the terminal relation has no B/COMMIT block.
+- [ ] Terminal `t`-state soundness: tampering `t`, `e`, or `z` is rejected; the terminal A-row check enforces that the revealed witness maps to the transcript-bound `t` state.
+- [ ] Descriptor bytes bind the tail-encoding policy and cross-policy verify fails.
+- [ ] Under `feature = "zk"`, selecting the segment-typed tail policy rejects with `InvalidSetup` (or an equivalent explicit zk tail policy).
+- [ ] In-guest decode cost measured via `final_witness_decode` in `profile/akita-recursion`; net `akita_verify` cycles do not regress versus the PR #141 direct-mode baseline.
+- [ ] BoundedSmall Golomb encoding for one-hot `e` (today `e` is `RawField` in #190).
 
 ### Testing Strategy
 
@@ -85,12 +93,12 @@ Feature combinations: default, `--no-default-features`, `--features zk` (policy 
 
 Expected direction: smaller proofs, no material prover slowdown, bounded verifier decode.
 
-Per-lever, at the affected tail modes (verified by `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile` and the planner `exact_proof_bytes`; numbers below are **projected** until the stack lands):
+Per-lever, at the affected tail modes (verified by `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile` and the planner `exact_proof_bytes`):
 
-- **r-drop + terminal stage-2 drop** (PR #141 direct mode): measured **5.25%–6.15%** proof reduction on np1 profiles (secondary citation from PR #141 / JL analysis; pin primary profile table in S5).
-- **u-drop (terminal `t`-state)**: removes one `n_b`-ring-element `next_w_commitment` (~1 KB on cited fp128 D64 profiles at steady-state `n_b`) by sending the terminal inner image `t` instead of the outer image `u = B * t_hat`. The terminal direct relation consumes `t` as the public state and checks the revealed witness against it.
-- **z entropy coding**: `z` coordinate cost drops from fixed `depth_fold * log_basis` bits/coord (packed digits) to `k + O(1)` bits/coord at public `k = optimal_rice_k(β_inf)` (~13 bits/coord on fp128 D64 vs 15 packed). Realized random witnesses average ~9.7–10 bits/coord, but the public `k` must price the worst-case per-coefficient bound `β_inf`, not the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` (which would imply `k ≈ 22` and is strictly worse).
-- **per-segment width recovery**: one-hot `e` segments stop paying `z`/`t`'s global `bits_per_elem`; their near-binary digits collapse toward their own entropy.
+- **r-drop + terminal stage-2 drop** (PR #141 direct mode): **deferred**; projected **5.25%–6.15%** proof reduction on np1 profiles (secondary citation from PR #141 / JL analysis).
+- **u-drop (terminal `t`-state)**: **deferred**; projected ~1 KB savings on cited fp128 D64 profiles (one `n_b`-ring-element `next_w_commitment` elided).
+- **z entropy coding** *(landed in #190)*: `z` coordinate cost drops from fixed `depth_fold * log_basis` bits/coord (packed digits) to `k + O(1)` bits/coord at public `k = optimal_rice_k(β_inf)` (~13 bits/coord on fp128 D64 vs 15 packed). Realized random witnesses average ~9.7–10 bits/coord; the public `k` prices worst-case `β_inf`, not the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` (which would imply `k ≈ 22`).
+- **per-segment width recovery for `e`**: **deferred** (one-hot `e` is `RawField` in #190, not BoundedSmall Golomb yet).
 
 A-role rank, setup size, and L2 pricing are unchanged.
 
@@ -105,10 +113,10 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 | `v = D * e_hat` | auxiliary D image | do not send; reveal `e` at the tail | D-drop (done, PR #88) |
 | terminal input `u = B * t_hat` | outer commitment to terminal witness | do not send `u`; send inner state `t = A * w_terminal` and check it directly | terminal `t`-state (this spec, S2) |
 | `z` (folded response) | norm-bounded per coefficient (`β_inf`) | Golomb-Rice keyed by derived `k = optimal_rice_k(β_inf)` | this spec (S4) |
-| one-hot `e` | sparse / near-binary | bounded-small entropy code | this spec (S4) |
-| `t = A * w_terminal` | full entropy mod q | raw field elements (`RawField`) | this spec (S2/S3; replaces digit-packed `t_hat`) |
-| tiered `û_concat` | outer-commitment artifact | absent under terminal `t`-state | this spec (S2) |
-| `r` quotient | auxiliary, not in the statement | do not send; direct ring relations | PR #141 (S1) |
+| one-hot `e` | sparse / near-binary | bounded-small entropy code *(umbrella)*; **raw field in #190** | this spec (S4, deferred for `e`) |
+| `t = A * w_terminal` | full entropy mod q | raw field elements (`RawField`) | **#190** (digit-packed `t_hat` replaced on wire; `t`-state cutover deferred) |
+| tiered `û_concat` | outer-commitment artifact | absent under terminal `t`-state | umbrella S2 (deferred) |
+| `r` quotient | auxiliary, not in the statement | do not send; direct ring relations | PR #141 S1 (deferred; **#190 still sends `r` as `RawField`**) |
 
 Affected surfaces:
 
@@ -117,7 +125,7 @@ Affected surfaces:
 - `akita-verifier`: decode typed segments (no-panic), re-decompose where needed for row checks, verify the direct terminal A rows against the transcript-bound `t` state, and validate that the terminal layout has no B/COMMIT rows.
 - `akita-planner`/`akita-config`: codec-aware tail byte accounting, regenerate shipped tables under the new tail policy, bind the policy in the descriptor.
 
-The current single-width path (`PackedDigits`, `direct_witness.rs:106-163`) is retained only for the ZK tail; the transparent tail routes through the segment-typed variant.
+The current single-width path (`PackedDigits`) is retained for the **zk** tail (`#[cfg(feature = "zk")]`). The transparent **non-zk** tail routes through `CleartextWitnessProof::SegmentTyped` (#190).
 
 ### Terminal `t`-state / u-elision
 
@@ -192,7 +200,7 @@ The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source
 Segments appear in `z_first`-dependent order for the `z`/`e` split; `r_hat` planes are absent under PR #141 direct mode.
 Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
 
-This mirrors the existing headerless, shape-driven decode (the shape supplies counts; the descriptor supplies models). **S3** adds `CleartextWitnessShape::SegmentTyped(...)` and the matching proof variant; they do not exist in the codebase today.
+This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
 
 The verifier decodes each segment to its integer or field vector (`z_coords` + `e_coords` + `t_field_elems` coordinates total), then re-decomposes the `z` and `e` integers into balanced digits *on the verifier side* for the digit-range and row checks (wire carries recomposed integers, not digit planes).
 `t` is carried as `RawField` base-field coefficients (`t_field_elems`); the verifier uses them directly in the terminal A-row checks after binding the segment bytes in the transcript.
@@ -256,39 +264,37 @@ Shipped schedule tables are regenerated under the new tail policy in S5; the dri
 ## Documentation
 
 - Update PR #141 branch `specs/terminal-direct-ring-relation.md` and `specs/terminal-fold-cutover.md` (PR #88) to cross-link this spec as the encoding layer on top of the r-drop and D-drop, and to record the terminal `t`-state cutover as the replacement for the old terminal `u` opening.
-- Update PR #174 branch `specs/fold-linf-rejection.md` to note that the `t*` threshold uses the same `β_inf` fold bound, which is also the Golomb-Rice scale for `z` (distinct from the level variance envelope).
+- Update PR #174 / `specs/fold-linf-rejection.md` cross-link: Golomb `z` sizing uses the same `β_inf` fold bound as `t*` analysis (distinct from the level variance envelope).
 - Profile example / bench reports: structured tail witness reporting is implemented in `crates/akita-pcs/examples/profile/report.rs` (`emit_proof_tail_report`) and `scripts/profile_bench_report.py`. The profile binary (non-zk) emits `proof tail summary` with `final_w_encoding` / `final_w_policy` and, for `segment_typed`, per-segment wire bytes plus Golomb-vs-`PackedDigits` `z` stats. Encoding variants on `CleartextWitnessProof`: `segment_typed` (non-zk folded terminal default), `packed_digits` (`feature = "zk"` fallback), `field_elements` (root-direct cleartext witness), and `none` (root-direct zero-fold; `tail_bytes = 0`).
 - **Extension point:** a future revealed JL projection image `p` at the tail is itself sub-Gaussian and should become another `Gaussian{k}` segment; coordinate with `specs/akita-jl-norm-check-resolutions.md` §8 when that path is specified.
 
 ## Execution
 
-Recommended as a **stack of small PRs under this umbrella spec**, not one cross-cutting PR (rationale below).
-Dependency order:
+Umbrella dependency order (full tail wire encoding):
 
 ```text
-S1  Land PR #141 (r-drop + terminal direct ring relations).        [spec-approved; not merged]
-S2  Terminal t-state / u-elision (+ soundness paragraph).          depends on S1
-S3  Segment-typed tail framing (replace single PackedDigits with    depends on S1
-    typed segments; fixed-width payloads first).                    byte-neutral refactor; transcript bind
-S4  Golomb-Rice codec + β_inf/k accessors + Gaussian/BoundedSmall   depends on S3
-    models for z and e.                                             the measurable entropy win
-S5  Planner regen + descriptor binding + proof-size accounting +    depends on S2,S3,S4
-    Jolt-decode cost measurement + drift guard.
+S1  Land PR #141 (r-drop + terminal direct ring relations).        deferred
+S2  Terminal t-state / u-elision (+ soundness paragraph).          deferred (depends on S1)
+S3  Segment-typed tail framing (replace single PackedDigits with    landed in #190 (non-zk)
+    typed segments; raw e/t/r + Golomb z; length-prefixed z)
+S4  Golomb-Rice codec + β_inf/k for z segment                       landed in #190
+    (BoundedSmall e encoding deferred)
+S5  Descriptor binding + Jolt decode measurement + full S5 polish   partially landed in #190
+    (non-zk planner regen + profile tail accounting only)
 ```
 
-Each slice is independently shippable with its own measurable proof-size delta and its own narrow review surface.
+**#190** is the first implementation PR under this umbrella. It is independently shippable: measurable `z` entropy win on non-zk folded terminals without waiting for S1/S2 elision.
 
-Risks to resolve first:
+Risks for remaining umbrella slices:
 
 - The S2 soundness paragraph must state the terminal statement cutover precisely: `u` is no longer the terminal state, `t` is transcript-bound instead, and the terminal A rows check the revealed witness against `t`.
-- The S4 codec must be canonical, total, and no-panic on the verifier path, and cheap to decode in-guest; pin canonicality and the `β_inf -> k` rule against reference tests, and measure Jolt cycles.
-- S3 must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across the segment boundaries (the same alignment risk PR #141 names).
-- S5 must regenerate shipped tables under the same policy and keep the drift guard green.
+- S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
+- S5 descriptor binding and Jolt cycle measurement remain open.
 
 ## References
 
 - PR #141 branch `specs/terminal-direct-ring-relation.md`: terminal r-drop and direct ring relations; S1 dependency.
-- PR #174 branch `specs/fold-linf-rejection.md`: the `t*` threshold and `β_inf` per-coefficient fold bound reused for Golomb-Rice `z` sizing.
+- PR #174 / `specs/fold-linf-rejection.md` (closed spec PR; implementation #189): the `t*` threshold and `β_inf` per-coefficient fold bound; Golomb `z` sizing uses the same `β_inf`, not the level variance envelope.
 - `specs/terminal-fold-cutover.md` (PR #88): the D-role drop whose transcript-binding discipline the terminal `t`-state cutover reuses.
 - `specs/weak-binding-norm-fix.md`: the weak-binding object the tail extraction recovers.
 - `crates/akita-types/src/proof/direct_witness.rs` (`PackedDigits`, `CleartextWitnessProof`), `crates/akita-types/src/proof/terminal_witness.rs` (`terminal_witness_segment_layout`, transcript slicing), `crates/akita-types/src/proof/levels.rs:704-731` (`TerminalLevelProof`), `crates/akita-types/src/proof/ring_relation.rs:226-267` (segment plane counts).
