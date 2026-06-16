@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::terminal_witness_segment_layout;
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.

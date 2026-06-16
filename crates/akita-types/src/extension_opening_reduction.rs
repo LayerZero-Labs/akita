@@ -321,38 +321,45 @@ where
         .collect())
 }
 
-/// Compute and transpose tensor partials from a base-field witness table.
+/// Derive a logical opening claim and tensor partials from base-field witness evals.
 ///
 /// # Errors
 ///
-/// Returns an error if the point/table shape is malformed.
-pub fn tensor_partials_from_base_evals<F, E>(
+/// Returns an error if the logical point, witness table, or tensor shape is malformed.
+pub fn derive_tensor_extension_opening_claim<F, E>(
     original_num_vars: usize,
     base_evals: &[F],
     logical_point: &[E],
-) -> Result<ExtensionOpeningTensorPartials<E>, AkitaError>
+) -> Result<(E, ExtensionOpeningTensorPartials<E>), AkitaError>
 where
     F: FieldCore,
-    E: MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let column_partials = tensor_column_partials_from_base_evals::<F, E>(
         original_num_vars,
         base_evals,
         logical_point,
     )?;
+    let opening = derive_tensor_extension_opening_claim_from_partials::<F, E>(
+        logical_point,
+        &column_partials,
+    )?;
     let row_partials = tensor_row_partials_from_columns::<F, E>(&column_partials)?;
-    Ok(ExtensionOpeningTensorPartials {
-        column_partials,
-        row_partials,
-    })
+    Ok((
+        opening,
+        ExtensionOpeningTensorPartials {
+            column_partials,
+            row_partials,
+        },
+    ))
 }
 
-/// Recombine column-view tensor partials into the logical opening claim.
+/// Derive a logical opening claim from column-view tensor partials.
 ///
 /// # Errors
 ///
 /// Returns an error if the logical point or partial vector is malformed.
-pub fn tensor_logical_claim_from_partials<F, E>(
+pub fn derive_tensor_extension_opening_claim_from_partials<F, E>(
     logical_point: &[E],
     column_partials: &[E],
 ) -> Result<E, AkitaError>
@@ -373,32 +380,10 @@ where
             actual: column_partials.len(),
         });
     }
-    let head_weights = EqPolynomial::evals(&logical_point[..split_bits])?;
-    Ok(head_weights
+    Ok(EqPolynomial::evals(&logical_point[..split_bits])?
         .into_iter()
         .zip(column_partials.iter().copied())
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
-}
-
-/// Check column-view tensor partials against a logical opening claim.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] if the recomposed claim differs.
-pub fn check_tensor_extension_opening_claim<F, E>(
-    logical_point: &[E],
-    logical_claim: E,
-    column_partials: &[E],
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let expected = tensor_logical_claim_from_partials::<F, E>(logical_point, column_partials)?;
-    if expected != logical_claim {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(())
 }
 
 /// Compute the row-batched tensor reduction claim

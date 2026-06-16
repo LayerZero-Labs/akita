@@ -38,7 +38,7 @@ The key surfaces modified are:
 - `akita-prover::backend::sparse_ring`: validated packed sparse-ring
   coefficients, sorted constructors, borrowed row decomposition, and a
   position-bucketed sparse column sweep for dense tiles.
-- `akita-prover::protocol::flow`: grouping root extension-opening claims by
+- `akita-prover::protocol::core`: grouping root extension-opening claims by
   point, passing caller-owned input claims into the batched reduction prover,
   and using sparse tensor-factor terms for one-hot same-point batches.
 - `akita-sumcheck::extension_opening_reduction`: lazy tensor equality factors,
