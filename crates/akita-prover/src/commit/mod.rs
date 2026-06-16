@@ -20,7 +20,7 @@ mod recursive;
 // The narrow public surface.
 pub use ajtai::backend::CommitBackend;
 pub use ajtai::opening::{AjtaiOpeningType, ZeroScan};
-pub use ajtai::spec::{MatrixRole, MatrixSpec, RingDomain};
+pub use ajtai::spec::{MatrixRole, MatrixSpec};
 pub use entry::{batched_commit, commit};
 pub use opening_view::AjtaiOpeningView;
 pub use pipeline::{

@@ -15,12 +15,12 @@ use crate::backend::onehot::{MultiChunkEntry, SingleChunkEntry};
 use crate::commit::ajtai::backend::CommitBackend;
 use crate::commit::ajtai::column_sweep::{column_sweep_ajtai_onehot, column_sweep_sparse};
 use crate::commit::ajtai::opening::{AjtaiOpeningType, OneHotCommitBlocks, ZeroScan};
-use crate::commit::ajtai::spec::{MatrixSpec, RingDomain};
+use crate::commit::ajtai::spec::MatrixSpec;
 use crate::compute::{CpuBackend, CpuPreparedSetup};
 use crate::kernels::linear::{
     mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8,
 };
 
 /// Validate that the requested window fits the commitment key.
@@ -79,8 +79,8 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         validate_matrix::<F, D>(commitment_key, &spec)?;
-        match (spec.domain, opening) {
-            (RingDomain::Negacyclic, AjtaiOpeningType::DigitVector { digits, log_basis }) => {
+        match opening {
+            AjtaiOpeningType::DigitVector { digits, log_basis } => {
                 require_block_width(spec.cols, digits.len())?;
                 Ok(vec![mat_vec_mul_ntt_single_i8(
                     &commitment_key.ntt_shared,
@@ -90,24 +90,11 @@ where
                     log_basis,
                 )?])
             }
-            (RingDomain::Cyclic, AjtaiOpeningType::DigitVector { digits, log_basis }) => {
-                require_block_width(spec.cols, digits.len())?;
-                Ok(vec![mat_vec_mul_ntt_single_i8_cyclic(
-                    &commitment_key.ntt_shared,
-                    spec.rows,
-                    spec.cols,
-                    digits,
-                    log_basis,
-                )?])
-            }
-            (
-                RingDomain::Negacyclic,
-                AjtaiOpeningType::DigitBlocks {
-                    blocks,
-                    log_basis,
-                    zero_scan,
-                },
-            ) => match zero_scan {
+            AjtaiOpeningType::DigitBlocks {
+                blocks,
+                log_basis,
+                zero_scan,
+            } => match zero_scan {
                 ZeroScan::Dense => mat_vec_mul_ntt_dense_digits_i8_trusted(
                     &commitment_key.ntt_shared,
                     spec.rows,
@@ -123,15 +110,12 @@ where
                     log_basis,
                 ),
             },
-            (
-                RingDomain::Negacyclic,
-                AjtaiOpeningType::CoeffBlocks {
-                    blocks,
-                    num_digits,
-                    log_basis,
-                    zero_scan,
-                },
-            ) => match zero_scan {
+            AjtaiOpeningType::CoeffBlocks {
+                blocks,
+                num_digits,
+                log_basis,
+                zero_scan,
+            } => match zero_scan {
                 ZeroScan::Dense => {
                     if spec.rows == 1 {
                         Ok(mat_vec_mul_ntt_i8_dense_single_row(
@@ -164,17 +148,14 @@ where
                     log_basis,
                 ),
             },
-            (
-                RingDomain::Negacyclic,
-                AjtaiOpeningType::StridedDigits {
-                    coeffs,
-                    num_blocks,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                    raw,
-                },
-            ) => {
+            AjtaiOpeningType::StridedDigits {
+                coeffs,
+                num_blocks,
+                block_len,
+                num_digits,
+                log_basis,
+                raw,
+            } => {
                 if raw {
                     mat_vec_mul_ntt_raw_i8_strided(
                         &commitment_key.ntt_shared,
@@ -204,13 +185,10 @@ where
                     )
                 }
             }
-            (
-                RingDomain::Negacyclic,
-                AjtaiOpeningType::OneHot {
-                    blocks,
-                    num_digits_commit,
-                },
-            ) => {
+            AjtaiOpeningType::OneHot {
+                blocks,
+                num_digits_commit,
+            } => {
                 let a_view = commitment_key
                     .expanded
                     .shared_matrix
@@ -236,13 +214,10 @@ where
                     }
                 })
             }
-            (
-                RingDomain::Negacyclic,
-                AjtaiOpeningType::SparseRing {
-                    blocks,
-                    num_digits_commit,
-                },
-            ) => {
+            AjtaiOpeningType::SparseRing {
+                blocks,
+                num_digits_commit,
+            } => {
                 let block_len = spec.cols.checked_div(num_digits_commit).ok_or_else(|| {
                     AkitaError::InvalidSetup(
                         "sparse-ring commit requires nonzero num_digits_commit".to_string(),
@@ -263,9 +238,6 @@ where
                     num_digits_commit,
                 ))
             }
-            (RingDomain::Cyclic, _) => Err(AkitaError::InvalidSetup(
-                "cyclic ajtai commit only supports the DigitVector opening".to_string(),
-            )),
         }
     }
 }

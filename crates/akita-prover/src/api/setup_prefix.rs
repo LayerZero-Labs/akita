@@ -3,7 +3,7 @@
 use crate::commit::{
     commit_inner_block_digit_count, commit_inner_flat_digit_count,
     validate_commit_outer_input_nonempty, AjtaiOpeningType, CommitBackend, MatrixRole, MatrixSpec,
-    RingDomain, ZeroScan,
+    ZeroScan,
 };
 use crate::kernels::linear::decompose_rows_i8_into;
 #[cfg(feature = "zk")]
@@ -95,7 +95,6 @@ where
             role: MatrixRole::AInner,
             rows: level_params.a_key.row_len(),
             cols: a_cols,
-            domain: RingDomain::Negacyclic,
         },
         AjtaiOpeningType::CoeffBlocks {
             blocks: block_slices,
@@ -154,7 +153,6 @@ where
         role: MatrixRole::BOuter,
         rows: level_params.b_key.row_len(),
         cols: b_input_digits.len(),
-        domain: RingDomain::Negacyclic,
     };
     #[cfg(feature = "zk")]
     let b_blinding_digits =

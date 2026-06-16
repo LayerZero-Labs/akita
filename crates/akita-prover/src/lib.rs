@@ -34,8 +34,7 @@ pub use backend::{
     SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
 };
 pub use commit::{
-    commit_w, AjtaiOpeningType, AjtaiOpeningView, CommitBackend, MatrixRole, MatrixSpec,
-    RingDomain, ZeroScan,
+    commit_w, AjtaiOpeningType, AjtaiOpeningView, CommitBackend, MatrixRole, MatrixSpec, ZeroScan,
 };
 pub use compute::{
     ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,

@@ -21,18 +21,9 @@ pub enum MatrixRole {
     DRelation,
 }
 
-/// Ring multiplication domain for the commit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RingDomain {
-    /// Negacyclic ring (the default for `A`/`B`/`B'`/`F`).
-    Negacyclic,
-    /// Cyclic ring (ring-switch relation rows).
-    Cyclic,
-}
-
 /// Selects a `rows × cols` window of the commitment key (the shared setup
 /// matrix). Both dimensions are explicit (the fix for the previous implicit
-/// `cols == digits.len()` coupling).
+/// `cols == digits.len()` coupling). Every commit is negacyclic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatrixSpec {
     /// Which protocol matrix this window represents (validation/tracing only).
@@ -41,6 +32,4 @@ pub struct MatrixSpec {
     pub rows: usize,
     /// Logical column width read from the shared matrix.
     pub cols: usize,
-    /// Ring multiplication domain.
-    pub domain: RingDomain,
 }

@@ -11,7 +11,7 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
 use akita_types::{FlatDigitBlocks, LevelParams};
 
 use crate::commit::ajtai::backend::CommitBackend;
-use crate::commit::ajtai::spec::{MatrixRole, MatrixSpec, RingDomain};
+use crate::commit::ajtai::spec::{MatrixRole, MatrixSpec};
 use crate::commit::decompose::decompose_rows;
 use crate::commit::opening_view::AjtaiOpeningView;
 use crate::commit::pipeline::{
@@ -46,7 +46,6 @@ where
         role: MatrixRole::AInner,
         rows: params.a_key.row_len(),
         cols: a_cols,
-        domain: RingDomain::Negacyclic,
     };
     let opening = poly.to_ajtai_opening(
         params.block_len,

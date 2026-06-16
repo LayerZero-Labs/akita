@@ -1,4 +1,4 @@
-use crate::commit::{commit_inner_one, AjtaiOpeningType, MatrixRole, MatrixSpec, RingDomain};
+use crate::commit::{commit_inner_one, AjtaiOpeningType, MatrixRole, MatrixSpec};
 use crate::protocol::masking::sample_blinding_digits;
 use crate::{DensePoly, ProverComputeBackend};
 use akita_algebra::CyclotomicRing;
@@ -53,7 +53,6 @@ where
                 role: MatrixRole::BOuter,
                 rows: hiding_params.b_key.row_len(),
                 cols: b_input_digits.len(),
-                domain: RingDomain::Negacyclic,
             },
             AjtaiOpeningType::DigitVector {
                 digits: &b_input_digits,

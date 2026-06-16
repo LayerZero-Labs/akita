@@ -247,18 +247,21 @@ All of these live in `commit/`. This is the reference; §7 shows them in use.
 
 ```rust
 pub enum MatrixRole { AInner, BOuter, BOuterTierSlice, FOuterTier, DRelation }
-pub enum RingDomain { Negacyclic, Cyclic }
 
 /// Selects a `rows × cols` window of the commitment key (the shared setup
 /// matrix). Both dimensions are explicit (the fix for today's implicit
-/// `cols == digits.len()`).
+/// `cols == digits.len()`). Every commit is negacyclic.
 pub struct MatrixSpec {
     pub role: MatrixRole,
     pub rows: usize,
     pub cols: usize,
-    pub domain: RingDomain,
 }
 ```
+
+> The `commit` primitive only commits negacyclically, so there is no
+> `RingDomain` field. The (deferred) Phase 8 cyclic ring-switch relation hook
+> was dropped rather than carried as dead scaffolding; the relation path keeps
+> using `CyclicRowsComputeBackend::cyclic_digit_rows` (see [§11](#11-relationship-to-the-compute-backend-spec)).
 
 ### 6.2 `AjtaiOpeningType` — the opening (`commit/ajtai/opening.rs`)
 
@@ -677,19 +680,20 @@ tiny `AjtaiOpeningView` impls.
 The contract for `commit/ajtai/cpu.rs`: each arm calls the **same** kernel the
 corresponding `*_commit_rows` / `digit_rows` method calls today.
 
-| `AjtaiOpeningType` arm | `RingDomain` | Existing kernel (in `src/kernels/` or `commit/ajtai/column_sweep.rs`) |
-|---|---|---|
-| `CoeffBlocks` (rows>1, `Dense`) | Negacyclic | `mat_vec_mul_ntt_i8_dense` |
-| `CoeffBlocks` (rows==1, `Dense`) | Negacyclic | `mat_vec_mul_ntt_i8_dense_single_row` |
-| `CoeffBlocks` (`SkipZeros`) | Negacyclic | `mat_vec_mul_ntt_i8` |
-| `DigitBlocks` (`Dense`) | Negacyclic | `mat_vec_mul_ntt_dense_digits_i8_trusted` |
-| `DigitBlocks` (`SkipZeros`) | Negacyclic | `mat_vec_mul_ntt_digits_i8` |
-| `DigitVector` | Negacyclic | `mat_vec_mul_ntt_single_i8` |
-| `DigitVector` | Cyclic | `mat_vec_mul_ntt_single_i8_cyclic` |
-| `StridedDigits` (`raw==false`) | Negacyclic | `mat_vec_mul_ntt_i8_strided` (rehydrate first) |
-| `StridedDigits` (`raw==true`) | Negacyclic | `mat_vec_mul_ntt_raw_i8_strided` |
-| `OneHot` | Negacyclic | `column_sweep_ajtai_onehot::<Single/MultiChunkEntry>` |
-| `SparseRing` | Negacyclic | `column_sweep_sparse` |
+All arms are negacyclic.
+
+| `AjtaiOpeningType` arm | Existing kernel (in `src/kernels/` or `commit/ajtai/column_sweep.rs`) |
+|---|---|
+| `CoeffBlocks` (rows>1, `Dense`) | `mat_vec_mul_ntt_i8_dense` |
+| `CoeffBlocks` (rows==1, `Dense`) | `mat_vec_mul_ntt_i8_dense_single_row` |
+| `CoeffBlocks` (`SkipZeros`) | `mat_vec_mul_ntt_i8` |
+| `DigitBlocks` (`Dense`) | `mat_vec_mul_ntt_dense_digits_i8_trusted` |
+| `DigitBlocks` (`SkipZeros`) | `mat_vec_mul_ntt_digits_i8` |
+| `DigitVector` | `mat_vec_mul_ntt_single_i8` |
+| `StridedDigits` (`raw==false`) | `mat_vec_mul_ntt_i8_strided` (rehydrate first) |
+| `StridedDigits` (`raw==true`) | `mat_vec_mul_ntt_raw_i8_strided` |
+| `OneHot` | `column_sweep_ajtai_onehot::<Single/MultiChunkEntry>` |
+| `SparseRing` | `column_sweep_sparse` |
 
 `ajtai_commit` validates once before dispatch (nonzero `rows`/`cols`, footprint
 fits, i8-range `log_basis`, per-block width matches `spec.cols`), returning
@@ -843,11 +847,14 @@ land. The byte-equality + profiler gates from Phase 0 are re-run at Phase 6.
 - [x] `cargo fmt -q`, `cargo clippy --all -- -D warnings` (default +
       `--all-features`), and the release test suite are clean.
 
-### Phase 8 — (Optional follow-up, separate PR)
+### Phase 8 — (Dropped)
 
-- [ ] Route the cyclic ring-switch relation rows through
+- [x] ~~Route the cyclic ring-switch relation rows through
       `AjtaiOpeningType::DigitVector { Cyclic }` so the relation path also speaks
-      `commit`.
+      `commit`.~~ Dropped: the `RingDomain` / cyclic-commit hook was removed
+      rather than carried as dead scaffolding. The relation/quotient path keeps
+      its own `CyclicRowsComputeBackend::cyclic_digit_rows` (per §11), so the
+      `commit` primitive stays negacyclic-only.
 
 ## 10. Keeping the same performance
 

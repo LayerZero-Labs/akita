@@ -8,7 +8,7 @@ use akita_types::LevelParams;
 
 use crate::commit::ajtai::backend::CommitBackend;
 use crate::commit::ajtai::opening::AjtaiOpeningType;
-use crate::commit::ajtai::spec::{MatrixRole, MatrixSpec, RingDomain};
+use crate::commit::ajtai::spec::{MatrixRole, MatrixSpec};
 use crate::commit::decompose::decompose_rows;
 
 /// Outer commit: `u = B · t̂` (single-tier) or
@@ -37,7 +37,6 @@ where
                 role: MatrixRole::BOuter,
                 rows: params.b_key.row_len(),
                 cols: t_hat.len(),
-                domain: RingDomain::Negacyclic,
             };
             let u = backend
                 .ajtai_commit::<D>(
@@ -89,7 +88,6 @@ where
         role: MatrixRole::BOuterTierSlice,
         rows: params.b_key.row_len(),
         cols: width_small,
-        domain: RingDomain::Negacyclic,
     };
     // u_concat = (B'·t̂_slice_0 ‖ … ‖ B'·t̂_slice_{f-1}), negacyclic.
     let mut u_concat: Vec<CyclotomicRing<F, D>> = Vec::new();
@@ -119,7 +117,6 @@ where
         role: MatrixRole::FOuterTier,
         rows: f_key.row_len(),
         cols: u_hat.flat_digits().len(),
-        domain: RingDomain::Negacyclic,
     };
     let u_final = backend
         .ajtai_commit::<D>(

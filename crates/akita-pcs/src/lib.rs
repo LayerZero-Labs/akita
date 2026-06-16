@@ -62,7 +62,7 @@ pub use akita_prover::{
     CommittedPolynomials, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, FlatBlockTable,
     MatrixRole, MatrixSpec, MultiChunkEntry, OneHotCommitBlocks, ProverClaims,
-    ProverComputeBackend, RingDomain, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    ProverComputeBackend, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SingleChunkEntry, SparseRingBlockEntry,
     ZeroScan,
 };

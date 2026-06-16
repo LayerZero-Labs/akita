@@ -720,7 +720,7 @@ mod tests {
                 use akita_prover::DensePoly;
                 use akita_prover::{
                     AjtaiOpeningType, AjtaiOpeningView, CommitBackend, ComputeBackendSetup,
-                    CpuBackend, MatrixRole, MatrixSpec, RingDomain,
+                    CpuBackend, MatrixRole, MatrixSpec,
                 };
 
                 const MAX_VARS: usize = 14;
@@ -758,7 +758,6 @@ mod tests {
                                 role: MatrixRole::AInner,
                                 rows: lp.a_key.row_len(),
                                 cols: a_cols,
-                                domain: RingDomain::Negacyclic,
                             },
                             opening,
                         )
@@ -778,7 +777,6 @@ mod tests {
                                 role: MatrixRole::BOuter,
                                 rows: lp.b_key.row_len(),
                                 cols: flat.len(),
-                                domain: RingDomain::Negacyclic,
                             },
                             AjtaiOpeningType::DigitVector {
                                 digits: &flat,
