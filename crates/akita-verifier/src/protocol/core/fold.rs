@@ -12,9 +12,9 @@ pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, c
 }
 
 #[cfg(feature = "zk")]
-struct ZkMaskedClaim<E: FieldCore> {
-    public: E,
-    mask: ZkR1csLinearCombination<E>,
+pub(in crate::protocol::core) struct ZkMaskedClaim<E: FieldCore> {
+    pub(in crate::protocol::core) public: E,
+    pub(in crate::protocol::core) mask: ZkR1csLinearCombination<E>,
 }
 
 #[derive(Clone, Copy)]

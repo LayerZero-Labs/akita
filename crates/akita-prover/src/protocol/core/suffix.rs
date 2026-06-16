@@ -1,8 +1,6 @@
 use super::*;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
-#[cfg(feature = "zk")]
-use akita_types::terminal_witness_segment_layout;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
