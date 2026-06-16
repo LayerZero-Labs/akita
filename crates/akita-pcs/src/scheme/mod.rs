@@ -7,8 +7,8 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
-    ProverComputeBackend,
+    AjtaiOpeningView, AkitaPolyOps, AkitaProverSetup, CommitBackend, CommitmentProver,
+    ProverClaims, ProverComputeBackend,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -84,8 +84,8 @@ where
         polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        P: AkitaPolyOps<F, D> + AjtaiOpeningView<F, D>,
+        B: CommitBackend<F>,
     {
         akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
     }
@@ -99,8 +99,8 @@ where
         polys_per_commitment_group: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        P: AkitaPolyOps<F, D> + AjtaiOpeningView<F, D>,
+        B: CommitBackend<F>,
     {
         akita_prover::batched_commit::<Cfg, D, P, B>(
             polys_per_commitment_group,

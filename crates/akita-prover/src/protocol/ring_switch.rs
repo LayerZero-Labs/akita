@@ -1,14 +1,9 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
-use crate::api::commitment::{
-    validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
-};
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
-    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RingSwitchComputeBackend,
+    tensor_pack_recursive_witness, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
+    RingSwitchComputeBackend,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
@@ -27,9 +22,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaCommitmentHint,
-    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
-    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
+    FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint,
 };
 
 mod coeffs;

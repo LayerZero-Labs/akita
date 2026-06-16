@@ -16,12 +16,10 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
-use crate::kernels::linear::decompose_rows_i8_into;
-use akita_types::FlatDigitBlocks;
+use crate::commit::{AjtaiOpeningType, AjtaiOpeningView};
 use std::marker::PhantomData;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, DecomposeFoldWitness};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -242,50 +240,26 @@ where
         );
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
+}
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    #[allow(clippy::too_many_arguments)]
-    fn commit_inner<B>(
+impl<F, const D: usize> AjtaiOpeningView<F, D> for SuffixWitness<'_, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn to_ajtai_opening(
         &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_rows: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
-        num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = backend.recursive_witness_commit_rows(
-            prepared,
-            RecursiveWitnessCommitRowsPlan {
-                coeffs: self.coeffs,
-                n_rows,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                log_basis,
-            },
-        )?;
-
-        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
+    ) -> Result<AjtaiOpeningType<'_, F, D>, AkitaError> {
+        Ok(AjtaiOpeningType::StridedDigits {
+            coeffs: self.coeffs,
+            num_blocks,
+            block_len,
+            num_digits: num_digits_commit,
+            log_basis,
+            raw: num_digits_commit == 1,
         })
     }
 }

@@ -473,60 +473,6 @@ where
         Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 
-    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        _num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let blocks = self.blocks_for(block_len)?;
-        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "one-hot inner commitment digit block count overflow".to_string(),
-            )
-        })?;
-        let t = backend.onehot_commit_rows::<D>(
-            prepared,
-            OneHotCommitRowsPlan {
-                n_a,
-                block_len,
-                num_digits_commit,
-                blocks: blocks.commit_plan_blocks(),
-            },
-        )?;
-
-        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| {
-                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
-                }
-            });
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
-            }
-        });
-
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
-        })
-    }
-
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
@@ -553,5 +499,23 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(evals),
         ))
+    }
+}
+
+impl<F: FieldCore, const D: usize, I: OneHotIndex> crate::commit::AjtaiOpeningView<F, D>
+    for OneHotPoly<F, D, I>
+{
+    fn to_ajtai_opening(
+        &self,
+        block_len: usize,
+        _num_blocks: usize,
+        num_digits_commit: usize,
+        _log_basis: u32,
+    ) -> Result<crate::commit::AjtaiOpeningType<'_, F, D>, AkitaError> {
+        let blocks = self.blocks_for(block_len)?;
+        Ok(crate::commit::AjtaiOpeningType::OneHot {
+            blocks: blocks.commit_plan_blocks(),
+            num_digits_commit,
+        })
     }
 }

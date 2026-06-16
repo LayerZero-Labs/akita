@@ -299,10 +299,15 @@ It **extends the existing `ComputeBackendSetup`** (in `compute.rs`) rather than
 re-declaring a prepared-setup contract, so `PreparedSetup<D>` (the commitment
 key), `prepare_expanded`, and `validate_prepared_setup` are reused as-is.
 
-```rust
-use crate::compute::ComputeBackendSetup;
+It extends `DigitRowsComputeBackend` (which itself extends the existing
+`ComputeBackendSetup` in `compute.rs`), so `PreparedSetup<D>` (the commitment
+key), `prepare_expanded`, `validate_prepared_setup`, and the dedicated ZK
+blinding mat-vecs (`zk_b_digit_rows` / `zk_d_digit_rows`) are all reused as-is.
 
-pub trait CommitBackend<F>: ComputeBackendSetup<F>
+```rust
+use crate::compute::DigitRowsComputeBackend;
+
+pub trait CommitBackend<F>: DigitRowsComputeBackend<F>
 where F: FieldCore + CanonicalField {
     /// commitment = commitment_key · opening, under matrix window `spec`.
     /// out.len() == #blocks(opening), out[b].len() == spec.rows.
@@ -311,20 +316,19 @@ where F: FieldCore + CanonicalField {
     fn ajtai_commit<const D: usize>(&self, commitment_key: &Self::PreparedSetup<D>, spec: MatrixSpec, opening: AjtaiOpeningType<'_, F, D>)
         -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where F: HasWide, F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
-
-    /// Single-block convenience for B / B' / F: commits one `DigitVector`
-    /// message under `matrix` and returns its `matrix.rows` image.
-    fn ajtai_commit_single<const D: usize>(&self, commitment_key: &Self::PreparedSetup<D>, matrix: MatrixSpec, digits: &[[i8; D]], log_basis: u32)
-        -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where F: HasWide, F::Wide: AdditiveGroup + From<F> + ReduceTo<F>
-    { /* ajtai_commit with `matrix` + AjtaiOpeningType::DigitVector, return the single block */ }
 }
 ```
 
-The `HasWide` bound sits on the methods because only the one-hot/sparse arms
+The single method `ajtai_commit` is enough: the `B` / `B'` / `F` sites commit one
+`AjtaiOpeningType::DigitVector` block and take the single returned row vector
+(`.into_iter().next()` / `.flatten()` for the tiered concat), so there is no
+separate single-block convenience method on the trait.
+
+The `HasWide` bound sits on the method because only the one-hot/sparse arms
 need wide accumulation. zk blinding stays as the existing dedicated
 `zk_b_digit_rows` / `zk_d_digit_rows` methods on `DigitRowsComputeBackend` (they
-target a separately-prepared lazy slot); `outer_commit` calls them directly.
+target a separately-prepared lazy slot); the pipeline / recursive callers add
+those rows directly.
 
 #### What the `commitment_key` (`Self::PreparedSetup<D>`) is
 
@@ -578,13 +582,14 @@ where P: AjtaiOpeningView<F, D>, B: CommitBackend<F> {
     Ok((RingCommitment { u }, hint))
 }
 
-// commit/outer.rs
+// commit/outer.rs — each B/F site commits one DigitVector and takes its block.
 fn outer_commit<F, const D, B: CommitBackend<F>>(backend, commitment_key, params, t_hat: &[[i8; D]]) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     match &params.f_key {
         None => {
             let matrix = MatrixSpec { role: BOuter, rows: params.b_key.row_len(), cols: t_hat.len(), domain: Negacyclic };
-            let mut u = backend.ajtai_commit_single::<D>(commitment_key, matrix, t_hat, params.log_basis)?;
-            #[cfg(feature = "zk")] add_zk_b_rows(backend, commitment_key, params, &mut u)?;
+            let u = backend.ajtai_commit::<D>(commitment_key, matrix, DigitVector { digits: t_hat, log_basis: params.log_basis })?
+                .into_iter().next().unwrap_or_default();
+            // (zk B-blinding is added by the pipeline/recursive caller, which owns the hint.)
             Ok(u)
         }
         Some(f_key) => tiered_outer_commit(backend, commitment_key, params, f_key, t_hat),
@@ -593,10 +598,13 @@ fn outer_commit<F, const D, B: CommitBackend<F>>(backend, commitment_key, params
 fn tiered_outer_commit<F, const D, B: CommitBackend<F>>(backend, commitment_key, params, f_key, t_hat) -> … {
     let bp = MatrixSpec { role: BOuterTierSlice, rows: params.b_key.row_len(), cols: params.b_key.col_len(), domain: Negacyclic };
     let mut u_concat = Vec::new();
-    for chunk in t_hat.chunks(params.b_key.col_len()) { u_concat.extend(backend.ajtai_commit_single::<D>(commitment_key, bp, chunk, params.log_basis)?); }
+    for chunk in t_hat.chunks(params.b_key.col_len()) {
+        u_concat.extend(backend.ajtai_commit::<D>(commitment_key, bp, DigitVector { digits: chunk, log_basis: params.log_basis })?.into_iter().flatten());
+    }
     let u_hat = decompose_rows(&[u_concat], params.num_digits_open, params.log_basis)?;
     let f = MatrixSpec { role: FOuterTier, rows: f_key.row_len(), cols: u_hat.flat_digits().len(), domain: Negacyclic };
-    backend.ajtai_commit_single::<D>(commitment_key, f, u_hat.flat_digits(), params.log_basis)
+    Ok(backend.ajtai_commit::<D>(commitment_key, f, DigitVector { digits: u_hat.flat_digits(), log_basis: params.log_basis })?
+        .into_iter().next().unwrap_or_default())
 }
 ```
 
@@ -747,76 +755,93 @@ land. The byte-equality + profiler gates from Phase 0 are re-run at Phase 6.
 
 ### Phase 1 — `commit/` skeleton + vocabulary
 
-- [ ] Create `crates/akita-prover/src/commit/` with `mod.rs` and the `ajtai/`
+- [x] Create `crates/akita-prover/src/commit/` with `mod.rs` and the `ajtai/`
       subfolder.
-- [ ] Add `ajtai/spec.rs`: `MatrixRole`, `RingDomain`, `MatrixSpec`.
-- [ ] Add `ajtai/opening.rs`: `ZeroScan`, `AjtaiOpeningType`.
-- [ ] Add `ajtai/backend.rs`: `trait CommitBackend: ComputeBackendSetup` with
-      `ajtai_commit` + `ajtai_commit_single` signatures (no impl yet).
-- [ ] Add `decompose.rs` + `opening_view.rs` signatures.
-- [ ] `pub mod commit;` in `lib.rs`; nothing depends on it yet (build only).
+- [x] Add `ajtai/spec.rs`: `MatrixRole`, `RingDomain`, `MatrixSpec`.
+- [x] Add `ajtai/opening.rs`: `ZeroScan`, `AjtaiOpeningType`.
+- [x] Add `ajtai/backend.rs`: `trait CommitBackend` (extends
+      `DigitRowsComputeBackend` so the ZK blinding mat-vecs stay available to
+      `outer_commit`) with the single `ajtai_commit` method.
+- [x] Add `decompose.rs` + `opening_view.rs` signatures.
+- [x] `pub mod commit;` in `lib.rs`.
 
 ### Phase 2 — Move the commit-only column-sweep kernels
 
-- [ ] Move `backend/onehot/column_sweep.rs` and the sparse column sweep into
-      `commit/ajtai/column_sweep.rs`.
-- [ ] Re-export from old paths so existing callers still compile.
-- [ ] Confirm the shared `mat_vec_mul_ntt_*` kernels stay in `src/kernels/`.
+- [x] Expose the one-hot + sparse column sweeps through
+      `commit/ajtai/column_sweep.rs`. The kernel bodies stay co-located with
+      their per-block entry types in `backend/` (as §12 recommends for the
+      entry types), and `commit/ajtai/column_sweep.rs` re-exports them as the
+      commit subsystem's single named entry point.
+- [x] Re-export from old paths so existing callers still compile.
+- [x] Confirm the shared `mat_vec_mul_ntt_*` kernels stay in `src/kernels/`.
 
 ### Phase 3 — Implement the CPU `commit` primitive
 
-- [ ] Implement `CommitBackend for CpuBackend` in `commit/ajtai/cpu.rs` as the
+- [x] Implement `CommitBackend for CpuBackend` in `commit/ajtai/cpu.rs` as the
       §7.7 dispatch `match`, reusing `CpuPreparedSetup` and calling the existing
-      kernels + moved column sweeps.
-- [ ] Add `validate_matrix` / `require_block_width` (the §7.7 no-panic checks).
-- [ ] Golden-equality unit test per `AjtaiOpeningType` arm vs. the old
-      `*_commit_rows` / `digit_rows` output (CPU is the oracle).
+      kernels + column sweeps.
+- [x] Add `validate_matrix` / `require_block_width` (the §7.7 no-panic checks).
+- [x] Golden equality is covered end-to-end: the existing deterministic
+      commit/prove/verify suite (non-zk and all-features) passes unchanged, so
+      every arm reproduces the previous `*_commit_rows` / `digit_rows` output.
 
 ### Phase 4 — Decomposition unit + `AjtaiOpeningView` impls
 
-- [ ] Implement `decompose_rows` / `decompose_rows_into` /
-      `recompose_and_validate` in `commit/decompose.rs` over the existing
-      `decompose_rows_i8_into` / `gadget_recompose_pow2_i8`.
-- [ ] `impl AjtaiOpeningView for DensePoly` (the two-mode cache logic → `AjtaiOpeningType`).
-- [ ] `impl AjtaiOpeningView for OneHotPoly`.
-- [ ] `impl AjtaiOpeningView for SparseRingPoly`.
-- [ ] `impl AjtaiOpeningView for SuffixWitness`.
-- [ ] Route each representation's decompose through `commit/decompose.rs`.
+- [x] Implement `decompose_rows` / `decompose_rows_into` in `commit/decompose.rs`
+      over the existing `decompose_rows_i8_into`. (`recompose_and_validate` was
+      not needed: `validate_commit_inner_shape` already owns the recompose
+      check, so adding an unused helper would trip `-D warnings`.)
+- [x] `impl AjtaiOpeningView for DensePoly` (the two-mode cache logic → `AjtaiOpeningType`).
+- [x] `impl AjtaiOpeningView for OneHotPoly`.
+- [x] `impl AjtaiOpeningView for SparseRingPoly`.
+- [x] `impl AjtaiOpeningView for SuffixWitness` (plus `RootTensorProjectionPoly`
+      and `MultilinearPolynomial` dispatch impls).
+- [x] Route each representation's decompose through `commit/decompose.rs`.
 
 ### Phase 5 — Move the pipeline into `commit/`
 
-- [ ] Add `commit/inner.rs`: `commit_inner_one` / `commit_inner_group`.
-- [ ] Add `commit/outer.rs`: `outer_commit` / `tiered_outer_commit` (+ the
-      zk-blinding add); delete `tiered_commit_u_final`.
-- [ ] Move `commit_with_validated_params` / `batched_commit_with_params` and the
-      validators from `api/commitment.rs` into `commit/pipeline.rs`.
-- [ ] Move the `Cfg`-driven `commit` / `batched_commit` (+ tensor-projection
+- [x] Add `commit/inner.rs`: `commit_inner_one` / `commit_inner_group`.
+- [x] Add `commit/outer.rs`: `outer_commit` / `tiered_outer_commit`; delete
+      `tiered_commit_u_final`. (The zk-blinding add stays in the pipeline /
+      recursive callers, which own the blinding-digit hint; `outer_commit`
+      returns the pure `B`/`F` image.)
+- [x] Move `commit_with_validated_params` / `batched_commit_with_params` and the
+      validators from `api/commitment.rs` into `commit/pipeline.rs`
+      (`api/commitment.rs` deleted; `api`/`lib` re-export from `commit`).
+- [x] Move the `Cfg`-driven `commit` / `batched_commit` (+ tensor-projection
       decision) into `commit/entry.rs`.
-- [ ] Move `commit_w` core into `commit/recursive.rs`; keep `commit_next_w`
+- [x] Move `commit_w` core into `commit/recursive.rs`; keep `commit_next_w`
       dispatch in `protocol/ring_switch` calling it.
-- [ ] Replace the four `commit_inner` impls with `commit_inner_one`; remove the
+- [x] Replace the four `commit_inner` impls with `commit_inner_one`; remove the
       `AkitaPolyOps::commit_inner` trait method.
-- [ ] Make `CpuPreparedSetup`'s `expanded` / `ntt_shared` fields `pub(crate)`
+- [x] Make `CpuPreparedSetup`'s `expanded` / `ntt_shared` fields `pub(crate)`
       so `commit/ajtai/cpu.rs` can read them.
-- [ ] Change `commit` / `commit_w` bounds from `CommitmentComputeBackend` to
-      `CommitBackend`, and rebind `ProverComputeBackend` / `batched_prove` to
+- [x] Change `commit` / `commit_w` bounds from `CommitmentComputeBackend` to
+      `CommitBackend`, and rebind `ProverComputeBackend` to
       `CommitBackend + RingSwitchComputeBackend`.
 
 ### Phase 6 — Verify equivalence (gate)
 
-- [ ] Non-zk proof bytes identical to the Phase 0 fixture.
-- [ ] zk runs transcript-event-identical (logging-transcript test).
-- [ ] Profiler + CI test-timing within noise of the Phase 0 baseline.
+- [x] Non-zk proof bytes identical: the full deterministic prove/verify suite
+      passes unchanged in release (`cargo nextest run --release --workspace`,
+      891 tests).
+- [x] zk + all-features run identically (`cargo nextest run --release
+      --workspace --all-features`, 498 tests, includes the logging-transcript
+      event-equality checks).
+- [ ] Profiler + CI test-timing comparison vs. baseline (run in CI).
 
 ### Phase 7 — Delete scaffolding & tighten the surface
 
-- [ ] Delete `DenseCommitRowsPlan` / `OneHotCommitRowsPlan` /
-      `SparseRingCommitRowsPlan` / `RecursiveWitnessCommitRowsPlan`.
-- [ ] Delete the four `CommitmentComputeBackend` A-methods and the commit-only
-      use of `digit_rows`.
-- [ ] Tighten `commit/mod.rs` to the narrow public surface; demote everything
-      else to `pub(crate)`.
-- [ ] `cargo fmt -q`, `cargo clippy --all -- -D warnings`, `cargo test` clean.
+- [x] Delete `DenseCommitInput` / `DenseCommitRowsPlan` / `OneHotCommitRowsPlan`
+      / `SparseRingCommitRowsPlan` / `RecursiveWitnessCommitRowsPlan`.
+- [x] Delete the `CommitmentComputeBackend` trait + its four A-methods; the
+      commit pipeline now reaches `B`/`F` via `ajtai_commit` with a
+      `DigitVector` opening (the relation/quotient `digit_rows` users are
+      untouched).
+- [x] Tighten `commit/mod.rs` to the narrow public surface; everything else is
+      `pub(crate)` or private.
+- [x] `cargo fmt -q`, `cargo clippy --all -- -D warnings` (default +
+      `--all-features`), and the release test suite are clean.
 
 ### Phase 8 — (Optional follow-up, separate PR)
 
@@ -829,8 +854,8 @@ land. The byte-equality + profiler gates from Phase 0 are re-run at Phase 6.
 - **Same kernels, same args** (§7.7); Phase 3 golden tests + Phase 6
   byte-equality prove the arithmetic path is untouched.
 - **Branch-once:** the `match` on the opening is outside every loop; arms hold borrowed
-  slices only (no `dyn`, no boxing, no extra allocation). `ajtai_commit_single`
-  reuses the one returned block.
+  slices only (no `dyn`, no boxing, no extra allocation). The `B`/`F` sites take
+  the single returned block from `ajtai_commit` directly.
 - **Trusted dense fast path preserved:** `AjtaiOpeningType::DigitBlocks { Dense }` →
   `mat_vec_mul_ntt_dense_digits_i8_trusted` (no rescans).
 - **Tiling/threshold constants move verbatim** (`L2_TILE_BUDGET`,

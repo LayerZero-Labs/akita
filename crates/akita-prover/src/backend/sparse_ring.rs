@@ -10,13 +10,13 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
+use akita_types::{CleartextWitnessProof, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
-use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::commit::{AjtaiOpeningType, AjtaiOpeningView};
+use crate::compute::FlatBlockTable;
+use crate::{AkitaPolyOps, DecomposeFoldWitness};
 
 mod tensor_fold;
 
@@ -388,30 +388,6 @@ where
         )?))
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        _num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
-        let decomposed_inner_rows =
-            decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)?;
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows,
-        })
-    }
-
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
@@ -432,32 +408,19 @@ where
     }
 }
 
-impl<F, const D: usize> SparseRingPoly<F, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-{
-    fn commit_inner_rows<B>(
+impl<F: FieldCore, const D: usize> AjtaiOpeningView<F, D> for SparseRingPoly<F, D> {
+    fn to_ajtai_opening(
         &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
         block_len: usize,
+        _num_blocks: usize,
         num_digits_commit: usize,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
+        _log_basis: u32,
+    ) -> Result<AjtaiOpeningType<'_, F, D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        backend.sparse_ring_commit_rows(
-            prepared,
-            SparseRingCommitRowsPlan {
-                n_a,
-                block_len,
-                num_digits_commit,
-                blocks: blocks.table(),
-            },
-        )
+        Ok(AjtaiOpeningType::SparseRing {
+            blocks: blocks.table(),
+            num_digits_commit,
+        })
     }
 }
 
@@ -715,40 +678,6 @@ where
         out.extend(thread_blocks);
     }
     out
-}
-
-fn decompose_commit_rows<F, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-    n_a: usize,
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
-        AkitaError::InvalidSetup("commit witness digit block length overflow".to_string())
-    })?;
-    let mut out = FlatDigitBlocks::zeroed(vec![zero_block_len; rows.len()])?;
-    let dst_blocks = out.split_blocks_mut();
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(rows))
-        .for_each(|(dst, row)| {
-            if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
-            }
-        });
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(rows.iter())
-        .for_each(|(dst, row)| {
-            if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
-            }
-        });
-    Ok(out)
 }
 
 #[cfg(test)]

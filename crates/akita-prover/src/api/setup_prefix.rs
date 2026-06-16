@@ -1,17 +1,18 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::{
+use crate::commit::{
     commit_inner_block_digit_count, commit_inner_flat_digit_count,
-    validate_commit_outer_input_nonempty,
+    validate_commit_outer_input_nonempty, AjtaiOpeningType, CommitBackend, MatrixRole, MatrixSpec,
+    RingDomain, ZeroScan,
 };
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
     FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
@@ -37,8 +38,9 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    B: CommitBackend<F>,
 {
     if natural_len == 0 || natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(
@@ -81,15 +83,25 @@ where
     let block_slices =
         setup_prefix_block_slices(&ring_elems, level_params.num_blocks, level_params.block_len)?;
 
-    let recomposed_inner_rows = backend.dense_commit_rows(
+    let a_cols = level_params
+        .block_len
+        .checked_mul(level_params.num_digits_commit)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix A commit width overflow".to_string())
+        })?;
+    let recomposed_inner_rows = backend.ajtai_commit::<D>(
         prepared,
-        DenseCommitRowsPlan {
-            n_a: level_params.a_key.row_len(),
-            input: DenseCommitInput::CoeffBlocks {
-                block_slices,
-                num_digits_commit: level_params.num_digits_commit,
-                log_basis: level_params.log_basis,
-            },
+        MatrixSpec {
+            role: MatrixRole::AInner,
+            rows: level_params.a_key.row_len(),
+            cols: a_cols,
+            domain: RingDomain::Negacyclic,
+        },
+        AjtaiOpeningType::CoeffBlocks {
+            blocks: block_slices,
+            num_digits: level_params.num_digits_commit,
+            log_basis: level_params.log_basis,
+            zero_scan: ZeroScan::Dense,
         },
     )?;
 
@@ -138,23 +150,31 @@ where
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
     b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    let matrix_b = MatrixSpec {
+        role: MatrixRole::BOuter,
+        rows: level_params.b_key.row_len(),
+        cols: b_input_digits.len(),
+        domain: RingDomain::Negacyclic,
+    };
     #[cfg(feature = "zk")]
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(level_params.b_key.row_len(), level_params.log_basis)?;
+    let b_opening = AjtaiOpeningType::DigitVector {
+        digits: &b_input_digits,
+        log_basis: level_params.log_basis,
+    };
     #[cfg(feature = "zk")]
-    let mut u = backend.digit_rows::<D>(
-        prepared,
-        level_params.b_key.row_len(),
-        &b_input_digits,
-        level_params.log_basis,
-    )?;
+    let mut u = backend
+        .ajtai_commit::<D>(prepared, matrix_b, b_opening)?
+        .into_iter()
+        .next()
+        .unwrap_or_default();
     #[cfg(not(feature = "zk"))]
-    let u = backend.digit_rows::<D>(
-        prepared,
-        level_params.b_key.row_len(),
-        &b_input_digits,
-        level_params.log_basis,
-    )?;
+    let u = backend
+        .ajtai_commit::<D>(prepared, matrix_b, b_opening)?
+        .into_iter()
+        .next()
+        .unwrap_or_default();
     #[cfg(feature = "zk")]
     {
         let blinding_rows = backend.zk_b_digit_rows::<D>(

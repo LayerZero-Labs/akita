@@ -717,9 +717,11 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
-                use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
+                use akita_prover::{
+                    AjtaiOpeningType, AjtaiOpeningView, CommitBackend, ComputeBackendSetup,
+                    CpuBackend, MatrixRole, MatrixSpec, RingDomain,
+                };
 
                 const MAX_VARS: usize = 14;
 
@@ -740,26 +742,53 @@ mod tests {
 
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let prepared = CpuBackend.prepare_setup(setup).unwrap();
-                    let inner = poly
-                        .commit_inner(
-                            &CpuBackend,
-                            &prepared,
-                            lp.a_key.row_len(),
+                    let a_cols = lp.block_len * lp.num_digits_commit;
+                    let opening = poly
+                        .to_ajtai_opening(
                             lp.block_len,
                             lp.num_blocks,
                             lp.num_digits_commit,
-                            lp.num_digits_open,
                             lp.log_basis,
                         )
                         .unwrap();
-                    CpuBackend
-                        .digit_rows::<TEST_D>(
+                    let t = CpuBackend
+                        .ajtai_commit::<TEST_D>(
                             &prepared,
-                            lp.b_key.row_len(),
-                            inner.decomposed_inner_rows.flat_digits(),
-                            lp.log_basis,
+                            MatrixSpec {
+                                role: MatrixRole::AInner,
+                                rows: lp.a_key.row_len(),
+                                cols: a_cols,
+                                domain: RingDomain::Negacyclic,
+                            },
+                            opening,
+                        )
+                        .unwrap();
+                    let mut flat = Vec::new();
+                    for block in &t {
+                        for ring in block {
+                            let mut planes = vec![[0i8; TEST_D]; lp.num_digits_open];
+                            ring.balanced_decompose_pow2_i8_into(&mut planes, lp.log_basis);
+                            flat.extend(planes);
+                        }
+                    }
+                    CpuBackend
+                        .ajtai_commit::<TEST_D>(
+                            &prepared,
+                            MatrixSpec {
+                                role: MatrixRole::BOuter,
+                                rows: lp.b_key.row_len(),
+                                cols: flat.len(),
+                                domain: RingDomain::Negacyclic,
+                            },
+                            AjtaiOpeningType::DigitVector {
+                                digits: &flat,
+                                log_basis: lp.log_basis,
+                            },
                         )
                         .unwrap()
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default()
                 };
 
                 let fresh_u = commit_u(&fresh_setup);

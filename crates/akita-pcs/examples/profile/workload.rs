@@ -333,7 +333,12 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
+fn run_prove<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF>,
+    P: AkitaPolyOps<FF, D> + akita_pcs::AjtaiOpeningView<FF, D>,
+>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,

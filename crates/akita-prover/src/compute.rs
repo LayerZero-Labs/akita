@@ -5,25 +5,21 @@
 //! named commit/protocol kernels, and does not reach through prepared setup for
 //! raw CPU matrices or NTT slots.
 
-use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
-use crate::backend::sparse_ring::{column_sweep_sparse, SparseRingBlockEntry};
+use crate::backend::onehot::{MultiChunkEntry, SingleChunkEntry};
+use crate::commit::CommitBackend;
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 #[cfg(test)]
 use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-    selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
 #[cfg(any(test, feature = "zk"))]
 use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::AkitaExpandedSetup;
-use std::array::from_fn;
 use std::sync::Arc;
 #[cfg(feature = "zk")]
 use std::sync::OnceLock;
@@ -82,106 +78,22 @@ impl<'a, E> FlatBlockTable<'a, E> {
         Ok(&self.entries[lo..hi])
     }
 
-    fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
+    pub(crate) fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
         (0..self.num_blocks()).map(|idx| self.block(idx)).collect()
     }
 }
 
-/// Dense polynomial commit representation handed to the compute backend.
-pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
-    /// Balanced digit planes are already cached by the polynomial.
-    CachedDigits {
-        /// Per-block digit slices.
-        digit_block_slices: Vec<&'a [[i8; D]]>,
-        /// Logarithm of the gadget basis used to produce the cached digits.
-        log_basis: u32,
-    },
-    /// Ring coefficients need backend-side digit decomposition.
-    CoeffBlocks {
-        /// Per-block coefficient slices.
-        block_slices: Vec<&'a [CyclotomicRing<F, D>]>,
-        /// Number of balanced digits used for the A-side commit.
-        num_digits_commit: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
-}
-
-/// Dense commit operation plan.
-pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Dense polynomial input representation.
-    pub input: DenseCommitInput<'a, F, D>,
-}
-
-/// One-hot commit input representation.
+/// One-hot commit input representation (the per-block sparse entry view).
 ///
-/// The contained entry slices are read-only plan views. They are public so
-/// accelerator crates can implement [`CommitmentComputeBackend`] without
-/// depending on CPU-prepared storage, while construction remains owned by the
-/// polynomial representations.
+/// The contained entry slices are read-only views. They are public so
+/// accelerator crates can consume the one-hot opening without depending on
+/// CPU-prepared storage, while construction remains owned by the polynomial
+/// representations.
 pub enum OneHotCommitBlocks<'a> {
     /// One ring has at most one hot coefficient.
     SingleChunk(FlatBlockTable<'a, SingleChunkEntry>),
     /// One ring may contain several hot coefficients.
     MultiChunk(FlatBlockTable<'a, MultiChunkEntry>),
-}
-
-/// One-hot commit operation plan.
-pub struct OneHotCommitRowsPlan<'a> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Per-block one-hot entries.
-    pub(crate) blocks: OneHotCommitBlocks<'a>,
-}
-
-impl<'a> OneHotCommitRowsPlan<'a> {
-    /// Per-block one-hot entries.
-    #[inline]
-    pub fn blocks(&self) -> &OneHotCommitBlocks<'a> {
-        &self.blocks
-    }
-}
-
-/// Sparse signed-ring commit operation plan.
-pub struct SparseRingCommitRowsPlan<'a> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Per-block sparse signed coefficients.
-    pub(crate) blocks: FlatBlockTable<'a, SparseRingBlockEntry>,
-}
-
-impl<'a> SparseRingCommitRowsPlan<'a> {
-    /// Per-block sparse signed coefficients.
-    #[inline]
-    pub fn blocks(&self) -> FlatBlockTable<'a, SparseRingBlockEntry> {
-        self.blocks
-    }
-}
-
-/// Recursive witness commit operation plan.
-pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
-    /// Recursive witness digit rows, chunked at `D`.
-    pub coeffs: &'a [[i8; D]],
-    /// Number of rows to produce.
-    pub n_rows: usize,
-    /// Recursive block length.
-    pub block_len: usize,
-    /// Number of logical blocks.
-    pub num_blocks: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Logarithm of the gadget basis.
-    pub log_basis: u32,
 }
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -301,46 +213,6 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
-/// Commitment row operations for migrated root/ring commitment work.
-pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Dense A-side commit rows.
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-
-    /// One-hot A-side commit rows.
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
-
-    /// Sparse signed-ring A-side commit rows.
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
-
-    /// Recursive witness A-side commit rows.
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-}
-
 /// Full ring-switch relation operation input.
 pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     /// Number of D-side cyclic rows to produce.
@@ -407,8 +279,7 @@ where
 }
 
 /// Full first-PR prover compute surface.
-pub trait ProverComputeBackend<F>:
-    CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
+pub trait ProverComputeBackend<F>: CommitBackend<F> + RingSwitchComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -417,7 +288,7 @@ where
 impl<F, B> ProverComputeBackend<F> for B
 where
     F: FieldCore + CanonicalField,
-    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
+    B: CommitBackend<F> + RingSwitchComputeBackend<F>,
 {
 }
 
@@ -428,8 +299,8 @@ pub struct CpuBackend;
 /// CPU-prepared setup for one field/ring-dimension pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
-    expanded: Arc<AkitaExpandedSetup<F>>,
-    ntt_shared: NttSlotCache<D>,
+    pub(crate) expanded: Arc<AkitaExpandedSetup<F>>,
+    pub(crate) ntt_shared: NttSlotCache<D>,
     ntt_i8_capacity: CrtI8CapacityProfile,
     #[cfg(feature = "zk")]
     ntt_zk_b: OnceLock<NttSlotCache<D>>,
@@ -610,173 +481,6 @@ where
         prepared: &'a Self::PreparedSetup<D>,
     ) -> &'a AkitaExpandedSetup<F> {
         prepared.expanded.as_ref()
-    }
-}
-
-impl<F> CommitmentComputeBackend<F> for CpuBackend
-where
-    F: FieldCore + CanonicalField,
-{
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        match plan.input {
-            DenseCommitInput::CachedDigits {
-                digit_block_slices,
-                log_basis,
-            } => {
-                let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                mat_vec_mul_ntt_dense_digits_i8_trusted(
-                    &prepared.ntt_shared,
-                    plan.n_a,
-                    row_width,
-                    &digit_block_slices,
-                    log_basis,
-                )
-            }
-            DenseCommitInput::CoeffBlocks {
-                block_slices,
-                num_digits_commit,
-                log_basis,
-            } => {
-                let row_width = block_slices.first().map_or(Ok(0usize), |block| {
-                    block.len().checked_mul(num_digits_commit).ok_or_else(|| {
-                        AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
-                    })
-                })?;
-                if plan.n_a == 1 {
-                    Ok(mat_vec_mul_ntt_i8_dense_single_row(
-                        &prepared.ntt_shared,
-                        row_width,
-                        &block_slices,
-                        num_digits_commit,
-                        log_basis,
-                    )?
-                    .into_iter()
-                    .map(|ring| vec![ring])
-                    .collect())
-                } else {
-                    mat_vec_mul_ntt_i8_dense(
-                        &prepared.ntt_shared,
-                        plan.n_a,
-                        row_width,
-                        &block_slices,
-                        num_digits_commit,
-                        log_basis,
-                    )
-                }
-            }
-        }
-    }
-
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        let active_a_cols = plan
-            .block_len
-            .checked_mul(plan.num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
-        Ok(match plan.blocks {
-            OneHotCommitBlocks::SingleChunk(blocks) => {
-                column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
-                    &a_view,
-                    &blocks.block_slices()?,
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_commit,
-                )
-            }
-            OneHotCommitBlocks::MultiChunk(blocks) => {
-                column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
-                    &a_view,
-                    &blocks.block_slices()?,
-                    plan.n_a,
-                    active_a_cols,
-                    plan.num_digits_commit,
-                )
-            }
-        })
-    }
-
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-    {
-        let active_a_cols = plan
-            .block_len
-            .checked_mul(plan.num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
-        let a_rows = (0..plan.n_a)
-            .map(|idx| a_view.row(idx))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(column_sweep_sparse(
-            &a_rows,
-            &plan.blocks.block_slices()?,
-            plan.n_a,
-            plan.block_len,
-            plan.num_digits_commit,
-        ))
-    }
-
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let row_width = plan
-            .block_len
-            .checked_mul(plan.num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
-        if plan.num_digits_commit == 1 {
-            mat_vec_mul_ntt_raw_i8_strided(
-                &prepared.ntt_shared,
-                plan.n_rows,
-                row_width,
-                plan.coeffs,
-                plan.num_blocks,
-                plan.block_len,
-            )
-        } else {
-            let ring_elems: Vec<CyclotomicRing<F, D>> = plan
-                .coeffs
-                .iter()
-                .map(|digit| {
-                    let coeffs = from_fn(|k| F::from_i8(digit[k]));
-                    CyclotomicRing::from_coefficients(coeffs)
-                })
-                .collect();
-            mat_vec_mul_ntt_i8_strided(
-                &prepared.ntt_shared,
-                plan.n_rows,
-                row_width,
-                &ring_elems,
-                plan.num_blocks,
-                plan.block_len,
-                plan.num_digits_commit,
-                plan.log_basis,
-            )
-        }
     }
 }
 

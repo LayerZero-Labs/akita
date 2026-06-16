@@ -9,10 +9,9 @@
 //! paths; truly mixed batches fall back to the caller's per-polynomial
 //! aggregation path.
 
-use crate::compute::CommitmentComputeBackend;
+use crate::commit::{AjtaiOpeningType, AjtaiOpeningView};
 use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
-    SuffixWitness,
+    AkitaPolyOps, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly, SuffixWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
@@ -274,60 +273,37 @@ where
         }
     }
 
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
-        match self {
-            Self::Dense(poly) => poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            ),
-            Self::OneHot(poly) => poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            ),
-            Self::Witness(poly) => poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            ),
-        }
-    }
-
     fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),
             Self::Witness(poly) => poly.direct_root_witness(),
+        }
+    }
+}
+
+impl<F, const D: usize, I> AjtaiOpeningView<F, D> for MultilinearPolynomial<'_, F, D, I>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn to_ajtai_opening(
+        &self,
+        block_len: usize,
+        num_blocks: usize,
+        num_digits_commit: usize,
+        log_basis: u32,
+    ) -> Result<AjtaiOpeningType<'_, F, D>, AkitaError> {
+        match self {
+            Self::Dense(poly) => {
+                poly.to_ajtai_opening(block_len, num_blocks, num_digits_commit, log_basis)
+            }
+            Self::OneHot(poly) => {
+                poly.to_ajtai_opening(block_len, num_blocks, num_digits_commit, log_basis)
+            }
+            Self::Witness(poly) => {
+                poly.to_ajtai_opening(block_len, num_blocks, num_digits_commit, log_basis)
+            }
         }
     }
 }

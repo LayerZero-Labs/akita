@@ -532,7 +532,9 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     _num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + akita_field::unreduced::HasWide,
+    <F as akita_field::unreduced::HasWide>::Wide:
+        akita_field::AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
     E: FpExtEncoding<F>,
     L: FpExtEncoding<F> + ExtField<F>,
     B: ProverComputeBackend<F>,

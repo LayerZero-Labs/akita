@@ -2,11 +2,10 @@ use crate::new_prover_setup;
 #[cfg(feature = "disk-persistence")]
 use crate::save_prover_setup;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
+    commit_setup_prefix, AkitaProverSetup, CommitBackend, ComputeBackendSetup, CpuBackend,
 };
 use akita_serialization::Valid;
 use akita_types::{
@@ -24,8 +23,9 @@ fn commit_setup_prefix_for_level<F, const D: usize, B>(
     n_prefix: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide,
+    <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    B: CommitBackend<F>,
 {
     if D != SETUP_OFFLOAD_D_SETUP {
         return Err(AkitaError::InvalidSetup(format!(
@@ -61,7 +61,8 @@ fn populate_recursive_setup_prefixes<F, const D: usize, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide,
+    <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
     if D != SETUP_OFFLOAD_D_SETUP {
@@ -134,6 +135,7 @@ pub fn new_prover_setup_recursion<F, const D: usize, Cfg>(
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
+    <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
     let mut setup = new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys)?;

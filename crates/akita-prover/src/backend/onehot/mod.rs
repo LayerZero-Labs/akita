@@ -38,23 +38,15 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
-use akita_types::{
-    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, FpExtEncoding, RingMatrixView,
-};
+use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
-use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
-};
-use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
-    SparseRingPoly,
-};
+use crate::compute::{FlatBlockTable, OneHotCommitBlocks};
+use crate::{AkitaPolyOps, DecomposeFoldWitness, RootTensorProjectionPoly, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.

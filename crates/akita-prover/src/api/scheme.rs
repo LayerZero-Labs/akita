@@ -1,6 +1,7 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
+use crate::commit::{AjtaiOpeningView, CommitBackend};
+use crate::compute::ProverComputeBackend;
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
@@ -69,8 +70,8 @@ where
         polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        P: AkitaPolyOps<F, D> + AjtaiOpeningView<F, D>,
+        B: CommitBackend<F>;
 
     /// Commit the polynomial bundles used by a batched prove.
     ///
@@ -89,8 +90,8 @@ where
         polys_per_commitment_group: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        P: AkitaPolyOps<F, D> + AjtaiOpeningView<F, D>,
+        B: CommitBackend<F>;
 
     /// Produce a fused batched opening proof for one shared opening point.
     ///

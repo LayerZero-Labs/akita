@@ -6,7 +6,7 @@ use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
 use std::sync::Arc;
 
-use crate::compute::CommitmentComputeBackend;
+use crate::commit::{AjtaiOpeningType, AjtaiOpeningView};
 use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
@@ -154,37 +154,25 @@ where
         }
     }
 
-    fn commit_inner<B>(
+    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
+        dispatch_root_projection!(self, poly => poly.direct_root_witness())
+    }
+}
+
+impl<F, const D: usize> AjtaiOpeningView<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn to_ajtai_opening(
         &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
-        num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<crate::CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
+    ) -> Result<AjtaiOpeningType<'_, F, D>, AkitaError> {
         dispatch_root_projection!(self, poly => {
-            poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            )
+            poly.to_ajtai_opening(block_len, num_blocks, num_digits_commit, log_basis)
         })
-    }
-
-    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
-        dispatch_root_projection!(self, poly => poly.direct_root_witness())
     }
 }
 

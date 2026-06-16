@@ -58,13 +58,13 @@ pub use akita_field::{
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
-    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    FlatBlockTable, MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    AjtaiOpeningType, AjtaiOpeningView, AkitaPolyOps, CommitBackend, CommitmentProver,
+    CommittedPolynomials, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, FlatBlockTable,
+    MatrixRole, MatrixSpec, MultiChunkEntry, OneHotCommitBlocks, ProverClaims,
+    ProverComputeBackend, RingDomain, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SingleChunkEntry, SparseRingBlockEntry,
+    ZeroScan,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

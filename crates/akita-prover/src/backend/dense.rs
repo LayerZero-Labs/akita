@@ -18,12 +18,12 @@ use crate::backend::poly_helpers::{
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
-use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
-use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
+use crate::commit::{AjtaiOpeningType, AjtaiOpeningView, ZeroScan};
+use crate::kernels::linear::try_centered_i8;
+use akita_types::{CleartextWitnessProof, FlatRingVec};
 use std::sync::OnceLock;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, DecomposeFoldWitness};
 
 mod tensor_fold;
 
@@ -450,35 +450,6 @@ where
         )
     }
 
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        _num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_rows(
-            backend,
-            prepared,
-            n_a,
-            block_len,
-            num_digits_commit,
-            log_basis,
-        )?;
-        let decomposed_inner_rows = decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)?;
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows,
-        })
-    }
-
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
@@ -499,41 +470,29 @@ where
     }
 }
 
-impl<F, const D: usize> DensePoly<F, D>
+impl<F, const D: usize> AjtaiOpeningView<F, D> for DensePoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    fn commit_rows<B>(
+    fn to_ajtai_opening(
         &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
         block_len: usize,
+        _num_blocks: usize,
         num_digits_commit: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
+    ) -> Result<AjtaiOpeningType<'_, F, D>, AkitaError> {
         let n = self.coeffs.len();
-        let num_blocks = n.div_ceil(block_len);
-
         if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
-            let digit_block_slices =
-                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
-            return backend.dense_commit_rows(
-                prepared,
-                DenseCommitRowsPlan {
-                    n_a,
-                    input: DenseCommitInput::CachedDigits {
-                        digit_block_slices,
-                        log_basis,
-                    },
-                },
-            );
+            let blocks = digit_block_slices(digit_planes, n, block_len, num_digits_commit);
+            return Ok(AjtaiOpeningType::DigitBlocks {
+                blocks,
+                log_basis,
+                zero_scan: ZeroScan::Dense,
+            });
         }
 
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
+        let num_blocks = n.div_ceil(block_len);
+        let blocks: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
                 if start >= n {
@@ -543,43 +502,13 @@ where
                 }
             })
             .collect();
-
-        backend.dense_commit_rows(
-            prepared,
-            DenseCommitRowsPlan {
-                n_a,
-                input: DenseCommitInput::CoeffBlocks {
-                    block_slices,
-                    num_digits_commit,
-                    log_basis,
-                },
-            },
-        )
+        Ok(AjtaiOpeningType::CoeffBlocks {
+            blocks,
+            num_digits: num_digits_commit,
+            log_basis,
+            zero_scan: ZeroScan::Dense,
+        })
     }
-}
-
-fn decompose_commit_rows<F, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let block_sizes: Vec<usize> = rows.iter().map(|t_i| t_i.len() * num_digits_open).collect();
-    let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-    let dst_blocks = t_hat.split_blocks_mut();
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(rows))
-        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(rows.iter())
-        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-
-    Ok(t_hat)
 }
 
 fn digit_block_slices<const D: usize>(

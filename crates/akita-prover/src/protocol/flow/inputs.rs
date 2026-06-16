@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::commit::validate_onehot_chunk_size_for_params;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -317,6 +317,9 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
+    <Cfg::Field as HasWide>::Wide: akita_field::AdditiveGroup
+        + From<Cfg::Field>
+        + akita_field::unreduced::ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>

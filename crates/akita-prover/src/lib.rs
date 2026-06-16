@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod commit;
 pub mod compute;
 pub mod kernels;
 pub mod protocol;
@@ -31,13 +32,15 @@ pub use backend::{
     OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
     SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
 };
+pub use commit::{
+    commit_w, AjtaiOpeningType, AjtaiOpeningView, CommitBackend, MatrixRole, MatrixSpec,
+    RingDomain, ZeroScan,
+};
 pub use compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
-    CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
+    DigitRowsComputeBackend, FlatBlockTable, OneHotCommitBlocks, PreparedCrtNttProfile,
+    ProverComputeBackend, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
@@ -460,27 +463,6 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(None)
     }
 
-    /// Inner Ajtai commit step that also preserves recomposed inner rows.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the cached matrix-vector multiply or digit
-    /// decomposition fails.
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>;
-
     /// Materialize a direct root witness for zero-fold openings.
     ///
     /// # Errors
@@ -653,34 +635,6 @@ where
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::decompose_fold_tensor_batched(&inner_refs, tensor, block_len, num_digits, log_basis)
-    }
-
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
-        <P as AkitaPolyOps<F, D>>::commit_inner(
-            *self,
-            backend,
-            prepared,
-            n_a,
-            block_len,
-            num_blocks,
-            num_digits_commit,
-            num_digits_open,
-            log_basis,
-        )
     }
 
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
