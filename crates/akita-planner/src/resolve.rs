@@ -22,9 +22,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    MRowLayout, Schedule, Step,
 };
 
 use crate::find_schedule;
@@ -198,7 +198,7 @@ fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            root_extension_opening_partials(extension_opening_width, key.num_w_vectors),
+            extension_opening_width.saturating_mul(key.num_w_vectors),
             key.num_vars,
         )
     } else {

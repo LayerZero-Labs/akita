@@ -81,7 +81,8 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         E::new(F::from_u64(5), F::from_u64(7)),
         E::new(F::from_u64(11), F::from_u64(13)),
     ];
-    let mut base_evals = recursive_witness_base_evals::<F>(&logical_w);
+    let logical_view = logical_w.view::<F, 2>().expect("valid suffix witness");
+    let mut base_evals = logical_view.base_evals().expect("base evals");
     base_evals.resize(1usize << point.len(), F::zero());
     let expected_opening = base_evals
         .iter()
@@ -104,19 +105,24 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
     #[cfg(feature = "zk")]
     let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
-    let reduction = prove_extension_opening_reduction::<F, E, _>(
-        &logical_w,
+    let logical_polys = [&logical_view];
+    let opening_batch = OpeningBatch::same_point(point.len(), 1).expect("opening batch");
+    let proved = prove_extension_opening_reduction::<F, E, _, _, 2>(
+        &logical_polys,
+        &opening_batch,
         &point,
-        expected_opening,
+        true,
         &mut transcript,
+        "recursive",
         #[cfg(feature = "zk")]
         &mut zk_hiding,
     )
     .expect("padded logical witnesses should reduce over the opening cube");
 
     assert_eq!(
-        reduction.proof.partials.len(),
+        proved.reduction.proof.partials.len(),
         <E as ExtField<F>>::EXT_DEGREE
     );
-    assert_eq!(reduction.proof.num_rounds(), point.len() - 1);
+    assert_eq!(proved.openings, vec![expected_opening]);
+    assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
 }

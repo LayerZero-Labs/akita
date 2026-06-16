@@ -33,36 +33,36 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
     }
 }
 
-pub(in crate::protocol::flow) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
-    pub(in crate::protocol::flow) commitment: FlatRingVec<F>,
-    pub(in crate::protocol::flow) instance: RingRelationInstance<F, D>,
-    pub(in crate::protocol::flow) witness: RingRelationWitness<F, D>,
-    pub(in crate::protocol::flow) extension_opening_reduction:
+pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
+    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
+    pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
+    pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
+    pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
-    pub(in crate::protocol::flow) trace_eval_target: L,
+    pub(in crate::protocol::core) trace_eval_target: L,
     #[cfg(feature = "zk")]
-    pub(in crate::protocol::flow) trace_eval_target_public: L,
-    pub(in crate::protocol::flow) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
-    pub(in crate::protocol::flow) trace_claim_scales: Option<Vec<L>>,
-    pub(in crate::protocol::flow) trace_scale: L,
+    pub(in crate::protocol::core) trace_eval_target_public: L,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
+    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
+    pub(in crate::protocol::core) trace_scale: L,
     #[cfg(feature = "zk")]
-    pub(in crate::protocol::flow) zk_hiding: ZkHidingProverState<F>,
-    pub(in crate::protocol::flow) row_coefficients: Option<Vec<L>>,
+    pub(in crate::protocol::core) zk_hiding: ZkHidingProverState<F>,
+    pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
 #[cfg(not(feature = "zk"))]
-pub(in crate::protocol::flow) type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
+pub(in crate::protocol::core) type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
 #[cfg(feature = "zk")]
-pub(in crate::protocol::flow) type TerminalFoldResult<F, L> =
+pub(in crate::protocol::core) type TerminalFoldResult<F, L> =
     (TerminalLevelProof<F, L>, ZkHidingProverState<F>);
 
-pub(in crate::protocol::flow) enum FoldProveOutput<F: FieldCore, L: FieldCore> {
+pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, L: FieldCore> {
     Intermediate(Box<ProveLevelOutput<F, L>>),
     Terminal(Box<TerminalFoldResult<F, L>>),
 }
 
 impl<F: FieldCore, L: FieldCore> FoldProveOutput<F, L> {
-    pub(in crate::protocol::flow) fn get_intermediate(
+    pub(in crate::protocol::core) fn get_intermediate(
         self,
     ) -> Result<ProveLevelOutput<F, L>, AkitaError> {
         match self {
@@ -73,7 +73,7 @@ impl<F: FieldCore, L: FieldCore> FoldProveOutput<F, L> {
         }
     }
 
-    pub(in crate::protocol::flow) fn get_terminal(
+    pub(in crate::protocol::core) fn get_terminal(
         self,
     ) -> Result<TerminalFoldResult<F, L>, AkitaError> {
         match self {
@@ -247,7 +247,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::flow) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
+pub(in crate::protocol::core) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
     backend: &B,
@@ -538,7 +538,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::flow) fn bind_next_witness_for_ring_switch<F, T, const D: usize>(
+pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D: usize>(
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
@@ -585,7 +585,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::flow) fn prove_stage1<F, L, T>(
+pub(in crate::protocol::core) fn prove_stage1<F, L, T>(
     transcript: &mut T,
     rs: &RingSwitchOutput<L>,
     #[cfg(feature = "zk")] stage1_round_pads: Vec<Vec<akita_sumcheck::EqFactoredUniPoly<L>>>,
@@ -682,7 +682,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::flow) fn prove_stage3<F, L, T, const D: usize>(
+pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
@@ -723,177 +723,6 @@ where
     }
 }
 
-pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: FieldCore> {
-    pub(in crate::protocol::flow) proof: ExtensionOpeningReductionProof<L>,
-    pub(in crate::protocol::flow) rho: Vec<L>,
-    /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
-    /// the prepare step can fail-fast cross-check the folded y-ring opening
-    /// against the reduction output; the verifier enforces the same relation.
-    pub(in crate::protocol::flow) final_claim: L,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::flow) final_claim_public: L,
-    pub(in crate::protocol::flow) final_factor: L,
-}
-
-pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
-    logical_w: &RecursiveWitnessFlat,
-) -> Vec<F>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    // Pure order-preserving map; the indexed parallel collect yields the same
-    // ordering as the serial map, so the base-field witness table is identical.
-    cfg_iter!(logical_w.as_i8_digits())
-        .copied()
-        .map(F::from_i8)
-        .collect()
-}
-
-pub(in crate::protocol::flow) fn prove_extension_opening_reduction<F, L, T>(
-    logical_w: &RecursiveWitnessFlat,
-    opening_point: &[L],
-    expected_opening: L,
-    transcript: &mut T,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
-) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    let num_vars = opening_point.len();
-    let padded_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
-        AkitaError::InvalidInput("recursive opening point is too large".to_string())
-    })?;
-    let (split_bits, _width) = tensor_opening_split::<F, L>()?;
-    if split_bits > num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: split_bits,
-            actual: opening_point.len(),
-        });
-    }
-    if logical_w.len() > padded_len {
-        return Err(AkitaError::InvalidSize {
-            expected: padded_len,
-            actual: logical_w.len(),
-        });
-    }
-    let _eor_prep_span = tracing::info_span!("recursive_eor_prepare", num_vars).entered();
-    let base_evals = {
-        let _s = tracing::info_span!("eor_base_evals").entered();
-        let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
-        base_evals.resize(padded_len, F::zero());
-        base_evals
-    };
-    let tensor = {
-        let _s = tracing::info_span!("eor_tensor_partials").entered();
-        tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?
-    };
-    check_tensor_extension_opening_claim::<F, L>(
-        opening_point,
-        expected_opening,
-        &tensor.column_partials,
-    )?;
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let (partial_masks, sumcheck_pads) =
-                zk_hiding.take_extension_opening_reduction_pads::<L>(
-                    tensor.column_partials.len(),
-                    num_vars - split_bits,
-                )?;
-            let proof_partials = tensor
-                .column_partials
-                .iter()
-                .copied()
-                .zip(partial_masks)
-                .map(|(partial, mask)| partial + mask)
-                .collect::<Vec<_>>();
-        } else {
-            let proof_partials = tensor.column_partials.clone();
-        }
-    }
-    for partial in &proof_partials {
-        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
-    }
-
-    let eta = (0..split_bits)
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
-        .collect::<Vec<_>>();
-    let proof_row_partials = tensor_row_partials_from_columns::<F, L>(&proof_partials)?;
-    let input_claim = tensor_reduction_claim_from_rows::<F, L>(&proof_row_partials, &eta)?;
-    let true_input_claim = tensor_reduction_claim_from_rows::<F, L>(&tensor.row_partials, &eta)?;
-    #[cfg(not(feature = "zk"))]
-    debug_assert_eq!(input_claim, true_input_claim);
-    let tail_point = &opening_point[split_bits..];
-    let packed_witness = {
-        let _s = tracing::info_span!("eor_packed_witness").entered();
-        tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?
-    };
-    let factor_evals = {
-        let _s = tracing::info_span!("eor_factor_evals").entered();
-        tensor_equality_factor_evals::<F, L>(tail_point, &eta)?
-    };
-    let prover = ExtensionOpeningReductionProver::from_dense_tables(packed_witness, factor_evals)?;
-    if prover.input_claim() != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
-    }
-    let mut prover = prover;
-    drop(_eor_prep_span);
-    let _eor_sumcheck_span = tracing::info_span!(
-        "extension_opening_reduction_sumcheck",
-        path = "recursive",
-        num_rounds = prover.num_rounds()
-    )
-    .entered();
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let (sumcheck_proof, rho) = prover.prove_zk::<F, T, _>(
-                input_claim,
-                transcript,
-                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                sumcheck_pads,
-            )?;
-            let final_claim_public =
-                masked_sumcheck_final_claim(input_claim, &sumcheck_proof, &rho)?;
-        } else {
-            let (sumcheck_proof, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        }
-    }
-    let (final_witness, final_factor_from_table) =
-        prover.final_witness_and_factor_evals().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "extension-opening reduction has not reached a final point".to_string(),
-            )
-        })?;
-    let final_factor = tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &rho)?;
-    if final_factor != final_factor_from_table {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction transparent factor mismatch".to_string(),
-        ));
-    }
-    #[cfg(feature = "zk")]
-    let final_claim = final_witness * final_factor;
-    check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
-    Ok(RecursiveExtensionOpeningReduction {
-        proof: ExtensionOpeningReductionProof {
-            partials: proof_partials,
-            #[cfg(not(feature = "zk"))]
-            sumcheck: sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: sumcheck_proof,
-        },
-        rho,
-        final_claim,
-        #[cfg(feature = "zk")]
-        final_claim_public,
-        final_factor,
-    })
-}
-
 /// Derive the fused-trace evaluation target and EOR tail scale, and fail-fast
 /// check that the folded witness ties back to the carried claim.
 ///
@@ -903,7 +732,7 @@ where
 /// scaled by the transparent factor. This writes nothing to the transcript: the
 /// verifier re-derives the same relation through the fused stage-2 term.
 fn compute_trace_target<F, L, const D: usize>(
-    reduction: &Option<RecursiveExtensionOpeningReduction<L>>,
+    reduction: &Option<ExtensionOpeningReduction<L>>,
     folded_rings: &[CyclotomicRing<F, D>],
     prepared_point: &PreparedOpeningPoint<F, L, D>,
     expected_opening: L,
@@ -1043,19 +872,34 @@ where
     let (reduction, protocol_point) = if <L as ExtField<F>>::EXT_DEGREE == 1 {
         (None, opening_point.to_vec())
     } else {
-        let reduction = prove_extension_opening_reduction::<F, L, T>(
-            logical_w,
+        let logical_view = logical_w.view::<F, D>()?;
+        let logical_polys = [&logical_view];
+        let opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+        let proved = prove_extension_opening_reduction::<F, L, T, _, D>(
+            &logical_polys,
+            &opening_batch,
             opening_point,
-            current_state.opening,
+            true,
             transcript,
+            "recursive",
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        (Some(reduction), protocol_point)
+        match proved.openings.as_slice() {
+            [tensor_opening] if *tensor_opening == current_state.opening => {}
+            [_] => return Err(AkitaError::InvalidProof),
+            [] => {
+                return Err(AkitaError::InvalidInput(
+                    "recursive EOR preparation produced no opening".to_string(),
+                ));
+            }
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "recursive EOR preparation produced extra openings".to_string(),
+                ));
+            }
+        }
+        (Some(proved.reduction), proved.protocol_point)
     };
     let prepared_point = prepare_opening_point::<F, L, D>(
         &protocol_point,

@@ -401,14 +401,17 @@ where
         )?))
     }
 
-    fn tensor_packed_extension_root_poly<E>(
+    fn tensor_packed_extension_fold_input<E>(
         &self,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
     where
+        Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
         E: RingSubfieldEncoding<F>,
     {
-        Ok(self.tensor_packed_sparse_ring_poly::<E>()?.into())
+        Ok(FoldInputPoly::ProjectedSparse(
+            self.tensor_packed_sparse_ring_poly::<E>()?,
+        ))
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]

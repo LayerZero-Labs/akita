@@ -1,12 +1,13 @@
 //! Root and suffix fold verifier replay for Akita proofs.
 //!
 //! This module owns the shared per-fold replay engine plus path-specific prep
-//! in `root_fold` and `suffix`. Schedule/config dispatch stays with the scheme
-//! crate until the verifier-facing config boundary is extracted.
+//! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
+//! the scheme crate until the verifier-facing config boundary is extracted.
 
 use super::validate_level_dispatch;
 #[cfg(not(feature = "zk"))]
 mod extension_opening_reduction;
+mod verify;
 #[cfg(feature = "zk")]
 mod zk;
 use crate::protocol::ring_switch::{
@@ -42,7 +43,7 @@ use akita_transcript::labels::{
 use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, ABSORB_ZK_HIDING_COMMITMENT};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
-use akita_types::check_tensor_extension_opening_claim;
+use akita_types::derive_tensor_extension_opening_claim_from_partials;
 #[cfg(feature = "zk")]
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_types::{
@@ -54,13 +55,12 @@ use akita_types::{
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
     trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
     ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, OpeningBatch,
     PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
     RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupSumcheckProof, Step, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    TraceClaim,
+    SetupSumcheckProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -74,7 +74,7 @@ mod root_fold;
 mod suffix;
 use root_fold::verify_root;
 
-pub(crate) use suffix::verify_folded_batched_proof;
+pub use verify::verify_batched;
 
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
@@ -298,7 +298,14 @@ where
                 .map(|_| zk_ext_mask_lc::<F, C>(zk_hiding_cursor))
                 .collect::<Vec<_>>();
             #[cfg(not(feature = "zk"))]
-            check_tensor_extension_opening_claim::<F, C>(&eor_point, opening, partials)?;
+            {
+                let expected = derive_tensor_extension_opening_claim_from_partials::<F, C>(
+                    &eor_point, partials,
+                )?;
+                if expected != opening {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
             #[cfg(feature = "zk")]
             {
                 let head_weights = EqPolynomial::<C>::evals(&eor_point[..shape.split_bits])?;

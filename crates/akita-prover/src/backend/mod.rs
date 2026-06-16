@@ -13,7 +13,7 @@ pub(crate) mod sparse_ring;
 mod tensor_fold;
 
 pub use dense::DensePoly;
-pub use field_reduction::{tensor_pack_recursive_witness, RootTensorProjectionPoly};
+pub use field_reduction::{tensor_pack_recursive_witness, FoldInputPoly};
 pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{MultiChunkEntry, OneHotIndex, OneHotPoly, SingleChunkEntry};
 pub use recursive_hint::RecursiveCommitmentHintCache;

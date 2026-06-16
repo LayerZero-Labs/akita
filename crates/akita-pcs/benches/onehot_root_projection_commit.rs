@@ -114,7 +114,7 @@ where
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
     let transformed_polys = onehot_polys
         .iter()
-        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
+        .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
@@ -138,7 +138,7 @@ where
                 let start = Instant::now();
                 let projected = polys
                     .iter()
-                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
+                    .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
                     .collect::<Result<Vec<_>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();

@@ -23,17 +23,16 @@ pub mod zk;
 
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    checked_table_len, extension_opening_reduction_claim,
-    extension_opening_reduction_eval_at_point, num_rounds_from_table_len,
-    project_tensor_factor_value, tensor_column_partials_from_base_evals,
+    check_extension_opening_reduction_output, checked_table_len,
+    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
+    extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
+    num_rounds_from_table_len, project_tensor_factor_value, tensor_column_partials_from_base_evals,
     tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
-    tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, validate_reduction_tables, ExtensionOpeningFactorTerm,
-    ExtensionOpeningReductionFactor, ExtensionOpeningReductionRoundResult,
-    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
+    ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor,
+    ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials, FlatColumnSource,
+    TensorColumnSource, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
@@ -51,8 +50,8 @@ pub use layout::{
     extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
     monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    root_extension_opening_partials, sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix,
-    LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
+    sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
+    RingOpeningPoint,
 };
 #[cfg(feature = "zk")]
 pub use proof::ZkHidingProof;

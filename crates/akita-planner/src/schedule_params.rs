@@ -20,9 +20,9 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -320,10 +320,7 @@ fn extension_opening_reduction_level_bytes(
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
-        (
-            root_extension_opening_partials(width, key.num_w_vectors),
-            key.num_vars,
-        )
+        (width.saturating_mul(key.num_w_vectors), key.num_vars)
     } else {
         (width, padded_boolean_vars(current_w_len)?)
     };
