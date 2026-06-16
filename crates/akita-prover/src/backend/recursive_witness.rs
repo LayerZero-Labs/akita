@@ -9,9 +9,9 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -19,10 +19,10 @@ use crate::backend::poly_helpers::{
 use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_field::ExtField;
-use akita_types::{tensor_packed_witness_evals, FlatDigitBlocks};
+use akita_types::{tensor_packed_witness_evals, FlatDigitBlocks, FpExtEncoding};
 use std::marker::PhantomData;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, FoldInputPoly};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -132,6 +132,17 @@ where
         let num_vars = self.num_vars();
         let base_evals = self.base_evals()?;
         tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
+    }
+
+    fn tensor_packed_extension_fold_input<E>(
+        &self,
+    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
+    where
+        Self: Sized,
+        F: CanonicalField + FromPrimitiveInt,
+        E: FpExtEncoding<F>,
+    {
+        Ok(FoldInputPoly::Original(self))
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
@@ -263,6 +274,26 @@ where
             inner_width,
         );
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
+    }
+
+    fn decompose_fold_batched(
+        _polys: &[&Self],
+        _challenges: &[SparseChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        None
+    }
+
+    fn decompose_fold_tensor_batched(
+        _polys: &[&Self],
+        _tensor: &TensorChallenges,
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

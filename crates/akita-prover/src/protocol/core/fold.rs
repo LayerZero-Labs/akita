@@ -78,6 +78,14 @@ where
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
+pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
+    pub(in crate::protocol::core) trace_eval_target: L,
+    #[cfg(feature = "zk")]
+    pub(in crate::protocol::core) trace_eval_target_public: L,
+    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
+    pub(in crate::protocol::core) trace_scale: L,
+}
+
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: FlatRingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
