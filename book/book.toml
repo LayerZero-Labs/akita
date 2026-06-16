@@ -1,0 +1,17 @@
+[book]
+authors = []
+language = "en"
+src = "src"
+title = "Akita Book"
+description = "Documentation for Akita, a lattice-based polynomial commitment scheme."
+
+[preprocessor.katex]
+after = ["links"]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+git-repository-url = "https://github.com/LayerZero-Labs/akita"
+edit-url-template = "https://github.com/LayerZero-Labs/akita/edit/main/book/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

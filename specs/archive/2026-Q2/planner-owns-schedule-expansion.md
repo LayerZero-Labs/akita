@@ -4,8 +4,9 @@
 |-----------|--------------------------------|
 | Author(s) |                                |
 | Created   | 2026-06-01                     |
-| Status    | implemented                    |
+| Status    | archived |
 | PR        |                                |
+| Book-chapter | book/src/how/configuration.md |
 
 ## Summary
 
