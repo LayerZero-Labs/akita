@@ -276,6 +276,30 @@ impl LevelParams {
     ///
     /// # Errors
     ///
+    /// Per-coefficient `‖z‖_inf` cap for fold digit sizing, grind acceptance, and
+    /// terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::sis::fold_witness_beta`] and
+    /// [`crate::sis::fold_witness_linf_cap`] setup errors.
+    pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
+        let witness = self.fold_witness_norms();
+        let witness_linf = witness.infinity_norm();
+        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
+        crate::sis::fold_witness_linf_cap(
+            beta,
+            self.num_fold_blocks(num_claims)?,
+            witness_linf_sq,
+            &self.fold_witness_linf_cap_config(),
+        )
+    }
+
     /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
     pub fn fold_witness_grind_contract(
         &self,
@@ -287,20 +311,7 @@ impl LevelParams {
             crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
             crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
         };
-        let witness = self.fold_witness_norms();
-        let witness_linf = witness.infinity_norm();
-        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
-        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
-        let witness_linf_cap = crate::sis::fold_witness_linf_cap(
-            beta,
-            self.num_fold_blocks(num_claims)?,
-            witness_linf_sq,
-            &self.fold_witness_linf_cap_config(),
-        )?;
+        let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
             policy,
             witness_linf_cap,

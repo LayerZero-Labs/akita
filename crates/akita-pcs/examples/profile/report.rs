@@ -86,12 +86,12 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             .unwrap_or(0);
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
-        let z_beta_inf = z_stats.as_ref().map(|s| s.beta_inf).unwrap_or(0);
-        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_beta).unwrap_or(0);
+        let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
+        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_public).unwrap_or(0);
         let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
-            .map(|s| s.bits_per_coord_k_beta)
+            .map(|s| s.bits_per_coord_k_public)
             .unwrap_or(0.0);
         let z_bits_per_coord_packed = z_stats
             .as_ref()
@@ -127,7 +127,7 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
             tail_r_bytes = r_bytes,
-            z_beta_inf,
+            z_witness_linf_cap,
             z_rice_k,
             z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
@@ -140,16 +140,16 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: beta_inf={} k_beta={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
-                     {:.2} bits/coord@k_beta vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
+                    " Golomb z: witness_linf_cap={} k_public={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@k_public vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
                      dist max={} median={} p90={} p99={}",
-                    stats.beta_inf,
-                    stats.rice_k_beta,
+                    stats.witness_linf_cap,
+                    stats.rice_k_public,
                     stats.rice_k_empirical,
                     stats.coord_count,
-                    stats.bits_per_coord_k_beta,
+                    stats.bits_per_coord_k_public,
                     stats.bits_per_coord_k_empirical,
                     stats.bits_per_coord_packed_digits,
                     stats.total_bits_packed_digits.div_ceil(8),
@@ -248,7 +248,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         return;
     };
     let k_hi = stats
-        .rice_k_beta
+        .rice_k_public
         .saturating_add(4)
         .max(stats.rice_k_empirical);
     let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
@@ -257,8 +257,8 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
     eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
     for &(k, bytes) in &sweep {
-        let marker = if k == stats.rice_k_beta {
-            "  <-- public k_beta (sound)"
+        let marker = if k == stats.rice_k_public {
+            "  <-- public k (sound)"
         } else if k == stats.rice_k_empirical {
             "  <-- empirical min on this witness"
         } else if k == k_observed {
@@ -276,9 +276,9 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
         eprintln!(
             "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
-             (vs actual {actual_z_payload_bytes} B at k_beta={}, delta {save_vs_beta} B; \
-             sound tightening needs public k <= k_beta)",
-            stats.rice_k_beta,
+             (vs actual {actual_z_payload_bytes} B at k_public={}, delta {save_vs_beta} B; \
+             sound tightening needs public k <= k_public)",
+            stats.rice_k_public,
         );
     }
 }

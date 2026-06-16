@@ -305,8 +305,10 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
     for key in TAIL_SUMMARY_FLOAT_FIELDS:
         if key in kvs:
             summary[key] = float(kvs[key])
-    if "z_beta_inf" in kvs:
-        summary["z_beta_inf"] = kvs["z_beta_inf"]
+    if "z_witness_linf_cap" in kvs:
+        summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
+    elif "z_beta_inf" in kvs:
+        summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
     if summary.get("tail_log_basis") is not None:
         summary["terminal_log_basis"] = summary["tail_log_basis"]
 
@@ -414,7 +416,7 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             f"scheduled upper `{fmt_bytes(float(z_budget))} B`{slack_note}"
         )
 
-    z_beta_inf = current.get("z_beta_inf")
+    z_witness_linf_cap = current.get("z_witness_linf_cap")
     z_rice_k = current.get("z_rice_k")
     z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
     z_ring_elems = current.get("tail_z_ring_elems")
@@ -422,11 +424,11 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     z_bits_packed = current.get("z_bits_per_coord_packed")
     z_packed_hyp = current.get("z_packed_hypothetical_bytes")
     z_savings = current.get("z_golomb_savings_bytes")
-    if z_beta_inf is not None and z_rice_k is not None and z_field_coeffs is not None:
+    if z_witness_linf_cap is not None and z_rice_k is not None and z_field_coeffs is not None:
         comparison = ""
         if z_bits_golomb is not None and z_bits_packed is not None:
             comparison = (
-                f", `{z_bits_golomb:.2f}` bits/field_coeff (Golomb k=`{z_rice_k}` from beta_inf=`{z_beta_inf}`) "
+                f", `{z_bits_golomb:.2f}` bits/field_coeff (Golomb k=`{z_rice_k}` from witness_linf_cap=`{z_witness_linf_cap}`) "
                 f"vs `{z_bits_packed:.2f}` bits/field_coeff (legacy uniform `PackedDigits` z planes)"
             )
         savings_note = ""
@@ -682,11 +684,17 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["tail_encoding"] = "segment_typed"
             if "z_coords" in kvs:
                 summary["z_coords"] = int(kvs["z_coords"])
-            if "beta_inf" in kvs:
-                summary["z_beta_inf"] = kvs["beta_inf"]
-            if "rice_k_beta" in kvs:
+            if "witness_linf_cap" in kvs:
+                summary["z_witness_linf_cap"] = kvs["witness_linf_cap"]
+            elif "beta_inf" in kvs:
+                summary["z_witness_linf_cap"] = kvs["beta_inf"]
+            if "rice_k_public" in kvs:
+                summary["z_rice_k"] = int(kvs["rice_k_public"])
+            elif "rice_k_beta" in kvs:
                 summary["z_rice_k"] = int(kvs["rice_k_beta"])
-            if "bits_per_coord_k_beta" in kvs:
+            if "bits_per_coord_k_public" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_public"])
+            elif "bits_per_coord_k_beta" in kvs:
                 summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_beta"])
             if "bits_per_coord_packed" in kvs:
                 summary["z_bits_per_coord_packed"] = float(kvs["bits_per_coord_packed"])
