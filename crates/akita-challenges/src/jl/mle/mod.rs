@@ -40,7 +40,9 @@ mod reference;
 #[cfg(test)]
 mod tests;
 
-use crate::jl::panel::{byte_aligned_panel_cols, panel_span, parallel_jl_enabled};
+use crate::jl::panel::byte_aligned_panel_cols;
+#[cfg(feature = "parallel")]
+use crate::jl::panel::{panel_span, parallel_jl_enabled};
 use crate::jl::JlProjectionMatrix;
 use common::{
     accumulate_row_weight_range, scatter_row_weight_range, validate_mle_points, JlMleLayout,
