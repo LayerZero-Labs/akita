@@ -40,6 +40,10 @@ pub struct GeneratedFamily {
     /// Inclusive upper bound of the `num_vars` range enumerated for
     /// this family.
     pub max_num_vars: usize,
+    /// Polynomial batch sizes enumerated for this family. Every count is
+    /// crossed with the full `[min_num_vars, max_num_vars]` range to form
+    /// the emitted key set.
+    pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
@@ -51,11 +55,11 @@ pub struct GeneratedFamily {
 
 /// Build the ordered key cross-product emitted for `family`.
 ///
-/// The order matches what `gen_schedule_tables` writes to disk: all
-/// singleton (`num_polys = 1`) keys first, then all 4-batched
-/// (`num_polys = 4`) keys, each block ordered by `num_vars` ascending.
-/// Drift-guard tests assert positional equality against the shipped
-/// table, so this ordering doubles as the canonical row order.
+/// The order matches what `gen_schedule_tables` writes to disk: the
+/// `family.num_polys` batch sizes are enumerated in listed order, and each
+/// batch size's block is ordered by `num_vars` ascending. Drift-guard tests
+/// assert positional equality against the shipped table, so this ordering
+/// doubles as the canonical row order.
 ///
 /// # Errors
 ///
@@ -63,8 +67,9 @@ pub struct GeneratedFamily {
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    let mut keys = Vec::with_capacity(2 * (family.max_num_vars - family.min_num_vars + 1));
-    for num_polys in [1, 4] {
+    let span = family.max_num_vars - family.min_num_vars + 1;
+    let mut keys = Vec::with_capacity(family.num_polys.len() * span);
+    for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
             let opening_batch = OpeningBatch::same_point(nv, num_polys)?;
             keys.push(AkitaScheduleLookupKey::new_from_opening_batch(
@@ -93,6 +98,14 @@ fn table_backed<Cfg: CommitmentConfig>(
     Cfg::runtime_schedule(key)
 }
 
+/// Default batch sizes every family ships: singleton plus the canonical
+/// 4-poly batch.
+const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
+
+/// D64 one-hot batch sizes: the defaults plus the wide 35..=40 batches used
+/// by larger same-point openings.
+const D64_ONEHOT_NUM_POLYS: &[usize] = &[1, 4, 35, 36, 37, 38, 39, 40];
+
 /// Every `Cfg` that ships with a generated schedule table.
 ///
 /// Adding a new preset with a generated table requires adding a row
@@ -104,6 +117,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP128_D128_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp128::D128Full>,
         table_backed: table_backed::<fp128::D128Full>,
     },
@@ -112,6 +126,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP128_D128_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp128::D128OneHot>,
         table_backed: table_backed::<fp128::D128OneHot>,
     },
@@ -120,6 +135,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP128_D64_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
+        num_polys: D64_ONEHOT_NUM_POLYS,
         regen: regen::<fp128::D64OneHot>,
         table_backed: table_backed::<fp128::D64OneHot>,
     },
@@ -128,6 +144,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<tensor_verifier::fp128::D64OneHotTensor>,
         table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
     },
@@ -138,6 +155,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP128_D64_ONEHOT_TIERED_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
+        num_polys: D64_ONEHOT_NUM_POLYS,
         regen: regen::<fp128::D64OneHotTiered>,
         table_backed: table_backed::<fp128::D64OneHotTiered>,
     },
@@ -146,6 +164,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP64_D128_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp64::D128Full>,
         table_backed: table_backed::<fp64::D128Full>,
     },
@@ -154,6 +173,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP64_D128_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp64::D128OneHot>,
         table_backed: table_backed::<fp64::D128OneHot>,
     },
@@ -162,6 +182,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP64_D256_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp64::D256OneHot>,
         table_backed: table_backed::<fp64::D256OneHot>,
     },
@@ -170,6 +191,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP32_D128_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp32::D128OneHot>,
         table_backed: table_backed::<fp32::D128OneHot>,
     },
@@ -178,6 +200,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         const_name: "FP32_D256_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
+        num_polys: DEFAULT_NUM_POLYS,
         regen: regen::<fp32::D256OneHot>,
         table_backed: table_backed::<fp32::D256OneHot>,
     },
