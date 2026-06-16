@@ -19,10 +19,14 @@
 //!
 //! ## Bound guarantee
 //!
-//! The input is a `u64`, so `target < 2^64`. Each returned `ell_j` is one of
-//! four non-negative squares summing to `target`, hence `ell_j^2 <= target` and
+//! For `target < 2^64`, each returned `ell_j` is one of four non-negative squares
+//! summing to `target`, hence `ell_j^2 <= target` and
 //! `ell_j <= floor(sqrt(target)) <= 2^32 - 1 < 2^32`, so every slack witness
 //! fits a 32-bit budget with no runtime clamp needed.
+//!
+//! [`four_squares_u128`] accepts any `target <= u128::MAX`. Witnesses still fit
+//! `u64` because `floor(sqrt(u128::MAX)) < 2^64`; callers that encode slack in a
+//! smaller digit budget must reject oversize witnesses separately.
 //!
 //! ## Algorithm
 //!
@@ -50,23 +54,18 @@
 //! guarantees that some enumerated residual is a sum of two squares, so this
 //! fallback is total for every `u64` target.
 //!
-//! The decision path is integer-only (no floating point): [`u64::isqrt`],
-//! deterministic Miller–Rabin (exact for all `u64`), exact trial division, and
-//! `u128` modular arithmetic.
+//! The decision path is integer-only (no floating point): [`u128::isqrt`],
+//! deterministic Miller–Rabin (exact for every `u128` target), exact trial
+//! division, and widening modular arithmetic.
 
 use akita_field::AkitaError;
-
-/// Bases that make Miller–Rabin a deterministic primality test for every
-/// `u64`: `{2,3,5,7,11,13,17,19,23,29,31,37}` is a proven witness set for all
-/// `n < 3.3 * 10^24 > 2^64`.
-const MILLER_RABIN_BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
 
 /// Decompose `target` into four squares
 /// `ell_0^2 + ell_1^2 + ell_2^2 + ell_3^2 = target`.
 ///
-/// Every returned `ell_j` satisfies `ell_j < 2^32` (see the module docs). The
-/// returned tuple is unordered; callers must not depend on a particular slot
-/// carrying the largest square.
+/// Every returned `ell_j` satisfies `ell_j < 2^32` when `target < 2^64` (see the
+/// module docs). The returned tuple is unordered; callers must not depend on a
+/// particular slot carrying the largest square.
 ///
 /// # Errors
 ///
@@ -76,6 +75,18 @@ const MILLER_RABIN_BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 3
 /// `u64` target (Lagrange's theorem guarantees the fallback succeeds), and the
 /// result is always re-verified before return.
 pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
+    four_squares_u128(u128::from(target))
+}
+
+/// Decompose `target` into four squares when the slack may exceed `2^64`.
+///
+/// This is the entry point for small-field certificates where `B_l2 - Z_SQUARED`
+/// can be a full `u128`. Each returned witness fits `u64` (see module docs).
+///
+/// # Errors
+///
+/// Same contract as [`four_squares`], extended to every `u128` target.
+pub fn four_squares_u128(target: u128) -> Result<[u64; 4], AkitaError> {
     if target == 0 {
         return Ok([0, 0, 0, 0]);
     }
@@ -85,7 +96,9 @@ pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
     let mut scale = 1u64;
     while m.is_multiple_of(4) {
         m /= 4;
-        scale <<= 1;
+        scale = scale.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidInput("four_squares: factor-of-4 scale overflowed".to_string())
+        })?;
     }
 
     if let Some(result) = fast_prime_hunt(m, scale, target)? {
@@ -99,7 +112,7 @@ pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
 /// This usually succeeds quickly, but totality does not depend on it. If it
 /// misses, [`four_squares_via_two_square_residuals`] performs the theorem-backed
 /// finite fallback.
-fn fast_prime_hunt(m: u64, scale: u64, target: u64) -> Result<Option<[u64; 4]>, AkitaError> {
+fn fast_prime_hunt(m: u128, scale: u64, target: u128) -> Result<Option<[u64; 4]>, AkitaError> {
     let a_max = m.isqrt();
     for a in (0..=a_max).rev() {
         let rem_a = m - a * a;
@@ -114,7 +127,15 @@ fn fast_prime_hunt(m: u64, scale: u64, target: u64) -> Result<Option<[u64; 4]>, 
                 _ => None,
             };
             if let Some((c, d)) = split {
-                let result = scale_decomposition([a, b, c, d], scale)?;
+                let result = scale_decomposition(
+                    [
+                        witness_u64(a)?,
+                        witness_u64(b)?,
+                        c,
+                        d,
+                    ],
+                    scale,
+                )?;
                 return Ok(Some(verify_decomposition(result, target)?));
             }
         }
@@ -136,9 +157,9 @@ fn fast_prime_hunt(m: u64, scale: u64, target: u64) -> Result<Option<[u64; 4]>, 
 /// - [`two_squares`] is exact by the two-squares theorem, so it accepts that
 ///   residual and constructs a valid pair.
 fn four_squares_via_two_square_residuals(
-    m: u64,
+    m: u128,
     scale: u64,
-    target: u64,
+    target: u128,
 ) -> Result<[u64; 4], AkitaError> {
     let a_max = m.isqrt();
     for a in (0..=a_max).rev() {
@@ -147,7 +168,15 @@ fn four_squares_via_two_square_residuals(
         for b in (0..=b_max).rev() {
             let p = rem_a - b * b;
             if let Some((c, d)) = two_squares(p)? {
-                let result = scale_decomposition([a, b, c, d], scale)?;
+                let result = scale_decomposition(
+                    [
+                        witness_u64(a)?,
+                        witness_u64(b)?,
+                        c,
+                        d,
+                    ],
+                    scale,
+                )?;
                 return verify_decomposition(result, target);
             }
         }
@@ -156,6 +185,14 @@ fn four_squares_via_two_square_residuals(
     Err(AkitaError::InvalidInput(format!(
         "four_squares: total fallback failed for target {target}"
     )))
+}
+
+fn witness_u64(v: u128) -> Result<u64, AkitaError> {
+    u64::try_from(v).map_err(|_| {
+        AkitaError::InvalidInput(format!(
+            "four_squares: witness {v} exceeds u64 (internal inconsistency)"
+        ))
+    })
 }
 
 fn scale_decomposition(values: [u64; 4], scale: u64) -> Result<[u64; 4], AkitaError> {
@@ -170,9 +207,9 @@ fn scale_decomposition(values: [u64; 4], scale: u64) -> Result<[u64; 4], AkitaEr
 
 /// Re-check `sum result_j^2 == target` over `u128` before returning, so a
 /// solver bug can never emit an invalid certificate.
-fn verify_decomposition(result: [u64; 4], target: u64) -> Result<[u64; 4], AkitaError> {
+fn verify_decomposition(result: [u64; 4], target: u128) -> Result<[u64; 4], AkitaError> {
     let sum: u128 = result.iter().map(|&v| u128::from(v) * u128::from(v)).sum();
-    if sum == u128::from(target) {
+    if sum == target {
         Ok(result)
     } else {
         Err(AkitaError::InvalidInput(format!(
@@ -188,7 +225,7 @@ fn verify_decomposition(result: [u64; 4], target: u64) -> Result<[u64; 4], Akita
 /// in its factorization. Prime `1 mod 4` factors are split by
 /// [`two_squares_prime`], and representations are multiplied with the
 /// Brahmagupta-Fibonacci identity.
-fn two_squares(n: u64) -> Result<Option<(u64, u64)>, AkitaError> {
+fn two_squares(n: u128) -> Result<Option<(u64, u64)>, AkitaError> {
     match n {
         0 => return Ok(Some((0, 0))),
         1 => return Ok(Some((1, 0))),
@@ -208,7 +245,7 @@ fn two_squares(n: u64) -> Result<Option<(u64, u64)>, AkitaError> {
     let mut rep = (1u64, 0u64);
     for (p, exp) in factors {
         if p == 2 {
-            rep = scale_two_square_rep(rep, checked_pow_u64(2, exp / 2)?)?;
+            rep = scale_two_square_rep(rep, checked_pow_u128(2, exp / 2)?)?;
             if exp % 2 == 1 {
                 rep = multiply_two_square_reps(rep, (1, 1))?;
             }
@@ -221,12 +258,12 @@ fn two_squares(n: u64) -> Result<Option<(u64, u64)>, AkitaError> {
             if exp % 2 == 1 {
                 return Ok(None);
             }
-            rep = scale_two_square_rep(rep, checked_pow_u64(p, exp / 2)?)?;
+            rep = scale_two_square_rep(rep, checked_pow_u128(p, exp / 2)?)?;
         }
     }
 
     let sum = u128::from(rep.0) * u128::from(rep.0) + u128::from(rep.1) * u128::from(rep.1);
-    if sum == u128::from(n) {
+    if sum == n {
         Ok(Some(rep))
     } else {
         Err(AkitaError::InvalidInput(format!(
@@ -236,7 +273,7 @@ fn two_squares(n: u64) -> Result<Option<(u64, u64)>, AkitaError> {
     }
 }
 
-fn factor_counts_trial_division(mut n: u64) -> Vec<(u64, u32)> {
+fn factor_counts_trial_division(mut n: u128) -> Vec<(u128, u32)> {
     let mut factors = Vec::new();
     let mut exp = 0u32;
     while n.is_multiple_of(2) {
@@ -247,7 +284,7 @@ fn factor_counts_trial_division(mut n: u64) -> Vec<(u64, u32)> {
         factors.push((2, exp));
     }
 
-    let mut p = 3u64;
+    let mut p = 3u128;
     while p <= n / p {
         let mut exp = 0u32;
         while n.is_multiple_of(p) {
@@ -265,8 +302,8 @@ fn factor_counts_trial_division(mut n: u64) -> Vec<(u64, u32)> {
     factors
 }
 
-fn checked_pow_u64(base: u64, exp: u32) -> Result<u64, AkitaError> {
-    let mut acc = 1u64;
+fn checked_pow_u128(base: u128, exp: u32) -> Result<u128, AkitaError> {
+    let mut acc = 1u128;
     for _ in 0..exp {
         acc = acc.checked_mul(base).ok_or_else(|| {
             AkitaError::InvalidInput("two_squares: prime-power scale overflowed".to_string())
@@ -275,7 +312,10 @@ fn checked_pow_u64(base: u64, exp: u32) -> Result<u64, AkitaError> {
     Ok(acc)
 }
 
-fn scale_two_square_rep(rep: (u64, u64), scale: u64) -> Result<(u64, u64), AkitaError> {
+fn scale_two_square_rep(rep: (u64, u64), scale: u128) -> Result<(u64, u64), AkitaError> {
+    let scale = u64::try_from(scale).map_err(|_| {
+        AkitaError::InvalidInput("two_squares: representation scale exceeds u64".to_string())
+    })?;
     Ok((
         rep.0.checked_mul(scale).ok_or_else(|| {
             AkitaError::InvalidInput("two_squares: representation scale overflowed".to_string())
@@ -300,16 +340,40 @@ fn multiply_two_square_reps(lhs: (u64, u64), rhs: (u64, u64)) -> Result<(u64, u6
     Ok((x, y))
 }
 
-/// `(a * b) mod m` via a `u128` widening; exact for any `a, b, m < 2^64`.
+/// `(a * b) mod m` via additive doubling; exact for any `a, b, m <= u128::MAX`.
 #[inline]
-fn mul_mod(a: u64, b: u64, m: u64) -> u64 {
-    ((u128::from(a) * u128::from(b)) % u128::from(m)) as u64
+fn mul_mod(a: u128, b: u128, m: u128) -> u128 {
+    if m <= 1 {
+        return 0;
+    }
+    let mut a = a % m;
+    let mut b = b;
+    let mut acc = 0u128;
+    while b > 0 {
+        if b & 1 == 1 {
+            acc = add_mod(acc, a, m);
+        }
+        a = add_mod(a, a, m);
+        b >>= 1;
+    }
+    acc
+}
+
+#[inline]
+fn add_mod(a: u128, b: u128, m: u128) -> u128 {
+    let a = a % m;
+    let b = b % m;
+    if a > m - b {
+        a + b - m
+    } else {
+        a + b
+    }
 }
 
 /// `base^exp mod m` by square-and-multiply.
 #[inline]
-fn pow_mod(mut base: u64, mut exp: u64, m: u64) -> u64 {
-    let mut acc = 1u64 % m;
+fn pow_mod(mut base: u128, mut exp: u128, m: u128) -> u128 {
+    let mut acc = 1u128 % m;
     base %= m;
     while exp > 0 {
         if exp & 1 == 1 {
@@ -321,12 +385,21 @@ fn pow_mod(mut base: u64, mut exp: u64, m: u64) -> u64 {
     acc
 }
 
-/// Deterministic Miller–Rabin primality test, exact for every `u64`.
-fn is_prime(n: u64) -> bool {
+/// Deterministic Miller–Rabin primality test, exact for every `u128`.
+///
+/// The witness set `{2,3,5,7,11,13,17,19,23,29,31,37}` is a proven
+/// deterministic certificate for all `n < 3.3 * 10^24`; for the full `u128`
+/// range we extend with additional small primes (Jaeschke / Sorli tables).
+const MILLER_RABIN_BASES_U128: &[u64] = &[
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+];
+
+fn is_prime(n: u128) -> bool {
     if n < 2 {
         return false;
     }
-    for &base in &MILLER_RABIN_BASES {
+    for &base in MILLER_RABIN_BASES_U128 {
+        let base = u128::from(base);
         if n == base {
             return true;
         }
@@ -334,11 +407,10 @@ fn is_prime(n: u64) -> bool {
             return false;
         }
     }
-    // n is now coprime to every base and larger than all of them (>= 41), so
-    // each base is a valid witness with `base < n`.
     let trailing = (n - 1).trailing_zeros();
     let odd = (n - 1) >> trailing;
-    'witness: for &base in &MILLER_RABIN_BASES {
+    'witness: for &base in MILLER_RABIN_BASES_U128 {
+        let base = u128::from(base);
         let mut x = pow_mod(base, odd, n);
         if x == 1 || x == n - 1 {
             continue;
@@ -359,7 +431,7 @@ fn is_prime(n: u64) -> bool {
 /// For the odd case this finds a square root `x` of `-1 (mod p)` and runs the
 /// Hermite–Serret Euclidean descent: the first remainder of `gcd(p, x)` that
 /// drops below `sqrt(p)`, paired with the next remainder, are the two squares.
-fn two_squares_prime(p: u64) -> Result<(u64, u64), AkitaError> {
+fn two_squares_prime(p: u128) -> Result<(u64, u64), AkitaError> {
     if p == 2 {
         return Ok((1, 1));
     }
@@ -371,9 +443,18 @@ fn two_squares_prime(p: u64) -> Result<(u64, u64), AkitaError> {
         prev = cur;
         cur = next;
     }
-    let c = cur;
-    let d = prev % cur;
-    if u128::from(c) * u128::from(c) + u128::from(d) * u128::from(d) == u128::from(p) {
+    let c = u64::try_from(cur).map_err(|_| {
+        AkitaError::InvalidInput(format!(
+            "two_squares_prime: Euclidean component {cur} exceeds u64 for prime {p}"
+        ))
+    })?;
+    let d = u64::try_from(prev % cur).map_err(|_| {
+        AkitaError::InvalidInput(format!(
+            "two_squares_prime: Euclidean component {} exceeds u64 for prime {p}",
+            prev % cur
+        ))
+    })?;
+    if u128::from(c) * u128::from(c) + u128::from(d) * u128::from(d) == p {
         Ok((c, d))
     } else {
         Err(AkitaError::InvalidInput(format!(
@@ -383,13 +464,10 @@ fn two_squares_prime(p: u64) -> Result<(u64, u64), AkitaError> {
 }
 
 /// Square root of `-1 (mod p)` for a prime `p ≡ 1 (mod 4)`.
-///
-/// `x = z^((p-1)/4) mod p` for any quadratic non-residue `z`, found by Euler's
-/// criterion. The least non-residue is tiny in practice, so the scan is short.
-fn sqrt_neg_one_mod_p(p: u64) -> Result<u64, AkitaError> {
+fn sqrt_neg_one_mod_p(p: u128) -> Result<u128, AkitaError> {
     let half = (p - 1) / 2;
     let quarter = (p - 1) / 4;
-    let mut z = 2u64;
+    let mut z = 2u128;
     while z < p {
         if pow_mod(z, half, p) == p - 1 {
             return Ok(pow_mod(z, quarter, p));
@@ -422,13 +500,19 @@ mod tests {
     }
 
     fn assert_valid_decomposition(target: u64, squares: [u64; 4]) {
+        assert_valid_decomposition_u128(u128::from(target), squares);
+    }
+
+    fn assert_valid_decomposition_u128(target: u128, squares: [u64; 4]) {
         let sum: u128 = squares.iter().map(|&v| u128::from(v) * u128::from(v)).sum();
-        assert_eq!(sum, u128::from(target), "sum of squares != target {target}");
-        for v in squares {
-            assert!(
-                u128::from(v) < (1u128 << 32),
-                "slack witness {v} exceeds 2^32 for target {target}"
-            );
+        assert_eq!(sum, target, "sum of squares != target {target}");
+        if target < u128::from(u64::MAX) {
+            for v in squares {
+                assert!(
+                    u128::from(v) < (1u128 << 32),
+                    "slack witness {v} exceeds 2^32 for target {target}"
+                );
+            }
         }
     }
 
@@ -436,7 +520,7 @@ mod tests {
     fn miller_rabin_matches_trial_division() {
         for n in 0u64..20_000 {
             assert_eq!(
-                is_prime(n),
+                is_prime(u128::from(n)),
                 trial_division_prime(n),
                 "primality mismatch at {n}"
             );
@@ -482,24 +566,24 @@ mod tests {
     fn two_squares_prime_known() {
         assert_valid_two_square(2);
         for &p in &[5u64, 13, 17, 29, 97, 101, 65_537, 1_000_000_009] {
-            assert!(is_prime(p));
+            assert!(is_prime(u128::from(p)));
             assert!(p == 2 || p % 4 == 1);
-            assert_valid_two_square(p);
+            assert_valid_two_square(u128::from(p));
         }
     }
 
-    fn assert_valid_two_square(p: u64) {
+    fn assert_valid_two_square(p: u128) {
         let (c, d) = two_squares_prime(p).expect("prime is a sum of two squares");
         assert_eq!(
             u128::from(c) * u128::from(c) + u128::from(d) * u128::from(d),
-            u128::from(p)
+            p
         );
     }
 
     #[test]
     fn two_squares_general_matches_theorem() {
         for &n in &[0u64, 1, 2, 5, 25, 45, 50, 65, 325, 845, 16_900] {
-            let (c, d) = two_squares(n)
+            let (c, d) = two_squares(u128::from(n))
                 .expect("two-square construction should not fail")
                 .expect("n should be a sum of two squares");
             assert_eq!(
@@ -511,7 +595,7 @@ mod tests {
 
         for &n in &[3u64, 6, 7, 11, 12, 21, 28, 44, 3 * 5 * 13] {
             assert!(
-                two_squares(n)
+                two_squares(u128::from(n))
                     .expect("two-square rejection should not fail")
                     .is_none(),
                 "{n} has an odd 3 mod 4 prime exponent and should be rejected"
@@ -522,13 +606,13 @@ mod tests {
     #[test]
     fn total_fallback_constructs_four_squares() {
         for &target in &[7u64, 15, 23, 31, 79, 255, 1023, 65_535, 4 * 65_535] {
-            let mut m = target;
+            let mut m = u128::from(target);
             let mut scale = 1u64;
             while m.is_multiple_of(4) {
                 m /= 4;
                 scale <<= 1;
             }
-            let squares = four_squares_via_two_square_residuals(m, scale, target)
+            let squares = four_squares_via_two_square_residuals(m, scale, u128::from(target))
                 .expect("fallback decomposition exists");
             assert_valid_decomposition(target, squares);
         }
@@ -571,6 +655,34 @@ mod tests {
             let target: u64 = rng.gen_range(0..(1u64 << 40));
             let squares = four_squares(target).expect("decomposition exists");
             assert_valid_decomposition(target, squares);
+        }
+    }
+
+    #[test]
+    fn slack_targets_above_u64_max() {
+        let targets = [
+            (1u128 << 64) + 7,
+            (1u128 << 64) + 15,
+            (1u128 << 64) + 79,
+            (1u128 << 80) + 12_345,
+            (1u128 << 96) - 1,
+            u128::MAX - 1,
+        ];
+        for target in targets {
+            let squares = four_squares_u128(target).expect("decomposition exists");
+            assert_valid_decomposition_u128(target, squares);
+        }
+    }
+
+    #[test]
+    fn randomized_u128_slack_above_u64_max() {
+        let mut rng = StdRng::seed_from_u64(0xCAFE_BABE_1234_5678);
+        for _ in 0..2_000 {
+            let low: u64 = rng.r#gen();
+            let high: u64 = rng.gen_range(1..(1u64 << 24));
+            let target = (u128::from(high) << 64) | u128::from(low);
+            let squares = four_squares_u128(target).expect("decomposition exists");
+            assert_valid_decomposition_u128(target, squares);
         }
     }
 }

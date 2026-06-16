@@ -41,7 +41,8 @@ use crate::DecompositionParams;
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series
 /// `(b/2 - 1) · (b^n - 1) / (b - 1)`. When `b^n` overflows `u128` the result is
 /// a conservative lower bound (safe: it can only add a digit, never drop one).
-fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
+#[inline]
+pub fn balanced_positive_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
     let max_digit = base / 2 - 1;
     let base_minus_1 = base - 1;
@@ -96,7 +97,7 @@ pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
 
     let mut num_digits = (log_bound as usize).div_ceil(log_basis as usize);
     let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
-    if balanced_digit_max(log_basis, num_digits) < required_positive {
+    if balanced_positive_digit_max(log_basis, num_digits) < required_positive {
         num_digits += 1;
     }
     num_digits.max(1)
@@ -228,8 +229,8 @@ mod tests {
 
     #[test]
     fn balanced_digit_max_cases() {
-        assert_eq!(balanced_digit_max(2, 2), 5);
-        assert_eq!(balanced_digit_max(3, 1), 3);
+        assert_eq!(balanced_positive_digit_max(2, 2), 5);
+        assert_eq!(balanced_positive_digit_max(3, 1), 3);
     }
 
     #[test]
@@ -257,15 +258,15 @@ mod tests {
                 let n = compute_num_digits(log_bound, log_basis);
                 let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
                 assert!(
-                    balanced_digit_max(log_basis, n) >= required_positive,
+                    balanced_positive_digit_max(log_basis, n) >= required_positive,
                     "log_bound={log_bound} log_basis={log_basis} n={n} \
                      reach={} < required={required_positive}",
-                    balanced_digit_max(log_basis, n),
+                    balanced_positive_digit_max(log_basis, n),
                 );
                 // Minimality: one fewer digit must be insufficient (unless n==1).
                 if n > 1 {
                     assert!(
-                        balanced_digit_max(log_basis, n - 1) < required_positive,
+                        balanced_positive_digit_max(log_basis, n - 1) < required_positive,
                         "non-minimal: log_bound={log_bound} log_basis={log_basis} n={n}",
                     );
                 }

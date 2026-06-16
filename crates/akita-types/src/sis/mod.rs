@@ -21,6 +21,7 @@
 
 pub mod ajtai_key;
 pub mod decomposition_digits;
+pub mod fold_l2_certificate;
 pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
@@ -31,11 +32,17 @@ pub use ajtai_key::{
     COEFF_LINF_BUCKETS,
 };
 pub use decomposition_digits::{
-    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
-    num_digits_s_commit,
+    balanced_positive_digit_max, compute_num_digits_full_field, decomposed_s_block_ring_count,
+    decomposed_t_ring_count, decomposed_w_ring_count, num_digits_fold, num_digits_for_bound,
+    num_digits_open, num_digits_s_commit,
 };
-pub use four_square::four_squares;
+pub use fold_l2_certificate::{
+    carry_cell_count_for_budget, carry_cell_layout, field_fitting_certificate_fits,
+    folded_witness_l2_bound_squared, grouped_carry_no_wrap_gate_holds, grouped_fold_limb_bound,
+    l2_collision_bucket_for_z_squared, realizable_carry_budget, select_l2_certificate_realization,
+    CarryCellLayout, FoldNormGrouping, L2CertificateRealization,
+};
+pub use four_square::{four_squares, four_squares_u128};
 pub use norm_bound::{
     committed_fold_collision_l2_sq, fold_witness_beta, isqrt_ceil, l2_sq_from_linf,
     ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
