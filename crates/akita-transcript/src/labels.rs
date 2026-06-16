@@ -29,6 +29,10 @@ pub const CHALLENGE_RING_SWITCH: &[u8] = b"ak/c/rs";
 pub const ABSORB_SPARSE_CHALLENGE: &[u8] = b"ak/a/sp";
 /// Challenge bytes used to sample sparse challenges (e.g. ring `c` with weight ω).
 pub const CHALLENGE_SPARSE_CHALLENGE: &[u8] = b"ak/c/sp";
+/// Absorb JL projection-matrix sampling context (n_rows, cols, domain version).
+pub const ABSORB_JL_PROJECTION: &[u8] = b"ak/a/jl";
+/// Challenge bytes used to seed the JL projection-matrix PRG expansion.
+pub const CHALLENGE_JL_SEED: &[u8] = b"ak/c/jl";
 /// Absorb the initial sumcheck claim before round messages begin.
 pub const ABSORB_SUMCHECK_CLAIM: &[u8] = b"ak/a/sc";
 /// Absorb the selected setup-prefix slot id before delegated setup sumcheck replay.
@@ -104,6 +108,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_RING_SWITCH,
     ABSORB_SPARSE_CHALLENGE,
     CHALLENGE_SPARSE_CHALLENGE,
+    ABSORB_JL_PROJECTION,
+    CHALLENGE_JL_SEED,
     ABSORB_SUMCHECK_CLAIM,
     ABSORB_SETUP_PREFIX_SLOT,
     ABSORB_SUMCHECK_ROUND,

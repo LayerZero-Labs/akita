@@ -24,7 +24,7 @@ mod bounded_l1_support;
 mod exact_shell;
 pub(crate) mod op_norm;
 mod uniform;
-mod xof;
+pub(crate) mod xof;
 
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
