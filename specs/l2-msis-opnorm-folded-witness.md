@@ -999,6 +999,98 @@ tightens eligibility.
 Soundness does not require `H'_e = H_e`; it requires the committed layout to
 declare a representable envelope that the gate accepts.
 
+#### Worked example (fp32-style recursive dense level)
+
+The numbers below match `select_l2_certificate_realization` /
+`fold_l2_certificate::carry_cell_layout` for a representative certifying level
+(similar to the `recursive_dense_level_certifies_on_fp32` unit test).
+
+**Public geometry**
+
+| Parameter | Value |
+|-----------|------:|
+| Fold coefficient count `N` | 57,344 |
+| Fold digits `K = num_digits_fold` | 5 |
+| Log basis `lb` (so `b = 2^lb`) | 3 (`b = 8`) |
+| Field characteristic `q` | `2^32 - 99` |
+| Selected group size `g` | 2 (largest `g` passing the no-wrap gate) |
+| Grouped limb count `R = ceil(K/g)` | 3 |
+| Grouped radix `B = b^g` | 64 |
+| Last-group width | 1 (limb max bounds `A = [36, 36, 4]`) |
+
+With `lb = 3`, each balanced cell satisfies `|cell| <= b/2 = 4`.
+
+**Carry budgets across indices**
+
+`H_e` is the tight structural budget from the recurrence (ignoring public
+`T_e`, which only makes the recurrence more conservative).
+`δ = delta_carry(e)` is the smallest cell count with `H'_e >= H_e`.
+All values are exact integers from the reference formulas in
+`crates/akita-types/src/sis/fold_l2_certificate.rs`.
+
+| Carry `h_e` | `D_e` (structural) | `H_e` tight | `δ` | `H'_e` realizable | `H'_e / H_e` |
+|-------------|-------------------:|------------:|----:|------------------:|-------------:|
+| `h_0` | 74,323,008 | 0 | 0 | 0 | — |
+| `h_1` | 148,646,016 | 1,161,297 | 19 | 2,097,148 | 1.806 |
+| `h_2` | 90,839,232 | 2,340,740 | 20 | 4,194,300 | 1.792 |
+| `h_3` | 16,516,224 | 1,455,938 | 19 | 2,097,148 | 1.440 |
+| `h_4` | 917,568 | 280,816 | 17 | 524,284 | 1.867 |
+
+Boundary carries `h_0` and `h_5` (`h_{E+1}` with `E = 4`) are zero; only
+`h_1..h_4` need committed cells.
+
+**Zoom in on `h_1` (first nontrivial carry)**
+
+1. **Structural coefficient bound:** `D_1 = 148,646,016` (convolution at exponent 1
+   from `N · A_r · A_s` terms with grouped limbs).
+
+2. **Tight budget from the recurrence** (with `h_0 = 0`):
+   `H_1 = ceil((D_0 + H_0 + (B-1)) / B) = 1,161,297`.
+   This value is not a power of `B` and is not witnessed directly.
+
+3. **Cell layout:** `δ_carry(1) = 19` because
+   `H'_1 = (b/2)·(2^19 − 1) = 4 · 524,287 = 2,097,148` is the first
+   representable envelope with `H'_1 >= H_1`.
+   Nineteen balanced cells per carry index is tiny next to the `N` witness cells.
+
+4. **What the verifier enforces for `h_1`:**
+   - exactly 19 cells in the `carry_hat` segment for index `1`;
+   - each cell in `[-4, 3]` (balanced base `8`);
+   - hence `|h_1| <= H'_1 = 2,097,148` automatically, without a separate
+     `|h_1| <= H_1` check.
+
+5. **No-wrap gate at exponent `e = 1`:**
+   using realizable budgets `H'_1` and `H'_2`:
+
+   ```text
+   D_1 + H'_1 + (B-1) + B·H'_2
+     = 148,646,016 + 2,097,148 + 63 + 64·4,194,300
+     = 419,178,427
+     < q = 4,294,967,197.
+   ```
+
+   So any single-exponent residual `res_1` consistent with the structural
+   digit and carry layouts cannot be a nonzero wrap mod `q`.
+   Soundness still requires the folded identity `P(alpha) = 0` to force
+   `res_1 = 0` exactly, not merely mod `q`.
+
+6. **Honest recurrence** (integer division, not shown with real `C_1`, `T_1`):
+   with committed `h_1` and `h_2` reassembled from cells,
+
+   ```text
+   h_2 = (C_1 + h_1 - T_1) / B.
+   ```
+
+   The tight budget `H_1 = 1,161,297` is what the honest prover needs;
+   the committed layout allows up to `H'_1 = 2,097,148`, a factor‑1.8 envelope
+   that keeps base‑2 cells within a factor `2` of tight `H_e` and makes the
+   no-wrap gate stricter than it would be with `H_e` alone.
+
+**Takeaway:** non-power-of-two `H_e` is handled by rounding up to a representable
+`H'_e` via `delta_carry(e)`, not by witnessing `H_e`.
+Soundness uses `H'_e` in the gate; completeness needs `H'_e >= H_e` for the
+honest carry.
+
 #### Exponent indexing and telescoping
 
 Let `E = 2R - 2`.
