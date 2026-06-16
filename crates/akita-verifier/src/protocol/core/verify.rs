@@ -429,7 +429,7 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
 /// public claim normalization, schedule selection (from `Cfg`), the root-direct
 /// rewrite, and transcript instance-descriptor binding before handing off to
-/// [`verify`] for root-direct and folded-root replay.
+/// `verify` for root-direct and folded-root replay.
 ///
 /// The root-direct branch recomputes commitments with the same root commitment
 /// layout the prover used at commit time (`Cfg::get_params_for_batched_commitment`
