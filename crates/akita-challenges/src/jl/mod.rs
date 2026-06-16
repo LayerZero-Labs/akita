@@ -357,15 +357,7 @@ fn jl_overflow_msg() -> String {
 
 #[inline]
 fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
-    #[cfg(feature = "parallel")]
-    {
-        n_rows.saturating_mul(cols) >= JL_PARALLEL_ELEMS_THRESHOLD
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = (n_rows, cols);
-        false
-    }
+    cfg!(feature = "parallel") && n_rows.saturating_mul(cols) >= JL_PARALLEL_ELEMS_THRESHOLD
 }
 
 /// Integer image `p = J · c` of a JL projection.
