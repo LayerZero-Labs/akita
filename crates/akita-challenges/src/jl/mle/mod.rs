@@ -11,33 +11,37 @@
 //! 1. Outer loop: each byte-aligned 4-column window of `eq(r_w, ·)`.
 //! 2. Build a 256-entry LUT once from the four weights (81 canonical ternary
 //!    patterns via axis extension, remapped through [`lut::BYTE_TO_TERNARY4`] so
-//!    `01`/`10` zero pairs collapse correctly).
+//!    `01`/`10` zero pairs collapse correctly; same sign alphabet as
+//!    [`crate::jl::kernels::SIGNS_FOR_BYTE`]).
 //! 3. Inner loop: every row does one LUT lookup and one field add into `row_acc[j]`.
 //! 4. Scalar tail for `cols % 4`.
 //! 5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 //!
-//! On aarch64 fp128 (256 rows, 64K–256K cols), this LUT path beats both the naive
-//! row-major scalar loop (~3×) and every deferred-reduction “wide” variant we tried
-//! (~10–30% faster than wide accumulators). Wide LUT tables and i64-limb row sums
-//! add memory traffic without reducing enough modular work to pay for themselves.
+//! On aarch64 fp128 (256 rows, 64K–256K cols), this LUT path beats the row-major
+//! scalar baseline (~3×) and deferred-reduction wide variants we tried (~10–30%
+//! slower than LUT). See `benches/jl_mle.rs` (`scalar` vs `lut`).
 //!
 //! Parallelism partitions quad windows into panels when the `parallel` feature is
 //! enabled and `n_rows · cols` is large enough.
 //!
-//! Naive reference helpers back differential tests.
+//! Naive reference helpers in [`reference`] back differential tests.
 
 #![allow(non_snake_case)] // `r_J` matches the spec / paper notation.
 
 mod common;
+mod fused;
 mod lut;
 mod reference;
-mod split_eq;
+#[cfg(test)]
+mod tests;
 
 use akita_field::{AkitaError, FieldCore};
 
 use crate::jl::JlProjectionMatrix;
 
 pub use reference::eval_mle_from_weights;
+#[doc(hidden)]
+pub use reference::{build_jl_row_weights_reference, eval_jl_mle_at_reference};
 
 /// Fused verifier evaluation `J̃(r_J, r_w)` without materializing the weight table.
 ///
@@ -52,27 +56,17 @@ pub fn eval_jl_mle_at<L: FieldCore>(
     r_J: &[L],
     r_w: &[L],
 ) -> Result<L, AkitaError> {
-    split_eq::eval_jl_mle_at_split_eq_lut(
-        matrix,
-        r_J,
-        r_w,
-        split_eq::use_parallel_mle(matrix.n_rows(), matrix.cols()),
-    )
+    fused::eval_lut(matrix, r_J, r_w)
 }
 
-/// Row-major scalar fused eval (differential tests and `benches/jl_mle` baseline).
+/// Row-major scalar fused eval (`benches/jl_mle` baseline).
 #[doc(hidden)]
 pub fn eval_jl_mle_at_scalar<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
     r_w: &[L],
 ) -> Result<L, AkitaError> {
-    split_eq::eval_jl_mle_at_split_eq(
-        matrix,
-        r_J,
-        r_w,
-        split_eq::use_parallel_mle(matrix.n_rows(), matrix.cols()),
-    )
+    fused::eval_scalar_rowmajor(matrix, r_J, r_w)
 }
 
 /// Prover row-weight table `g` after batching JL rows with `eq(r_J, ·)`.
@@ -87,27 +81,5 @@ pub fn build_jl_row_weights<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
 ) -> Result<Vec<L>, AkitaError> {
-    split_eq::build_jl_row_weights_split_eq(matrix, r_J)
+    fused::build_row_weights(matrix, r_J)
 }
-
-/// Naive reference `J̃(r_J, r_w)` for differential tests.
-#[doc(hidden)]
-pub fn eval_jl_mle_at_reference<L: FieldCore>(
-    matrix: &JlProjectionMatrix,
-    r_J: &[L],
-    r_w: &[L],
-) -> Result<L, AkitaError> {
-    reference::eval_jl_mle_at_reference(matrix, r_J, r_w)
-}
-
-/// Naive reference row-weight builder for differential tests.
-#[doc(hidden)]
-pub fn build_jl_row_weights_reference<L: FieldCore>(
-    matrix: &JlProjectionMatrix,
-    r_J: &[L],
-) -> Result<Vec<L>, AkitaError> {
-    reference::build_jl_row_weights_reference(matrix, r_J)
-}
-
-#[cfg(test)]
-mod tests;

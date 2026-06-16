@@ -54,22 +54,22 @@ fn mle_roundtrip_for<L: FieldCore + FromPrimitiveInt>() {
 }
 
 #[test]
-fn split_eq_matches_reference_fp32() {
+fn mle_lut_matches_reference_fp32() {
     mle_roundtrip_for::<F32>();
 }
 
 #[test]
-fn split_eq_matches_reference_fp64() {
+fn mle_lut_matches_reference_fp64() {
     mle_roundtrip_for::<F64>();
 }
 
 #[test]
-fn split_eq_matches_reference_fp128() {
+fn mle_lut_matches_reference_fp128() {
     mle_roundtrip_for::<F128>();
 }
 
 #[test]
-fn split_eq_matches_reference_small_matrix() {
+fn mle_lut_matches_reference_small_matrix() {
     let signs: Vec<Vec<i8>> = (0..5)
         .map(|r| (0..7).map(|c| ((r + c) % 3) as i8 - 1).collect())
         .collect();

@@ -9,7 +9,8 @@ use super::common::{accum_sign_weight, entry_sign, validate_mle_points, JlMleLay
 use crate::jl::JlProjectionMatrix;
 
 /// `g[i] = Σ_j eq(r_J, j) · J[j, i]` by direct summation.
-pub(super) fn build_jl_row_weights_reference<L: FieldCore>(
+#[doc(hidden)]
+pub fn build_jl_row_weights_reference<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
 ) -> Result<Vec<L>, AkitaError> {
@@ -36,7 +37,8 @@ pub(super) fn build_jl_row_weights_reference<L: FieldCore>(
 }
 
 /// `Σ_{j,i} eq(r_J, j) eq(r_w, i) J[j,i]` by direct summation.
-pub(super) fn eval_jl_mle_at_reference<L: FieldCore>(
+#[doc(hidden)]
+pub fn eval_jl_mle_at_reference<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
     r_w: &[L],

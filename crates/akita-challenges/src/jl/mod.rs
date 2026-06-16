@@ -26,8 +26,12 @@ use crate::sampler::xof::XofCursor;
 
 mod kernels;
 pub mod mle;
+mod panel;
 
-pub use mle::{build_jl_row_weights, eval_jl_mle_at, eval_jl_mle_at_scalar, eval_mle_from_weights};
+pub use mle::{
+    build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at, eval_jl_mle_at_reference,
+    eval_jl_mle_at_scalar, eval_mle_from_weights,
+};
 
 /// PRG domain separator for the JL matrix stream. Distinct from the
 /// sparse-challenge PRG domain so the two streams cannot collide on a shared

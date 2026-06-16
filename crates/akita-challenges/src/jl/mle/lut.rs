@@ -1,4 +1,8 @@
 //! Per-4-column sign-weight LUT helpers for fused JL MLE evaluation.
+//!
+//! [`BYTE_TO_TERNARY4`] indexes the same four-lane sign alphabet as
+//! [`crate::jl::kernels::SIGNS_FOR_BYTE`], collapsed so `01`/`10` both map to
+//! the zero digit before the 81-pattern DP builds field-weight sums.
 
 use akita_field::FieldCore;
 
@@ -152,8 +156,14 @@ mod tests {
         // lanes 01 and 10 both decode to sign 0.
         let byte_01 = 0b00_01_00_01u8;
         let byte_10 = 0b00_10_00_10u8;
-        assert_eq!(BYTE_TO_TERNARY4[byte_01 as usize], BYTE_TO_TERNARY4[byte_10 as usize]);
-        assert_eq!(BYTE_TO_TERNARY4[byte_01 as usize], ternary4_index_from_byte(byte_01));
+        assert_eq!(
+            BYTE_TO_TERNARY4[byte_01 as usize],
+            BYTE_TO_TERNARY4[byte_10 as usize]
+        );
+        assert_eq!(
+            BYTE_TO_TERNARY4[byte_01 as usize],
+            ternary4_index_from_byte(byte_01)
+        );
     }
 
     #[test]
@@ -168,7 +178,7 @@ mod tests {
         let mut slow = [F::zero(); TERNARY4_LEN];
         build_sign_weight_lut_81(&weights, &mut fast);
 
-        for idx in 0..TERNARY4_LEN {
+        for (idx, slow_entry) in slow.iter_mut().enumerate().take(TERNARY4_LEN) {
             let d3 = idx % 3;
             let d2 = (idx / 3) % 3;
             let d1 = (idx / 9) % 3;
@@ -178,7 +188,7 @@ mod tests {
             for (digit, &weight) in digits.into_iter().zip(weights.iter()) {
                 acc = accum_sign_weight(acc, sign_from_digit(digit), weight);
             }
-            slow[idx] = acc;
+            *slow_entry = acc;
         }
         assert_eq!(fast, slow);
     }

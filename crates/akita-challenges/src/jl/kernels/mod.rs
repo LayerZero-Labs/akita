@@ -33,8 +33,13 @@ pub(crate) fn pair_to_sign(pair: u8) -> i8 {
 /// Target column count per parallel panel. Sized so a panel's `i8` digit chunk
 /// (one byte per column) stays comfortably within L1 and is reused across every
 /// row of the panel.
-const PANEL_BYTES_L1_MAX: usize = 4096;
+const PANEL_BYTES_L1_MAX: usize = super::panel::JL_PANEL_UNIT_MAX;
 
+/// Byte width of one parallel column panel for a row of `row_bytes` bytes.
+#[cfg(feature = "parallel")]
+fn parallel_panel_bytes(row_bytes: usize) -> usize {
+    super::panel::panel_span(row_bytes, PANEL_BYTES_L1_MAX).min(row_bytes.max(1))
+}
 /// One row coordinate over one byte-aligned column panel, dispatched to the
 /// fastest available kernel (NEON, AVX-512/AVX2 `madd`, or scalar).
 #[inline]
@@ -67,18 +72,6 @@ fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
 #[inline]
 fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     scalar::project_row(row, digits, cols)
-}
-
-/// Byte width of one parallel column panel for a row of `row_bytes` bytes.
-#[cfg(feature = "parallel")]
-fn parallel_panel_bytes(row_bytes: usize) -> usize {
-    // Minimum panel count, so rayon always has enough independent work units to
-    // balance across cores even at small column counts.
-    const MIN_PARALLEL_PANELS: usize = 64;
-    let by_balance = row_bytes.div_ceil(MIN_PARALLEL_PANELS);
-    by_balance
-        .clamp(1, PANEL_BYTES_L1_MAX)
-        .min(row_bytes.max(1))
 }
 
 /// Accumulate panel `p`'s contribution to every row coordinate into `coords`.
