@@ -1,7 +1,7 @@
 //! Prover-side protocol orchestration helpers.
 
+pub mod core;
 pub mod extension_opening_reduction;
-pub mod flow;
 pub mod fold_grind;
 pub mod fold_grind_observer;
 #[cfg(feature = "zk")]
@@ -15,10 +15,10 @@ pub mod sumcheck;
 pub(crate) mod zk_hiding_commit;
 
 pub use akita_types::RingRelationInstance;
-pub use flow::{
-    batched_prove, prepare_batched_prove_inputs, prove_folded_batched, prove_root,
-    prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState,
+pub use core::{
+    batched_prove, prepare_batched_prove_inputs, prove, prove_root, prove_root_direct,
+    prove_suffix, prove_terminal_root_fold_with_params, PreparedBatchedProveInputs,
+    ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState,
 };
 pub use fold_grind::ProverTranscriptGrind;
 pub use fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};

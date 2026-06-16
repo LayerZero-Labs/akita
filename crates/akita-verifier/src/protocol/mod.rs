@@ -3,12 +3,11 @@
 use akita_field::AkitaError;
 use akita_types::LevelParams;
 
-pub(crate) mod batched;
-pub(crate) mod levels;
+pub(crate) mod core;
 pub(crate) mod ring_switch;
 mod slice_mle;
 
-pub use batched::verify_batched;
+pub use core::batched_verify;
 pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
 pub(crate) use slice_mle::{SetupEvalPlan, SetupEvaluator};
 

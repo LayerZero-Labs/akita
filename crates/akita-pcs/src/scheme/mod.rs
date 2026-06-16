@@ -180,7 +180,7 @@ where
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_verifier::verify_batched::<Cfg, T, D>(
+        akita_verifier::batched_verify::<Cfg, T, D>(
             proof,
             setup,
             transcript,
