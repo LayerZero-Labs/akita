@@ -157,10 +157,10 @@ impl JlProjectionMatrix {
 
     /// Project a pre-centered balanced-digit vector with the fast `i32` kernel.
     ///
-    /// Row accumulation parallelizes over `n_rows` when the `parallel` feature
-    /// is enabled and `n_rows * cols` exceeds the internal threshold. With the
-    /// `jl-simd` feature, runtime dispatch selects NEON (aarch64), AVX-512
-    /// (x86_64 when F/DQ/BW are present), AVX2, or the scalar fast kernel.
+    /// Column-panel accumulation parallelizes over panels when the `parallel`
+    /// feature is enabled and `n_rows * cols` exceeds the internal threshold.
+    /// Runtime dispatch selects NEON (aarch64), AVX-512 (x86_64 when F/DQ/BW
+    /// are present), AVX2, or the scalar fast kernel.
     ///
     /// # Errors
     ///

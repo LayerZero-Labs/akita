@@ -35,7 +35,6 @@ harness = false
 [features]
 default = []
 parallel = ["akita-field/parallel"]
-jl-simd = []
 zk = ["akita-transcript/zk"]
 
 [lints]

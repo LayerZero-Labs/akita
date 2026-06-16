@@ -11,10 +11,10 @@
 mod reference;
 mod scalar;
 
-#[cfg(all(target_arch = "x86_64", feature = "jl-simd"))]
+#[cfg(target_arch = "x86_64")]
 mod simd_x86;
 
-#[cfg(all(target_arch = "aarch64", feature = "jl-simd"))]
+#[cfg(target_arch = "aarch64")]
 mod simd_neon;
 
 #[cfg(feature = "parallel")]
@@ -35,29 +35,36 @@ pub(crate) fn pair_to_sign(pair: u8) -> i8 {
 const PANEL_BYTES_L1_MAX: usize = 4096;
 
 /// One row coordinate over one byte-aligned column panel, dispatched to the
-/// fastest available kernel (NEON dot-product, AVX-512/AVX2 `madd`, or scalar).
+/// fastest available kernel (NEON, AVX-512/AVX2 `madd`, or scalar).
 #[inline]
 fn project_row_fast(row: &[u8], digits: &[i8], cols: usize) -> i32 {
-    #[cfg(all(target_arch = "x86_64", feature = "jl-simd"))]
-    {
-        if simd_x86::avx512_available() {
-            // SAFETY: feature detection + digit-bound contract.
-            return unsafe { simd_x86::project_row_avx512(row, digits, cols) };
-        }
-        if std::is_x86_feature_detected!("avx2") {
-            // SAFETY: feature detection + digit-bound contract.
-            return unsafe { simd_x86::project_row_avx2(row, digits, cols) };
-        }
-    }
+    project_row_fast_dispatch(row, digits, cols)
+}
 
-    #[cfg(all(target_arch = "aarch64", feature = "jl-simd"))]
-    {
-        if std::arch::is_aarch64_feature_detected!("neon") {
-            // SAFETY: feature detection + digit-bound contract.
-            return unsafe { simd_neon::project_row_neon(row, digits, cols) };
-        }
-    }
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
+    // SAFETY: NEON is mandatory on aarch64; digit-bound contract holds.
+    unsafe { simd_neon::project_row_neon(row, digits, cols) }
+}
 
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
+    if simd_x86::avx512_available() {
+        // SAFETY: feature detection + digit-bound contract.
+        return unsafe { simd_x86::project_row_avx512(row, digits, cols) };
+    }
+    if std::is_x86_feature_detected!("avx2") {
+        // SAFETY: feature detection + digit-bound contract.
+        return unsafe { simd_x86::project_row_avx2(row, digits, cols) };
+    }
+    scalar::project_row(row, digits, cols)
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[inline]
+fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     scalar::project_row(row, digits, cols)
 }
 

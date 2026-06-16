@@ -20,7 +20,7 @@
 //! Run with:
 //!
 //! ```text
-//! cargo bench -p akita-challenges --bench jl_projection --features parallel,jl-simd -- --noplot
+//! cargo bench -p akita-challenges --bench jl_projection --features parallel -- --noplot
 //! ```
 
 #![allow(missing_docs)]
