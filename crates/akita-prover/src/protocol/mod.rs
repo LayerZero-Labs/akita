@@ -2,6 +2,7 @@
 
 pub mod core;
 pub mod extension_opening_reduction;
+pub mod jl;
 #[cfg(feature = "zk")]
 pub(crate) mod masking;
 pub mod prg;

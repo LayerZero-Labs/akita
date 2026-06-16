@@ -33,6 +33,10 @@ pub const CHALLENGE_SPARSE_CHALLENGE: &[u8] = b"ak/c/sp";
 pub const ABSORB_JL_PROJECTION: &[u8] = b"ak/a/jl";
 /// Challenge bytes used to seed the JL projection-matrix PRG expansion.
 pub const CHALLENGE_JL_SEED: &[u8] = b"ak/c/jl";
+/// Absorb the JL image coordinates before row-batching challenges.
+pub const ABSORB_JL_IMAGE: &[u8] = b"ak/a/jli";
+/// Challenge for batching JL projection rows in the consistency sumcheck.
+pub const CHALLENGE_JL_ROW: &[u8] = b"ak/c/jlr";
 /// Absorb the initial sumcheck claim before round messages begin.
 pub const ABSORB_SUMCHECK_CLAIM: &[u8] = b"ak/a/sc";
 /// Absorb the selected setup-prefix slot id before delegated setup sumcheck replay.
@@ -110,6 +114,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_SPARSE_CHALLENGE,
     ABSORB_JL_PROJECTION,
     CHALLENGE_JL_SEED,
+    ABSORB_JL_IMAGE,
+    CHALLENGE_JL_ROW,
     ABSORB_SUMCHECK_CLAIM,
     ABSORB_SETUP_PREFIX_SLOT,
     ABSORB_SUMCHECK_ROUND,
