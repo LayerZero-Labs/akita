@@ -51,9 +51,7 @@ fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
             "JL matrix requires a non-zero column count".to_string(),
         ));
     }
-    let bit_pairs = cols
-        .checked_mul(2)
-        .ok_or_else(jl_geometry_overflow)?;
+    let bit_pairs = cols.checked_mul(2).ok_or_else(jl_geometry_overflow)?;
     Ok(bit_pairs.div_ceil(8))
 }
 
