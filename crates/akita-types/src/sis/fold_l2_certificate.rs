@@ -108,15 +108,15 @@ pub fn grouped_fold_limb_bound(log_basis: u32, limb_width: usize) -> Result<u128
             "grouped_fold_limb_bound: limb_width must be positive".to_string(),
         ));
     }
-    let half_base = 1u128
-        .checked_shl(log_basis - 1)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped_fold_limb_bound: b/2 overflow".to_string()))?;
-    let base = 1u128
-        .checked_shl(log_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped_fold_limb_bound: b overflow".to_string()))?;
-    let base_pow = base
-        .checked_pow(limb_width as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped_fold_limb_bound: b^g overflow".to_string()))?;
+    let half_base = 1u128.checked_shl(log_basis - 1).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped_fold_limb_bound: b/2 overflow".to_string())
+    })?;
+    let base = 1u128.checked_shl(log_basis).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped_fold_limb_bound: b overflow".to_string())
+    })?;
+    let base_pow = base.checked_pow(limb_width as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped_fold_limb_bound: b^g overflow".to_string())
+    })?;
     let numerator = half_base.checked_mul(base_pow - 1).ok_or_else(|| {
         AkitaError::InvalidSetup("grouped_fold_limb_bound: numerator overflow".to_string())
     })?;
@@ -143,13 +143,11 @@ pub fn folded_witness_l2_bound_squared(
     let sq = digit_max.checked_mul(digit_max).ok_or_else(|| {
         AkitaError::InvalidSetup("folded_witness_l2_bound_squared: digit_max² overflow".to_string())
     })?;
-    (num_fold_coeffs as u128)
-        .checked_mul(sq)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "folded_witness_l2_bound_squared: N · digit_max² overflow".to_string(),
-            )
-        })
+    (num_fold_coeffs as u128).checked_mul(sq).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "folded_witness_l2_bound_squared: N · digit_max² overflow".to_string(),
+        )
+    })
 }
 
 /// Round a realized squared norm up to the next audited L2 MSIS collision bucket.
@@ -210,19 +208,25 @@ fn structural_convolution_bound_de(
                 .checked_mul(a_r)
                 .and_then(|t| t.checked_mul(a_s))
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structural_convolution_bound_de: overflow".to_string())
+                    AkitaError::InvalidSetup(
+                        "structural_convolution_bound_de: overflow".to_string(),
+                    )
                 })?;
             let slack_term = 4u128
                 .checked_mul(a_r)
                 .and_then(|t| t.checked_mul(a_s))
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structural_convolution_bound_de: overflow".to_string())
+                    AkitaError::InvalidSetup(
+                        "structural_convolution_bound_de: overflow".to_string(),
+                    )
                 })?;
             sum = sum
                 .checked_add(witness_term)
                 .and_then(|t| t.checked_add(slack_term))
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structural_convolution_bound_de: overflow".to_string())
+                    AkitaError::InvalidSetup(
+                        "structural_convolution_bound_de: overflow".to_string(),
+                    )
                 })?;
         }
     }
@@ -230,19 +234,20 @@ fn structural_convolution_bound_de(
 }
 
 /// Tight carry magnitude budget `H_e` from the structural recurrence (ignoring `T_e`).
-fn carry_magnitude_budget(log_basis: u32, grouping: &FoldNormGrouping, num_fold_coeffs: usize) -> Result<Vec<u128>, AkitaError> {
+fn carry_magnitude_budget(
+    log_basis: u32,
+    grouping: &FoldNormGrouping,
+    num_fold_coeffs: usize,
+) -> Result<Vec<u128>, AkitaError> {
     if grouping.group_count == 0 {
         return Err(AkitaError::InvalidSetup(
             "carry_magnitude_budget: empty grouping".to_string(),
         ));
     }
-    let base = 1u128
-        .checked_shl(log_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("carry_magnitude_budget: b overflow".to_string()))?;
-    let max_exponent = grouping
-        .group_count
-        .saturating_mul(2)
-        .saturating_sub(2);
+    let base = 1u128.checked_shl(log_basis).ok_or_else(|| {
+        AkitaError::InvalidSetup("carry_magnitude_budget: b overflow".to_string())
+    })?;
+    let max_exponent = grouping.group_count.saturating_mul(2).saturating_sub(2);
     let mut h = vec![0u128; max_exponent + 2];
     for e in 0..=max_exponent {
         let d_e = structural_convolution_bound_de(num_fold_coeffs, log_basis, grouping, e)?;
@@ -267,9 +272,9 @@ pub fn realizable_carry_budget(log_basis: u32, tight_budget: u128) -> Result<u12
             "realizable_carry_budget: invalid log_basis {log_basis}"
         )));
     }
-    let half_base = 1u128
-        .checked_shl(log_basis - 1)
-        .ok_or_else(|| AkitaError::InvalidSetup("realizable_carry_budget: b/2 overflow".to_string()))?;
+    let half_base = 1u128.checked_shl(log_basis - 1).ok_or_else(|| {
+        AkitaError::InvalidSetup("realizable_carry_budget: b/2 overflow".to_string())
+    })?;
     let mut delta = 1usize;
     loop {
         let cells = 1u128
@@ -296,7 +301,10 @@ pub fn realizable_carry_budget(log_basis: u32, tight_budget: u128) -> Result<u12
 }
 
 /// Smallest `delta_carry(e)` with `H'_e >= H_e`.
-pub fn carry_cell_count_for_budget(log_basis: u32, tight_budget: u128) -> Result<usize, AkitaError> {
+pub fn carry_cell_count_for_budget(
+    log_basis: u32,
+    tight_budget: u128,
+) -> Result<usize, AkitaError> {
     if tight_budget == 0 {
         return Ok(0);
     }
@@ -305,9 +313,9 @@ pub fn carry_cell_count_for_budget(log_basis: u32, tight_budget: u128) -> Result
             "carry_cell_count_for_budget: invalid log_basis {log_basis}"
         )));
     }
-    let half_base = 1u128
-        .checked_shl(log_basis - 1)
-        .ok_or_else(|| AkitaError::InvalidSetup("carry_cell_count_for_budget: b/2 overflow".to_string()))?;
+    let half_base = 1u128.checked_shl(log_basis - 1).ok_or_else(|| {
+        AkitaError::InvalidSetup("carry_cell_count_for_budget: b/2 overflow".to_string())
+    })?;
     for delta in 1..=128usize {
         let cells = 1u128
             .checked_shl(delta as u32)
@@ -356,19 +364,16 @@ pub fn grouped_carry_no_wrap_gate_holds(
             "grouped_carry_no_wrap_gate_holds: field_characteristic must be positive".to_string(),
         ));
     }
-    let base = 1u128
-        .checked_shl(log_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped_carry_no_wrap_gate_holds: b overflow".to_string()))?;
+    let base = 1u128.checked_shl(log_basis).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped_carry_no_wrap_gate_holds: b overflow".to_string())
+    })?;
     let grouped_base = base
         .checked_pow(grouping.group_digits as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("grouped_carry_no_wrap_gate_holds: B overflow".to_string())
         })?;
     let h = carry_magnitude_budget(log_basis, grouping, num_fold_coeffs)?;
-    let max_exponent = grouping
-        .group_count
-        .saturating_mul(2)
-        .saturating_sub(2);
+    let max_exponent = grouping.group_count.saturating_mul(2).saturating_sub(2);
     for e in 0..=max_exponent {
         let d_e = structural_convolution_bound_de(num_fold_coeffs, log_basis, grouping, e)?;
         let h_e = realizable_carry_budget(log_basis, h[e])?;
@@ -378,7 +383,9 @@ pub fn grouped_carry_no_wrap_gate_holds(
             .and_then(|t| t.checked_add(grouped_base - 1))
             .and_then(|t| t.checked_add(grouped_base.checked_mul(h_next)?))
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped_carry_no_wrap_gate_holds: residual overflow".to_string())
+                AkitaError::InvalidSetup(
+                    "grouped_carry_no_wrap_gate_holds: residual overflow".to_string(),
+                )
             })?;
         if residual_bound >= field_characteristic {
             return Ok(false);
@@ -416,10 +423,8 @@ pub fn select_l2_certificate_realization(
     )? {
         return Ok(L2CertificateRealization::FieldFitting);
     }
-    if num_digits_fold == 1 {
-        return Ok(L2CertificateRealization::DeterministicFallback);
-    }
-    for group_digits in (1..num_digits_fold).rev() {
+    let max_group_digits = num_digits_fold.saturating_sub(1).max(1);
+    for group_digits in (1..=max_group_digits).rev() {
         let grouping = FoldNormGrouping::new(num_digits_fold, group_digits)?;
         if grouped_carry_no_wrap_gate_holds(
             num_fold_coeffs,
@@ -435,8 +440,8 @@ pub fn select_l2_certificate_realization(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ajtai_key::SisModulusFamily;
+    use super::*;
 
     const Q_FP32: u128 = (1u128 << 32) - 99;
     const Q_FP128: u128 = u128::MAX - (1u128 << 32) + 22_538;

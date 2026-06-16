@@ -123,19 +123,11 @@ fn fast_prime_hunt(m: u128, scale: u64, target: u128) -> Result<Option<[u64; 4]>
                 0 => Some((0, 0)),
                 1 => Some((1, 0)),
                 2 => Some((1, 1)),
-                _ if p % 4 == 1 && is_prime(p) => Some(two_squares_prime(p)?),
+                _ if p % 4 == 1 && is_prime(p) => two_squares_prime(p).ok(),
                 _ => None,
             };
             if let Some((c, d)) = split {
-                let result = scale_decomposition(
-                    [
-                        witness_u64(a)?,
-                        witness_u64(b)?,
-                        c,
-                        d,
-                    ],
-                    scale,
-                )?;
+                let result = scale_decomposition([witness_u64(a)?, witness_u64(b)?, c, d], scale)?;
                 return Ok(Some(verify_decomposition(result, target)?));
             }
         }
@@ -168,15 +160,7 @@ fn four_squares_via_two_square_residuals(
         for b in (0..=b_max).rev() {
             let p = rem_a - b * b;
             if let Some((c, d)) = two_squares(p)? {
-                let result = scale_decomposition(
-                    [
-                        witness_u64(a)?,
-                        witness_u64(b)?,
-                        c,
-                        d,
-                    ],
-                    scale,
-                )?;
+                let result = scale_decomposition([witness_u64(a)?, witness_u64(b)?, c, d], scale)?;
                 return verify_decomposition(result, target);
             }
         }
@@ -385,21 +369,33 @@ fn pow_mod(mut base: u128, mut exp: u128, m: u128) -> u128 {
     acc
 }
 
-/// Deterministic Miller–Rabin primality test, exact for every `u128`.
-///
-/// The witness set `{2,3,5,7,11,13,17,19,23,29,31,37}` is a proven
-/// deterministic certificate for all `n < 3.3 * 10^24`; for the full `u128`
-/// range we extend with additional small primes (Jaeschke / Sorli tables).
-const MILLER_RABIN_BASES_U128: &[u64] = &[
-    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
-];
+/// Deterministic Miller–Rabin for `n <= u64::MAX`. Above that, strong probable-prime
+/// tests with several small bases (totality of [`four_squares_u128`] still comes from
+/// the theorem-backed fallback if the fast path skips a split).
+const MILLER_RABIN_BASES_U64: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
+
+const STRONG_BASES_U128: [u64; 7] = [2, 3, 5, 7, 11, 13, 17];
 
 fn is_prime(n: u128) -> bool {
     if n < 2 {
         return false;
     }
-    for &base in MILLER_RABIN_BASES_U128 {
-        let base = u128::from(base);
+    if n <= u128::from(u64::MAX) {
+        return is_prime_u64(n as u64);
+    }
+    if n.is_multiple_of(2) || n.is_multiple_of(3) {
+        return n == 2 || n == 3;
+    }
+    STRONG_BASES_U128
+        .iter()
+        .all(|&base| is_strong_probable_prime(u128::from(base), n))
+}
+
+fn is_prime_u64(n: u64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    for &base in &MILLER_RABIN_BASES_U64 {
         if n == base {
             return true;
         }
@@ -409,21 +405,44 @@ fn is_prime(n: u128) -> bool {
     }
     let trailing = (n - 1).trailing_zeros();
     let odd = (n - 1) >> trailing;
-    'witness: for &base in MILLER_RABIN_BASES_U128 {
-        let base = u128::from(base);
-        let mut x = pow_mod(base, odd, n);
-        if x == 1 || x == n - 1 {
+    'witness: for &base in &MILLER_RABIN_BASES_U64 {
+        let mut x = pow_mod(u128::from(base), u128::from(odd), u128::from(n));
+        if x == 1 || x == n as u128 - 1 {
             continue;
         }
         for _ in 1..trailing {
-            x = mul_mod(x, x, n);
-            if x == n - 1 {
+            x = mul_mod(x, x, u128::from(n));
+            if x == n as u128 - 1 {
                 continue 'witness;
             }
         }
         return false;
     }
     true
+}
+
+/// Strong probable prime test (base `a`).
+fn is_strong_probable_prime(a: u128, n: u128) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if a.is_multiple_of(n) {
+        return true;
+    }
+    let mut d = n - 1;
+    let s = d.trailing_zeros();
+    d >>= s;
+    let mut x = pow_mod(a, d, n);
+    if x == 1 || x == n - 1 {
+        return true;
+    }
+    for _ in 1..s {
+        x = mul_mod(x, x, n);
+        if x == n - 1 {
+            return true;
+        }
+    }
+    false
 }
 
 /// Write a prime `p` that is `2` or `≡ 1 (mod 4)` as `c^2 + d^2`.
@@ -538,6 +557,10 @@ mod tests {
         // Carmichael numbers must not fool the test.
         assert!(!is_prime(561));
         assert!(!is_prime(41_041));
+        // Strong probable-prime path above `u64::MAX` (M127).
+        let m127 = (1u128 << 127) - 1;
+        assert!(is_prime(m127));
+        assert!(!is_prime(m127 - 1));
     }
 
     #[test]
