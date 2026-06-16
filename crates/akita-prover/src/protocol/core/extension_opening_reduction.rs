@@ -76,17 +76,11 @@ where
 {
     let _span =
         tracing::info_span!("extension_opening_sparse_terms", num_terms = polys.len()).entered();
-    let mut witnesses = Vec::with_capacity(polys.len());
-    for poly in polys {
-        let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
-            return Ok(None);
-        };
-        witnesses.push(witness);
-    }
-
-    let witness_evals = SparseExtensionOpeningWitness::linear_combination(
-        row_coefficients.iter().copied().zip(witnesses.iter()),
-    )?;
+    let Some(witness_evals) =
+        P::tensor_packed_extension_sparse_linear_combination::<E>(polys, row_coefficients)?
+    else {
+        return Ok(None);
+    };
     let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
     let term = if lazy_rounds == 0 {
         let factor_evals = {
@@ -201,24 +195,44 @@ where
     {
         let _span =
             tracing::info_span!("extension_opening_prepare_partials", width, split_bits).entered();
-        for poly in polys {
-            let mut base_evals = poly.base_evals()?;
-            if base_evals.len() > padded_len || (!pad_base_evals && base_evals.len() != padded_len)
-            {
+        if pad_base_evals {
+            for poly in polys {
+                let mut base_evals = poly.base_evals()?;
+                if base_evals.len() > padded_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: padded_len,
+                        actual: base_evals.len(),
+                    });
+                }
+                base_evals.resize(padded_len, F::zero());
+                let (opening, tensor) = derive_tensor_extension_opening_claim::<F, E>(
+                    num_vars,
+                    &base_evals,
+                    &padded_point,
+                )?;
+                partials.extend(tensor.column_partials);
+                openings.push(opening);
+                row_partials_by_claim.push(tensor.row_partials);
+            }
+        } else {
+            let point_partials =
+                P::tensor_extension_column_partials_batch::<E>(polys, &padded_point)?;
+            if point_partials.len() != num_claims {
                 return Err(AkitaError::InvalidSize {
-                    expected: padded_len,
-                    actual: base_evals.len(),
+                    expected: num_claims,
+                    actual: point_partials.len(),
                 });
             }
-            base_evals.resize(padded_len, F::zero());
-            let (opening, tensor) = derive_tensor_extension_opening_claim::<F, E>(
-                num_vars,
-                &base_evals,
-                &padded_point,
-            )?;
-            partials.extend(tensor.column_partials);
-            openings.push(opening);
-            row_partials_by_claim.push(tensor.row_partials);
+            for column_partials in point_partials {
+                let opening = derive_tensor_extension_opening_claim_from_partials::<F, E>(
+                    &padded_point,
+                    &column_partials,
+                )?;
+                let row_partials = tensor_row_partials_from_columns::<F, E>(&column_partials)?;
+                partials.extend(column_partials);
+                openings.push(opening);
+                row_partials_by_claim.push(row_partials);
+            }
         }
     }
     #[cfg(feature = "zk")]

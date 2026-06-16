@@ -1,7 +1,7 @@
 //! Prover core state shared by root orchestration during crate extraction.
 
 use crate::protocol::extension_opening_reduction::{
-    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
@@ -44,7 +44,7 @@ use akita_types::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     append_opening_batch_shape_to_transcript, basis_weights,
     batched_eval_target_from_opening_batch, build_trace_table_scaled,
-    derive_tensor_extension_opening_claim, embed_ring_subfield_scalar, embed_ring_subfield_vector,
+    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     ensure_trace_stage2_supported, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords,
