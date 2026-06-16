@@ -179,17 +179,17 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 
 ### Acceptance Criteria
 
-- [ ] `akita-challenges::jl` compiles and exposes `JlProjectionMatrix` with transcript-seeded `sample`, a flat `project(&[F])`, signed-coordinate validation, and checked norm helpers, generic over `F: FieldCore + CanonicalField` (no `const D` in this crate).
-- [ ] `akita-challenges::jl::mle` exposes `eval_jl_mle_at` (fused verifier path) and `build_jl_row_weights` (prover path); fast kernels match reference on fp32/fp64/fp128 extension fields used by shipped configs; tail-geometry bench documents throughput at `n_rows = 256` and `cols` in the shipped tail range.
-- [ ] Determinism test: two transcripts in identical state yield byte-identical matrices and equal projections.
-- [ ] Projection-vs-reference test: `project` matches a naive integer reference for random witnesses across fields and dims.
-- [ ] fp128 digit test: small balanced digits project correctly over an fp128 base field; a non-digit, full-magnitude fp128 coefficient (centered value past `i64`) is rejected without panic.
-- [ ] Signed-coordinate tests: accepted coordinates embed injectively into the base field, and boundary aliases are rejected.
-- [ ] `akita-prover::protocol::jl` consistency prove/verify round-trips for honest `(w, p)` across representative non-degenerate `(field, ring dim)` combinations, using public test witness data or an explicit `w_tilde(r)` evaluation hook.
-- [ ] Soundness-direction tests: an image inconsistent with `w` is rejected by the consistency sumcheck for all but a negligible fraction of `r_J`; an over-norm image is rejected by the norm check.
-- [ ] Malformed-input tests: wrong matrix shape, wrong image length, wrong point dimension all return `AkitaError`, never panic.
-- [ ] All pre-existing workspace tests pass unchanged.
-- [ ] `cargo fmt -q`, `cargo clippy --all -- -D warnings`, and the relevant test passes are green.
+- [x] `akita-challenges::jl` compiles and exposes `JlProjectionMatrix` with transcript-seeded `sample`, a flat `project(&[F])`, signed-coordinate validation, and checked norm helpers, generic over `F: FieldCore + CanonicalField` (no `const D` in this crate).
+- [x] `akita-challenges::jl::mle` exposes `eval_jl_mle_at` (fused verifier path) and `build_jl_row_weights` (prover path); fast kernels match reference on fp32/fp64/fp128 extension fields used by shipped configs; tail-geometry bench documents throughput at `n_rows = 256` and `cols` in the shipped tail range.
+- [x] Determinism test: two transcripts in identical state yield byte-identical matrices and equal projections.
+- [x] Projection-vs-reference test: `project` matches a naive integer reference for random witnesses across fields and dims.
+- [x] fp128 digit test: small balanced digits project correctly over an fp128 base field; a non-digit, full-magnitude fp128 coefficient (centered value past `i64`) is rejected without panic.
+- [x] Signed-coordinate tests: accepted coordinates embed injectively into the base field, and boundary aliases are rejected.
+- [x] `akita-prover::protocol::jl` consistency prove/verify round-trips for honest `(w, p)` across representative non-degenerate `(field, ring dim)` combinations, using public test witness data or an explicit `w_tilde(r)` evaluation hook.
+- [x] Soundness-direction tests: an image inconsistent with `w` is rejected by the consistency sumcheck for all but a negligible fraction of `r_J`; an over-norm image is rejected by the norm check.
+- [x] Malformed-input tests: wrong matrix shape, wrong image length, wrong point dimension all return `AkitaError`, never panic.
+- [x] All pre-existing workspace tests pass unchanged.
+- [x] `cargo fmt -q`, `cargo clippy --all -- -D warnings`, and the relevant test passes are green.
 
 ### Testing Strategy
 
