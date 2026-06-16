@@ -316,7 +316,7 @@ where
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
-    use crate::protocol::core::root_fold::compute_trace_target_root;
+    use crate::protocol::core::root_fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;
@@ -352,9 +352,8 @@ mod tests {
 
         let opening_batch = OpeningBatch::same_point(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
-        let err = match compute_trace_target_root::<TestF, TestF, _, D>(
+        let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,
-            None,
             &folded_rings,
             &prepared_point,
             &[],

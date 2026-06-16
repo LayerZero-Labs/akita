@@ -149,67 +149,53 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     B: ProverComputeBackend<F>,
 {
-    let (fold_inputs, protocol_point, row_coefficients, reduction, expected_openings) =
-        if needs_extension_reduction {
-            let path = if pad_base_evals { "recursive" } else { "root" };
-            let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
-                eor_polys,
-                opening_batch,
-                opening_point,
-                #[cfg(feature = "zk")]
-                public_openings,
-                pad_base_evals,
-                transcript,
-                path,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding,
-            )?;
-            if let Some(expected_openings) = expected_openings.as_ref() {
-                if proved.openings != *expected_openings {
-                    return Err(AkitaError::InvalidProof);
-                }
+    let (fold_inputs, protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
+        let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
+            eor_polys,
+            opening_batch,
+            opening_point,
+            #[cfg(feature = "zk")]
+            public_openings,
+            pad_base_evals,
+            transcript,
+            if pad_base_evals { "recursive" } else { "root" },
+            #[cfg(feature = "zk")]
+            &mut zk_hiding,
+        )?;
+        if let Some(expected_openings) = expected_openings.as_ref() {
+            if proved.openings != *expected_openings {
+                return Err(AkitaError::InvalidProof);
             }
-            let fold_inputs = {
-                let _span = tracing::info_span!(
-                    "extension_transform_polys",
-                    path,
-                    num_claims = fold_polys.len()
-                )
-                .entered();
-                cfg_iter!(fold_polys)
-                    .map(|poly| {
-                        <FoldP as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(
-                            *poly,
-                        )
-                    })
-                    .collect::<Result<Vec<FoldInputPoly<'a, F, FoldP, D>>, _>>()?
-            };
-            (
-                fold_inputs,
-                proved.protocol_point,
-                Some(proved.row_coefficients),
-                Some(proved.reduction),
-                expected_openings,
-            )
-        } else {
-            validate_non_eor()?;
-            let fold_inputs = fold_polys
-                .iter()
-                .map(|poly| FoldInputPoly::Original(*poly))
-                .collect::<Vec<_>>();
-            let row_coefficients = if pad_base_evals {
-                Some(vec![E::one()])
-            } else {
-                None
-            };
-            (
-                fold_inputs,
-                non_eor_protocol_point,
-                row_coefficients,
-                None,
-                None,
-            )
+        }
+        let fold_inputs = {
+            let _span =
+                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
+                    .entered();
+            cfg_iter!(fold_polys)
+                .map(|poly| {
+                    <FoldP as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(*poly)
+                })
+                .collect::<Result<Vec<FoldInputPoly<'a, F, FoldP, D>>, _>>()?
         };
+        (
+            fold_inputs,
+            proved.protocol_point,
+            Some(proved.row_coefficients),
+            Some(proved.reduction),
+        )
+    } else {
+        validate_non_eor()?;
+        let fold_inputs = fold_polys
+            .iter()
+            .map(|poly| FoldInputPoly::Original(*poly))
+            .collect::<Vec<_>>();
+        let row_coefficients = if pad_base_evals {
+            Some(vec![E::one()])
+        } else {
+            None
+        };
+        (fold_inputs, non_eor_protocol_point, row_coefficients, None)
+    };
     let prepared_point = prepare_opening_point::<F, E, D>(
         &protocol_point,
         basis,
@@ -223,14 +209,8 @@ where
     for pt in &prepared_point.padded_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
-    let trace_expected_openings = if pad_base_evals {
-        None
-    } else {
-        expected_openings.as_deref()
-    };
-    let (trace_target, row_coefficients) = compute_trace_target_root::<F, E, T, D>(
+    let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
         &reduction,
-        trace_expected_openings,
         &folded_rings,
         &prepared_point,
         &protocol_point,
@@ -295,9 +275,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn compute_trace_target_root<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
-    expected_openings: Option<&[E]>,
     folded_rings: &[CyclotomicRing<F, D>],
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     protocol_point: &[E],
@@ -324,11 +303,6 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(expected_openings) = expected_openings {
-        if openings != expected_openings {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
     let row_coefficients = if let Some(row_coefficients) = row_coefficients {
         row_coefficients
     } else {
