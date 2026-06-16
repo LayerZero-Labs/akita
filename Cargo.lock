@@ -50,6 +50,7 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-field",
  "akita-transcript",
  "criterion",

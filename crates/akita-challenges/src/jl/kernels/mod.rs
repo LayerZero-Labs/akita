@@ -10,6 +10,7 @@
 
 mod reference;
 mod scalar;
+pub(crate) use scalar::SIGNS_FOR_BYTE;
 
 #[cfg(target_arch = "x86_64")]
 mod simd_x86;

@@ -25,6 +25,9 @@ use akita_transcript::Transcript;
 use crate::sampler::xof::XofCursor;
 
 mod kernels;
+pub mod mle;
+
+pub use mle::{build_jl_row_weights, eval_jl_mle_at, eval_mle_from_weights};
 
 /// PRG domain separator for the JL matrix stream. Distinct from the
 /// sparse-challenge PRG domain so the two streams cannot collide on a shared
@@ -82,6 +85,12 @@ impl JlProjectionMatrix {
     fn row_slice(&self, row_idx: usize) -> &[u8] {
         let start = row_idx * self.row_bytes;
         &self.packed_rows[start..start + self.row_bytes]
+    }
+
+    /// Packed row bytes for MLE kernels (`pub(crate)` for `jl::mle`).
+    #[inline]
+    pub(crate) fn row_bytes_slice(&self, row_idx: usize) -> &[u8] {
+        self.row_slice(row_idx)
     }
 
     /// Sample a dense ternary matrix deterministically from the transcript.
