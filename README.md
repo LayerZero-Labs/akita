@@ -9,20 +9,34 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 
 - `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
-- `akita-types` owns shared proof, setup, schedule, layout, and commitment data shapes used by both roles.
-- `akita-config` owns concrete runtime config presets and config-backed schedule/SIS policy.
+- `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
+- `akita-planner` is the `Cfg`-free schedule owner: shipped generated tables, on-demand expansion, and the schedule-search DP. It sits *below* `akita-config`.
+- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-planner` (`runtime_schedule` delegates to `akita_planner::get_schedule`).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
-- `akita-verifier` owns verifier replay without depending on prover-only polynomial backends.
-- `akita-prover` owns commitment, proving, setup expansion, recursive witness construction, and polynomial backends.
-- `akita-scheme` owns the end-to-end `AkitaCommitmentScheme` orchestration that wires config, setup, prover, and verifier crates together.
-- `akita-pcs` is the umbrella package that re-exports the broad public surface and hosts examples, benches, and end-to-end integration tests.
-- `akita-planner` owns offline schedule search and proof-size/security planning.
+- `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches `akita-planner` transitively, so the schedule-search DP is verifier-reachable.
+- `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.
+- `akita-r1cs` owns the deferred R1CS relations used only by the zero-knowledge (`zk`) path; it is not on the transparent prove/verify path.
+- `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the broad public surface, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
 
 Verifier-only consumers should prefer the slim role crates directly:
 `akita-verifier` for verification, `akita-types` for proof/setup/claim shapes,
 and `akita-config` for concrete schedule/config policy. The umbrella
 `akita-pcs` package is convenient for examples and end-to-end use, but it also
 pulls in prover-facing APIs.
+
+## Documentation
+
+The [Akita Book](book/README.md) is the **canonical target** for narrative
+documentation (how the scheme works, how to use it, and the foundations). Most
+chapters are still stubs that cite source paths and specs to fold; until prose
+lands, integrators should also read [`AGENTS.md`](AGENTS.md),
+[`specs/single-point-opening-batch.md`](specs/single-point-opening-batch.md),
+and [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
+Build the book locally with `./scripts/serve-book.sh` (see
+[`book/README.md`](book/README.md) for the toolchain). `AGENTS.md` is the
+maintainer/agent runbook, and `specs/` holds the design records (lifecycle in
+[`specs/PRUNING.md`](specs/PRUNING.md)). Documentation guardrails (CI + PR
+comments) are in [`docs/documentation.md`](docs/documentation.md).
 
 ## Lineage
 
