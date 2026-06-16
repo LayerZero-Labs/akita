@@ -44,10 +44,10 @@ use akita_types::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     append_opening_batch_shape_to_transcript, basis_weights,
     batched_eval_target_from_opening_batch, build_trace_table_scaled,
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    ensure_trace_stage2_supported, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
+    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
+    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape, prepare_opening_point,
+    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_current_w_len, root_direct_schedule,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
@@ -84,6 +84,7 @@ pub(in crate::protocol::core) struct ExtensionOpeningReduction<L: FieldCore> {
 }
 
 mod extension_opening_reduction;
+mod fold;
 mod prove;
 mod root_fold;
 mod suffix;
@@ -91,79 +92,13 @@ mod suffix;
 mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
+pub(in crate::protocol::core) use fold::{prove_fold, PreparedFold};
 pub use prove::{
     batched_prove, prepare_batched_prove_inputs, prove_folded_batched, prove_root_direct,
 };
 pub(in crate::protocol::core) use root_fold::evaluate_claims_at_prepared_point;
 pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
-pub(in crate::protocol::core) use suffix::{prove_fold, PreparedFold};
 pub use suffix::{prove_suffix, SuffixProverState};
-
-fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
-    lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    col_bits: usize,
-    ring_bits: usize,
-    num_trace_blocks: usize,
-) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
-    let layout =
-        trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
-    Ok((segment, layout))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_recursive_stage2_trace_table<F, E, const D: usize>(
-    lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared: &PreparedOpeningPoint<F, E, D>,
-    trace_scale: E,
-    output_scale: E,
-    col_bits: usize,
-    ring_bits: usize,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
-    let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_root_stage2_trace_table<F, E, const D: usize>(
-    lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
-    row_coefficients: &[E],
-    trace_claim_scales: Option<&[E]>,
-    output_scale: E,
-    col_bits: usize,
-    ring_bits: usize,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    let num_trace_blocks = instance
-        .opening_batch()
-        .num_claims()
-        .checked_mul(lp.num_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-    let (_, layout) =
-        trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
-    let public_weights = trace_public_weights_root_terms::<F, E, D>(
-        lp,
-        instance.opening_batch(),
-        prepared_point,
-        row_coefficients,
-        trace_claim_scales,
-    )?;
-    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
-}
 
 /// Cursor into the proof-level hiding witness allocated at batched-prove start.
 #[cfg(feature = "zk")]

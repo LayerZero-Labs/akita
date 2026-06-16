@@ -69,9 +69,6 @@ where
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatch::same_point(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
-    if proof.extension_opening_reduction().is_some() {
-        append_claim_values_to_transcript::<F, L, T>(&openings, transcript);
-    }
     let row_coefficients = vec![L::one()];
     #[cfg(feature = "zk")]
     let opening_masks = vec![Some(&current_state.opening_mask)];

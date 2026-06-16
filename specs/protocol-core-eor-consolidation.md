@@ -5,7 +5,7 @@
 | Author(s)     | Amirhossein Khajehpour                     |
 | Created       | 2026-06-15                                 |
 | Status        | implemented                                |
-| PR            |                                            |
+| PR            | #194                                       |
 | Supersedes    |                                            |
 | Superseded-by |                                            |
 | Book-chapter  | how/proving/extension-opening-reduction.md |
@@ -42,9 +42,19 @@ The refactor is implemented in the prover and verifier protocol crates:
 
 ### Invariants
 
-- The refactor must not change proof bytes or transcript bytes. EOR still absorbs
-  logical openings, row coefficients, partials, and sumcheck messages in the same
-  order; only the module homes and in-memory preparation path changed.
+- Serialized proof layout and `ExtensionOpeningReductionProof` wire encoding are
+  unchanged. Only module homes and in-memory preparation paths moved.
+- Fiat–Shamir transcript layout is path-specific and must stay aligned with the
+  shipped prover/verifier replay:
+  - **Root EOR** (`pad_base_evals = false`): absorb logical openings, sample row
+    coefficients γ, absorb proof partials, sample EOR η, then run the EOR
+    sumcheck.
+  - **Recursive suffix EOR** (`pad_base_evals = true`, single claim): absorb
+    proof partials only, sample EOR η, with row coefficient fixed to `[1]` (no
+    opening absorb and no γ squeeze). The verifier suffix path must not
+    pre-absorb the carried opening before `verify_fold_eor`.
+- Root and suffix share one implementation (`prepare_extension_opening_reduction`
+  / `verify_fold_eor`); the `pad_base_evals` flag selects the branch above.
 - Prover and verifier must keep the same root/suffix boundary. Root folds use
   `BlockOrder::RowMajor`; suffix folds use `BlockOrder::ColumnMajor`.
 - EOR is optional and shape-driven. Non-EOR roots use `FoldInputPoly::Original`;
@@ -74,9 +84,13 @@ The refactor is implemented in the prover and verifier protocol crates:
 
 - `crates/akita-prover/src/protocol/mod.rs` exposes `core`, not the old
   root/suffix `flow` module.
-- `crates/akita-prover/src/protocol/core.rs` owns the shared fold state and
+- `crates/akita-prover/src/protocol/core.rs` owns shared core wiring and
   re-exports the public prove entry points from `core/prove.rs`,
-  `core/root_fold.rs`, and `core/suffix.rs`.
+  `core/root_fold.rs`, `core/suffix.rs`, and `core/fold.rs`.
+- `crates/akita-prover/src/protocol/core/fold.rs` owns the shared per-fold
+  prover engine (`PreparedFold`, `prove_fold`, stage-1/2/3, ring-switch binding).
+- `crates/akita-prover/src/protocol/core/suffix.rs` owns suffix state,
+  `prove_suffix`, and per-level `prepare_fold_data`.
 - `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`
   contains the shared EOR preparation and proof helpers used by both root and
   recursive fold paths.
@@ -87,8 +101,10 @@ The refactor is implemented in the prover and verifier protocol crates:
 - Root EOR materialization calls
   `AkitaPolyOps::tensor_packed_extension_fold_input` and then builds the
   ring-relation over `&FoldInputPoly` references.
-- Non-EOR root folds still borrow original polynomials through
-  `FoldInputPoly::Original`.
+- `crates/akita-verifier/src/protocol/core/fold.rs` owns shared per-fold replay
+  (`verify_fold_eor`, `verify_fold`, stage verifiers).
+- Recursive suffix EOR uses partials-first transcript replay (`pad_base_evals =
+  true`); root EOR keeps openings-then-γ-then-partials.
 - The default validation suite passes:
   `cargo fmt -q`,
   `cargo clippy --all --message-format=short -q -- -D warnings`, and
@@ -96,8 +112,11 @@ The refactor is implemented in the prover and verifier protocol crates:
 
 ### Testing Strategy
 
-The change is intended to be behavior-preserving, so the primary evidence is that
-existing root, suffix, EOR, transcript, and end-to-end tests pass unchanged.
+Primary evidence is existing root, suffix, EOR, and end-to-end tests passing
+after the refactor. Because suffix EOR transcript layout is path-specific,
+regressions there will not always surface in root-only or non-EOR tests; include
+at least one recursive extension-field suffix round-trip when touching EOR
+transcript code.
 
 Required checks:
 
@@ -110,15 +129,25 @@ Additional review checks:
 
 - Search for stale module references to `protocol/flow/root_extension`.
 - Search for root-only EOR materialization paths that bypass `FoldInputPoly`.
+- Confirm suffix EOR does not pre-absorb openings on the verifier or absorb them
+  on the prover when `pad_base_evals = true`.
 - Confirm terminal witness shape checks still use the segment-aware
   `admits_realized` relation after merging main's tail encoding work.
 
 ### Performance
 
-No proof-size or transcript performance movement is expected from the module
-restructure itself. The performance-sensitive part is preserving sparse EOR
-storage: one-hot tensor projections must remain `ProjectedSparse` so the sparse
-sumcheck path is not accidentally densified before relation construction.
+No proof-size movement is expected from the module restructure itself. Two
+performance boundaries matter:
+
+- **Sparse EOR storage:** one-hot tensor projections must remain
+  `ProjectedSparse` so the sparse sumcheck path is not accidentally densified
+  before relation construction. Root EOR must call the one-hot batched partial
+  APIs (`tensor_extension_column_partials_batch`,
+  `tensor_packed_extension_sparse_linear_combination`), not the dense base-eval
+  fallback.
+- **Fold engine locality:** moving `prove_fold` / `verify_fold` into
+  `core/fold.rs` is structural only; hot paths stay the same once sparse EOR
+  dispatch is preserved.
 
 ## Design
 
@@ -127,25 +156,30 @@ sumcheck path is not accidentally densified before relation construction.
 The prover protocol layout was renamed and split to match the verifier's current
 root/suffix terminology:
 
-- `protocol/core.rs` is the shared prover core module. It owns imports, shared
-  fold helpers, trace-table helpers, and the private submodule wiring.
+- `protocol/core.rs` is the shared prover core module. It owns imports, ZK hiding
+  state, and private submodule wiring.
+- `protocol/core/fold.rs` owns the shared per-fold prover engine: trace-table
+  helpers, `PreparedFold`, `prove_fold`, stage-1/2/3, and ring-switch binding.
 - `protocol/core/prove.rs` owns top-level batched prove orchestration after the
   schedule and setup inputs are selected.
 - `protocol/core/root_fold.rs` owns folded-root and terminal-root preparation.
   It performs opening-batch transcript setup, optional EOR preparation, root
   opening-point preparation, root ring-relation construction, and dispatch into
-  the shared fold prover.
-- `protocol/core/suffix.rs` owns recursive suffix folds. It prepares recursive
-  EOR when needed, builds suffix ring relations, handles terminal witness
-  materialization, and carries `SuffixProverState`.
+  `prove_fold`.
+- `protocol/core/suffix.rs` owns recursive suffix orchestration: it carries
+  `SuffixProverState`, runs `prove_suffix`, and per-level `prepare_fold_data`
+  before dispatching into `prove_fold`.
 - `protocol/core/extension_opening_reduction.rs` owns common EOR preparation:
-  partial opening preparation, row coefficient sampling, sparse/dense term
-  construction, sumcheck proving, and conversion from reduction challenges to the
-  protocol point.
+  partial opening preparation, path-selected transcript replay (root vs suffix),
+  sparse/dense term construction, sumcheck proving, and conversion from reduction
+  challenges to the protocol point.
 
 The verifier mirrors the same conceptual split:
 
-- `crates/akita-verifier/src/protocol/core.rs` owns shared fold replay helpers.
+- `crates/akita-verifier/src/protocol/core.rs` owns shared imports, terminal
+  witness replay, and submodule wiring.
+- `core/fold.rs` owns shared per-fold replay: EOR verification, stage-1/2/3
+  replay, ring-switch replay, `verify_fold`.
 - `core/root_fold.rs` verifies the folded-root or one-fold terminal-root payload.
 - `core/suffix.rs` verifies recursive suffix folds after the root handoff.
 - `core/verify.rs` remains the public batched verifier orchestration once the
@@ -161,12 +195,14 @@ prepared tensor partials, sampled row coefficients, built dense or sparse EOR
 terms, and then separately transformed root polynomials into a projected form for
 ring-relation construction.
 
-The consolidated path has one EOR lifecycle:
+The consolidated path has one EOR lifecycle, with transcript branching on
+`pad_base_evals`:
 
-1. `prepare_extension_opening_reduction` pads the logical opening point, derives
-   tensor column partials, appends logical openings, samples row coefficients,
-   absorbs proof partials, samples the EOR `eta` challenges, and builds the EOR
-   sumcheck input claim.
+1. `prepare_extension_opening_reduction` pads the logical opening point and
+   derives tensor column partials. On the **root** path it then absorbs logical
+   openings, samples row coefficients γ, absorbs proof partials, and samples EOR
+   η. On the **recursive suffix** path it skips opening absorb and γ, fixes the
+   row coefficient to `[1]`, absorbs proof partials, and samples EOR η.
 2. `build_extension_opening_reduction_terms` selects sparse terms when every
    input supports sparse tensor packed extension evaluations; otherwise it builds
    dense terms from base evaluations and tensor equality factors.
@@ -222,17 +258,31 @@ the same EOR preparation and ring-relation construction surface as the root path
 
 ### Transcript and Proof Compatibility
 
-The refactor changes where code lives, not the protocol byte stream.
+**Proof bytes.** The refactor does not change serialized proof objects. EOR proof
+segments, fold proofs, and terminal witness encodings are unchanged on the wire.
 
-- Opening-batch shape, commitments, shared opening points, logical openings,
-  row coefficients, EOR partials, EOR challenges, ring-switch messages, stage-1
-  messages, stage-2 messages, and terminal witness payloads remain in the same
-  order.
-- `ExtensionOpeningReductionProof` remains the wire proof object.
-- `PreparedFold` carries the optional EOR proof beside the ordinary
-  `RingRelationInstance` and `RingRelationWitness`.
-- Verifier replay continues to derive the same prepared points and trace claims
-  from the proof and public inputs.
+**Transcript bytes.** Layout is unchanged for the root fold and for non-EOR
+rounds. Recursive suffix EOR is the subtle case: main never absorbed the carried
+single opening before partials. An intermediate consolidation step accidentally
+replayed the root opening-first layout on suffix rounds (changing Fiat–Shamir
+challenges). The shipped fix restores partials-first suffix replay on both prover
+and verifier.
+
+| Phase | Root EOR | Recursive suffix EOR |
+|-------|----------|----------------------|
+| Openings absorbed before partials | yes | no |
+| Row coefficient γ sampled | yes (batching) | no (implicit `[1]`) |
+| Partials absorbed | yes | yes |
+| EOR η sampled | yes | yes |
+| ZK masked opening on suffix path | N/A (root uses public openings when provided) | prover passes `None`; verifier checks opening against partials inside `verify_fold_eor` |
+
+Everything after EOR (ring switch, stage-1/2/3, terminal witness) keeps the
+pre-refactor order. Labels and sumcheck message shapes are unchanged.
+
+**Review note.** Do not claim “transcript bytes unchanged” without the root vs
+suffix split above. This spec is orthogonal to `specs/fold-linf-rejection.md`
+(Golomb `z` / `β_inf` tail rejection); that work does not alter EOR transcript
+layout.
 
 ## Documentation
 
@@ -249,5 +299,7 @@ record.
 - `crates/akita-prover/src/backend/field_reduction.rs`
 - `crates/akita-prover/src/protocol/core.rs`
 - `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`
+- `crates/akita-prover/src/protocol/core/fold.rs`
 - `crates/akita-prover/src/protocol/core/root_fold.rs`
 - `crates/akita-prover/src/protocol/core/suffix.rs`
+- `crates/akita-verifier/src/protocol/core/fold.rs`

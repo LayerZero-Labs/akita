@@ -247,22 +247,31 @@ where
         .collect::<Vec<_>>();
     #[cfg(not(feature = "zk"))]
     let proof_partials = partials.clone();
-    #[cfg(feature = "zk")]
-    let transcript_openings = if let Some(public_openings) = public_openings {
-        if public_openings.len() != openings.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: openings.len(),
-                actual: public_openings.len(),
-            });
+    let row_coefficients = if pad_base_evals {
+        if num_claims != 1 {
+            return Err(AkitaError::InvalidInput(
+                "recursive extension-opening reduction expects a single claim".to_string(),
+            ));
         }
-        public_openings
+        vec![E::one()]
     } else {
-        openings.as_slice()
+        #[cfg(feature = "zk")]
+        let transcript_openings = if let Some(public_openings) = public_openings {
+            if public_openings.len() != openings.len() {
+                return Err(AkitaError::InvalidSize {
+                    expected: openings.len(),
+                    actual: public_openings.len(),
+                });
+            }
+            public_openings
+        } else {
+            openings.as_slice()
+        };
+        #[cfg(not(feature = "zk"))]
+        let transcript_openings = openings.as_slice();
+        append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
+        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
     };
-    #[cfg(not(feature = "zk"))]
-    let transcript_openings = openings.as_slice();
-    append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     if row_partials_by_claim.len() != row_coefficients.len() {
         return Err(AkitaError::InvalidSize {
             expected: row_partials_by_claim.len(),
