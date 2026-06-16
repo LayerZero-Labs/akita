@@ -1082,8 +1082,8 @@ Boundary carries `h_0` and `h_5` (`h_{E+1}` with `E = 4`) are zero; only
    ```
 
    The tight budget `H_1 = 1,161,297` is what the honest prover needs;
-   the committed layout allows up to `H'_1 = 2,097,148`, a factor‑1.8 envelope
-   that keeps base‑2 cells within a factor `2` of tight `H_e` and makes the
+   the committed layout allows up to `H'_1 = 2,097,148`, a factor-1.8 envelope
+   that keeps base-2 cells within a factor `2` of tight `H_e` and makes the
    no-wrap gate stricter than it would be with `H_e` alone.
 
 **Takeaway:** non-power-of-two `H_e` is handled by rounding up to a representable
