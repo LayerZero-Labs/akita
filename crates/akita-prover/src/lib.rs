@@ -27,10 +27,11 @@ pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_setup_prefix, commit_with_params,
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
+pub use backend::FoldInputPoly;
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
+    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, SingleChunkEntry,
+    SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
 };
 pub use commit::{
     commit_w, AjtaiOpeningType, AjtaiOpeningView, CommitBackend, MatrixRole, MatrixSpec,
@@ -44,7 +45,7 @@ pub use compute::{
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, commit_next_w, prepare_batched_prove_inputs, prove_folded_batched, prove_root,
+    batched_prove, commit_next_w, prepare_batched_prove_inputs, prove, prove_root,
     prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, RingSwitchOutput,
     SuffixProverState,
@@ -138,6 +139,23 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         None
     }
 
+    /// Materialize the base-field evaluation table for this polynomial view.
+    ///
+    /// Root backends usually expose this through their direct witness payload.
+    /// Recursive suffix views can override it to convert their carried digit
+    /// representation into the padded field-element cube they represent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend cannot expose base-field evaluations.
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
+        })?;
+        Ok(field_elems.coeffs().to_vec())
+    }
+
     /// Prover per-block fold.
     ///
     /// For each contiguous block of `block_len` ring elements, computes
@@ -213,23 +231,17 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 actual: point.len(),
             });
         }
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root extension evaluation requires field-element root witness".to_string(),
-            )
-        })?;
+        let base_evals = self.base_evals()?;
         let expected_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput("root extension evaluation table length overflow".to_string())
         })?;
-        if field_elems.coeff_len() != expected_len {
+        if base_evals.len() != expected_len {
             return Err(AkitaError::InvalidSize {
                 expected: expected_len,
-                actual: field_elems.coeff_len(),
+                actual: base_evals.len(),
             });
         }
-        let mut layer = field_elems
-            .coeffs()
+        let mut layer = base_evals
             .iter()
             .copied()
             .map(E::lift_base)
@@ -268,15 +280,10 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 actual: logical_point.len(),
             });
         }
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root tensor partials require field-element root witness".to_string(),
-            )
-        })?;
+        let base_evals = self.base_evals()?;
         akita_types::tensor_column_partials_from_base_evals::<F, E>(
             num_vars,
-            field_elems.coeffs(),
+            &base_evals,
             logical_point,
         )
     }
@@ -314,13 +321,8 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         E: ExtField<F>,
     {
         let num_vars = self.num_vars();
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root tensor projection requires field-element root witness".to_string(),
-            )
-        })?;
-        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+        let base_evals = self.base_evals()?;
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
     }
 
     /// Materialize a sparse tensor-packed root witness when the backend can
@@ -411,21 +413,24 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(DensePoly::<F, D>::from_ring_coeffs(rings))
     }
 
-    /// Materialize the committed tensor-projected root polynomial while
-    /// preserving sparse transformed roots when available.
+    /// Materialize the committed tensor-projected fold input while preserving
+    /// sparse transformed roots when available.
     ///
     /// # Errors
     ///
     /// Returns an error if tensor packing or ring-subfield embedding rejects
     /// the transformed root shape.
-    fn tensor_packed_extension_root_poly<E>(
+    fn tensor_packed_extension_fold_input<E>(
         &self,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
     where
+        Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
-        Ok(self.tensor_packed_extension_poly::<E>()?.into())
+        Ok(FoldInputPoly::projected_dense(
+            self.tensor_packed_extension_poly::<E>()?,
+        ))
     }
 
     /// Prover decompose + challenge-fold step.
@@ -491,6 +496,10 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         <P as AkitaPolyOps<F, D>>::onehot_chunk_size(*self)
+    }
+
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        <P as AkitaPolyOps<F, D>>::base_evals(*self)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
@@ -593,14 +602,19 @@ where
         <P as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(*self)
     }
 
-    fn tensor_packed_extension_root_poly<E>(
+    fn tensor_packed_extension_fold_input<E>(
         &self,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
     where
+        Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
-        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(*self)
+        match <P as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(*self)? {
+            FoldInputPoly::Original(_) => Ok(FoldInputPoly::Original(self)),
+            FoldInputPoly::ProjectedDense(poly) => Ok(FoldInputPoly::ProjectedDense(poly)),
+            FoldInputPoly::ProjectedSparse(poly) => Ok(FoldInputPoly::ProjectedSparse(poly)),
+        }
     }
 
     fn decompose_fold(

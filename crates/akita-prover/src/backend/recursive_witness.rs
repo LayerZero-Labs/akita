@@ -17,6 +17,8 @@ use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::commit::{AjtaiOpeningType, AjtaiOpeningView};
+use akita_field::ExtField;
+use akita_types::tensor_packed_witness_evals;
 use std::marker::PhantomData;
 
 use crate::{AkitaPolyOps, DecomposeFoldWitness};
@@ -108,6 +110,27 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         self.padded_ring_elems
+    }
+
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidInput("recursive base evals length overflow".to_string())
+        })?;
+        let mut base_evals = Vec::with_capacity(expected_len);
+        for coeffs in self.coeffs {
+            base_evals.extend(coeffs.iter().copied().map(F::from_i8));
+        }
+        base_evals.resize(expected_len, F::zero());
+        Ok(base_evals)
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let base_evals = self.base_evals()?;
+        tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {

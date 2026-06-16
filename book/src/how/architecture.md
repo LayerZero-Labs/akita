@@ -32,5 +32,5 @@ shape.
 
 - Council architecture report §1 (full numbered flow with file/line citations).
 - `crates/akita-prover/src/protocol/flow/inputs.rs`, `flow/root_fold.rs`, `flow/recursive.rs`.
-- `crates/akita-verifier/src/protocol/batched.rs:441-613` (`verify_batched`).
+- `crates/akita-verifier/src/protocol/core/verify.rs` (`batched_verify`).
 - Paper §3.8 `sec:akita-full-pcs` (`fig:akita-scheme`, the four PCS algorithms).

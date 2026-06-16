@@ -373,7 +373,7 @@ same set the report identified for onehot/tensor):
 - `policy_of::<Cfg>()` → `PlannerPolicy.tiered` (planner sizing).
 - `shipped_table` discriminator (so a tiered policy never aliases the
   non-tiered table).
-- Prover `commit` / `prove_batched` and verifier `verify_batched` (so they build
+- Prover `commit` / `prove_batched` and verifier `batched_verify` (so they build
   / replay the F tier). Because the schedule already carries `tier_split` /
   `f_key` in `LevelParams`, most code branches on the *level params*, not the
   flag directly — the flag is only the planner input + the table discriminator.

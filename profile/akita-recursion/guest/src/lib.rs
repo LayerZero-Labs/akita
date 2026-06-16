@@ -7,7 +7,7 @@
 //!
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
 //! - `transcript_init`:   construct the `AkitaTranscript`.
-//! - `akita_verify`:      `akita_verifier::verify_batched` (the kernel
+//! - `akita_verify`:      `akita_verifier::batched_verify` (the kernel
 //!   that `akita-pcs::AkitaCommitmentScheme::batched_verify` wraps; we call it directly to
 //!   avoid `std::time::Instant::now()`, which traps on the Jolt RISC-V
 //!   emulator).
@@ -23,7 +23,7 @@ use akita_config::CommitmentConfig;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
-use akita_verifier::verify_batched;
+use akita_verifier::batched_verify;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -93,16 +93,16 @@ fn akita_verify(input: &[u8]) -> u32 {
 
     let openings = [decoded.opening];
 
-    // We call `verify_batched` directly (rather than the public
+    // We call `batched_verify` directly (rather than the public
     // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
     // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
     // `clock_gettime` support), so the scheme entry point would abort
-    // before any real verifier work runs. The new `verify_batched`
+    // before any real verifier work runs. The new `batched_verify`
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched::<Cfg, _, D>(
+    let result = batched_verify::<Cfg, _, D>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,

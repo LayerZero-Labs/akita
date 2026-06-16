@@ -46,7 +46,7 @@ use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
 use crate::compute::{FlatBlockTable, OneHotCommitBlocks};
-use crate::{AkitaPolyOps, DecomposeFoldWitness, RootTensorProjectionPoly, SparseRingPoly};
+use crate::{AkitaPolyOps, DecomposeFoldWitness, FoldInputPoly, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.

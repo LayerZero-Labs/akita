@@ -269,7 +269,7 @@ where
             "root schedule does not start with a fold".to_string(),
         ));
     }
-    prove_folded_batched::<Cfg, T, P, B, D>(
+    prove::<Cfg, T, P, B, D>(
         expanded,
         prefix_slots,
         backend,
@@ -297,7 +297,7 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
+pub fn prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
     backend: &B,
@@ -363,14 +363,6 @@ where
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
-    let PreparedBatchedProveInputs {
-        opening_point,
-        commitments,
-        opening_batch,
-        flat_polys,
-        commitment_hints,
-    } = prepared_claims;
-
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
         #[cfg(not(feature = "zk"))]
@@ -381,11 +373,11 @@ where
                 backend,
                 prepared,
                 transcript,
-                &flat_polys,
-                opening_batch,
-                opening_point,
-                &commitments,
-                commitment_hints,
+                &prepared_claims.flat_polys,
+                prepared_claims.opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.commitments,
+                prepared_claims.commitment_hints,
                 &root_scheduled,
                 #[cfg(not(feature = "zk"))]
                 terminal_shape,
@@ -413,11 +405,11 @@ where
         backend,
         prepared,
         transcript,
-        &flat_polys,
-        opening_batch,
-        opening_point,
-        &commitments,
-        commitment_hints,
+        &prepared_claims.flat_polys,
+        prepared_claims.opening_batch,
+        prepared_claims.opening_point,
+        &prepared_claims.commitments,
+        prepared_claims.commitment_hints,
         &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,
@@ -437,21 +429,15 @@ where
         schedule,
         setup_contribution_mode,
     )?;
-    let RecursiveSuffixOutcome {
-        steps,
-        #[cfg(feature = "zk")]
-        zk_hiding,
-        num_levels,
-    } = suffix;
     #[cfg(feature = "zk")]
-    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
+    let zk_hiding = suffix.zk_hiding.into_proof(zk_hiding_commitment)?;
     Ok((
         AkitaBatchedProof {
             #[cfg(feature = "zk")]
             zk_hiding,
             root,
-            steps,
+            steps: suffix.steps,
         },
-        num_levels,
+        suffix.num_levels,
     ))
 }
