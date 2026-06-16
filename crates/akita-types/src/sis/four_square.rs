@@ -159,8 +159,7 @@ fn four_squares_via_two_square_residuals(
         let b_max = rem_a.isqrt();
         for b in (0..=b_max).rev() {
             let p = rem_a - b * b;
-            let split = two_squares(p).unwrap_or_default();
-            if let Some((c, d)) = split {
+            if let Some((c, d)) = two_squares(p)? {
                 let result = scale_decomposition([witness_u64(a)?, witness_u64(b)?, c, d], scale)?;
                 return verify_decomposition(result, target);
             }
@@ -220,7 +219,7 @@ fn two_squares(n: u128) -> Result<Option<(u64, u64)>, AkitaError> {
 
     if is_prime(n) {
         return if n % 4 == 1 {
-            Ok(Some(two_squares_prime(n)?))
+            Ok(two_squares_prime(n).ok())
         } else {
             Ok(None)
         };
@@ -348,7 +347,7 @@ fn mul_mod(a: u128, b: u128, m: u128) -> u128 {
 fn add_mod(a: u128, b: u128, m: u128) -> u128 {
     let a = a % m;
     let b = b % m;
-    if a > m - b {
+    if a >= m - b {
         a + b - m
     } else {
         a + b
@@ -663,6 +662,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn modular_addition_reduces_to_zero_at_modulus() {
+        let m = 97u128;
+        assert_eq!(add_mod(m - 1, 1, m), 0);
+        assert_eq!(mul_mod(m - 1, 2, m), m - 2);
+        assert_eq!(pow_mod(2, m - 1, m), 1);
     }
 
     #[test]
