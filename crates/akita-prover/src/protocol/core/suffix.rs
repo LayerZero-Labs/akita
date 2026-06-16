@@ -209,49 +209,27 @@ where
     F: FieldCore + FromPrimitiveInt + Invertible,
     L: ExtField<F> + FpExtEncoding<F>,
 {
-    #[cfg(not(feature = "zk"))]
-    {
-        match reduction {
-            Some(reduction) => Ok((reduction.final_claim, reduction.final_factor)),
-            None => {
-                let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
-                let opening = recover_ring_subfield_inner_product::<F, L, D>(
-                    folded_ring,
-                    &prepared_point.packed_inner_point,
-                )?;
-                if opening != expected_opening {
-                    return Err(AkitaError::InvalidInput(
-                        "recursive opening does not match carried claim".to_string(),
-                    ));
-                }
-                Ok((opening, L::one()))
-            }
+    let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
+    let internal_claim = recover_ring_subfield_inner_product::<F, L, D>(
+        folded_ring,
+        &prepared_point.packed_inner_point,
+    )?;
+    match reduction {
+        Some(reduction) => {
+            check_extension_opening_reduction_output(
+                reduction.final_claim,
+                internal_claim,
+                reduction.final_factor,
+            )?;
+            Ok((reduction.final_claim, reduction.final_factor))
         }
-    }
-    #[cfg(feature = "zk")]
-    {
-        let folded_ring = folded_rings.first().ok_or(AkitaError::InvalidProof)?;
-        let internal_claim = recover_ring_subfield_inner_product::<F, L, D>(
-            folded_ring,
-            &prepared_point.packed_inner_point,
-        )?;
-        match reduction {
-            Some(reduction) => {
-                check_extension_opening_reduction_output(
-                    reduction.final_claim,
-                    internal_claim,
-                    reduction.final_factor,
-                )?;
-                Ok((reduction.final_claim, reduction.final_factor))
+        None => {
+            if internal_claim != expected_opening {
+                return Err(AkitaError::InvalidInput(
+                    "recursive opening does not match carried claim".to_string(),
+                ));
             }
-            None => {
-                if internal_claim != expected_opening {
-                    return Err(AkitaError::InvalidInput(
-                        "recursive opening does not match carried claim".to_string(),
-                    ));
-                }
-                Ok((internal_claim, L::one()))
-            }
+            Ok((internal_claim, L::one()))
         }
     }
 }
@@ -490,5 +468,43 @@ mod tests {
         assert!(
             matches!(err, AkitaError::InvalidInput(message) if message.contains("scheduled num_blocks"))
         );
+    }
+
+    #[cfg(not(feature = "zk"))]
+    #[test]
+    fn non_zk_eor_mismatch_is_rejected() {
+        let prepared_point: PreparedOpeningPoint<TestF, TestF, D> = PreparedOpeningPoint {
+            padded_point: Vec::new(),
+            ring_opening_point: RingOpeningPoint {
+                a: vec![TestF::one()],
+                b: vec![TestF::one()],
+            },
+            ring_multiplier_point: RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+                a: vec![TestF::one()],
+                b: vec![TestF::one()],
+            }),
+            packed_inner_point: CyclotomicRing::<TestF, D>::zero(),
+        };
+        let folded_rings = [CyclotomicRing::<TestF, D>::zero()];
+        let reduction = Some(ExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials: Vec::new(),
+                sumcheck: SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+            },
+            final_claim: TestF::one(),
+            final_factor: TestF::one(),
+        });
+
+        let err = compute_trace_target::<TestF, TestF, D>(
+            &reduction,
+            &folded_rings,
+            &prepared_point,
+            TestF::zero(),
+        )
+        .expect_err("non-zk EOR mismatch should reject");
+
+        assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

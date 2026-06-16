@@ -44,10 +44,11 @@ use akita_types::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     append_opening_batch_shape_to_transcript, basis_weights,
     batched_eval_target_from_opening_batch, build_trace_table_scaled,
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
-    flatten_batched_commitment_rows, folded_root_supports_opening_shape, prepare_opening_point,
-    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
+    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim,
+    derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, flatten_batched_commitment_rows,
+    folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_current_w_len, root_direct_schedule,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
@@ -64,10 +65,7 @@ use akita_types::{
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
-use akita_types::{
-    check_extension_opening_reduction_output, stage1_tree_stage_shapes, sumcheck_rounds,
-    PackedDigits, ZkHidingProof,
-};
+use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, PackedDigits, ZkHidingProof};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 use std::sync::Arc;
