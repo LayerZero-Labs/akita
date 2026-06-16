@@ -443,7 +443,7 @@ where
 /// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
 ///
 /// Rice `k` and zigzag width `W` are priced from the per-coefficient fold-response
-/// cap [`LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
+/// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
 /// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
 ///
 /// # Errors

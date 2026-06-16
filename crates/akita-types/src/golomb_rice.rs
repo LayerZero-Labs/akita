@@ -133,7 +133,7 @@ pub fn optimal_rice_k(scale: u128) -> u32 {
 /// Signed zigzag width for fold-response coefficients bounded by `scale`.
 ///
 /// Mirrors the `[-scale, scale]` envelope priced by
-/// [`LevelParams::fold_witness_linf_cap_for_claims`].
+/// [`crate::LevelParams::fold_witness_linf_cap_for_claims`].
 #[must_use]
 pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
     if scale == 0 {
