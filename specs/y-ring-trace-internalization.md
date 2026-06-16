@@ -436,4 +436,4 @@ and commitment `\mathbf{v}`.
 - Gadget powers `g_open[h] = base^h`: `crates/akita-types/src/layout/digit_math.rs:17-26`.
 - Verifier level + fused trace claim: `crates/akita-verifier/src/protocol/levels.rs`, `levels/recursive.rs`; stage-2 oracle: `crates/akita-verifier/src/stages/stage2.rs`.
 - Proof sizing: `crates/akita-types/src/proof_size.rs:72-104`.
-- Notation: `specs/w-to-e-notation.md`; trace cutover lineage: `specs/extension-field-trace-cutover.md`, `specs/extension-field-opening-batching.md`.
+- Notation: `specs/archive/2026-Q2/w-to-e-notation.md`; trace cutover lineage: `specs/extension-field-trace-cutover.md`, `specs/extension-field-opening-batching.md`.

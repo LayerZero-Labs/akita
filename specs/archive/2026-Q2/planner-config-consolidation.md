@@ -4,8 +4,10 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | 2026-05-21                     |
-| Status      | proposed                       |
+| Status      | superseded |
 | PR          |                                |
+| Superseded-by | `CommitmentConfig` consolidation (`AGENTS.md`) |
+| Book-chapter | book/src/how/configuration.md |
 
 ## Summary
 

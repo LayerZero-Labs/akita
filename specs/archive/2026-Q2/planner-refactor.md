@@ -4,8 +4,9 @@
 |-----------|----------------------------------------|
 | Author(s) |                                        |
 | Created   | 2026-05-27 → 2026-06-01 (consolidated) |
-| Status    | implemented on the planner refactor branch |
+| Status    | archived |
 | PR        |                                        |
+| Book-chapter | book/src/how/configuration.md |
 
 ## Summary
 
