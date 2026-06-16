@@ -1,5 +1,12 @@
 # Compute Backend Inventory
 
+> **Historical snapshot.** Pre-cutover symbol inventory (commit `324d14b7`); the
+> cutover has landed and this references removed symbols (e.g. `akita-scheme`,
+> `NttSlotCache`). The current compute-backend boundary is documented in
+> `docs/compute-backends.md` and the Akita Book
+> (`book/src/how/optimizations/compute-backends.md`). Scheduled to move to
+> `docs/archive/` (see `specs/PRUNING.md`).
+
 This inventory captures the pre-cutover CPU-cache and direct-kernel surface
 that the first compute-backend PR must cut over. It was gathered at commit
 `324d14b7` with:
