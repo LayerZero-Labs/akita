@@ -64,7 +64,7 @@ pub(super) fn entry_sign(matrix: &JlProjectionMatrix, row: usize, col: usize) ->
         return 0;
     }
     let shift = (col & 0b11) << 1;
-    let pair = (matrix.row_bytes_slice(row)[col >> 2] >> shift) & 0b11;
+    let pair = (matrix.row_slice(row)[col >> 2] >> shift) & 0b11;
     pair_to_sign(pair)
 }
 

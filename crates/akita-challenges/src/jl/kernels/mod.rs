@@ -33,12 +33,9 @@ pub(crate) fn pair_to_sign(pair: u8) -> i8 {
 /// Target column count per parallel panel. Sized so a panel's `i8` digit chunk
 /// (one byte per column) stays comfortably within L1 and is reused across every
 /// row of the panel.
-const PANEL_BYTES_L1_MAX: usize = super::panel::JL_PANEL_UNIT_MAX;
-
-/// Byte width of one parallel column panel for a row of `row_bytes` bytes.
 #[cfg(feature = "parallel")]
 fn parallel_panel_bytes(row_bytes: usize) -> usize {
-    super::panel::panel_span(row_bytes, PANEL_BYTES_L1_MAX).min(row_bytes.max(1))
+    super::panel::panel_span(row_bytes, super::panel::JL_PANEL_UNIT_MAX).min(row_bytes.max(1))
 }
 /// One row coordinate over one byte-aligned column panel, dispatched to the
 /// fastest available kernel (NEON, AVX-512/AVX2 `madd`, or scalar).
@@ -154,7 +151,7 @@ pub(crate) fn project_rows_fast(
 
     // Serial path still blocks by column panel so the digit chunk stays
     // L1-resident and is reused across rows.
-    let panel_bytes = row_bytes.clamp(1, PANEL_BYTES_L1_MAX);
+    let panel_bytes = row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX);
     let num_panels = row_bytes.div_ceil(panel_bytes);
     let mut coords = vec![0i32; n_rows];
     for p in 0..num_panels {

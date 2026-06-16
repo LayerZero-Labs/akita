@@ -108,7 +108,7 @@ fn sign_weight_lut_matches_row_accumulate() {
 
     let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| ((c * 2) % 3) as i8 - 1).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
-    let row = matrix.row_bytes_slice(0);
+    let row = matrix.row_slice(0);
 
     for byte_idx in 0..4 {
         let col0 = byte_idx * 4;
@@ -124,7 +124,7 @@ fn accumulate_row_weight_range_matches_entrywise() {
 
     let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| ((c * 2) % 3) as i8 - 1).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
-    let row = matrix.row_bytes_slice(0);
+    let row = matrix.row_slice(0);
     let col0 = 3;
     let n_cols = 10;
     let weights: Vec<F64> = (0..n_cols).map(|i| F64::from_u64(i as u64 + 1)).collect();
@@ -144,7 +144,7 @@ fn scatter_row_weight_range_matches_entrywise() {
 
     let signs: Vec<Vec<i8>> = vec![(0..23).map(|c| ((c * 5) % 3) as i8 - 1).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
-    let row = matrix.row_bytes_slice(0);
+    let row = matrix.row_slice(0);
     // Misaligned start and a sub-4 tail to exercise every branch of the scatter.
     let col0 = 2;
     let n_cols = 13;

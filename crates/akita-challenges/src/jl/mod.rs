@@ -28,11 +28,6 @@ mod kernels;
 pub mod mle;
 mod panel;
 
-pub use mle::{
-    build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at, eval_jl_mle_at_reference,
-    eval_jl_mle_at_scalar, eval_mle_from_weights,
-};
-
 /// PRG domain separator for the JL matrix stream. Distinct from the
 /// sparse-challenge PRG domain so the two streams cannot collide on a shared
 /// transcript seed.
@@ -48,11 +43,6 @@ pub const DEFAULT_JL_ROWS: usize = 256;
 
 /// Maximum absolute balanced-digit magnitude for JL witness coefficients (`lb ≤ 6`).
 pub const MAX_JL_DIGIT: i32 = 32;
-
-/// Minimum `n_rows * cols` before the `parallel` feature fans projection out
-/// over rows. Below this, rayon scheduling overhead dominates (see
-/// `benches/jl_projection.rs`).
-const JL_PARALLEL_ELEMS_THRESHOLD: usize = 1 << 16;
 
 /// Byte length of one packed row of `cols` ternary entries (2 bits each).
 fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
@@ -86,15 +76,9 @@ impl JlProjectionMatrix {
     }
 
     #[inline]
-    fn row_slice(&self, row_idx: usize) -> &[u8] {
+    pub(crate) fn row_slice(&self, row_idx: usize) -> &[u8] {
         let start = row_idx * self.row_bytes;
         &self.packed_rows[start..start + self.row_bytes]
-    }
-
-    /// Packed row bytes for MLE kernels (`pub(crate)` for `jl::mle`).
-    #[inline]
-    pub(crate) fn row_bytes_slice(&self, row_idx: usize) -> &[u8] {
-        self.row_slice(row_idx)
     }
 
     /// Sample a dense ternary matrix deterministically from the transcript.
@@ -344,7 +328,7 @@ fn center_to_i32(canonical: u128, q: u128, half_q: u128) -> Result<i32, AkitaErr
 
 #[inline]
 fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
-    cfg!(feature = "parallel") && n_rows.saturating_mul(cols) >= JL_PARALLEL_ELEMS_THRESHOLD
+    panel::parallel_jl_enabled(n_rows, cols)
 }
 
 /// Integer image `p = J · c` of a JL projection.

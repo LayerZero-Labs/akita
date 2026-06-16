@@ -73,7 +73,7 @@ fn parallel_column_panels_match_reference() {
     // the last panel's remainder bytes. The checked `i64` reference is the oracle.
     let n_rows = 16;
     let cols = 8191;
-    assert!(n_rows * cols >= super::JL_PARALLEL_ELEMS_THRESHOLD);
+    assert!(n_rows * cols >= crate::jl::panel::JL_PARALLEL_ELEMS_THRESHOLD);
     let signs: Vec<Vec<i8>> = (0..n_rows)
         .map(|r| (0..cols).map(|c| ((r * 5 + c * 2) % 3) as i8 - 1).collect())
         .collect();
