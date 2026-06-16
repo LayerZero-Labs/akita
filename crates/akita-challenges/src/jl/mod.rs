@@ -51,7 +51,20 @@ fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
             "JL matrix requires a non-zero column count".to_string(),
         ));
     }
-    Ok((cols * 2).div_ceil(8))
+    let bit_pairs = cols
+        .checked_mul(2)
+        .ok_or_else(jl_geometry_overflow)?;
+    Ok(bit_pairs.div_ceil(8))
+}
+
+#[inline]
+fn jl_geometry_overflow() -> AkitaError {
+    AkitaError::InvalidInput("JL matrix dimensions overflow".to_string())
+}
+
+#[inline]
+fn jl_digit_within_bound(d: i32) -> bool {
+    (-MAX_JL_DIGIT..=MAX_JL_DIGIT).contains(&d)
 }
 
 /// Dense ternary JL projection matrix with entries in `{-1, 0, +1}`, packed two
@@ -111,9 +124,14 @@ impl JlProjectionMatrix {
         let seed = transcript.challenge_bytes(CHALLENGE_JL_SEED, 32);
 
         let mut cursor = XofCursor::from_seed_with_domain(JL_PRG_DOMAIN, &seed);
-        let mut packed_rows = vec![0u8; n_rows * row_bytes];
+        let packed_len = n_rows
+            .checked_mul(row_bytes)
+            .ok_or_else(jl_geometry_overflow)?;
+        let mut packed_rows = vec![0u8; packed_len];
         for row_idx in 0..n_rows {
-            let start = row_idx * row_bytes;
+            let start = row_idx
+                .checked_mul(row_bytes)
+                .ok_or_else(jl_geometry_overflow)?;
             cursor.fill_bytes(&mut packed_rows[start..start + row_bytes]);
         }
 
@@ -229,9 +247,14 @@ impl JlProjectionMatrix {
             ));
         }
 
-        let mut packed_rows = vec![0u8; n_rows * row_bytes];
+        let packed_len = n_rows
+            .checked_mul(row_bytes)
+            .ok_or_else(jl_geometry_overflow)?;
+        let mut packed_rows = vec![0u8; packed_len];
         for (row_idx, row) in signs.iter().enumerate() {
-            let row_start = row_idx * row_bytes;
+            let row_start = row_idx
+                .checked_mul(row_bytes)
+                .ok_or_else(jl_geometry_overflow)?;
             for (col_idx, &sign) in row.iter().enumerate() {
                 let pair: u8 = match sign {
                     -1 => 0b00,
@@ -288,7 +311,7 @@ fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError>
             digits.len()
         )));
     }
-    if digits.iter().any(|&d| d.abs() > MAX_JL_DIGIT) {
+    if digits.iter().any(|&d| !jl_digit_within_bound(d)) {
         return Err(AkitaError::InvalidInput(format!(
             "JL witness digit exceeds balanced bound |d| <= {MAX_JL_DIGIT}"
         )));

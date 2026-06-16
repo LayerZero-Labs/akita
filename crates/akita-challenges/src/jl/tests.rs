@@ -208,3 +208,16 @@ fn digit_bound_is_enforced() {
     let digits = vec![MAX_JL_DIGIT + 1, 0, 0, 0];
     assert!(matrix.project_digits(&digits).is_err());
 }
+
+#[test]
+fn i32_min_digit_is_rejected() {
+    let signs = vec![vec![1i8]];
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    assert!(matrix.project_digits(&[i32::MIN]).is_err());
+}
+
+#[test]
+fn oversized_geometry_returns_error() {
+    let mut t = AkitaTranscript::<F64>::new(DOMAIN_AKITA_PROTOCOL);
+    assert!(JlProjectionMatrix::sample::<F64, _>(&mut t, usize::MAX, 8).is_err());
+}
