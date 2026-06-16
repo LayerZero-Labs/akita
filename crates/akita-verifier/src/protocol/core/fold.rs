@@ -1,112 +1,20 @@
-//! Root and suffix fold verifier replay for Akita proofs.
-//!
-//! This module owns the shared per-fold replay engine plus path-specific prep
-//! in `root_fold` and `suffix`. Schedule/config dispatch stays with the scheme
-//! crate until the verifier-facing config boundary is extracted.
+//! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
-use super::validate_level_dispatch;
-#[cfg(not(feature = "zk"))]
-mod extension_opening_reduction;
-#[cfg(feature = "zk")]
-mod zk;
-use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
-};
-use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
-use crate::stages::SetupSumcheckVerifier;
-use akita_algebra::CyclotomicRing;
-#[cfg(feature = "zk")]
-use akita_algebra::EqPolynomial;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling,
-};
-#[cfg(feature = "zk")]
-use akita_r1cs::{
-    lift_hiding_witness, zk_ext_mask_lc, zk_ext_mask_lc_at, zk_masked_compressed_round_claim_mask,
-    zk_push_linear_zero, zk_row_masks_from_column_masks, ZkR1csLinearCombination,
-    ZkRelationAccumulator,
-};
-use akita_serialization::AkitaSerialize;
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::SumcheckInstanceVerifierExt;
-#[cfg(feature = "zk")]
-use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
-use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
-};
-#[cfg(feature = "zk")]
-use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, ABSORB_ZK_HIDING_COMMITMENT};
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-#[cfg(not(feature = "zk"))]
-use akita_types::check_tensor_extension_opening_claim;
-#[cfg(feature = "zk")]
-use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
-use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
-    build_trace_claim_root, ensure_trace_stage2_supported, flatten_batched_commitment_rows,
-    generate_y, prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
-    stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
-    trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
-    OpeningBatch, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
-    SetupContributionMode, SetupSumcheckProof, Step, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, TraceClaim,
-};
-use akita_types::{
-    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-};
-#[cfg(not(feature = "zk"))]
-use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
-#[cfg(feature = "zk")]
-use zk::verify_zk_hiding_commitment;
+use super::*;
 
-mod root_fold;
-mod suffix;
-use root_fold::verify_root;
-
-pub(crate) use suffix::verify_folded_batched_proof;
-
-fn prepare_terminal_witness_replay<F, T>(
-    transcript: &mut T,
-    final_witness: &CleartextWitnessProof<F>,
-    final_w_len: usize,
-    layout: TerminalWitnessSegmentLayout,
-) -> Result<TerminalWitnessTranscriptParts, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    if final_witness.num_elems() != final_w_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
-    Ok(parts)
-}
-
-struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
-    prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
-    reduction_challenges: Option<Vec<C>>,
+pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
+    pub(in crate::protocol::core) reduction_challenges: Option<Vec<C>>,
     #[cfg(not(feature = "zk"))]
-    final_relation: Option<(C, Vec<C>)>,
+    pub(in crate::protocol::core) final_relation: Option<(C, Vec<C>)>,
     #[cfg(feature = "zk")]
-    final_relation: Option<(ZkMaskedClaim<C>, Vec<C>)>,
+    pub(in crate::protocol::core) final_relation: Option<(ZkMaskedClaim<C>, Vec<C>)>,
 }
 
 #[cfg(feature = "zk")]
-struct ZkMaskedClaim<E: FieldCore> {
-    public: E,
-    mask: ZkR1csLinearCombination<E>,
+pub(in crate::protocol::core) struct ZkMaskedClaim<E: FieldCore> {
+    pub(in crate::protocol::core) public: E,
+    pub(in crate::protocol::core) mask: ZkR1csLinearCombination<E>,
 }
 
 #[derive(Clone, Copy)]
@@ -229,7 +137,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_fold_eor<F, C, T, const D: usize>(
+pub(in crate::protocol::core) fn verify_fold_eor<F, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     _y_rings: &[CyclotomicRing<F, D>],
     challenge_point: &[C],
@@ -294,7 +202,14 @@ where
                 .map(|_| zk_ext_mask_lc::<F, C>(zk_hiding_cursor))
                 .collect::<Vec<_>>();
             #[cfg(not(feature = "zk"))]
-            check_tensor_extension_opening_claim::<F, C>(&eor_point, opening, partials)?;
+            {
+                let expected = derive_tensor_extension_opening_claim_from_partials::<F, C>(
+                    &eor_point, partials,
+                )?;
+                if expected != opening {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
             #[cfg(feature = "zk")]
             {
                 let head_weights = EqPolynomial::<C>::evals(&eor_point[..shape.split_bits])?;
@@ -417,29 +332,34 @@ where
     })
 }
 
-struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    lp: &'a LevelParams,
-    m_row_layout: MRowLayout,
-    v: Vec<CyclotomicRing<F, D>>,
-    commitment_rows: &'a [CyclotomicRing<F, D>],
-    row_coefficients: Vec<E>,
-    opening_batch: OpeningBatch,
-    ring_opening_point: RingOpeningPoint<F>,
-    ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    w_len: usize,
-    stage1: Option<&'a AkitaStage1Proof<E>>,
-    stage2: &'a AkitaStage2Proof<F, E>,
-    next_w_commitment: Option<&'a FlatRingVec<F>>,
-    terminal_replay: Option<TerminalWitnessTranscriptParts>,
-    stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    trace_prepared_point: Option<PreparedOpeningPoint<F, E, D>>,
-    trace_block_opening: Option<Vec<E>>,
-    trace_eval_target: E,
-    trace_eval_scale: E,
+pub(in crate::protocol::core) struct PreparedFoldReplay<
+    'a,
+    F: FieldCore,
+    E: FieldCore,
+    const D: usize,
+> {
+    pub(in crate::protocol::core) lp: &'a LevelParams,
+    pub(in crate::protocol::core) m_row_layout: MRowLayout,
+    pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
+    pub(in crate::protocol::core) commitment_rows: &'a [CyclotomicRing<F, D>],
+    pub(in crate::protocol::core) row_coefficients: Vec<E>,
+    pub(in crate::protocol::core) opening_batch: OpeningBatch,
+    pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
+    pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+    pub(in crate::protocol::core) w_len: usize,
+    pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
+    pub(in crate::protocol::core) stage2: &'a AkitaStage2Proof<F, E>,
+    pub(in crate::protocol::core) next_w_commitment: Option<&'a FlatRingVec<F>>,
+    pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
+    pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E, D>>,
+    pub(in crate::protocol::core) trace_block_opening: Option<Vec<E>>,
+    pub(in crate::protocol::core) trace_eval_target: E,
+    pub(in crate::protocol::core) trace_eval_scale: E,
     #[cfg(feature = "zk")]
-    trace_eval_target_mask: ZkR1csLinearCombination<E>,
-    trace_claim_scales: Option<Vec<E>>,
-    trace_basis: BasisMode,
+    pub(in crate::protocol::core) trace_eval_target_mask: ZkR1csLinearCombination<E>,
+    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
+    pub(in crate::protocol::core) trace_basis: BasisMode,
 }
 
 struct Stage1Replay<E: FieldCore> {
@@ -636,7 +556,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn verify_fold<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn verify_fold<F, E, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared: PreparedFoldReplay<'_, F, E, D>,
