@@ -947,6 +947,34 @@ def execute_schedule(
     return results, overall_return_code
 
 
+def failure_summaries_by_case(
+    results: list[tuple[ScheduledRun, dict[str, object]]],
+) -> dict[str, dict[str, object]]:
+    """Map case_id to the first recorded failure summary for that case."""
+    failures: dict[str, dict[str, object]] = {}
+    for run, summary in results:
+        if int(summary.get("exit_code", 0)) != 0:
+            failures.setdefault(run.case.case_id, summary)
+    return failures
+
+
+def propagate_sibling_case_failure(
+    case_summaries: list[dict[str, object]],
+    failure: dict[str, object],
+) -> list[dict[str, object]]:
+    """Mirror a paired-binary failure onto the sibling output root."""
+    if any(int(summary.get("exit_code", 0)) != 0 for summary in case_summaries):
+        return case_summaries
+    propagated = dict(failure)
+    propagated["error"] = (
+        "case cancelled after the paired binary failed: "
+        f"{failure.get('error', 'profile run failed')}"
+    )
+    propagated["exit_code"] = failure.get("exit_code", 1)
+    propagated["failure_phase"] = failure.get("failure_phase", "unknown")
+    return [*case_summaries, propagated]
+
+
 def write_aggregate_summaries(
     summary_dirs: list[pathlib.Path],
     cases: list[BenchmarkCaseSpec],
@@ -955,6 +983,7 @@ def write_aggregate_summaries(
 ) -> None:
     """Aggregate recorded run summaries into summary.json/summary.csv per root."""
     generated_at = datetime.now(timezone.utc).isoformat()
+    failures_by_case = failure_summaries_by_case(results)
     for summary_dir in summary_dirs:
         aggregate: dict[str, object] = {
             "schema_version": 2,
@@ -968,6 +997,9 @@ def write_aggregate_summaries(
                 for run, summary in results
                 if run.summary_dir == summary_dir and run.case.case_id == case.case_id
             ]
+            failure = failures_by_case.get(case.case_id)
+            if failure is not None:
+                case_summaries = propagate_sibling_case_failure(case_summaries, failure)
             if case_summaries:
                 aggregate["cases"].append(combine_case_run_summaries(case_summaries))
         summary_dir.mkdir(parents=True, exist_ok=True)
@@ -986,11 +1018,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
     if args.warmups < 0:
         raise ValueError("--warmups must be non-negative")
 
-    if args.baseline_binary and not args.baseline_output_dir:
-        raise ValueError("--baseline-output-dir is required with --baseline-binary")
+    if bool(args.baseline_binary) != bool(args.baseline_output_dir):
+        raise ValueError("--baseline-binary and --baseline-output-dir must be set together")
     binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
     if args.baseline_binary:
-        binaries.append((args.baseline_binary, pathlib.Path(args.baseline_output_dir)))
+        baseline_dir = pathlib.Path(args.baseline_output_dir)
+        baseline_dir.mkdir(parents=True, exist_ok=True)
+        binaries.append((args.baseline_binary, baseline_dir))
 
     cases = configured_cases(args)
     schedule: list[ScheduledRun] = []
