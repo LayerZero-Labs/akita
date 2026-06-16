@@ -155,7 +155,8 @@ New or updated checks:
 
 - Terminal transcript-order tests: assert the common prefix is "current
   commitment/opening context, terminal logical `e` absorb, sparse seed
-  squeeze, terminal witness remainder absorb". In `RingSwitchSumcheck` mode that
+  squeeze, fold challenges, terminal witness remainder absorb". In
+  `RingSwitchSumcheck` mode that
   prefix is followed by `alpha`, grouped `tau1`, and stage-2 challenges. In
   `DirectRingRelations` mode it is followed by direct row checking and contains
   no terminal `alpha`, `tau1`, or stage-2 challenges. Both modes contain no
@@ -234,15 +235,16 @@ Intermediate fold:
 1. absorb the current recursive commitment/opening context;
 2. compute and absorb the D-side relation input under the existing prover-value absorb;
 3. absorb sparse-challenge context and squeeze the sparse seed;
-4. compute the folded response, build the next recursive witness, and commit it;
-5. absorb the next-witness commitment;
-6. squeeze ring-switch `alpha`;
-7. squeeze grouped `tau0` coordinates for the stage-1 witness-table point;
-8. squeeze grouped `tau1` coordinates for the row-combination point;
-9. run stage 1 using `tau0`;
-10. absorb `s_claim`;
-11. sample any needed stage-2 batching coefficient;
-12. run stage 2.
+4. squeeze fold challenges;
+5. compute the folded response, build the next recursive witness, and commit it;
+6. absorb the next-witness commitment;
+7. squeeze ring-switch `alpha`;
+8. squeeze grouped `tau0` coordinates for the stage-1 witness-table point;
+9. squeeze grouped `tau1` coordinates for the row-combination point;
+10. run stage 1 using `tau0`;
+11. absorb `s_claim`;
+12. sample any needed stage-2 batching coefficient;
+13. run stage 2.
 
 Terminal fold, `RingSwitchSumcheck` mode:
 
@@ -251,12 +253,13 @@ Terminal fold, `RingSwitchSumcheck` mode:
 3. absorb the cleartext logical terminal `e` segment before any sparse seed is
    squeezed;
 4. absorb sparse-challenge context and squeeze the sparse seed;
-5. compute `z_folded`, compute `r`, and build the complete cleartext final
+5. squeeze fold challenges;
+6. compute `z_folded`, compute `r`, and build the complete cleartext final
    witness;
-6. absorb the remaining final-witness digits before ring-switch challenges;
-7. squeeze ring-switch `alpha`;
-8. squeeze grouped `tau1` coordinates for the row-combination point;
-9. run relation-only stage 2.
+7. absorb the remaining final-witness digits before ring-switch challenges;
+8. squeeze ring-switch `alpha`;
+9. squeeze grouped `tau1` coordinates for the row-combination point;
+10. run relation-only stage 2.
 
 Terminal fold, `DirectRingRelations` mode:
 
@@ -265,10 +268,11 @@ Terminal fold, `DirectRingRelations` mode:
 3. absorb the cleartext logical terminal `e` segment before any sparse seed is
    squeezed;
 4. absorb sparse-challenge context and squeeze the sparse seed;
-5. compute `z_folded` and build the cleartext final witness without a terminal
+5. squeeze fold challenges;
+6. compute `z_folded` and build the cleartext final witness without a terminal
    `r` segment;
-6. absorb the remaining final-witness digits;
-7. check the reduced terminal ring rows directly.
+7. absorb the remaining final-witness digits;
+8. check the reduced terminal ring rows directly.
 
 Terminal folds must not squeeze `tau0`. They skip stage 1, so there is no
 stage-1 witness-table point, no `s_claim`, and no stage-2 batching coefficient.
