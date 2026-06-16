@@ -99,9 +99,9 @@ fn accumulate_row_weight_range_matches_entrywise() {
 
     let fast = accumulate_row_weight_range::<F64>(row, col0, n_cols, &weights);
     let mut slow = F64::zero();
-    for k in 0..n_cols {
+    for (k, &weight) in weights.iter().enumerate() {
         let sign = entry_sign(&matrix, 0, col0 + k);
-        slow = accum_sign_weight(slow, sign, weights[k]);
+        slow = accum_sign_weight(slow, sign, weight);
     }
     assert_eq!(fast, slow);
 }
