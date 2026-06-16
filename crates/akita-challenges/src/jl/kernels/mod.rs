@@ -3,10 +3,10 @@
 mod reference;
 mod scalar;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "jl-simd"))]
 mod simd_x86;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "jl-simd"))]
 mod simd_neon;
 
 use akita_field::cfg_into_iter;

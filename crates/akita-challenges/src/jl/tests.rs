@@ -53,7 +53,7 @@ fn project_matches_reference_across_fields() {
 #[test]
 fn fast_kernel_matches_reference_kernel() {
     let n_rows = 32;
-    let cols = 1023; // non-multiple of 4 and 8
+    let cols: usize = 1023; // non-multiple of 4 and 8
     let signs: Vec<Vec<i8>> = (0..n_rows)
         .map(|r| (0..cols).map(|c| ((r * 7 + c * 3) % 3) as i8 - 1).collect())
         .collect();
