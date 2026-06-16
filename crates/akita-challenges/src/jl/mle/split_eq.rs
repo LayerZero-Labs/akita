@@ -1,4 +1,4 @@
-//! Dao–Thaler tensor split-eq contraction for JL matrix MLE evaluation.
+//! Row-major contractions for JL matrix MLE evaluation.
 
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
@@ -9,6 +9,7 @@ use akita_field::{AkitaError, FieldCore};
 use super::common::{
     accumulate_row_weight_range, scatter_row_weight_range, validate_mle_points, JlMleLayout,
 };
+use super::lut::{accumulate_rows_from_byte_lut, build_sign_weight_lut_256};
 use crate::jl::JlProjectionMatrix;
 
 /// `g[i] = Σ_j eq(r_J, j) · J[j, i]` via a row-major byte-wide scatter.
@@ -90,141 +91,188 @@ fn fill_row_weights<L: FieldCore>(
     }
 }
 
-/// Shared split-eq tile geometry and precomputed eq tables for the fused eval.
-struct SplitEqSetup<L> {
-    j_in_len: usize,
-    j_out_len: usize,
-    w_in_len: usize,
-    w_out_len: usize,
-    e_j_out: Vec<L>,
-    e_w_out: Vec<L>,
-    /// Inner tensor weights `W[j_i, i_i] = e_J_in[j_i] · e_w_in[i_i]`.
-    w_inner: Vec<L>,
-}
-
-fn split_eq_setup<L: FieldCore>(
+#[inline]
+fn direct_eq_tables<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
     r_w: &[L],
-) -> Result<SplitEqSetup<L>, AkitaError> {
+) -> Result<(Vec<L>, Vec<L>), AkitaError> {
     let layout = JlMleLayout::new(matrix)?;
     validate_mle_points(&layout, r_J, Some(r_w))?;
-
-    let (m_ji, _) = layout.row_split();
-    let (m_wi, _) = layout.col_split();
-    let j_in_len = 1usize << m_ji;
-    let j_out_len = layout.row_hyper >> m_ji;
-    let w_in_len = 1usize << m_wi;
-    let w_out_len = layout.col_hyper >> m_wi;
-
-    let e_j_in = EqPolynomial::evals(&r_J[..m_ji])?;
-    let e_j_out = EqPolynomial::evals(&r_J[m_ji..])?;
-    let e_w_in = EqPolynomial::evals(&r_w[..m_wi])?;
-    let e_w_out = EqPolynomial::evals(&r_w[m_wi..])?;
-
-    let w_inner: Vec<L> = e_j_in
-        .iter()
-        .flat_map(|&ej| e_w_in.iter().map(move |&ew| ej * ew))
-        .collect();
-    debug_assert_eq!(w_inner.len(), j_in_len * w_in_len);
-
-    Ok(SplitEqSetup {
-        j_in_len,
-        j_out_len,
-        w_in_len,
-        w_out_len,
-        e_j_out,
-        e_w_out,
-        w_inner,
-    })
+    Ok((EqPolynomial::evals(r_J)?, EqPolynomial::evals(r_w)?))
 }
 
-/// Fused `J̃(r_J, r_w)` via tensor split-eq on row and column hypercubes.
+/// Scalar row-per-row fused `J̃(r_J, r_w)` (differential tests / benches only).
 pub(super) fn eval_jl_mle_at_split_eq<L: FieldCore>(
-    matrix: &JlProjectionMatrix,
-    r_J: &[L],
-    r_w: &[L],
-) -> Result<L, AkitaError> {
-    let s = split_eq_setup(matrix, r_J, r_w)?;
-
-    let mut total = L::zero();
-    for j_o in 0..s.j_out_len {
-        for i_o in 0..s.w_out_len {
-            let outer = s.e_j_out[j_o] * s.e_w_out[i_o];
-            let inner =
-                inner_tile_contribution(matrix, j_o, i_o, s.j_in_len, s.w_in_len, &s.w_inner);
-            total += outer * inner;
-        }
-    }
-    Ok(total)
-}
-
-#[inline]
-fn inner_tile_contribution<L: FieldCore>(
-    matrix: &JlProjectionMatrix,
-    j_o: usize,
-    i_o: usize,
-    j_in_len: usize,
-    w_in_len: usize,
-    w_inner: &[L],
-) -> L {
-    let col0 = i_o * w_in_len;
-    let col1 = (col0 + w_in_len).min(matrix.cols());
-    if col0 >= col1 {
-        return L::zero();
-    }
-    let n_cols = col1 - col0;
-
-    let mut acc = L::zero();
-    for j_i in 0..j_in_len {
-        let j = j_o * j_in_len + j_i;
-        if j >= matrix.n_rows() {
-            continue;
-        }
-        let row = matrix.row_bytes_slice(j);
-        let w_base = j_i * w_in_len;
-        let weights = &w_inner[w_base..w_base + n_cols];
-        acc += accumulate_row_weight_range(row, col0, n_cols, weights);
-    }
-    acc
-}
-
-/// Parallel split-eq eval when `parallel` is enabled and the matrix is large enough.
-pub(super) fn eval_jl_mle_at_split_eq_parallel<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
     r_w: &[L],
     parallel: bool,
 ) -> Result<L, AkitaError> {
+    let (e_j, e_w) = direct_eq_tables(matrix, r_J, r_w)?;
+    let cols = matrix.cols();
+    let e_w = &e_w[..cols];
+
     #[cfg(feature = "parallel")]
     if parallel {
-        return eval_jl_mle_at_split_eq_par(matrix, r_J, r_w);
+        let total = (0..matrix.n_rows())
+            .into_par_iter()
+            .map(|j| e_j[j] * accumulate_row_weight_range(matrix.row_bytes_slice(j), 0, cols, e_w))
+            .reduce(L::zero, |a, b| a + b);
+        return Ok(total);
     }
     #[cfg(not(feature = "parallel"))]
     let _ = parallel;
-    eval_jl_mle_at_split_eq(matrix, r_J, r_w)
+
+    Ok(eval_jl_mle_at_rows_scalar(matrix, &e_j, e_w))
 }
 
-#[cfg(feature = "parallel")]
-fn eval_jl_mle_at_split_eq_par<L: FieldCore>(
+fn eval_jl_mle_at_rows_scalar<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+) -> L {
+    let cols = matrix.cols();
+    let mut acc = L::zero();
+    for (j, &ej) in e_j.iter().take(matrix.n_rows()).enumerate() {
+        let row_sum = accumulate_row_weight_range(matrix.row_bytes_slice(j), 0, cols, e_w);
+        acc += ej * row_sum;
+    }
+    acc
+}
+
+/// Production fused `J̃(r_J, r_w)` with a per-4-column sign-weight LUT.
+///
+/// Iteration order (LUT amortized over rows):
+/// 1. outer: each byte-aligned 4-column window of `e_w`
+/// 2. build `lut256` once from `eq_w[col0..col0+4]` (81-pattern DP + byte remap)
+/// 3. inner: every row does one LUT lookup + one add into `row_acc[j]`
+/// 4. scalar tail for `cols % 4`
+/// 5. finish with `Σ_j e_j[j] · row_acc[j]`
+pub(super) fn eval_jl_mle_at_split_eq_lut<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
     r_w: &[L],
+    parallel: bool,
 ) -> Result<L, AkitaError> {
-    let s = split_eq_setup(matrix, r_J, r_w)?;
+    let (e_j, e_w) = direct_eq_tables(matrix, r_J, r_w)?;
+    Ok(eval_jl_mle_at_rows_lut(
+        matrix,
+        &e_j,
+        &e_w,
+        parallel && use_parallel_mle(matrix.n_rows(), matrix.cols()),
+    ))
+}
 
-    let tile_count = s.j_out_len * s.w_out_len;
-    let total = (0..tile_count)
+fn eval_jl_mle_at_rows_lut<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+    parallel: bool,
+) -> L {
+    let n_rows = matrix.n_rows();
+    let cols = matrix.cols();
+    let e_w = &e_w[..cols];
+    let full_cols = cols - (cols & 0b11);
+    let tail_cols = cols & 0b11;
+
+    #[cfg(feature = "parallel")]
+    if parallel {
+        return eval_jl_mle_at_rows_lut_par(matrix, e_j, e_w, full_cols, tail_cols);
+    }
+    #[cfg(not(feature = "parallel"))]
+    let _ = parallel;
+
+    let mut row_acc = vec![L::zero(); n_rows];
+    let mut lut = [L::zero(); 256];
+    let mut col0 = 0usize;
+    while col0 < full_cols {
+        let weights: [L; 4] = [e_w[col0], e_w[col0 + 1], e_w[col0 + 2], e_w[col0 + 3]];
+        build_sign_weight_lut_256(&weights, &mut lut);
+        accumulate_rows_from_byte_lut(&mut row_acc, matrix, col0 >> 2, &lut);
+        col0 += 4;
+    }
+    accumulate_lut_tail(matrix, &mut row_acc, e_w, full_cols, tail_cols);
+    dot_row_eq_weights(e_j, n_rows, &row_acc)
+}
+
+#[cfg(feature = "parallel")]
+fn eval_jl_mle_at_rows_lut_par<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+    full_cols: usize,
+    tail_cols: usize,
+) -> L {
+    let n_rows = matrix.n_rows();
+    let num_quads = full_cols / 4;
+    let quads_per_panel = lut_quad_panel_count(num_quads);
+    let num_panels = num_quads.div_ceil(quads_per_panel);
+
+    let mut row_acc = (0..num_panels)
         .into_par_iter()
-        .map(|t| {
-            let j_o = t / s.w_out_len;
-            let i_o = t % s.w_out_len;
-            let outer = s.e_j_out[j_o] * s.e_w_out[i_o];
-            outer * inner_tile_contribution(matrix, j_o, i_o, s.j_in_len, s.w_in_len, &s.w_inner)
+        .map(|p| {
+            let q0 = p * quads_per_panel;
+            let q1 = (q0 + quads_per_panel).min(num_quads);
+            let mut panel_acc = vec![L::zero(); n_rows];
+            let mut lut = [L::zero(); 256];
+            for q in q0..q1 {
+                let col0 = q * 4;
+                let weights: [L; 4] = [e_w[col0], e_w[col0 + 1], e_w[col0 + 2], e_w[col0 + 3]];
+                build_sign_weight_lut_256(&weights, &mut lut);
+                accumulate_rows_from_byte_lut(&mut panel_acc, matrix, col0 >> 2, &lut);
+            }
+            panel_acc
         })
-        .reduce(L::zero, |a, b| a + b);
+        .reduce(
+            || vec![L::zero(); n_rows],
+            |mut a, b| {
+                for (x, y) in a.iter_mut().zip(b.iter()) {
+                    *x += *y;
+                }
+                a
+            },
+        );
 
-    Ok(total)
+    accumulate_lut_tail(matrix, &mut row_acc, e_w, full_cols, tail_cols);
+    dot_row_eq_weights(e_j, n_rows, &row_acc)
+}
+
+#[inline]
+fn accumulate_lut_tail<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    row_acc: &mut [L],
+    e_w: &[L],
+    full_cols: usize,
+    tail_cols: usize,
+) {
+    if tail_cols == 0 {
+        return;
+    }
+    for (j, acc) in row_acc.iter_mut().enumerate() {
+        *acc += accumulate_row_weight_range(
+            matrix.row_bytes_slice(j),
+            full_cols,
+            tail_cols,
+            &e_w[full_cols..],
+        );
+    }
+}
+
+/// Quad windows per parallel panel: enough independent work per task without one
+/// task per 4-column window at tail scale.
+pub(super) fn lut_quad_panel_count(num_quads: usize) -> usize {
+    const MIN_PANELS: usize = 64;
+    num_quads.div_ceil(MIN_PANELS).max(1)
+}
+
+#[inline]
+fn dot_row_eq_weights<L: FieldCore>(e_j: &[L], n_rows: usize, row_acc: &[L]) -> L {
+    let mut total = L::zero();
+    for (j, &ej) in e_j.iter().take(n_rows).enumerate() {
+        total += ej * row_acc[j];
+    }
+    total
 }
 
 const JL_MLE_PARALLEL_ELEMS_THRESHOLD: usize = 1 << 16;

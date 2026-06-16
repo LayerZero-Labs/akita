@@ -1,6 +1,6 @@
 use super::{
     build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at, eval_jl_mle_at_reference,
-    eval_mle_from_weights,
+    eval_jl_mle_at_scalar, eval_mle_from_weights,
 };
 use crate::jl::{JlProjectionMatrix, DEFAULT_JL_ROWS};
 use akita_field::{FieldCore, Fp64, FromPrimitiveInt, Prime128Offset275, Prime32Offset99};
@@ -42,6 +42,9 @@ fn mle_roundtrip_for<L: FieldCore + FromPrimitiveInt>() {
     let reference = eval_jl_mle_at_reference(&matrix, &r_J, &r_w).expect("ref eval");
     assert_eq!(fused, reference);
 
+    let scalar = eval_jl_mle_at_scalar(&matrix, &r_J, &r_w).expect("scalar eval");
+    assert_eq!(scalar, fused);
+
     let g = build_jl_row_weights(&matrix, &r_J).expect("row weights");
     let g_ref = build_jl_row_weights_reference(&matrix, &r_J).expect("ref row weights");
     assert_eq!(g, g_ref);
@@ -77,6 +80,9 @@ fn split_eq_matches_reference_small_matrix() {
     let fused = eval_jl_mle_at(&matrix, &r_J, &r_w).unwrap();
     let reference = eval_jl_mle_at_reference(&matrix, &r_J, &r_w).unwrap();
     assert_eq!(fused, reference);
+
+    let scalar = eval_jl_mle_at_scalar(&matrix, &r_J, &r_w).unwrap();
+    assert_eq!(scalar, reference);
 }
 
 #[test]
@@ -84,6 +90,32 @@ fn malformed_point_length_returns_error() {
     let matrix = sample_sign_matrix(DEFAULT_JL_ROWS, 64);
     let err = eval_jl_mle_at(&matrix, &[F64::one()], &[F64::one(); 6]).unwrap_err();
     assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+}
+
+#[test]
+fn sign_weight_lut_matches_row_accumulate() {
+    use super::common::accumulate_row_weight_range;
+    use super::lut::build_sign_weight_lut_256;
+
+    let weights: [F64; 4] = [
+        F64::from_u64(3),
+        F64::from_u64(7),
+        F64::from_u64(11),
+        F64::from_u64(13),
+    ];
+    let mut lut = [F64::zero(); 256];
+    build_sign_weight_lut_256(&weights, &mut lut);
+
+    let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| ((c * 2) % 3) as i8 - 1).collect()];
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let row = matrix.row_bytes_slice(0);
+
+    for byte_idx in 0..4 {
+        let col0 = byte_idx * 4;
+        let scalar = accumulate_row_weight_range(row, col0, 4, &weights);
+        let via_lut = lut[row[byte_idx] as usize];
+        assert_eq!(scalar, via_lut, "byte_idx={byte_idx}");
+    }
 }
 
 #[test]

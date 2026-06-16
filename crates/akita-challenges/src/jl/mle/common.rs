@@ -29,16 +29,6 @@ impl JlMleLayout {
             col_hyper: 1usize << col_bits,
         })
     }
-
-    pub(super) fn row_split(&self) -> (usize, usize) {
-        let m_in = self.row_bits / 2;
-        (m_in, self.row_bits - m_in)
-    }
-
-    pub(super) fn col_split(&self) -> (usize, usize) {
-        let m_in = self.col_bits / 2;
-        (m_in, self.col_bits - m_in)
-    }
 }
 
 pub(super) fn hypercube_bits(n: usize) -> usize {
