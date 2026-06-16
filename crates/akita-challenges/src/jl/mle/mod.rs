@@ -10,9 +10,9 @@
 //!
 //! 1. Outer loop: each byte-aligned 4-column window of `eq(r_w, ·)`.
 //! 2. Build a 256-entry LUT once from the four weights (81 canonical ternary
-//!    patterns via axis extension, remapped through [`lut::BYTE_TO_TERNARY4`] so
-//!    `01`/`10` zero pairs collapse correctly; same sign alphabet as
-//!    [`crate::jl::kernels::SIGNS_FOR_BYTE`]).
+//!    patterns via axis extension, remapped through `BYTE_TO_TERNARY4` so
+//!    `01`/`10` zero pairs collapse correctly; same four-lane sign alphabet as the
+//!    projection kernels' byte decode table).
 //! 3. Inner loop: every row does one LUT lookup and one field add into `row_acc[j]`.
 //! 4. Scalar tail for `cols % 4`.
 //! 5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.

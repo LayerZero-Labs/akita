@@ -1,7 +1,7 @@
 //! Per-4-column sign-weight LUT helpers for fused JL MLE evaluation.
 //!
-//! [`BYTE_TO_TERNARY4`] indexes the same four-lane sign alphabet as
-//! [`crate::jl::kernels::SIGNS_FOR_BYTE`], collapsed so `01`/`10` both map to
+//! [`BYTE_TO_TERNARY4`] indexes the same four-lane sign alphabet as the projection
+//! kernels' per-byte decode table, collapsed so `01`/`10` both map to
 //! the zero digit before the 81-pattern DP builds field-weight sums.
 
 use akita_field::FieldCore;
