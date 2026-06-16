@@ -650,11 +650,11 @@ mod tests {
     use super::*;
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-        root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
-        AkitaBatchedRootProof, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
-        AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
-        ExtensionOpeningReductionProof, FlatRingVec, MRowLayout, PackedDigits, SisModulusFamily,
-        TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+        stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
+        AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -999,10 +999,10 @@ mod tests {
 
     #[test]
     fn planned_root_extension_reduction_bytes_match_payload() {
-        let extension_width = 4;
-        let num_claims = 3;
-        let opening_vars = 12;
-        let partials = root_extension_opening_partials(extension_width, num_claims);
+        let extension_width = 4usize;
+        let num_claims = 3usize;
+        let opening_vars = 12usize;
+        let partials = extension_width.saturating_mul(num_claims);
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![F::zero(); partials],
             #[cfg(not(feature = "zk"))]

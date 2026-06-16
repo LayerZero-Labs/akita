@@ -3,7 +3,7 @@
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend, RootTensorProjectionPoly};
+use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend, FoldInputPoly};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
@@ -554,15 +554,15 @@ where
     if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
         let transformed = polys
             .iter()
-            .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
-            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
+            .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
+            .collect::<Result<Vec<FoldInputPoly<'_, Cfg::Field, P, D>>, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return commit_with_validated_params::<
-            Cfg::Field,
-            D,
-            RootTensorProjectionPoly<Cfg::Field, D>,
-            B,
-        >(&transformed, backend, prepared, &params);
+        return commit_with_validated_params::<Cfg::Field, D, FoldInputPoly<'_, Cfg::Field, P, D>, B>(
+            &transformed,
+            backend,
+            prepared,
+            &params,
+        );
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
@@ -674,16 +674,15 @@ where
         validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(group, &params)?;
     }
     if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
-        let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> =
-            polys_per_commitment_group
-                .iter()
-                .map(|group| {
-                    group
-                        .iter()
-                        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ExtField>())
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .collect::<Result<_, _>>()?;
+        let transformed: Vec<Vec<FoldInputPoly<'_, Cfg::Field, P, D>>> = polys_per_commitment_group
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<_, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
         return transformed
             .iter()
@@ -691,7 +690,7 @@ where
                 commit_with_validated_params::<
                     Cfg::Field,
                     D,
-                    RootTensorProjectionPoly<Cfg::Field, D>,
+                    FoldInputPoly<'_, Cfg::Field, P, D>,
                     B,
                 >(group, backend, prepared, &params)
             })

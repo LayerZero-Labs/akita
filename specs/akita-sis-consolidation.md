@@ -81,7 +81,7 @@ No SIS/Ajtai sizing logic remains in `akita-planner`, nor scattered across
   `proof_size_comparison`, `generated_schedule_tables_match_find_schedule`
   drift-guard, and all prover/verifier round-trips must pass unchanged.
 - **Verifier no-panic contract** (AGENTS.md) is preserved: every `sis` function
-  reachable from `verify_batched` returns `Option`/`Result` and never panics on
+  reachable from `batched_verify` returns `Option`/`Result` and never panics on
   malformed input (the planner DP table-miss path is verifier-reachable).
 - **Determinism.** Prover and verifier resolve identical schedules; the
   Fiat-Shamir `PlanSection`/descriptor bytes are unchanged (this refactor moves
