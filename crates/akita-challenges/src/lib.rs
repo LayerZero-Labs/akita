@@ -30,8 +30,9 @@ mod tensor;
 pub use challenge::{IntegerChallenge, SparseChallenge};
 pub use config::{SparseChallengeConfig, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
 pub use jl::mle::{
-    build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at, eval_jl_mle_at_reference,
-    eval_jl_mle_at_scalar, eval_mle_from_weights,
+    build_jl_row_weights, build_jl_row_weights_from_row_eq, build_jl_row_weights_reference,
+    eval_jl_mle_at, eval_jl_mle_at_from_eq_tables, eval_jl_mle_at_reference, eval_jl_mle_at_scalar,
+    eval_jl_mle_at_scalar_from_eq_tables, eval_mle_from_weights,
 };
 pub use jl::{center_coefficients, JlImage, JlProjectionMatrix, DEFAULT_JL_ROWS, MAX_JL_DIGIT};
 pub use sampler::sample_sparse_challenges;

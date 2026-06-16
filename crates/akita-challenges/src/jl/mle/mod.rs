@@ -65,14 +65,43 @@ pub fn build_jl_row_weights<L: FieldCore>(
 ) -> Result<Vec<L>, AkitaError> {
     let layout = JlMleLayout::new(matrix)?;
     validate_mle_points(&layout, r_J, None)?;
-
     let e_j = EqPolynomial::evals(r_J)?;
+    build_jl_row_weights_from_row_eq(matrix, &e_j)
+}
+
+/// Fused `J̃(r_J, r_w)` given precomputed `eq(r_J, ·)` and `eq(r_w, ·)` tables.
+///
+/// Bench / differential hook: production callers use [`eval_jl_mle_at`], which
+/// builds these tables once per call.
+#[doc(hidden)]
+pub fn eval_jl_mle_at_from_eq_tables<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+) -> L {
+    eval_jl_mle_at_from_eq_tables_impl(matrix, e_j, e_w)
+}
+
+/// Row-weight table given a precomputed `eq(r_J, ·)` vector.
+#[doc(hidden)]
+pub fn build_jl_row_weights_from_row_eq<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+) -> Result<Vec<L>, AkitaError> {
+    let layout = JlMleLayout::new(matrix)?;
+    if e_j.len() != layout.row_hyper {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.row_hyper,
+            actual: e_j.len(),
+        });
+    }
+
     let mut g = vec![L::zero(); layout.col_hyper];
     let cols = matrix.cols();
     let n_rows = matrix.n_rows();
     let panel_cols = byte_aligned_panel_cols(cols);
 
-    fill_row_weights(&mut g, panel_cols, cols, n_rows, matrix, &e_j);
+    fill_row_weights(&mut g, panel_cols, cols, n_rows, matrix, e_j);
     Ok(g)
 }
 
@@ -90,7 +119,34 @@ pub fn eval_jl_mle_at<L: FieldCore>(
     r_w: &[L],
 ) -> Result<L, AkitaError> {
     let (e_j, e_w) = prepare_eq_tables(matrix, r_J, r_w)?;
-    Ok(eval_jl_mle_at_from_eq_tables(matrix, &e_j, &e_w))
+    Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, &e_j, &e_w))
+}
+
+/// Row-major scalar fused eval with precomputed equality tables.
+#[doc(hidden)]
+pub fn eval_jl_mle_at_scalar_from_eq_tables<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+) -> L {
+    let cols = matrix.cols();
+    let e_w = &e_w[..cols];
+    let n_rows = matrix.n_rows();
+
+    #[cfg(feature = "parallel")]
+    if parallel_jl_enabled(n_rows, cols) {
+        return (0..n_rows)
+            .into_par_iter()
+            .map(|j| e_j[j] * accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w))
+            .reduce(L::zero, |a, b| a + b);
+    }
+
+    let mut total = L::zero();
+    for (j, &ej) in e_j.iter().take(n_rows).enumerate() {
+        let row_sum = accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w);
+        total += ej * row_sum;
+    }
+    total
 }
 
 /// Row-major scalar fused eval (`benches/jl_mle` baseline).
@@ -101,24 +157,7 @@ pub fn eval_jl_mle_at_scalar<L: FieldCore>(
     r_w: &[L],
 ) -> Result<L, AkitaError> {
     let (e_j, e_w) = prepare_eq_tables(matrix, r_J, r_w)?;
-    let cols = matrix.cols();
-    let e_w = &e_w[..cols];
-    let n_rows = matrix.n_rows();
-
-    #[cfg(feature = "parallel")]
-    if parallel_jl_enabled(n_rows, cols) {
-        return Ok((0..n_rows)
-            .into_par_iter()
-            .map(|j| e_j[j] * accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w))
-            .reduce(L::zero, |a, b| a + b));
-    }
-
-    let mut total = L::zero();
-    for (j, &ej) in e_j.iter().take(n_rows).enumerate() {
-        let row_sum = accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w);
-        total += ej * row_sum;
-    }
-    Ok(total)
+    Ok(eval_jl_mle_at_scalar_from_eq_tables(matrix, &e_j, &e_w))
 }
 
 fn prepare_eq_tables<L: FieldCore>(
@@ -131,7 +170,7 @@ fn prepare_eq_tables<L: FieldCore>(
     Ok((EqPolynomial::evals(r_J)?, EqPolynomial::evals(r_w)?))
 }
 
-fn eval_jl_mle_at_from_eq_tables<L: FieldCore>(
+fn eval_jl_mle_at_from_eq_tables_impl<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     e_j: &[L],
     e_w: &[L],

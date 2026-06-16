@@ -57,20 +57,21 @@ const fn build_byte_to_ternary4_lut() -> [u8; 256] {
 fn build_sign_weight_lut_81<L: FieldCore>(weights: &[L; 4], lut81: &mut [L; 81]) {
     debug_assert_eq!(lut81.len(), 81);
 
-    let mut layer = [L::zero(); 81];
+    let mut layers = [[L::zero(); 81]; 2];
+    let mut cur = 0usize;
     for (axis, &weight) in weights.iter().enumerate() {
         let prev_len = 3usize.pow(axis as u32);
-        let next_len = 3usize.pow((axis + 1) as u32);
-        let mut next = [L::zero(); 81];
-        for (prev_idx, &prev) in layer.iter().enumerate().take(prev_len) {
+        let next = 1 - cur;
+        for prev_idx in 0..prev_len {
+            let prev = layers[cur][prev_idx];
             for digit in 0..3 {
                 let out_idx = prev_idx * 3 + digit;
-                next[out_idx] = accum_sign_weight(prev, sign_from_digit(digit), weight);
+                layers[next][out_idx] = accum_sign_weight(prev, sign_from_digit(digit), weight);
             }
         }
-        layer[..next_len].copy_from_slice(&next[..next_len]);
+        cur = next;
     }
-    lut81.copy_from_slice(&layer);
+    lut81.copy_from_slice(&layers[cur]);
 }
 
 /// Build a direct 256-entry byte LUT from four `eq_w` weights in a column window.
