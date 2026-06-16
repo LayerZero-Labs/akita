@@ -105,3 +105,24 @@ fn accumulate_row_weight_range_matches_entrywise() {
     }
     assert_eq!(fast, slow);
 }
+
+#[test]
+fn scatter_row_weight_range_matches_entrywise() {
+    use super::common::{accum_sign_weight, entry_sign, scatter_row_weight_range};
+
+    let signs: Vec<Vec<i8>> = vec![(0..23).map(|c| ((c * 5) % 3) as i8 - 1).collect()];
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let row = matrix.row_bytes_slice(0);
+    // Misaligned start and a sub-4 tail to exercise every branch of the scatter.
+    let col0 = 2;
+    let n_cols = 13;
+    let weight = F64::from_u64(7);
+
+    let mut fast = vec![F64::zero(); n_cols];
+    scatter_row_weight_range(&mut fast, row, col0, weight);
+
+    let slow: Vec<F64> = (0..n_cols)
+        .map(|k| accum_sign_weight(F64::zero(), entry_sign(&matrix, 0, col0 + k), weight))
+        .collect();
+    assert_eq!(fast, slow);
+}

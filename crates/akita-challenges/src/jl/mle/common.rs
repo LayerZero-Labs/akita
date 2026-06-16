@@ -139,3 +139,57 @@ pub(super) fn accumulate_row_weight_range<L: FieldCore>(
     debug_assert_eq!(w_idx, n_cols);
     acc
 }
+
+/// Scatter a single per-row `weight` into `g[k] += sign(row, col0+k) · weight` for
+/// `k in 0..g.len()`, decoding signs four-at-a-time with the byte-wide LUT.
+///
+/// This is the transpose of [`accumulate_row_weight_range`]: the prover's
+/// `g[i] = Σ_j eq(r_J, j) · J[j, i]` sweeps rows and scatters each row's scalar
+/// weight across its columns, reusing the same packed-byte decode.
+pub(super) fn scatter_row_weight_range<L: FieldCore>(
+    g: &mut [L],
+    row: &[u8],
+    col0: usize,
+    weight: L,
+) {
+    let n_cols = g.len();
+    let mut col = col0;
+    let mut g_idx = 0usize;
+    let col_end = col0 + n_cols;
+
+    let misalign = col & 0b11;
+    if misalign > 0 {
+        let lane_limit = (4 - misalign).min(n_cols);
+        let byte = row[col >> 2];
+        for lane in misalign..misalign + lane_limit {
+            let pair = (byte >> (lane << 1)) & 0b11;
+            g[g_idx] = accum_sign_weight(g[g_idx], pair_to_sign(pair), weight);
+            g_idx += 1;
+            col += 1;
+        }
+    }
+
+    let remaining = col_end - col;
+    let full_bytes = remaining >> 2;
+    let byte_base = col >> 2;
+    for b in 0..full_bytes {
+        let signs = &SIGNS_FOR_BYTE[row[byte_base + b] as usize];
+        for &sign in signs {
+            g[g_idx] = accum_sign_weight(g[g_idx], sign, weight);
+            g_idx += 1;
+        }
+        col += 4;
+    }
+
+    let tail = col_end - col;
+    if tail > 0 {
+        let byte = row[col >> 2];
+        for lane in 0..tail {
+            let pair = (byte >> (lane << 1)) & 0b11;
+            g[g_idx] = accum_sign_weight(g[g_idx], pair_to_sign(pair), weight);
+            g_idx += 1;
+        }
+    }
+
+    debug_assert_eq!(g_idx, n_cols);
+}
