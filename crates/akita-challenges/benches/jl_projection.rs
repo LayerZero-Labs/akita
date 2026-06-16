@@ -1,9 +1,8 @@
 //! Microbenchmarks for the standalone JL projection prototype (`akita-challenges::jl`).
 //!
 //! Measures matrix sampling (`JlProjectionMatrix::sample`), integer projection
-//! (`project` on small balanced digits), and the squared-norm check
-//! (`JlImage::l2_norm_sq_checked`). The hot path is `project` at
-//! `O(n_rows * cols)`; matrix sampling is one-time per JL level.
+//! (`project` on small balanced digits), fast vs reference kernels (scalar,
+//! NEON, AVX2, AVX-512), and the squared-norm check (`JlImage::l2_norm_sq_checked`).
 //!
 //! Column counts are powers of two anchored to CI profile-bench tail geometry
 //! (`profile-bench-data`, `scripts/profile_bench_report.py`). See
@@ -21,7 +20,7 @@
 //! Run with:
 //!
 //! ```text
-//! cargo bench -p akita-challenges --bench jl_projection --features parallel -- --noplot
+//! cargo bench -p akita-challenges --bench jl_projection --features parallel,jl-simd -- --noplot
 //! ```
 
 #![allow(missing_docs)]
@@ -50,7 +49,6 @@ fn fresh_transcript() -> AkitaTranscript<F> {
     t
 }
 
-/// Criterion sample count; large witness columns are expensive to allocate/setup.
 fn sample_size_for_cols(cols: usize) -> usize {
     if cols >= COLS_256K {
         10
@@ -63,7 +61,6 @@ fn sample_size_for_cols(cols: usize) -> usize {
     }
 }
 
-/// Small balanced digits in `[-16, 16]`, the realistic JL input shape.
 fn digit_coeffs(cols: usize) -> Vec<F> {
     (0..cols)
         .map(|i| F::from_i64(((i % 33) as i64) - 16))
@@ -108,22 +105,45 @@ fn bench_project(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_project_centered(c: &mut Criterion) {
-    let mut group = c.benchmark_group("jl_project_centered");
+fn bench_project_digits(c: &mut Criterion) {
+    let mut group = c.benchmark_group("jl_project_digits");
     for &cols in COLS_SIZES {
         group.sample_size(sample_size_for_cols(cols));
         let mut tr = fresh_transcript();
         let matrix =
             JlProjectionMatrix::sample::<F, _>(&mut tr, N_ROWS, cols).expect("setup matrix");
         let coeffs = digit_coeffs(cols);
-        let centered = center_coefficients(&coeffs).expect("center coeffs");
+        let digits = center_coefficients(&coeffs).expect("center coeffs");
 
         group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
         group.bench_with_input(BenchmarkId::new("n256", cols), &cols, |b, _| {
             b.iter(|| {
                 let image = matrix
-                    .project_centered(black_box(&centered))
-                    .expect("JL project centered");
+                    .project_digits(black_box(&digits))
+                    .expect("JL project digits");
+                black_box(image)
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_project_reference(c: &mut Criterion) {
+    let mut group = c.benchmark_group("jl_project_reference");
+    for &cols in COLS_SIZES {
+        group.sample_size(sample_size_for_cols(cols));
+        let mut tr = fresh_transcript();
+        let matrix =
+            JlProjectionMatrix::sample::<F, _>(&mut tr, N_ROWS, cols).expect("setup matrix");
+        let coeffs = digit_coeffs(cols);
+        let digits = center_coefficients(&coeffs).expect("center coeffs");
+
+        group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
+        group.bench_with_input(BenchmarkId::new("n256", cols), &cols, |b, _| {
+            b.iter(|| {
+                let image = matrix
+                    .project_digits_reference(black_box(&digits))
+                    .expect("JL project reference");
                 black_box(image)
             });
         });
@@ -170,7 +190,8 @@ criterion_group!(
     jl_projection,
     bench_sample,
     bench_project,
-    bench_project_centered,
+    bench_project_digits,
+    bench_project_reference,
     bench_l2_norm,
     bench_end_to_end
 );

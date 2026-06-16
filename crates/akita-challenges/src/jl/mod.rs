@@ -16,7 +16,6 @@
 //! completeness loop, the consistency sumcheck, and any protocol wiring are
 //! deferred (see `specs/akita-jl-tail-projection-prototype.md`).
 
-use akita_field::cfg_into_iter;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -24,6 +23,8 @@ use akita_transcript::labels::{ABSORB_JL_PROJECTION, CHALLENGE_JL_SEED};
 use akita_transcript::Transcript;
 
 use crate::sampler::xof::XofCursor;
+
+mod kernels;
 
 /// PRG domain separator for the JL matrix stream. Distinct from the
 /// sparse-challenge PRG domain so the two streams cannot collide on a shared
@@ -38,17 +39,13 @@ const JL_SAMPLE_DOMAIN_VERSION: u64 = 1;
 /// The secure `n_rows` derivation is deferred (spec D6); callers parameterize.
 pub const DEFAULT_JL_ROWS: usize = 256;
 
+/// Maximum absolute balanced-digit magnitude for JL witness coefficients (`lb ≤ 6`).
+pub const MAX_JL_DIGIT: i32 = 32;
+
 /// Minimum `n_rows * cols` before the `parallel` feature fans projection out
 /// over rows. Below this, rayon scheduling overhead dominates (see
 /// `benches/jl_projection.rs`).
 const JL_PARALLEL_ELEMS_THRESHOLD: usize = 1 << 16;
-
-/// Map a packed 2-bit pair to its ternary sign: `0b00 -> -1`, `0b11 -> +1`,
-/// `0b01`/`0b10 -> 0`.
-#[inline]
-fn pair_to_sign(pair: u8) -> i8 {
-    ((pair == 0b11) as i8) - ((pair == 0b00) as i8)
-}
 
 /// Byte length of one packed row of `cols` ternary entries (2 bits each).
 fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
@@ -133,18 +130,13 @@ impl JlProjectionMatrix {
 
     /// Project a flat coefficient slice to its exact integer image `J · c`.
     ///
-    /// JL is only ever applied to small balanced digits, so coefficients and
-    /// coordinates are accumulated as `i64`: each coefficient is centered to its
-    /// balanced representative in `[-(q-1)/2, (q-1)/2]` and accumulated over the
-    /// integers with no modular reduction. Accumulation is checked, so a
-    /// coefficient or coordinate that would escape `i64` (i.e. a non-digit input
-    /// such as a full-magnitude fp128 element) is rejected rather than wrapped
-    /// or saturated, keeping the path panic-free without a wider integer type.
+    /// Coefficients are centered to balanced `i32` digits and projected through
+    /// the fast kernel. Non-digit inputs whose centered magnitude exceeds `i32`
+    /// (e.g. a full-magnitude fp128 element) are rejected at the boundary.
     ///
     /// # Errors
     ///
-    /// Returns an error if `coeffs.len() != cols` or if any centered coefficient
-    /// or coordinate overflows `i64`.
+    /// Returns an error if `coeffs.len() != cols` or centering fails.
     pub fn project<F>(&self, coeffs: &[F]) -> Result<JlImage, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -157,45 +149,66 @@ impl JlProjectionMatrix {
             )));
         }
 
-        let q = field_modulus::<F>();
-        let half_q = q / 2;
-        let centered: Vec<i64> = coeffs
-            .iter()
-            .map(|c| center_to_i64(c.to_canonical_u128(), q, half_q))
-            .collect::<Result<_, _>>()?;
-
-        self.project_centered(&centered)
+        let digits = center_coefficients(coeffs)?;
+        self.project_digits(&digits)
     }
 
-    /// Project a pre-centered digit coefficient vector to its integer image.
+    /// Project a pre-centered balanced-digit vector with the fast `i32` kernel.
     ///
-    /// Callers that already hold balanced `i64` digits (e.g. from a witness
-    /// flattening pass) can skip repeated field centering. Row accumulation
-    /// parallelizes over `n_rows` when the `parallel` feature is enabled.
+    /// Row accumulation parallelizes over `n_rows` when the `parallel` feature
+    /// is enabled and `n_rows * cols` exceeds the internal threshold. With the
+    /// `jl-simd` feature, runtime dispatch selects NEON (aarch64), AVX-512
+    /// (x86_64 when F/DQ/BW are present), AVX2, or the scalar fast kernel.
     ///
     /// # Errors
     ///
-    /// Returns an error if `centered.len() != cols` or if any coordinate
-    /// overflows `i64`.
-    pub fn project_centered(&self, centered: &[i64]) -> Result<JlImage, AkitaError> {
-        if centered.len() != self.cols {
-            return Err(AkitaError::InvalidInput(format!(
-                "JL projection expects {} centered coefficients, got {}",
-                self.cols,
-                centered.len()
-            )));
-        }
+    /// Returns an error on a shape mismatch or if any digit exceeds
+    /// [`MAX_JL_DIGIT`].
+    pub fn project_digits(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
+        validate_digit_witness(digits, self.cols)?;
+        let coords = kernels::project_rows_fast(
+            self.n_rows,
+            self.row_bytes,
+            &self.packed_rows,
+            digits,
+            self.cols,
+            use_parallel_projection(self.n_rows, self.cols),
+        );
+        Ok(JlImage { coords })
+    }
 
+    /// Checked `i64` reference projection for tests and differential benches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on shape mismatch, digit-bound violation, or `i64`
+    /// overflow during accumulation.
+    #[doc(hidden)]
+    pub fn project_digits_reference(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
+        validate_digit_witness(digits, self.cols)?;
+        let centered: Vec<i64> = digits.iter().map(|&d| i64::from(d)).collect();
+        let project_row = |row_idx: usize| {
+            kernels::project_row_reference(self.row_slice(row_idx), &centered, self.cols)
+        };
         let coords = if use_parallel_projection(self.n_rows, self.cols) {
-            cfg_into_iter!(0..self.n_rows)
-                .map(|row_idx| project_row(self.row_slice(row_idx), centered, self.cols))
+            akita_field::cfg_into_iter!(0..self.n_rows)
+                .map(project_row)
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             (0..self.n_rows)
-                .map(|row_idx| project_row(self.row_slice(row_idx), centered, self.cols))
+                .map(project_row)
                 .collect::<Result<Vec<_>, _>>()?
         };
-
+        let coords: Vec<i32> = coords
+            .into_iter()
+            .map(|c| {
+                i32::try_from(c).map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "JL reference coordinate exceeds i32 range for digit witness".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
         Ok(JlImage { coords })
     }
 
@@ -251,22 +264,42 @@ impl JlProjectionMatrix {
         }
         let shift = (col_idx & 0b11) << 1;
         let pair = (self.row_slice(row_idx)[col_idx >> 2] >> shift) & 0b11;
-        Some(pair_to_sign(pair))
+        Some(kernels::pair_to_sign(pair))
     }
 }
 
-/// Center a flat coefficient slice to balanced `i64` digits.
+/// Center a flat coefficient slice to balanced `i32` digits.
 ///
 /// # Errors
 ///
-/// Returns an error if any centered magnitude exceeds `i64` (non-digit input).
-pub fn center_coefficients<F: CanonicalField>(coeffs: &[F]) -> Result<Vec<i64>, AkitaError> {
+/// Returns an error if any centered magnitude exceeds `i32` (non-digit input).
+pub fn center_coefficients<F: CanonicalField>(coeffs: &[F]) -> Result<Vec<i32>, AkitaError> {
     let q = field_modulus::<F>();
     let half_q = q / 2;
     coeffs
         .iter()
-        .map(|c| center_to_i64(c.to_canonical_u128(), q, half_q))
+        .map(|c| center_to_i32(c.to_canonical_u128(), q, half_q))
         .collect()
+}
+
+fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError> {
+    if digits.len() != cols {
+        return Err(AkitaError::InvalidInput(format!(
+            "JL projection expects {cols} centered coefficients, got {}",
+            digits.len()
+        )));
+    }
+    if digits.iter().any(|&d| d.abs() > MAX_JL_DIGIT) {
+        return Err(AkitaError::InvalidInput(format!(
+            "JL witness digit exceeds balanced bound |d| <= {MAX_JL_DIGIT}"
+        )));
+    }
+    if cols > i32::MAX as usize / MAX_JL_DIGIT as usize {
+        return Err(AkitaError::InvalidInput(
+            "JL column count too large for unchecked i32 row accumulation".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Recover the field modulus `q` as a `u128` for a base prime field.
@@ -276,21 +309,15 @@ fn field_modulus<F: FieldCore + CanonicalField>() -> u128 {
 }
 
 /// Center a canonical residue in `[0, q)` to its balanced representative.
-///
-/// A JL input is a small balanced digit, so the centered value fits `i64` with
-/// room to spare. The conversion is still checked: a non-digit input whose
-/// centered magnitude exceeds `i64` (e.g. a full-magnitude fp128 element) is
-/// rejected, which both documents the digit contract and keeps projection
-/// panic-free without a wider integer type.
-fn center_to_i64(canonical: u128, q: u128, half_q: u128) -> Result<i64, AkitaError> {
+fn center_to_i32(canonical: u128, q: u128, half_q: u128) -> Result<i32, AkitaError> {
     let magnitude = if canonical > half_q {
         q - canonical
     } else {
         canonical
     };
-    let magnitude = i64::try_from(magnitude).map_err(|_| {
+    let magnitude = i32::try_from(magnitude).map_err(|_| {
         AkitaError::InvalidInput(
-            "JL centered coefficient exceeds i64 range (not a small balanced digit)".to_string(),
+            "JL centered coefficient exceeds i32 range (not a small balanced digit)".to_string(),
         )
     })?;
     Ok(if canonical > half_q {
@@ -298,61 +325,6 @@ fn center_to_i64(canonical: u128, q: u128, half_q: u128) -> Result<i64, AkitaErr
     } else {
         magnitude
     })
-}
-
-/// Add `sign(pair) * value` into `acc` with checked `i64` arithmetic.
-#[inline]
-fn accum_pair(acc: i64, pair: u8, value: i64) -> Result<i64, AkitaError> {
-    let sign = pair_to_sign(pair);
-    if sign == 0 {
-        return Ok(acc);
-    }
-    let term = if sign < 0 {
-        value
-            .checked_neg()
-            .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))?
-    } else {
-        value
-    };
-    acc.checked_add(term)
-        .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))
-}
-
-/// Accumulate one projection coordinate `sum_col sign(col) * centered[col]`
-/// with checked arithmetic, rejecting `i64` overflow.
-///
-/// Processes four packed column pairs per byte on the full-byte prefix.
-fn project_row(row: &[u8], centered: &[i64], cols: usize) -> Result<i64, AkitaError> {
-    let full_bytes = cols >> 2;
-    let remainder = cols & 0b11;
-    let mut coeff_idx = 0usize;
-    let mut acc: i64 = 0;
-
-    for &byte in row.iter().take(full_bytes) {
-        acc = accum_pair(acc, byte & 0b11, centered[coeff_idx])?;
-        coeff_idx += 1;
-        acc = accum_pair(acc, (byte >> 2) & 0b11, centered[coeff_idx])?;
-        coeff_idx += 1;
-        acc = accum_pair(acc, (byte >> 4) & 0b11, centered[coeff_idx])?;
-        coeff_idx += 1;
-        acc = accum_pair(acc, (byte >> 6) & 0b11, centered[coeff_idx])?;
-        coeff_idx += 1;
-    }
-
-    if remainder > 0 {
-        let byte = row[full_bytes];
-        for lane in 0..remainder {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            acc = accum_pair(acc, pair, centered[coeff_idx])?;
-            coeff_idx += 1;
-        }
-    }
-    debug_assert_eq!(coeff_idx, cols);
-    Ok(acc)
-}
-
-fn jl_overflow_msg() -> String {
-    "JL projection coordinate exceeds i64 range".to_string()
 }
 
 #[inline]
@@ -363,12 +335,12 @@ fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
 /// Integer image `p = J · c` of a JL projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JlImage {
-    coords: Vec<i64>,
+    coords: Vec<i32>,
 }
 
 impl JlImage {
     /// Signed integer coordinates of the image.
-    pub fn coords(&self) -> &[i64] {
+    pub fn coords(&self) -> &[i32] {
         &self.coords
     }
 
@@ -383,11 +355,6 @@ impl JlImage {
     }
 
     /// Squared Euclidean norm over the integers, with checked accumulation.
-    ///
-    /// Coordinates are `i64`, so each square fits `u128`; the `u128` accumulator
-    /// is the one place a width past `i64` is warranted (squaring), and it runs
-    /// `O(n_rows)`, off the hot projection path. The running sum is still
-    /// checked so an out-of-contract image rejects rather than wraps.
     ///
     /// # Errors
     ///
@@ -420,11 +387,8 @@ impl JlImage {
     }
 
     /// Embed each coordinate into the base field, requiring an injective signed
-    /// representative (`|p_j| < q/2`).
-    ///
-    /// The window check prevents two integers differing by a multiple of `q`
-    /// (with different Euclidean norms) from sharing one field residue, which a
-    /// later field-consistency check could not distinguish.
+    /// representative (`|p_j| < q/2`). Rejects coordinates that would alias
+    /// modulo `q` with a different Euclidean norm.
     ///
     /// # Errors
     ///

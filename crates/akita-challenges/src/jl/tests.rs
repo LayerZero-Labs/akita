@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::{Fp64, Prime128Offset275, Prime32Offset99};
+use akita_field::{FieldCore, Fp64, Prime128Offset275, Prime32Offset99};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::AkitaTranscript;
 
@@ -8,17 +8,22 @@ type F64 = Fp64<4294967197>;
 type F128 = Prime128Offset275;
 
 /// Balanced representative used by the naive reference projection.
-fn centered_ref<F: FieldCore + CanonicalField>(c: F) -> i64 {
+fn centered_ref<F: FieldCore + CanonicalField>(c: F) -> i32 {
     let q = field_modulus::<F>();
     let half_q = q / 2;
-    center_to_i64(c.to_canonical_u128(), q, half_q).expect("centered coeff fits i64")
+    center_to_i32(c.to_canonical_u128(), q, half_q).expect("centered coeff fits i32")
 }
 
 /// Naive integer projection used as the correctness oracle.
-fn reference_project(signs: &[Vec<i8>], centered: &[i64]) -> Vec<i64> {
+fn reference_project(signs: &[Vec<i8>], centered: &[i32]) -> Vec<i32> {
     signs
         .iter()
-        .map(|row| row.iter().zip(centered).map(|(&s, &v)| s as i64 * v).sum())
+        .map(|row| {
+            row.iter()
+                .zip(centered)
+                .map(|(&s, &v)| i32::from(s) * v)
+                .sum()
+        })
         .collect()
 }
 
@@ -33,7 +38,7 @@ fn project_vs_reference_for<F: FieldCore + CanonicalField>() {
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let image = matrix.project(&coeffs).unwrap();
 
-    let centered: Vec<i64> = coeffs.iter().map(|&c| centered_ref(c)).collect();
+    let centered: Vec<i32> = coeffs.iter().map(|&c| centered_ref(c)).collect();
     let expected = reference_project(&signs, &centered);
     assert_eq!(image.coords(), expected.as_slice());
 }
@@ -43,6 +48,21 @@ fn project_matches_reference_across_fields() {
     project_vs_reference_for::<F32>();
     project_vs_reference_for::<F64>();
     project_vs_reference_for::<F128>();
+}
+
+#[test]
+fn fast_kernel_matches_reference_kernel() {
+    let n_rows = 32;
+    let cols = 1023; // non-multiple of 4 and 8
+    let signs: Vec<Vec<i8>> = (0..n_rows)
+        .map(|r| (0..cols).map(|c| ((r * 7 + c * 3) % 3) as i8 - 1).collect())
+        .collect();
+    let digits: Vec<i32> = (0..cols).map(|i| ((i % 33) as i32) - 16).collect();
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    assert_eq!(
+        matrix.project_digits(&digits).unwrap(),
+        matrix.project_digits_reference(&digits).unwrap()
+    );
 }
 
 #[test]
@@ -78,19 +98,15 @@ fn packed_matrix_roundtrips_signs() {
 
 #[test]
 fn fp128_small_digits_project() {
-    // The real JL input is a small balanced digit, which projects fine over an
-    // fp128 base field even though fp128's modulus is far past i64.
     let coeffs = [F128::from_i64(-5), F128::from_i64(7)];
     let signs = vec![vec![1i8, 1i8], vec![1i8, -1i8]];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let image = matrix.project(&coeffs).unwrap();
-    assert_eq!(image.coords(), &[2i64, -12i64]);
+    assert_eq!(image.coords(), &[2, -12]);
 }
 
 #[test]
 fn oversized_non_digit_coefficient_is_rejected() {
-    // A full-magnitude fp128 element is not a balanced digit; its centered
-    // value exceeds i64 and projection rejects it without panicking.
     let q = field_modulus::<F128>();
     let half_q = q / 2;
     let large = half_q - 17;
@@ -109,20 +125,20 @@ fn oversized_non_digit_coefficient_is_rejected() {
 fn embed_enforces_injective_signed_window() {
     let q = field_modulus::<F32>();
     let half_q = q / 2;
-    let signs = vec![vec![1i8, 1i8]];
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let at_boundary = i32::try_from(half_q).expect("fp32 half modulus fits i32");
 
     // Coordinate exactly at the boundary `|p| = q/2` embeds injectively.
-    let at_boundary = F32::from_canonical_u128_reduced(half_q);
-    let image = matrix.project(&[at_boundary, F32::from_i64(0)]).unwrap();
-    assert_eq!(image.coords(), &[half_q as i64]);
+    let image = JlImage {
+        coords: vec![at_boundary],
+    };
     let embedded = image.embed_into_field::<F32>().unwrap();
     assert_eq!(embedded.len(), 1);
     assert_eq!(embedded[0].to_canonical_u128(), half_q);
 
     // One past the boundary aliases modulo q and is rejected.
-    let over = matrix.project(&[at_boundary, F32::from_i64(1)]).unwrap();
-    assert_eq!(over.coords(), &[(half_q + 1) as i64]);
+    let over = JlImage {
+        coords: vec![at_boundary + 1],
+    };
     assert!(over.embed_into_field::<F32>().is_err());
 }
 
@@ -132,7 +148,7 @@ fn check_l2_accepts_generous_and_rejects_tight() {
     let coeffs = [F64::from_i64(3), F64::from_i64(-4), F64::from_i64(5)];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let image = matrix.project(&coeffs).unwrap();
-    assert_eq!(image.coords(), &[4i64, -2i64]);
+    assert_eq!(image.coords(), &[4, -2]);
 
     assert_eq!(image.l2_norm_sq_checked().unwrap(), 20);
     assert!(image.check_l2(20).is_ok());
@@ -140,16 +156,16 @@ fn check_l2_accepts_generous_and_rejects_tight() {
 }
 
 #[test]
-fn project_centered_matches_project() {
+fn project_digits_matches_project() {
     let signs: Vec<Vec<i8>> = (0..4)
         .map(|r| (0..11).map(|c| ((r + c) % 3) as i8 - 1).collect())
         .collect();
     let coeffs: Vec<F64> = (0..11).map(|i| F64::from_i64(i as i64 - 5)).collect();
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
-    let centered = super::center_coefficients(&coeffs).unwrap();
+    let digits = super::center_coefficients(&coeffs).unwrap();
     assert_eq!(
         matrix.project(&coeffs).unwrap(),
-        matrix.project_centered(&centered).unwrap()
+        matrix.project_digits(&digits).unwrap()
     );
 }
 
@@ -162,4 +178,12 @@ fn malformed_inputs_return_error() {
     let mut t = AkitaTranscript::<F64>::new(DOMAIN_AKITA_PROTOCOL);
     assert!(JlProjectionMatrix::sample::<F64, _>(&mut t, 4, 0).is_err());
     assert!(JlProjectionMatrix::sample::<F64, _>(&mut t, 0, 4).is_err());
+}
+
+#[test]
+fn digit_bound_is_enforced() {
+    let signs = vec![vec![1i8; 4]];
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let digits = vec![MAX_JL_DIGIT + 1, 0, 0, 0];
+    assert!(matrix.project_digits(&digits).is_err());
 }
