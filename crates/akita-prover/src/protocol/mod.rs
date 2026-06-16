@@ -14,9 +14,9 @@ pub(crate) mod zk_hiding_commit;
 
 pub use akita_types::RingRelationInstance;
 pub use core::{
-    batched_prove, prepare_batched_prove_inputs, prove_folded_batched, prove_root,
-    prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState,
+    batched_prove, prepare_batched_prove_inputs, prove, prove_root, prove_root_direct,
+    prove_suffix, prove_terminal_root_fold_with_params, PreparedBatchedProveInputs,
+    ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState,
 };
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;

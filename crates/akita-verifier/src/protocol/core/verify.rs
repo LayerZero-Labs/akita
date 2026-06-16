@@ -428,8 +428,8 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 ///
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
 /// public claim normalization, schedule selection (from `Cfg`), the root-direct
-/// rewrite, transcript instance-descriptor binding, root-direct and folded-root
-/// dispatch, and recursive verifier replay.
+/// rewrite, and transcript instance-descriptor binding before handing off to
+/// [`verify`] for root-direct and folded-root replay.
 ///
 /// The root-direct branch recomputes commitments with the same root commitment
 /// layout the prover used at commit time (`Cfg::get_params_for_batched_commitment`
@@ -441,7 +441,7 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
-pub fn verify_batched<'a, Cfg, T, const D: usize>(
+pub fn batched_verify<'a, Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
@@ -479,13 +479,50 @@ where
         transcript,
     )?;
 
-    let PreparedVerifierClaims {
-        opening_point,
-        commitments,
-        openings,
-        opening_batch,
-    } = prepared_claims;
+    verify::<Cfg, T, D>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        &schedule,
+        basis,
+        setup_contribution_mode,
+    )
+}
 
+/// Verify a prepared batched proof once the schedule and transcript descriptor
+/// are fixed.
+///
+/// This mirrors the prover's `prove` orchestration: the batched wrapper owns
+/// public input preparation, while this function owns the root-direct vs
+/// folded-root proof dispatch.
+///
+/// # Errors
+///
+/// Returns an error if the proof root shape does not match the selected
+/// schedule, root-direct commitment recomputation rejects, or folded proof
+/// replay rejects.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub(crate) fn verify<'a, Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    prepared_claims: PreparedVerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    schedule: &Schedule,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             #[cfg(feature = "zk")]
@@ -498,9 +535,9 @@ where
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
             verify_zero_fold_openings_with_opening_batch(
                 witnesses,
-                opening_point,
-                &openings,
-                &opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.openings,
+                &prepared_claims.opening_batch,
                 basis,
             )?;
             #[cfg(feature = "zk")]
@@ -511,8 +548,8 @@ where
             verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
-                &commitments,
-                &opening_batch,
+                &prepared_claims.commitments,
+                &prepared_claims.opening_batch,
                 params,
                 #[cfg(feature = "zk")]
                 direct_commitment_payload,
@@ -523,12 +560,12 @@ where
                 proof,
                 setup,
                 transcript,
-                opening_point,
-                &openings,
-                &commitments,
-                opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.openings,
+                &prepared_claims.commitments,
+                prepared_claims.opening_batch,
                 basis,
-                &schedule,
+                schedule,
                 setup_contribution_mode,
             )?;
         }
