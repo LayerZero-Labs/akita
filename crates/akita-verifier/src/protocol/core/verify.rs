@@ -1,9 +1,12 @@
-//! Top-level batched verifier orchestration once a schedule is selected.
+use super::suffix::{verify_suffix, SuffixVerifierState};
+use super::*;
+#[cfg(feature = "zk")]
+use akita_r1cs::zk_ext_mask_lc_at;
+// Top-level batched verifier orchestration once a schedule is selected.
 
-use super::{validate_level_dispatch, validate_log_basis};
 use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
-use crate::protocol::levels::verify_folded_batched_proof;
+use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
@@ -425,8 +428,8 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 ///
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
 /// public claim normalization, schedule selection (from `Cfg`), the root-direct
-/// rewrite, transcript instance-descriptor binding, root-direct and folded-root
-/// dispatch, and recursive verifier replay.
+/// rewrite, and transcript instance-descriptor binding before handing off to
+/// `verify` for root-direct and folded-root replay.
 ///
 /// The root-direct branch recomputes commitments with the same root commitment
 /// layout the prover used at commit time (`Cfg::get_params_for_batched_commitment`
@@ -438,7 +441,7 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
-pub fn verify_batched<'a, Cfg, T, const D: usize>(
+pub fn batched_verify<'a, Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
@@ -476,13 +479,50 @@ where
         transcript,
     )?;
 
-    let PreparedVerifierClaims {
-        opening_point,
-        commitments,
-        openings,
-        opening_batch,
-    } = prepared_claims;
+    verify::<Cfg, T, D>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        &schedule,
+        basis,
+        setup_contribution_mode,
+    )
+}
 
+/// Verify a prepared batched proof once the schedule and transcript descriptor
+/// are fixed.
+///
+/// This mirrors the prover's `prove` orchestration: the batched wrapper owns
+/// public input preparation, while this function owns the root-direct vs
+/// folded-root proof dispatch.
+///
+/// # Errors
+///
+/// Returns an error if the proof root shape does not match the selected
+/// schedule, root-direct commitment recomputation rejects, or folded proof
+/// replay rejects.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub(crate) fn verify<'a, Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    prepared_claims: PreparedVerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    schedule: &Schedule,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             #[cfg(feature = "zk")]
@@ -495,9 +535,9 @@ where
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
             verify_zero_fold_openings_with_opening_batch(
                 witnesses,
-                opening_point,
-                &openings,
-                &opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.openings,
+                &prepared_claims.opening_batch,
                 basis,
             )?;
             #[cfg(feature = "zk")]
@@ -508,8 +548,8 @@ where
             verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
-                &commitments,
-                &opening_batch,
+                &prepared_claims.commitments,
+                &prepared_claims.opening_batch,
                 params,
                 #[cfg(feature = "zk")]
                 direct_commitment_payload,
@@ -520,15 +560,203 @@ where
                 proof,
                 setup,
                 transcript,
-                opening_point,
-                &openings,
-                &commitments,
-                opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.openings,
+                &prepared_claims.commitments,
+                prepared_claims.opening_batch,
                 basis,
-                &schedule,
+                schedule,
                 setup_contribution_mode,
             )?;
         }
+    }
+
+    Ok(())
+}
+
+/// Verify the folded-root branch of a batched opening proof.
+///
+/// The caller owns config-backed schedule selection and passes the derived
+/// root verifier layout plus the first suffix-level params. This function
+/// owns the fold-root proof-shape checks, root opening preparation, root
+/// transcript replay, and suffix handoff.
+///
+/// # Errors
+///
+/// Returns an error if the proof is not a folded-root proof, the schedule does
+/// not match the proof shape, the root proof rejects, or a suffix level rejects.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
+    proof: &AkitaBatchedProof<F, E>,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    opening_point: &[E],
+    openings: &[E],
+    commitments: &[RingCommitment<F, D>],
+    opening_batch: OpeningBatch,
+    basis: BasisMode,
+    schedule: &Schedule,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let root_lp = &root_step.params;
+    let total_fold_levels = schedule_num_fold_levels(schedule);
+    let terminal_direct = schedule
+        .steps
+        .last()
+        .and_then(|step| match step {
+            Step::Direct(direct) => Some(direct),
+            Step::Fold(_) => None,
+        })
+        .ok_or(AkitaError::InvalidProof)?;
+
+    #[cfg(feature = "zk")]
+    let mut zk_relations = ZkRelationAccumulator::new();
+    #[cfg(feature = "zk")]
+    {
+        if proof.zk_hiding.u_blind.is_empty() || proof.zk_hiding.hiding_witness.is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        verify_zk_hiding_commitment::<F, D>(setup, root_lp, &proof.zk_hiding)?;
+        transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &proof.zk_hiding.u_blind);
+    }
+    #[cfg(feature = "zk")]
+    let mut zk_hiding_cursor = 0usize;
+
+    match &proof.root {
+        AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        AkitaBatchedRootProof::Terminal(terminal) => {
+            // 1-fold case: the root itself is the terminal fold. No suffix follows.
+            if total_fold_levels != 1 {
+                return Err(AkitaError::InvalidProof);
+            }
+            let final_witness = terminal
+                .stage2
+                .final_witness()
+                .ok_or(AkitaError::InvalidProof)?;
+            if !terminal_direct
+                .witness_shape
+                .admits_realized(&final_witness.shape())
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            verify_root::<F, E, T, D>(
+                &proof.root,
+                setup,
+                transcript,
+                opening_point,
+                openings,
+                commitments,
+                opening_batch,
+                basis,
+                root_lp,
+                setup_contribution_mode,
+                None,
+                root_step.next_w_len,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
+            )?;
+            Ok(())
+        }
+        AkitaBatchedRootProof::Fold(fold_root) => {
+            let expected_recursive_levels = total_fold_levels
+                .checked_sub(1)
+                .ok_or(AkitaError::InvalidProof)?;
+            if proof.steps.len() != expected_recursive_levels {
+                return Err(AkitaError::InvalidProof);
+            }
+
+            let terminal_step = proof
+                .steps
+                .last()
+                .and_then(|step| match step {
+                    AkitaLevelProof::Terminal { .. } => Some(step),
+                    AkitaLevelProof::Intermediate { .. } => None,
+                })
+                .ok_or(AkitaError::InvalidProof)?;
+            if !terminal_direct.witness_shape.admits_realized(
+                &terminal_step
+                    .stage2()
+                    .final_witness()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .shape(),
+            ) {
+                return Err(AkitaError::InvalidProof);
+            }
+
+            let first_recursive_params =
+                scheduled_next_level_params(schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
+            let root_stage2 = fold_root
+                .stage2
+                .as_intermediate()
+                .ok_or(AkitaError::InvalidProof)?;
+            let root_challenges = verify_root::<F, E, T, D>(
+                &proof.root,
+                setup,
+                transcript,
+                opening_point,
+                openings,
+                commitments,
+                opening_batch,
+                basis,
+                root_lp,
+                setup_contribution_mode,
+                Some(&first_recursive_params),
+                root_step.next_w_len,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
+            )?;
+
+            let first_level_d = first_recursive_params.ring_dimension;
+            if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
+                return Err(AkitaError::InvalidProof);
+            }
+
+            let current_state = SuffixVerifierState {
+                opening_point: root_challenges,
+                opening: root_stage2.next_w_eval(),
+                #[cfg(feature = "zk")]
+                opening_mask: zk_ext_mask_lc_at::<F, E>(
+                    zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,
+                ),
+                commitment: &root_stage2.next_w_commitment,
+                basis: BasisMode::Lagrange,
+                w_len: root_step.next_w_len,
+            };
+            verify_suffix::<F, E, T>(
+                &proof.steps,
+                setup,
+                transcript,
+                schedule,
+                current_state,
+                setup_contribution_mode,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
+            )?;
+            Ok(())
+        }
+    }?;
+
+    #[cfg(feature = "zk")]
+    {
+        if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let lifted = lift_hiding_witness::<F, E>(&proof.zk_hiding.hiding_witness);
+        zk_relations.verify_all(&lifted)?;
     }
 
     Ok(())

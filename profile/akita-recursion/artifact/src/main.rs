@@ -29,7 +29,7 @@ use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
     LevelParams, SetupContributionMode,
 };
-use akita_verifier::verify_batched;
+use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -200,7 +200,7 @@ fn verify_with_setup_mode(
     claims: akita_types::VerifierClaims<'_, Claim, akita_types::RingCommitment<F, D>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
-    verify_batched::<Cfg, _, D>(
+    batched_verify::<Cfg, _, D>(
         proof,
         verifier_setup,
         transcript,
