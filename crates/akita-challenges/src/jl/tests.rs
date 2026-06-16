@@ -66,6 +66,27 @@ fn fast_kernel_matches_reference_kernel() {
 }
 
 #[test]
+fn parallel_column_panels_match_reference() {
+    // `n_rows * cols` is above `JL_PARALLEL_ELEMS_THRESHOLD`, so (with the
+    // `parallel` feature) `project_digits` fans out over many column panels and
+    // reduces per-panel partials. `cols` is not a multiple of 4 to also cover
+    // the last panel's remainder bytes. The checked `i64` reference is the oracle.
+    let n_rows = 16;
+    let cols = 8191;
+    assert!(n_rows * cols >= super::JL_PARALLEL_ELEMS_THRESHOLD);
+    let signs: Vec<Vec<i8>> = (0..n_rows)
+        .map(|r| (0..cols).map(|c| ((r * 5 + c * 2) % 3) as i8 - 1).collect())
+        .collect();
+    let digits: Vec<i32> = (0..cols).map(|i| ((i % 65) as i32) - 32).collect();
+    assert!(digits.iter().all(|d| d.abs() <= MAX_JL_DIGIT));
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    assert_eq!(
+        matrix.project_digits(&digits).unwrap(),
+        matrix.project_digits_reference(&digits).unwrap()
+    );
+}
+
+#[test]
 fn sample_is_deterministic_and_replayable() {
     let mut t1 = AkitaTranscript::<F64>::new(DOMAIN_AKITA_PROTOCOL);
     let mut t2 = AkitaTranscript::<F64>::new(DOMAIN_AKITA_PROTOCOL);

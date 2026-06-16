@@ -131,12 +131,14 @@ impl JlProjectionMatrix {
     /// Project a flat coefficient slice to its exact integer image `J · c`.
     ///
     /// Coefficients are centered to balanced `i32` digits and projected through
-    /// the fast kernel. Non-digit inputs whose centered magnitude exceeds `i32`
-    /// (e.g. a full-magnitude fp128 element) are rejected at the boundary.
+    /// the fast kernel. Any input whose centered magnitude exceeds the balanced
+    /// digit bound [`MAX_JL_DIGIT`] (e.g. a full-magnitude fp128 element) is
+    /// rejected at the boundary as a non-digit witness.
     ///
     /// # Errors
     ///
-    /// Returns an error if `coeffs.len() != cols` or centering fails.
+    /// Returns an error if `coeffs.len() != cols`, if any centered magnitude
+    /// exceeds `i32`, or if any centered digit exceeds [`MAX_JL_DIGIT`].
     pub fn project<F>(&self, coeffs: &[F]) -> Result<JlImage, AkitaError>
     where
         F: FieldCore + CanonicalField,
