@@ -185,9 +185,11 @@ The primary protocol surfaces are:
 - [ ] The verifier accepts a realized level only when the public no-wrap gate
       holds for every convolution exponent
       (`D_e + H'_e + (B-1) + B·H'_{e+1} < q`, with `H'_e` the committed carry
-      cell run's realizable budget), so each carry residual that is zero modulo
-      `q` is zero as an integer. A test pins which levels choose field-fitting,
-      grouped-carry, or deterministic-fallback tiers.
+      cell run's realizable budget), and the folded carry soundness argument in
+      **Grouped-Carry Soundness** is implemented (polynomial identity in `alpha`,
+      carry layout `delta_carry(e)`, boundary `h_0 = h_{E+1} = 0`).
+      A test pins which levels choose field-fitting, grouped-carry, or
+      deterministic-fallback tiers.
 - [ ] The certified statement is over the committed `z_hat` / `ell_hat` /
       `carry_hat` digit planes, and a test ties every limb, slack, and carry
       evaluation to the committed `w_next` segment via gadget recomposition (a
@@ -241,7 +243,8 @@ Unit tests:
   folds.
 - Grouped-carry tests covering field-fitting selection, single-digit grouping,
   last short groups, negative `C_e` / carries, the integer carry recurrence
-  against a direct `Σ z[i]^2` reference, and no-wrap-gate fallback.
+  against a direct `Σ z[i]^2` reference, no-wrap-gate fallback, and a regression
+  that mismatched `delta_carry(e)` or out-of-range carry cells are rejected.
 
 Protocol tests:
 
@@ -543,8 +546,11 @@ do not by themselves justify adding D32 back to production schedules.
 | `a^{<j>}` | Augmented limb family over the size-`(N+4)` domain (folded witness for `x < N`, slack at the tail) |
 | `C_e` | Un-reduced base-`B` coefficient of the squared norm, `Σ_{r+s=e} <a^{<r>}, a^{<s>}>` |
 | `T_e` | Public base-`B` digit of the bound, `B_l2 = Σ_e B^e T_e` |
-| `h_e` | Signed carry, `C_e + h_e − T_e − B·h_{e+1} = 0`, `h_0 = h_E = 0`; committed as `carry_hat` |
-| `δ_carry(e)` | Balanced digit cells committed for `h_e` (base-2 weights); realizable budget `H'_e = (b/2)(2^{δ_carry}−1) ≥ H_e` |
+| `h_e` | Signed carry, `C_e + h_e − T_e − B·h_{e+1} = 0`, `h_0 = h_{E+1} = 0`; committed as `carry_hat` |
+| `res_e` | Carry residual `C_e + h_e − T_e − B·h_{e+1}`; vanishing for all `e` implies the bound |
+| `H_e` | Tight carry magnitude budget from the structural recurrence (not witnessed) |
+| `H'_e` | Realizable carry budget `(b/2)(2^{δ_carry(e)}−1)` from the committed cell layout |
+| `δ_carry(e)` | Balanced digit cells committed for `h_e` (base-2 weights); `H'_e >= H_e` |
 | `α` | Challenge-field randomizer folding the limbs and carries into one sumcheck |
 | `Z_α` | `α`-weighted recomposition `Σ_j α^j a^{<j>}`, the squared-sum sumcheck's polynomial |
 
@@ -723,7 +729,7 @@ the public `B_l2`.
 
 **Carry reconciliation, folded by the same `alpha`.**
 Let `T_e` be the public base-`B` digits of the bound (`B_l2 = sum_e B^e T_e`) and
-let `h_e` be signed carries with `h_0 = 0`, `h_E = 0`, satisfying
+let `h_e` be signed carries with `h_0 = 0`, `h_{E+1} = 0`, satisfying
 
 ```text
 C_e + h_e - T_e - B · h_{e+1} = 0   for every e,
@@ -791,8 +797,10 @@ H'_e = (b/2) · (2^{delta_carry(e)} - 1),
 
 and `delta_carry(e)` is the smallest cell count with `H'_e >= H_e` (completeness).
 Because the cells are ordinary balanced digits, their per-cell bound is exactly the
-one the scheme already enforces on `z_hat`; the carry segment adds no new range
-obligation, only a different public weight vector in the carry virtualization.
+one the scheme already enforces on `z_hat`; the carry segment adds no new per-cell
+range rule, only a public cell count and weight vector in the carry virtualization.
+Any committed carry obeys `|h_e| <= H'_e` automatically when the layout matches
+`delta_carry(e)`; see **Grouped-Carry Soundness** for why that is enough.
 
 Then `|C_e| <= D_e` and `|h_e| <= H'_e`, so the carry residual
 `res_e = C_e + h_e - T_e - B · h_{e+1}` obeys
@@ -804,9 +812,11 @@ D_e + H'_e + (B - 1) + B · H'_{e+1} < q,
 ```
 
 where `q` is the characteristic of the accumulation field.
-Under this gate the `alpha`-folded carry claim, which forces `res_e ≡ 0 (mod q)`,
-forces `res_e = 0` as an integer, because the only multiple of `q` with absolute
-value below `q` is `0`.
+This gate is a **structural eligibility** check: it certifies that any residual
+consistent with the public digit and carry layouts cannot wrap modulo `q` as a
+single per-exponent integer.
+It does **not** by itself prove all `res_e = 0`; that implication comes from the
+folded polynomial identity checked at random `alpha` (next section).
 
 Base-2 carry weights keep `H'_e` within a factor 2 of the tight `H_e`.
 Reusing the gadget weights `b^k` for carries would round each budget up to a
@@ -845,6 +855,167 @@ Extension fields do **not** widen the gate.
 `F_{q^k}` has characteristic `q`, so every base-embedded coefficient still reduces
 modulo `q`. A larger base prime widens the gate; an extension over the same base
 prime does not.
+
+### Grouped-Carry Soundness
+
+This section states what the grouped-carry proof obligates, how carries are
+constrained, and how soundness combines the no-wrap gate with a folded polynomial
+identity.
+
+#### Certified statement
+
+The level proves, on the committed fold-response digits,
+
+```text
+sum_i z[i]^2 + sum_h ell_h^2 <= B_l2.
+```
+
+Four-square slack turns the inequality into
+`sum_i z[i]^2 + sum_h ell_h^2 = sum_e B^e C_e`.
+When every per-exponent residual vanishes, the carry chain identifies
+`sum_e B^e C_e` with `sum_e B^e T_e = B_l2`.
+
+#### Honest carries are unique
+
+Fix `C_e` from the committed `z_hat` and `ell_hat`, and public `T_e` from `B_l2`
+in base `B`.
+With `h_0 = 0`, the recurrence
+
+```text
+h_{e+1} = (C_e + h_e - T_e) / B
+```
+
+defines the honest carry sequence whenever each division is exact in `Z`.
+For an honest prover, exactness follows from the four-square equality.
+There is no freedom in honest `h_e` beyond the witness.
+
+#### Obligations checked in the proof (malicious prover)
+
+The transcript never sends `C_e` or individual `h_e`.
+It checks:
+
+1. **Squared-sum sumcheck:** `sum_x Z_alpha(x)^2 = V`, with `Z_alpha` the
+   `alpha`-weighted recomposition of committed grouped limbs in `z_hat` and
+   `ell_hat`.
+2. **Folded carry claim:** in the challenge field,
+   `V = sum_e alpha^e T_e + sum_e alpha^e (B·h_{e+1} - h_e)`, with each `h_e`
+   reassembled from committed `carry_hat` cells.
+3. **Virtualization:** evaluations from (1) and (2) are public linear functionals
+   of the same committed `w_next` opened at stage 2.
+4. **Boundary carries:** `h_0 = 0` and the terminal carry `h_{E+1} = 0` (see
+   indexing below).
+5. **Carry layout:** for each `e`, exactly `delta_carry(e)` balanced cells with
+   public base-`2` weights; per-cell magnitudes bounded like `z_hat`.
+6. **No-wrap gate:** `D_e + H'_e + (B-1) + B·H'_{e+1} < q` for every `e`, from
+   public parameters before reading carry values.
+
+Define
+
+```text
+res_e = C_e + h_e - T_e - B · h_{e+1}.
+```
+
+Items (1) and (2) imply, in the accumulation field,
+
+```text
+P(alpha) = sum_e alpha^e res_e = 0.
+```
+
+#### Folded polynomial identity (not per-equation mod-`q` lifting)
+
+The verifier does **not** check `res_e ≡ 0 (mod q)` separately for each `e`.
+Soundness treats `P(alpha) = sum_e res_e alpha^e` as a polynomial of degree at
+most `E`, where `E = 2R - 2` is the maximal convolution exponent.
+
+If some `res_e` is nonzero in `Z`, then `P` is a nonzero polynomial over the
+challenge field (coefficients embed in `F_{q^k}`).
+For `alpha` uniform in a large enough challenge domain, `P(alpha) = 0` with
+probability at most about `E / |S|` (Schwartz–Zippel / polynomial identity test).
+
+`alpha` is squeezed only after `z_hat`, `ell_hat`, `carry_hat`, and `B_l2` are
+bound, so the prover cannot adapt carries to a known `alpha`.
+
+The argument also needs standard sumcheck soundness for
+`sum_x Z_alpha(x)^2 = V` and linear-claim soundness for the folded carry
+relation on the opened `carry_hat`.
+Then, except with negligible probability over `alpha` and the sumcheck coins,
+`res_e = 0` for all `e`.
+
+#### Role of the no-wrap gate
+
+The gate is **not** a substitute for the polynomial identity test.
+It certifies **level eligibility**: structurally bounded `C_e` and committed
+`h_e` are so small that field arithmetic cannot confuse distinct integers when
+forming the bounded intermediates behind the sumcheck and carry virtualization.
+
+Under validated digit bounds, `|C_e| <= D_e` and `|h_e| <= H'_e`, so
+
+```text
+|res_e| <= D_e + H'_e + (B-1) + B·H'_{e+1} < q.
+```
+
+So a **single** per-exponent residual, if checked mod `q` against these bounds,
+could not be a nonzero wrap.
+Implementation paths that rebuild bounded carry terms in the field cannot conflate
+`r` with `r + q` while the gate holds.
+
+The gate is evaluated on the realizable budget `H'_e`, never on tight `H_e` alone.
+That is conservative for soundness (stricter gate) at the cost of completeness on
+borderline levels.
+
+#### Realizable magnitude `H'_e` (why not range-check `H_e` directly)
+
+`H_e` from the recurrence is generally not a power of `B` and is not witnessed.
+Each `h_e` is committed as `delta_carry(e)` balanced cells with base-`2` weights:
+
+```text
+h_e = sum_{k=0}^{delta_carry(e)-1} 2^k · carry_hat[e][k],
+|carry_hat[e][k]| <= b/2.
+```
+
+Hence any committed carry satisfies
+
+```text
+|h_e| <= H'_e = (b/2) · (2^{delta_carry(e)} - 1).
+```
+
+`delta_carry(e)` is the smallest count with `H'_e >= H_e`.
+Base-`2` weights keep `H'_e` within a factor `2` of tight `H_e`; base-`b` carry
+weights would inflate budgets by up to a factor `b`.
+
+**Soundness:** there is no separate `|h_e| <= H_e` gadget.
+The verifier enforces public `delta_carry(e)`, the virtualization weights, and
+per-cell digit bounds.
+A prover cannot encode `|h_e| > H'_e` without wrong cell count or out-of-range
+digits.
+
+**Completeness:** if `delta_carry(e)` is too small, honest carries may not fit
+(prover failure).
+The layout must match `fold_l2_certificate::carry_cell_layout` (or equivalent).
+
+**Why `H'_e` is safe despite not equaling `H_e`:** the no-wrap gate uses `H'_e`,
+not `H_e`, in the residual bound, so enlarging the representable envelope only
+tightens eligibility.
+Soundness does not require `H'_e = H_e`; it requires the committed layout to
+declare a representable envelope that the gate accepts.
+
+#### Exponent indexing and telescoping
+
+Let `E = 2R - 2`.
+Carry indices run `e = 0, 1, …, E`.
+Boundary conditions: `h_0 = 0` and `h_{E+1} = 0`.
+Proof shape, virtualization, and verifier replay must share this indexing.
+
+Telescoping with `res_e = 0` for all `e` gives `sum_e B^e C_e = sum_e B^e T_e`.
+
+#### What is not claimed
+
+- Carries are not unique among all integer tuples satisfying the folded identity;
+  uniqueness holds for the honest witness.
+- Individual `C_e` are not sent; magnitudes are structural (`D_e`) and tied to
+  committed digits through `Z_alpha`.
+- `H_e` is not directly witnessed; only `H'_e` and `delta_carry(e)` appear on the
+  wire.
 
 ### Sumcheck And Virtualization
 
@@ -911,20 +1082,27 @@ sumcheck.
   `ell_hat` and `carry_hat` are committed through `next_w_commitment`, and `B_l2`
   is transcript-bound, before `alpha` or any squared-sum / carry challenge is
   squeezed.
-- The no-wrap gate is on the carry residual, not the realized values.
+- The no-wrap gate is structural eligibility, not the full soundness argument.
   Check `D_e + H'_e + (B-1) + B·H'_{e+1} < q` for every `e` from public parameters
-  (with the realizable carry budget `H'_e`) before trusting any carry equation as
-  an integer equation.
-- Carries are signed, and bounded by the committed cell run, not by `H_e`.
+  (with the realizable carry budget `H'_e`) before the level may use grouped-carry.
+  Per-exponent mod-`q` lifting applies to structurally bounded single residuals;
+  vanishing of all `res_e` comes from the folded polynomial identity at random
+  `alpha` (see **Grouped-Carry Soundness**).
+- Carries are signed, and bounded by the committed cell run layout, not by tight
+  `H_e` directly.
   `C_e` can be negative, so `carry_hat` is a balanced decomposition with public
-  base-2 recomposition weights. Size `delta_carry(e)` as the smallest cell count
-  with `H'_e = (b/2)(2^{delta_carry} - 1) >= H_e`, and evaluate the no-wrap gate
-  with `H'_e` (never with `H_e`). The cells are ordinary balanced digits, so they
-  need no range machinery beyond the existing `z_hat` digit bound; do not reuse the
-  `b^k` gadget weights for carries (that wastes ~`lb` bits of headroom).
+  base-2 recomposition weights.
+  Size `delta_carry(e)` as the smallest cell count with
+  `H'_e = (b/2)(2^{delta_carry} - 1) >= H_e`, and evaluate the no-wrap gate
+  with `H'_e` (never with `H_e`).
+  The verifier must pin `delta_carry(e)` in proof shape and reject carry segments
+  with the wrong cell count; per-cell magnitudes use the existing `z_hat` digit
+  bound, which implies `|h_e| <= H'_e` but not `|h_e| <= H_e`.
+  Do not reuse the `b^k` gadget weights for carries (that wastes ~`lb` bits of
+  headroom).
 - Boundary carries are fixed.
-  Enforce `h_0 = 0` and `h_E = 0`; the closing `h_E = 0` is what forces the total
-  to match `B_l2`.
+  Enforce `h_0 = 0` and `h_{E+1} = 0`; the terminal zero telescopes the chain to
+  `B_l2`.
 - Slack can exceed `u64`.
   On small fields `B_l2 - Z_SQUARED` can exceed `2^64`, so the four-square solver
   needs a `u128` target path; the verifier must reject (not assume) any slack that
@@ -1229,8 +1407,10 @@ At minimum:
 - State that A-role sizing uses the existing Lemma 7 bound converted by
   `||v||_2^2 <= d · ||v||_inf^2` (no alternate weak-binding derivation).
 - State the grouped-carry folded-witness certificate, the per-exponent no-wrap
-  gate, and why each carry residual that is zero modulo `q` is an exact integer
-  zero (certificate tier).
+  gate as structural eligibility, the folded polynomial identity
+  `P(alpha) = sum_e alpha^e res_e = 0` at random `alpha`, and the representable
+  carry layout (`H'_e`, `delta_carry(e)`) that enforces `|h_e| <= H'_e` without
+  witnessing tight `H_e` directly.
 - Explain the full cutover and remove superseded L∞ **estimator** language while
   keeping the Lemma 7 collision formula.
 
@@ -1533,7 +1713,7 @@ into stage 2 or carried adjacent.
 **S10 — Verifier replay + no-panic.** *(S6, S9)*
 `crates/akita-verifier/src/stages/stage2.rs`, `protocol/levels.rs`.
 Recompute the realization and no-wrap gate from public params, replay the
-squared-sum sumcheck and carry claim, check `h_0 = h_E = 0`, validate `B_l2`,
+squared-sum sumcheck and carry claim, check `h_0 = h_{E+1} = 0`, validate `B_l2`,
 `ell_hat`, and `carry_hat` lengths / digit bounds / offsets, confirm every
 evaluation is anchored to the committed `w_next`, and reject every malformed
 challenge / certificate / shape with `AkitaError` / `SerializationError`.
