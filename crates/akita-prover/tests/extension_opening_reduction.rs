@@ -14,12 +14,12 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
     extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows, ExtensionOpeningFactorTerm,
-    ExtensionOpeningReductionFactor, ExtensionOpeningReductionRoundResult,
+    tensor_column_partials_from_base_evals, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor,
+    ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
@@ -149,27 +149,25 @@ fn tensor_partials_recompose_logical_extension_opening() {
         })
         .collect::<Vec<_>>();
 
-    let partials = tensor_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
+    let column_partials =
+        tensor_column_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
+    let row_partials = tensor_row_partials_from_columns::<B, E>(&column_partials).unwrap();
+    let partials = ExtensionOpeningTensorPartials {
+        column_partials,
+        row_partials,
+    };
     assert_eq!(
         partials.column_partials.len(),
         <E as ExtField<B>>::EXT_DEGREE
     );
     assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::EXT_DEGREE);
 
-    let logical_claim =
-        tensor_logical_claim_from_partials::<B, E>(&point, &partials.column_partials).unwrap();
+    let logical_claim = derive_tensor_extension_opening_claim_from_partials::<B, E>(
+        &point,
+        &partials.column_partials,
+    )
+    .unwrap();
     assert_eq!(logical_claim, lifted_multilinear_eval(&base_evals, &point));
-    check_tensor_extension_opening_claim::<B, E>(&point, logical_claim, &partials.column_partials)
-        .unwrap();
-
-    assert!(matches!(
-        check_tensor_extension_opening_claim::<B, E>(
-            &point,
-            logical_claim + E::one(),
-            &partials.column_partials,
-        ),
-        Err(akita_field::AkitaError::InvalidProof)
-    ));
 }
 
 #[test]
@@ -192,7 +190,13 @@ fn tensor_row_reduction_matches_dense_sumcheck_claim() {
     let eta = vec![E::from_base_slice(&[B::from_u64(19), B::from_u64(29)])];
 
     let packed_witness = tensor_packed_witness_evals::<B, E>(num_vars, &base_evals).unwrap();
-    let partials = tensor_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
+    let column_partials =
+        tensor_column_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
+    let row_partials = tensor_row_partials_from_columns::<B, E>(&column_partials).unwrap();
+    let partials = ExtensionOpeningTensorPartials {
+        column_partials,
+        row_partials,
+    };
     let row_claim = tensor_reduction_claim_from_rows::<B, E>(&partials.row_partials, &eta).unwrap();
     let factor_evals = tensor_equality_factor_evals::<B, E>(&point[1..], &eta).unwrap();
 
@@ -291,11 +295,10 @@ fn extension_opening_reduction_proves_witness_factor_claim() {
     let factor_evals: Vec<F> = (0..16).map(|i| F::from_u64((7 * i + 11) as u64)).collect();
     let expected_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
 
-    let mut prover = ExtensionOpeningReductionProver::from_dense_tables(
-        witness_evals.clone(),
-        factor_evals.clone(),
-    )
-    .unwrap();
+    let term =
+        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
+            .unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
     assert_eq!(prover.input_claim(), expected_claim);
 
@@ -735,11 +738,10 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
     let factor_evals = factor.evals().unwrap();
     let expected_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let mut prover = ExtensionOpeningReductionProver::from_dense_tables(
-        witness_evals.clone(),
-        factor_evals.clone(),
-    )
-    .unwrap();
+    let term =
+        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
+            .unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
@@ -766,9 +768,9 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
     let factor_evals = factor.evals().unwrap();
     let input_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let mut prover =
-        ExtensionOpeningReductionProver::from_dense_tables(witness_evals.clone(), factor_evals)
-            .unwrap();
+    let term =
+        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -807,9 +809,10 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
     let witness_evals: Vec<F> = (0..8).map(|i| F::from_u64((i + 1) as u64)).collect();
     let factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 9) as u64)).collect();
 
-    let mut prover =
-        ExtensionOpeningReductionProver::from_dense_tables(witness_evals.clone(), factor_evals)
-            .unwrap();
+    let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
+    let term =
+        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -824,11 +827,11 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
 fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
     let witness_evals: Vec<F> = (0..4).map(|i| F::from_u64((5 * i + 1) as u64)).collect();
     let factor_evals: Vec<F> = (0..4).map(|i| F::from_u64((13 * i + 2) as u64)).collect();
-    let mut prover = ExtensionOpeningReductionProver::from_dense_tables(
-        witness_evals.clone(),
-        factor_evals.clone(),
-    )
-    .unwrap();
+    let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
+    let term =
+        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
+            .unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
 
     let mut prover_transcript = new_transcript();
     let (proof, challenges, final_claim) = prover
@@ -858,9 +861,7 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
 fn extension_opening_reduction_rejects_malformed_table_lengths() {
     let witness_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
     let factor_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
-    assert!(
-        ExtensionOpeningReductionProver::from_dense_tables(witness_evals, factor_evals).is_err()
-    );
+    assert!(ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, F::one()).is_err());
 
     let witness_evals = vec![F::one(), F::from_u64(2)];
     let factor_evals = vec![F::one()];
@@ -1171,9 +1172,11 @@ mod delayed_product_sum_contract {
         let mut factor = vec![max, zero, max, zero, max, zero, max, zero];
         assert_inputs_are_hazardous(&witness, &factor);
 
-        let mut prover =
-            ExtensionOpeningReductionProver::from_dense_tables(witness.clone(), factor.clone())
+        let input_claim = extension_opening_reduction_claim(&witness, &factor).unwrap();
+        let term =
+            ExtensionOpeningReductionTerm::new(witness.clone(), factor.clone(), LossyField::one())
                 .unwrap();
+        let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
         let mut claim = prover.input_claim();
 
         let eval_points = [zero, one, two, LossyField::from_u64(3)];

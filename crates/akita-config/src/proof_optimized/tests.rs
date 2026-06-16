@@ -154,8 +154,8 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 #[cfg(not(feature = "zk"))]
 fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // Locks in the fix for the descriptor-binding bug at
-    // `akita_prover::protocol::flow` and
-    // `akita_verifier::protocol::batched`: when the planner-selected
+    // `akita_prover::protocol::core` and
+    // `akita_verifier::protocol::core`: when the planner-selected
     // folded root cannot handle the opening shape, both sides build
     // a fallback root-direct schedule. That schedule's `params` are
     // hashed into the per-proof effective-schedule digest

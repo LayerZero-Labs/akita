@@ -1,4 +1,4 @@
-use crate::protocol::batched::{
+use super::verify::{
     direct_decomposed_inner_rows, field_evals_to_rings, mat_vec_mul_i8_plain, zk_b_blinding_rows,
 };
 use akita_field::{AkitaError, CanonicalField, FieldCore};
