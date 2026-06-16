@@ -4,8 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-04                     |
-| Status      | implemented |
+| Status      | archived |
 | PR          | #150                           |
+| Book-chapter | book/src/foundations/glossary.md |
 
 ## Summary
 

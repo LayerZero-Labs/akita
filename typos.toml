@@ -4,4 +4,8 @@ msis = "msis"
 nd = "nd"
 Ser = "Ser"
 evn = "evn"
+thm = "thm"
 Thm = "Thm"
+
+[files]
+extend-exclude = ["book/mermaid.min.js"]
