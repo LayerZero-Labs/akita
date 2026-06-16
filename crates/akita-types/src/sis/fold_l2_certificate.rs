@@ -18,7 +18,6 @@
 use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_collision, SisModulusFamily};
-use super::decomposition_digits::balanced_positive_digit_max;
 
 /// How a certifying fold level proves its Euclidean norm bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +123,7 @@ pub fn grouped_fold_limb_bound(log_basis: u32, limb_width: usize) -> Result<u128
 }
 
 /// Deterministic worst-case squared Euclidean bound on the fold response:
-/// `N · balanced_digit_max(lb, K)²`.
+/// `N · digit_abs_max(lb, K)²`.
 ///
 /// # Errors
 ///
@@ -139,13 +138,15 @@ pub fn folded_witness_l2_bound_squared(
             "folded_witness_l2_bound_squared: num_fold_coeffs must be positive".to_string(),
         ));
     }
-    let digit_max = balanced_positive_digit_max(log_basis, num_digits_fold);
-    let sq = digit_max.checked_mul(digit_max).ok_or_else(|| {
-        AkitaError::InvalidSetup("folded_witness_l2_bound_squared: digit_max² overflow".to_string())
+    let digit_abs_max = grouped_fold_limb_bound(log_basis, num_digits_fold)?;
+    let sq = digit_abs_max.checked_mul(digit_abs_max).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "folded_witness_l2_bound_squared: digit_abs_max² overflow".to_string(),
+        )
     })?;
     (num_fold_coeffs as u128).checked_mul(sq).ok_or_else(|| {
         AkitaError::InvalidSetup(
-            "folded_witness_l2_bound_squared: N · digit_max² overflow".to_string(),
+            "folded_witness_l2_bound_squared: N · digit_abs_max² overflow".to_string(),
         )
     })
 }
@@ -159,7 +160,8 @@ pub fn l2_collision_bucket_for_z_squared(
     ceil_supported_collision(sis_family, ring_dimension, z_squared)
 }
 
-/// Field-fitting realization: `N·m² + 4·B_l2 < q` for `m = digit_max(lb, K)`.
+/// Field-fitting realization: `N·m² + 4·B_l2 < q` for
+/// `m = digit_abs_max(lb, K)`.
 #[inline]
 pub fn field_fitting_certificate_fits(
     num_fold_coeffs: usize,
@@ -173,12 +175,14 @@ pub fn field_fitting_certificate_fits(
             "field_fitting_certificate_fits: field_characteristic must be positive".to_string(),
         ));
     }
-    let digit_max = balanced_positive_digit_max(log_basis, num_digits_fold);
+    let digit_abs_max = grouped_fold_limb_bound(log_basis, num_digits_fold)?;
     let witness_sq = (num_fold_coeffs as u128)
-        .checked_mul(digit_max)
-        .and_then(|n| n.checked_mul(digit_max))
+        .checked_mul(digit_abs_max)
+        .and_then(|n| n.checked_mul(digit_abs_max))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("field_fitting_certificate_fits: N·m² overflow".to_string())
+            AkitaError::InvalidSetup(
+                "field_fitting_certificate_fits: N·digit_abs_max² overflow".to_string(),
+            )
         })?;
     let slack = b_l2.checked_mul(4).ok_or_else(|| {
         AkitaError::InvalidSetup("field_fitting_certificate_fits: 4·B_l2 overflow".to_string())
@@ -247,14 +251,19 @@ fn carry_magnitude_budget(
     let base = 1u128.checked_shl(log_basis).ok_or_else(|| {
         AkitaError::InvalidSetup("carry_magnitude_budget: b overflow".to_string())
     })?;
+    let grouped_base = base
+        .checked_pow(grouping.group_digits as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("carry_magnitude_budget: B overflow".to_string())
+        })?;
     let max_exponent = grouping.group_count.saturating_mul(2).saturating_sub(2);
     let mut h = vec![0u128; max_exponent + 2];
     for e in 0..=max_exponent {
         let d_e = structural_convolution_bound_de(num_fold_coeffs, log_basis, grouping, e)?;
         h[e + 1] = d_e
             .checked_add(h[e])
-            .and_then(|t| t.checked_add(base - 1))
-            .map(|t| t.div_ceil(base))
+            .and_then(|t| t.checked_add(grouped_base - 1))
+            .map(|t| t.div_ceil(grouped_base))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("carry_magnitude_budget: recurrence overflow".to_string())
             })?;
@@ -447,11 +456,19 @@ mod tests {
     const Q_FP128: u128 = u128::MAX - (1u128 << 32) + 22_538;
 
     #[test]
-    fn folded_witness_l2_bound_squared_matches_digit_max() {
+    fn folded_witness_l2_bound_squared_matches_abs_digit_envelope() {
         let n = 57_344usize;
         let bound = folded_witness_l2_bound_squared(n, 3, 5).unwrap();
-        let m = balanced_positive_digit_max(3, 5);
+        let m = grouped_fold_limb_bound(3, 5).unwrap();
         assert_eq!(bound, n as u128 * m * m);
+    }
+
+    #[test]
+    fn grouped_carry_budget_uses_grouped_radix() {
+        let grouping = FoldNormGrouping::new(4, 2).unwrap();
+        let h = carry_magnitude_budget(2, &grouping, 1).unwrap();
+        assert_eq!(h[0], 0);
+        assert_eq!(h[1], 33);
     }
 
     #[test]
@@ -485,6 +502,18 @@ mod tests {
         assert_eq!(
             select_l2_certificate_realization(n, 2, 9, b_l2, Q_FP32).unwrap(),
             L2CertificateRealization::DeterministicFallback,
+        );
+    }
+
+    #[test]
+    fn k_one_tries_single_digit_grouped_carry() {
+        let n = 1usize;
+        let k = 1usize;
+        let b_l2 = Q_FP32 / 4;
+        assert!(!field_fitting_certificate_fits(n, 2, k, b_l2, Q_FP32).unwrap());
+        assert_eq!(
+            select_l2_certificate_realization(n, 2, k, b_l2, Q_FP32).unwrap(),
+            L2CertificateRealization::GroupedCarry { group_digits: 1 },
         );
     }
 

@@ -55,8 +55,8 @@
 //! fallback is total for every `u64` target.
 //!
 //! The decision path is integer-only (no floating point): [`u128::isqrt`],
-//! deterministic Miller–Rabin (exact for every `u128` target), exact trial
-//! division, and widening modular arithmetic.
+//! deterministic Miller-Rabin for `u64`, Baillie-PSW probable-prime testing for
+//! larger `u128` values, exact trial division, and widening modular arithmetic.
 
 use akita_field::AkitaError;
 
@@ -159,7 +159,8 @@ fn four_squares_via_two_square_residuals(
         let b_max = rem_a.isqrt();
         for b in (0..=b_max).rev() {
             let p = rem_a - b * b;
-            if let Some((c, d)) = two_squares(p)? {
+            let split = two_squares(p).unwrap_or_default();
+            if let Some((c, d)) = split {
                 let result = scale_decomposition([witness_u64(a)?, witness_u64(b)?, c, d], scale)?;
                 return verify_decomposition(result, target);
             }
@@ -354,6 +355,17 @@ fn add_mod(a: u128, b: u128, m: u128) -> u128 {
     }
 }
 
+#[inline]
+fn sub_mod(a: u128, b: u128, m: u128) -> u128 {
+    let a = a % m;
+    let b = b % m;
+    if a >= b {
+        a - b
+    } else {
+        m - (b - a)
+    }
+}
+
 /// `base^exp mod m` by square-and-multiply.
 #[inline]
 fn pow_mod(mut base: u128, mut exp: u128, m: u128) -> u128 {
@@ -369,12 +381,8 @@ fn pow_mod(mut base: u128, mut exp: u128, m: u128) -> u128 {
     acc
 }
 
-/// Deterministic Miller–Rabin for `n <= u64::MAX`. Above that, strong probable-prime
-/// tests with several small bases (totality of [`four_squares_u128`] still comes from
-/// the theorem-backed fallback if the fast path skips a split).
+/// Deterministic Miller-Rabin for `n <= u64::MAX`; Baillie-PSW above that.
 const MILLER_RABIN_BASES_U64: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
-
-const STRONG_BASES_U128: [u64; 7] = [2, 3, 5, 7, 11, 13, 17];
 
 fn is_prime(n: u128) -> bool {
     if n < 2 {
@@ -383,12 +391,13 @@ fn is_prime(n: u128) -> bool {
     if n <= u128::from(u64::MAX) {
         return is_prime_u64(n as u64);
     }
-    if n.is_multiple_of(2) || n.is_multiple_of(3) {
-        return n == 2 || n == 3;
+    for &base in &MILLER_RABIN_BASES_U64 {
+        let base = u128::from(base);
+        if n.is_multiple_of(base) {
+            return false;
+        }
     }
-    STRONG_BASES_U128
-        .iter()
-        .all(|&base| is_strong_probable_prime(u128::from(base), n))
+    is_baillie_psw_probable_prime(n)
 }
 
 fn is_prime_u64(n: u64) -> bool {
@@ -443,6 +452,127 @@ fn is_strong_probable_prime(a: u128, n: u128) -> bool {
         }
     }
     false
+}
+
+fn is_baillie_psw_probable_prime(n: u128) -> bool {
+    if is_square(n) || !is_strong_probable_prime(2, n) {
+        return false;
+    }
+    is_strong_lucas_selfridge_probable_prime(n)
+}
+
+fn is_square(n: u128) -> bool {
+    let root = n.isqrt();
+    root * root == n
+}
+
+fn is_strong_lucas_selfridge_probable_prime(n: u128) -> bool {
+    let (d_abs, d_negative) = match selfridge_discriminant(n) {
+        Some(d) => d,
+        None => return false,
+    };
+    let q_mod = if d_negative {
+        ((d_abs + 1) / 4) % n
+    } else {
+        signed_mod((d_abs - 1) / 4, true, n)
+    };
+    let d_mod = signed_mod(d_abs, d_negative, n);
+    let Some(mut odd) = n.checked_add(1) else {
+        return false;
+    };
+    let trailing = odd.trailing_zeros();
+    odd >>= trailing;
+
+    let (u, mut v, mut q_k) = lucas_sequence_mod(odd, d_mod, q_mod, n);
+    if u == 0 || v == 0 {
+        return true;
+    }
+    for _ in 1..trailing {
+        v = sub_mod(mul_mod(v, v, n), mul_mod(2, q_k, n), n);
+        q_k = mul_mod(q_k, q_k, n);
+        if v == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn selfridge_discriminant(n: u128) -> Option<(u128, bool)> {
+    let mut d_abs = 5u128;
+    let mut d_negative = false;
+    loop {
+        match jacobi_small_signed(d_abs, d_negative, n) {
+            -1 => return Some((d_abs, d_negative)),
+            0 => return None,
+            _ => {}
+        }
+        d_abs = d_abs.checked_add(2)?;
+        d_negative = !d_negative;
+    }
+}
+
+fn jacobi_small_signed(abs_a: u128, negative: bool, n: u128) -> i8 {
+    debug_assert!(n % 2 == 1);
+    let mut sign = 1i8;
+    if negative && n % 4 == 3 {
+        sign = -sign;
+    }
+    let mut a = abs_a % n;
+    let mut n = n;
+    while a != 0 {
+        while a.is_multiple_of(2) {
+            a >>= 1;
+            let n_mod_8 = n % 8;
+            if n_mod_8 == 3 || n_mod_8 == 5 {
+                sign = -sign;
+            }
+        }
+        core::mem::swap(&mut a, &mut n);
+        if a % 4 == 3 && n % 4 == 3 {
+            sign = -sign;
+        }
+        a %= n;
+    }
+    if n == 1 {
+        sign
+    } else {
+        0
+    }
+}
+
+fn signed_mod(abs_value: u128, negative: bool, modulus: u128) -> u128 {
+    let value = abs_value % modulus;
+    if negative && value != 0 {
+        modulus - value
+    } else {
+        value
+    }
+}
+
+fn lucas_sequence_mod(k: u128, d_mod: u128, q_mod: u128, n: u128) -> (u128, u128, u128) {
+    debug_assert!(k > 0);
+    let inv_two = n.div_ceil(2);
+    let mut u = 0u128;
+    let mut v = 2u128 % n;
+    let mut q_k = 1u128;
+    let top_bit = 127 - k.leading_zeros();
+    for bit in (0..=top_bit).rev() {
+        let u_doubled = mul_mod(u, v, n);
+        let v_doubled = sub_mod(mul_mod(v, v, n), mul_mod(2, q_k, n), n);
+        u = u_doubled;
+        v = v_doubled;
+        q_k = mul_mod(q_k, q_k, n);
+        if (k >> bit) & 1 == 1 {
+            u = mul_mod(add_mod(u_doubled, v_doubled, n), inv_two, n);
+            v = mul_mod(
+                add_mod(mul_mod(d_mod, u_doubled, n), v_doubled, n),
+                inv_two,
+                n,
+            );
+            q_k = mul_mod(q_k, q_mod, n);
+        }
+    }
+    (u, v, q_k)
 }
 
 /// Write a prime `p` that is `2` or `≡ 1 (mod 4)` as `c^2 + d^2`.
@@ -561,6 +691,19 @@ mod tests {
         let m127 = (1u128 << 127) - 1;
         assert!(is_prime(m127));
         assert!(!is_prime(m127 - 1));
+        let large_composite = u128::from(4_294_967_291u64) * u128::from(4_294_967_311u64);
+        assert!(large_composite > u128::from(u64::MAX));
+        assert!(!is_prime(large_composite));
+    }
+
+    #[test]
+    fn baillie_psw_rejects_base_two_strong_pseudoprimes() {
+        for &n in &[
+            2047u128, 3277, 4033, 4681, 8321, 15_841, 29_341, 42_799, 49_141,
+        ] {
+            assert!(is_strong_probable_prime(2, n), "{n} should be base-2 SPRP");
+            assert!(!is_prime(n), "{n} is composite");
+        }
     }
 
     #[test]

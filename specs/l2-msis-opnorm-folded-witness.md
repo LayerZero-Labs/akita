@@ -755,7 +755,7 @@ limb / carry evaluations appear, so the certificate's sole public scalar is
 When the whole squared sum and the bound fit the field,
 
 ```text
-coeffs · balanced_digit_max(lb, K)^2 + 4 · B_l2 < q,
+coeffs · digit_abs_max(lb, K)^2 + 4 · B_l2 < q,
 ```
 
 no grouping or carries are needed: the prover proves `sum_x z_aug(x)^2 = B_l2`
@@ -833,10 +833,10 @@ integer; it is not enough that the honest realized values happen to be small.
 The level selects its realization deterministically from public parameters:
 
 ```text
-if coeffs · balanced_digit_max(lb, K)^2 + 4 · B_l2 < q:
+if coeffs · digit_abs_max(lb, K)^2 + 4 · B_l2 < q:
     field-fitting realization (no grouping, no carries)
 else:
-    choose the largest g in 1..K-1 such that the per-exponent gate holds for all e;
+    choose the largest g in 1..max(K-1, 1) such that the per-exponent gate holds for all e;
     if some g works: grouped-carry realization with that g
     else:            no certificate; price A-role at L2_BOUND_SQUARED
 ```
