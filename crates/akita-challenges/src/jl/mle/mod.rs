@@ -24,7 +24,7 @@
 //! Parallelism partitions quad windows into panels when the `parallel` feature is
 //! enabled and `n_rows · cols` is large enough.
 //!
-//! Naive reference helpers in [`reference`] back differential tests.
+//! Naive reference helpers in the `reference` submodule back differential tests.
 
 #![allow(non_snake_case)] // `r_J` matches the spec / paper notation.
 
