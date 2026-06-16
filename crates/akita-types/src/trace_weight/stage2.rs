@@ -10,8 +10,8 @@ use super::build::{
 };
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, LevelParams, OpeningBatch, PreparedOpeningPoint,
-    RingRelationSegmentLayout, RingSubfieldEncoding, TraceFieldBlockOpening, TraceRingBlockOpening,
+    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningBatch,
+    PreparedOpeningPoint, RingRelationSegmentLayout, TraceFieldBlockOpening, TraceRingBlockOpening,
     TraceTerm, TraceWeightLayout,
 };
 
@@ -150,7 +150,7 @@ where
 fn scaled_base_weights<F, E>(weights: &[F], scale: E) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore,
-    E: RingSubfieldEncoding<F> + FieldCore,
+    E: FpExtEncoding<F> + FieldCore,
 {
     let scale = scale.degree_one_base().ok_or_else(|| {
         AkitaError::InvalidInput("trace field scale had no base coordinate".to_string())
@@ -164,7 +164,7 @@ fn scaled_ring_weights<F, E, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + FieldCore,
+    E: FpExtEncoding<F> + FieldCore,
 {
     let scale = embed_ring_subfield_scalar::<F, E, D>(
         scale,
@@ -250,7 +250,7 @@ pub fn trace_public_weights_root_terms<F, E, const D: usize>(
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
         lp,
@@ -306,7 +306,7 @@ pub fn trace_public_weights_recursive<F, E, const D: usize>(
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     if E::EXT_DEGREE == 1 {
         trace_public_weights_field_terms(&[TraceFieldBlockOpening {
@@ -377,7 +377,7 @@ pub fn trace_terms_root<F, E, const D: usize>(
 ) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
         lp,
@@ -416,7 +416,7 @@ pub fn build_trace_claim_root<F, E, const D: usize>(
 ) -> Result<TraceClaim<F, E, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     Ok(TraceClaim {
         layout,
@@ -445,7 +445,7 @@ pub fn trace_terms_recursive<F, E, const D: usize>(
 ) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let outer_len = lp
         .m_vars
@@ -515,7 +515,7 @@ pub fn build_trace_table_scaled<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     match public_weights {
         TracePublicWeights::Field { terms } => {

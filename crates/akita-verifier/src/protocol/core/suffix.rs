@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::OpeningBatch;
+use akita_types::{terminal_witness_segment_layout, OpeningBatch};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -47,12 +47,8 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -219,12 +215,8 @@ pub(super) fn verify_suffix<'a, F, L, T>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {

@@ -10,7 +10,7 @@ use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
@@ -18,8 +18,8 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, LevelParams,
-    OpeningBatch, RingCommitment, RingSubfieldEncoding, Schedule, SetupContributionMode, Step,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
+    LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode, Step,
     VerifierClaims,
 };
 use std::array::from_fn;
@@ -77,7 +77,7 @@ fn effective_batched_schedule<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.num_vars();
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
@@ -451,9 +451,9 @@ pub fn verify_batched<'a, Cfg, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>,
-    Cfg::ExtField: RingSubfieldEncoding<Cfg::Field>
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + FromPrimitiveInt
         + AkitaSerialize,
@@ -562,12 +562,8 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -608,7 +604,10 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            if final_witness.shape() != terminal_direct.witness_shape {
+            if !terminal_direct
+                .witness_shape
+                .admits_realized(&final_witness.shape())
+            {
                 return Err(AkitaError::InvalidProof);
             }
             verify_root::<F, E, T, D>(
@@ -647,13 +646,13 @@ where
                     AkitaLevelProof::Intermediate { .. } => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;
-            if terminal_step
-                .stage2()
-                .final_witness()
-                .ok_or(AkitaError::InvalidProof)?
-                .shape()
-                != terminal_direct.witness_shape
-            {
+            if !terminal_direct.witness_shape.admits_realized(
+                &terminal_step
+                    .stage2()
+                    .final_witness()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .shape(),
+            ) {
                 return Err(AkitaError::InvalidProof);
             }
 

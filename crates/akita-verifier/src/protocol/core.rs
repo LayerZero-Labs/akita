@@ -14,14 +14,14 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{AkitaStage2Verifier, Stage2WitnessOracle};
+use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    PseudoMersenneField, RandomSampling,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
 #[cfg(feature = "zk")]
 use akita_r1cs::{
@@ -53,14 +53,14 @@ use akita_types::{
     generate_y, prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
-    stage2_trace_coeff, tensor_equality_factor_eval_at_point, terminal_witness_segment_layout,
-    trace_terms_recursive, trace_weight_layout_from_segment, w_ring_element_count_with_counts,
-    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, OpeningBatch,
-    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupSumcheckProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
+    stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,
+    trace_weight_layout_from_segment, w_ring_element_count_with_counts, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
+    FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, PreparedOpeningPoint,
+    RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationInstance, Schedule, SetupContributionMode, SetupSumcheckProof,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -248,11 +248,7 @@ fn verify_fold_eor<F, C, T, const D: usize>(
 ) -> Result<FoldEorReplay<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    C: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    C: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_claims = opening_batch.num_claims();
@@ -537,6 +533,8 @@ fn verify_stage2<F, E, T, const D: usize>(
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
+    lp: &LevelParams,
+    num_commitment_groups: usize,
     #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
@@ -547,18 +545,20 @@ fn verify_stage2<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <E as ExtField<F>>::EXT_DEGREE;
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => Stage2WitnessOracle::Cleartext {
-            witness: &proof.final_witness,
+        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E, D>(
+            &proof.final_witness,
             physical_w_len,
-        },
+            lp,
+            num_commitment_groups,
+        )?,
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
             #[cfg(feature = "zk")]
@@ -627,7 +627,7 @@ fn verify_stage3<F, E, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
@@ -651,8 +651,8 @@ fn verify_fold<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
@@ -827,6 +827,11 @@ where
         stage1_replay,
         &rs,
         relation_claim,
+        prepared.lp,
+        relation_instance
+            .opening_batch()
+            .num_polys_per_commitment_group()
+            .len(),
         #[cfg(feature = "zk")]
         relation_claim_mask,
         setup_claim,

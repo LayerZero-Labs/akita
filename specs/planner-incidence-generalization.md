@@ -1,4 +1,12 @@
-# Planner Incidence Generalization
+# Spec: Planner Incidence Generalization
+
+| Field         | Value                          |
+|---------------|--------------------------------|
+| Author(s)     |                                |
+| Created       | 2026-05-27                     |
+| Status        | active                         |
+| PR            |                                |
+| Book-chapter  | book/src/how/configuration.md  |
 
 ## Goal
 
@@ -258,8 +266,8 @@ The main current shape carriers are:
 - `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the
   exact root profile counts.
 - Config-policy call sites in `crates/akita-config/src/lib.rs`,
-  `crates/akita-config/src/schedule_policy.rs`, and
-  `crates/akita-config/src/proof_optimized.rs`.
+  `crates/akita-config/src/transcript_binding.rs`, and
+  `crates/akita-config/src/proof_optimized.rs` (`policy_of`, `CommitmentConfig`).
 
 The long-term direction should be:
 

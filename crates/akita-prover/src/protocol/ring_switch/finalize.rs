@@ -27,7 +27,7 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let default_gamma;

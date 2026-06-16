@@ -3,8 +3,8 @@
 
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, Prime128Offset275, Prime24Offset3, Prime30Offset35,
-    Prime31Offset19, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4,
+    AkitaError, Ext2, ExtField, FieldCore, FpExt4, Prime128Offset275, Prime24Offset3,
+    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime64Offset59,
 };
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
@@ -439,7 +439,7 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
 #[test]
 fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
     type B = Prime32Offset99;
-    type E = RingSubfieldFpExt4<B>;
+    type E = FpExt4<B>;
 
     let tail_point = (0..14)
         .map(|idx| {
@@ -535,7 +535,7 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
     assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
 }
 
-// Exercises the `RingSubfieldFpExt4<Fp32>` lazy tensor factor across every Fp32-backed
+// Exercises the `FpExt4<Fp32>` lazy tensor factor across every Fp32-backed
 // base prime: the largest `2^32 - 99` down through the 31-bit Mersenne-style
 // `2^31 - 19` and smaller widths. Where the product accumulator is exact the lazy
 // factor takes the delayed-reduction branch in `factor_pair`; otherwise it falls
@@ -549,7 +549,7 @@ macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
         #[test]
         fn $name() {
             type B = $base;
-            type E = RingSubfieldFpExt4<B>;
+            type E = FpExt4<B>;
 
             let tail_point = (0..5)
                 .map(|idx| {

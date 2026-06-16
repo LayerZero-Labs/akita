@@ -39,6 +39,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
+use akita_types::FpExtEncoding;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     append_opening_batch_shape_to_transcript, basis_weights,
@@ -52,22 +53,20 @@ use akita_types::{
     schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, terminal_witness_segment_layout,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
-    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits, OpeningClaimKind,
-    OpeningClaimSlot, PackedDigits, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingSubfieldEncoding, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
-    TraceTable,
+    tensor_row_partials_from_columns, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_weight_layout_from_segment, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
+    BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FlatRingVec, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits,
+    OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 #[cfg(feature = "zk")]
 use akita_types::{
     check_extension_opening_reduction_output, stage1_tree_stage_shapes, sumcheck_rounds,
-    ZkHidingProof,
+    PackedDigits, ZkHidingProof,
 };
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
@@ -126,7 +125,7 @@ fn build_recursive_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
@@ -147,7 +146,7 @@ fn build_root_stage2_trace_table<F, E, const D: usize>(
 ) -> Result<TraceTable<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let num_trace_blocks = instance
         .opening_batch()
@@ -375,7 +374,7 @@ fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
     L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
@@ -423,7 +422,7 @@ fn row_coefficient_rings<F, L, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>,
+    L: FpExtEncoding<F>,
 {
     coefficients
         .iter()
@@ -540,8 +539,8 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>,
-    L: RingSubfieldEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F>,
+    L: FpExtEncoding<F> + ExtField<F>,
     B: ProverComputeBackend<F>,
 {
     let mut rng = OsRng;

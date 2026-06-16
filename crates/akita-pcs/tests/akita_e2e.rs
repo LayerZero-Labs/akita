@@ -15,7 +15,11 @@ use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
-use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
+use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
+#[cfg(not(feature = "zk"))]
+use akita_types::{
+    schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
+};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
@@ -45,6 +49,31 @@ fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
+
+#[cfg(not(feature = "zk"))]
+fn schedule_bytes_with_realized_terminal_z<FF, L>(
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+) -> usize
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
+        return schedule.total_bytes;
+    };
+    let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
+        return schedule.total_bytes;
+    };
+    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
+        return schedule.total_bytes;
+    };
+
+    schedule
+        .total_bytes
+        .saturating_sub(scheduled.z_payload_bytes)
+        .saturating_add(witness.z_payload.len())
+}
 
 static INIT_RAYON: Once = Once::new();
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -197,8 +226,8 @@ where
         CommitHint = AkitaCommitmentHint<FField, D>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
-    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
-    Cfg::ExtField: RingSubfieldEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
@@ -314,17 +343,22 @@ fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
     layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
-    let akita_types::CleartextWitnessProof::PackedDigits(packed) = witness else {
-        panic!("trace tamper fixture should use packed terminal digits");
-    };
-    let mut digits = (0..packed.num_elems)
-        .map(|idx| packed.digit_at(idx).expect("packed digit index"))
-        .collect::<Vec<_>>();
-    let digit = digits
-        .get_mut(layout.e_hat_digit_offset)
-        .expect("terminal e_hat offset must be in range");
-    *digit = if *digit == -1 { 0 } else { -1 };
-    *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+    match witness {
+        akita_types::CleartextWitnessProof::PackedDigits(packed) => {
+            let mut digits = (0..packed.num_elems)
+                .map(|idx| packed.digit_at(idx).expect("packed digit index"))
+                .collect::<Vec<_>>();
+            let digit = digits
+                .get_mut(layout.e_hat_digit_offset)
+                .expect("terminal e_hat offset must be in range");
+            *digit = if *digit == -1 { 0 } else { -1 };
+            *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+        }
+        akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
+            bump_flat_ring_vec(&mut segment.e_fields);
+        }
+        _ => panic!("trace tamper fixture expects packed or segment-typed terminal witness"),
+    }
 }
 
 #[cfg(not(feature = "zk"))]
@@ -879,9 +913,10 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             assert_eq!(
                 proof
                     .final_witness()
-                    .as_packed_digits()
-                    .expect("current terminal witness should be packed digits")
-                    .bits_per_elem,
+                    .as_segment_typed()
+                    .expect("terminal witness should be segment-typed")
+                    .layout
+                    .log_basis,
                 schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
@@ -993,34 +1028,29 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-            // `Schedule::total_bytes` is the planner's conservative upper bound:
-            // `level_proof_bytes` sizes every stage-2 sumcheck round as
-            // degree-3, but the prover ships a degree-2 first round per
-            // stage-2 sumcheck (one challenge-field element fewer per fold
-            // level). So the runtime proof never exceeds the estimate and
-            // undershoots it by at most one challenge element per fold level.
+            // `Schedule::total_bytes` is the planner's public upper bound. For
+            // segment-typed tails the schedule budgets the variable-length
+            // Golomb `z` segment at its worst-case public length; the proof
+            // carries the realized byte length on the wire.
             assert!(
                 proof.size() <= plan.total_bytes,
                 "runtime proof {} exceeds planner upper bound {}",
                 proof.size(),
                 plan.total_bytes
             );
-            let challenge_elem = F::zero().serialized_size(akita_serialization::Compress::No);
-            let overcount = plan.total_bytes - proof.size();
-            assert!(
-                overcount <= plan.num_fold_levels() * challenge_elem,
-                "planner estimate {} overcounts runtime proof {} by {overcount} bytes, \
-                 exceeding the {} stage-2 degree-2 rounds * {challenge_elem}B tolerance",
-                plan.total_bytes,
+            assert_eq!(
+                schedule_bytes_with_realized_terminal_z(&proof, &plan),
                 proof.size(),
-                plan.num_fold_levels()
+                "planner/runtime proof-size accounting should be exact once the \
+                 realized variable-length terminal z payload is substituted",
             );
             assert_eq!(
                 decoded
                     .final_witness()
-                    .as_packed_digits()
-                    .expect("current terminal witness should be packed digits")
-                    .bits_per_elem,
+                    .as_segment_typed()
+                    .expect("terminal witness should be segment-typed")
+                    .layout
+                    .log_basis,
                 schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
@@ -1066,9 +1096,12 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             // bound. Under honest A-role pricing, D=64 stops securing a fold
             // for very large `num_vars`, so the DP returns this edge instead
             // of a folded schedule; it carries no basis to check.
-            akita_types::Step::Direct(direct) => match direct.witness_shape {
-                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => bits <= 6,
+            akita_types::Step::Direct(direct) => match &direct.witness_shape {
+                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => *bits <= 6,
                 akita_types::CleartextWitnessShape::FieldElements(_) => true,
+                akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
+                    shape.layout.log_basis <= 6
+                }
             },
         });
         assert!(
@@ -1290,8 +1323,13 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     akita_types::CleartextWitnessProof::PackedDigits(packed) => {
                         packed.data[0] ^= 1;
                     }
+                    akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
+                        segment.z_payload[0] ^= 1;
+                    }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
-                        panic!("expected packed-digits final witness for tamper test");
+                        panic!(
+                            "expected packed-digits or segment-typed final witness for tamper test"
+                        );
                     }
                 }
             }

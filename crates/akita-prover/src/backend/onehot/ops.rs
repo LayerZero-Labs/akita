@@ -407,7 +407,7 @@ where
     where
         Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         Ok(FoldInputPoly::ProjectedSparse(
             self.tensor_packed_sparse_ring_poly::<E>()?,

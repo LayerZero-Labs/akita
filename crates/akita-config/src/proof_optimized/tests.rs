@@ -651,6 +651,28 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 }
 
 #[test]
+#[cfg(feature = "zk")]
+fn batched_4x15_terminal_witness_is_packed_digits() {
+    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape, Step};
+    let key = AkitaScheduleLookupKey::new(15, 4, 4, 1);
+    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
+        .expect("config schedule should succeed");
+    let terminal_log_basis = match schedule.steps.last() {
+        Some(Step::Direct(direct)) => {
+            direct.log_basis(fp128::D64OneHot::decomposition().field_bits())
+        }
+        _ => panic!("zk schedule should end in a terminal direct step"),
+    };
+    match schedule_terminal_direct_witness_shape(&schedule).expect("terminal direct") {
+        CleartextWitnessShape::PackedDigits((len, bits)) => {
+            assert_eq!(*bits, terminal_log_basis);
+            assert!(*len > 0, "terminal witness len must be positive");
+        }
+        other => panic!("expected packed terminal witness for zk build, got {other:?}"),
+    }
+}
+
+#[test]
 #[cfg(not(feature = "zk"))]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
@@ -663,19 +685,20 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
-    let akita_types::CleartextWitnessShape::PackedDigits((num_elems, _bits)) =
+    let akita_types::CleartextWitnessShape::SegmentTyped(ref shape) =
         *akita_types::schedule_terminal_direct_witness_shape(&schedule)
             .expect("4x30 onehot schedule should end in a direct step")
     else {
-        panic!("4x30 onehot schedule should end in packed digits");
+        panic!("4x30 onehot schedule should end in segment-typed witness");
     };
     // Bound reflects the committed-fold A-role SIS pricing: honest pricing
     // lifts the per-level rank, widening the terminal witness, but the
     // byte-aware schedule still keeps folding rather than dumping a huge
     // cleartext root.
     assert!(
-        num_elems <= 375_104,
-        "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
+        shape.layout.logical_num_elems <= 375_104,
+        "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
+        shape.layout.logical_num_elems
     );
 }
 

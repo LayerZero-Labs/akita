@@ -4,8 +4,9 @@
 |-------------|-------------------|
 | Author(s)   | Quang Dao         |
 | Created     | 2026-05-26        |
-| Status      | proposed          |
+| Status      | archived |
 | PR          | #110              |
+| Book-chapter | |
 
 ## Summary
 

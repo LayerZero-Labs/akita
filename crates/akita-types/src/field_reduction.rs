@@ -6,21 +6,17 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, Invertible, RingSubfieldFpExt4,
-    RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend,
+    AkitaError, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend,
+    FromPrimitiveInt, Invertible,
 };
 use akita_serialization::Valid;
 use std::array::from_fn;
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
-///
-/// This intentionally does not blanket-implement every extension field over
-/// `F`: tower/power coordinates are not automatically the same basis as the
-/// cyclotomic subfield basis used by the trace reduction.
-pub trait RingSubfieldEncoding<F: FieldCore>: ExtField<F> {
+pub trait FpExtEncoding<F: FieldCore>: ExtField<F> {
     /// Return coordinates in the ring-subfield basis.
-    fn to_ring_subfield_coords(&self) -> Vec<F>;
+    fn to_ext_coords(&self) -> Vec<F>;
 
     /// Return the underlying base scalar when this encoding is degree one.
     fn degree_one_base(&self) -> Option<F> {
@@ -28,12 +24,12 @@ pub trait RingSubfieldEncoding<F: FieldCore>: ExtField<F> {
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for F
+impl<F> FpExtEncoding<F> for F
 where
     F: FieldCore + FromPrimitiveInt,
 {
     #[inline]
-    fn to_ring_subfield_coords(&self) -> Vec<F> {
+    fn to_ext_coords(&self) -> Vec<F> {
         vec![*self]
     }
 
@@ -43,32 +39,32 @@ where
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for Ext2<F>
+impl<F> FpExtEncoding<F> for Ext2<F>
 where
     F: FieldCore + FromPrimitiveInt + Valid,
 {
     #[inline]
-    fn to_ring_subfield_coords(&self) -> Vec<F> {
+    fn to_ext_coords(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for RingSubfieldFpExt4<F>
+impl<F> FpExtEncoding<F> for FpExt4<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt4MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + FpExt4MulBackend,
 {
     #[inline]
-    fn to_ring_subfield_coords(&self) -> Vec<F> {
+    fn to_ext_coords(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
 }
 
-impl<F> RingSubfieldEncoding<F> for RingSubfieldFpExt8<F>
+impl<F> FpExtEncoding<F> for FpExt8<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt8MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + FpExt8MulBackend,
 {
     #[inline]
-    fn to_ring_subfield_coords(&self) -> Vec<F> {
+    fn to_ext_coords(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
 }
@@ -292,7 +288,7 @@ pub fn embed_ring_subfield_vector<F, E, const D: usize>(
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     macro_rules! arm {
         ($k:expr) => {{
@@ -303,7 +299,7 @@ where
             }
             let mut coords = Vec::with_capacity(D);
             for value in values {
-                let limbs = value.to_ring_subfield_coords();
+                let limbs = value.to_ext_coords();
                 if limbs.len() != $k {
                     return Err(error);
                 }
@@ -338,12 +334,12 @@ pub fn embed_ring_subfield_scalar<F, E, const D: usize>(
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     macro_rules! arm {
         ($k:expr) => {{
             let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
-            let limbs = value.to_ring_subfield_coords();
+            let limbs = value.to_ext_coords();
             let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
             Ok(embed_subfield::<F, D, $k>(params, &coords))
         }};
@@ -500,7 +496,7 @@ pub fn validate_ring_subfield_role<F, E, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let error = || {
         AkitaError::InvalidSetup(format!(
@@ -540,7 +536,7 @@ pub fn recover_ring_subfield_inner_product<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let trace_input = *y_ring * packed_inner_point.sigma_m1();
     macro_rules! arm {
@@ -573,7 +569,7 @@ fn decode_traced_to_extension<F, E, const D: usize, const K: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let scale_inv = F::from_u64(params.packed_len() as u64)
         .inverse()
@@ -601,7 +597,7 @@ pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let ring_len = 1usize
         .checked_shl(ring_bits as u32)
@@ -718,7 +714,7 @@ pub(crate) fn trace_open_folded_ring_mle_dot<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt + Invertible,
-    E: RingSubfieldEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F> + ExtField<F>,
 {
     let ring_bits = u32::try_from(ring_bits).map_err(|_| {
         AkitaError::InvalidInput("trace-open ring bits exceed platform width".to_string())

@@ -18,8 +18,8 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::{
-    embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, OpeningPoints,
-    RingSubfieldEncoding,
+    embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, FpExtEncoding,
+    OpeningPoints,
 };
 
 pub use api::{
@@ -386,7 +386,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         let evals = self.tensor_packed_extension_evals::<E>()?;
         let packed_len = D / E::EXT_DEGREE;
@@ -423,7 +423,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     where
         Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         Ok(FoldInputPoly::projected_dense(
             self.tensor_packed_extension_poly::<E>()?,
@@ -615,7 +615,7 @@ where
     fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         <P as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(*self)
     }
@@ -626,7 +626,7 @@ where
     where
         Self: Sized,
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         match <P as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(*self)? {
             FoldInputPoly::Original(_) => Ok(FoldInputPoly::Original(self)),

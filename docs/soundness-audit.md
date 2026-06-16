@@ -27,7 +27,6 @@ cargo deny check bans licenses sources advisories
 scripts/check-crate-deps.sh akita-verifier
 scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
-scripts/check-crate-deps.sh akita-derive
 scripts/check-crate-deps.sh akita-setup
 ```
 

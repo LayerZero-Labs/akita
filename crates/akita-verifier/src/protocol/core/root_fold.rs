@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::terminal_witness_segment_layout;
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -31,12 +32,8 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
