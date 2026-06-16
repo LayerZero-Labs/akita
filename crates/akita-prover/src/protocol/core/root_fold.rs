@@ -141,6 +141,8 @@ where
             polys,
             &opening_batch,
             shared_opening_point,
+            #[cfg(feature = "zk")]
+            None,
             false,
             transcript,
             "root",

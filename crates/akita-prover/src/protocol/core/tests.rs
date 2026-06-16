@@ -111,6 +111,8 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         &logical_polys,
         &opening_batch,
         &point,
+        #[cfg(feature = "zk")]
+        None,
         true,
         &mut transcript,
         "recursive",

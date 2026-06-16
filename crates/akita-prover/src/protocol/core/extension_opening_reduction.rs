@@ -161,6 +161,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<F, E, T, P,
     polys: &[&P],
     opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
+    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     pad_base_evals: bool,
     transcript: &mut T,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
@@ -232,7 +233,21 @@ where
         .collect::<Vec<_>>();
     #[cfg(not(feature = "zk"))]
     let proof_partials = partials.clone();
-    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+    #[cfg(feature = "zk")]
+    let transcript_openings = if let Some(public_openings) = public_openings {
+        if public_openings.len() != openings.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: openings.len(),
+                actual: public_openings.len(),
+            });
+        }
+        public_openings
+    } else {
+        openings.as_slice()
+    };
+    #[cfg(not(feature = "zk"))]
+    let transcript_openings = openings.as_slice();
+    append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     if row_partials_by_claim.len() != row_coefficients.len() {
         return Err(AkitaError::InvalidSize {
@@ -317,6 +332,7 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, c
     polys: &[&P],
     opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
+    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
@@ -338,6 +354,8 @@ where
         polys,
         opening_batch,
         shared_opening_point,
+        #[cfg(feature = "zk")]
+        public_openings,
         pad_base_evals,
         transcript,
         #[cfg(feature = "zk")]

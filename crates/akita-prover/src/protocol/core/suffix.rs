@@ -977,10 +977,14 @@ where
         let logical_view = logical_w.view::<F, D>()?;
         let logical_polys = [&logical_view];
         let opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+        #[cfg(feature = "zk")]
+        let public_openings = [current_state.opening_public];
         let proved = prove_extension_opening_reduction::<F, L, T, _, D>(
             &logical_polys,
             &opening_batch,
             opening_point,
+            #[cfg(feature = "zk")]
+            Some(&public_openings),
             true,
             transcript,
             "recursive",
