@@ -29,7 +29,7 @@ mod tensor;
 
 pub use challenge::{IntegerChallenge, SparseChallenge};
 pub use config::{SparseChallengeConfig, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
-pub use jl::{JlImage, JlProjectionMatrix, DEFAULT_JL_ROWS};
+pub use jl::{center_coefficients, JlImage, JlProjectionMatrix, DEFAULT_JL_ROWS};
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
     sample_folding_challenges, stage1_fold_challenge_labels, tensor_left_digest, tensor_split,

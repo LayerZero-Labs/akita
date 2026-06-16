@@ -140,6 +140,20 @@ fn check_l2_accepts_generous_and_rejects_tight() {
 }
 
 #[test]
+fn project_centered_matches_project() {
+    let signs: Vec<Vec<i8>> = (0..4)
+        .map(|r| (0..11).map(|c| ((r + c) % 3) as i8 - 1).collect())
+        .collect();
+    let coeffs: Vec<F64> = (0..11).map(|i| F64::from_i64(i as i64 - 5)).collect();
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let centered = super::center_coefficients(&coeffs).unwrap();
+    assert_eq!(
+        matrix.project(&coeffs).unwrap(),
+        matrix.project_centered(&centered).unwrap()
+    );
+}
+
+#[test]
 fn malformed_inputs_return_error() {
     let signs = vec![vec![1i8, 1i8]];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();

@@ -16,6 +16,9 @@
 //! completeness loop, the consistency sumcheck, and any protocol wiring are
 //! deferred (see `specs/akita-jl-tail-projection-prototype.md`).
 
+use akita_field::cfg_into_iter;
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_JL_PROJECTION, CHALLENGE_JL_SEED};
 use akita_transcript::Transcript;
@@ -35,18 +38,16 @@ const JL_SAMPLE_DOMAIN_VERSION: u64 = 1;
 /// The secure `n_rows` derivation is deferred (spec D6); callers parameterize.
 pub const DEFAULT_JL_ROWS: usize = 256;
 
+/// Minimum `n_rows * cols` before the `parallel` feature fans projection out
+/// over rows. Below this, rayon scheduling overhead dominates (see
+/// `benches/jl_projection.rs`).
+const JL_PARALLEL_ELEMS_THRESHOLD: usize = 1 << 16;
+
 /// Map a packed 2-bit pair to its ternary sign: `0b00 -> -1`, `0b11 -> +1`,
 /// `0b01`/`0b10 -> 0`.
 #[inline]
 fn pair_to_sign(pair: u8) -> i8 {
     ((pair == 0b11) as i8) - ((pair == 0b00) as i8)
-}
-
-/// Read the 2-bit pair for column `col` from a packed row.
-#[inline]
-fn pair_at(row: &[u8], col: usize) -> u8 {
-    let shift = (col & 0b11) << 1;
-    (row[col >> 2] >> shift) & 0b11
 }
 
 /// Byte length of one packed row of `cols` ternary entries (2 bits each).
@@ -60,13 +61,13 @@ fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
 }
 
 /// Dense ternary JL projection matrix with entries in `{-1, 0, +1}`, packed two
-/// bits per entry.
+/// bits per entry in a single contiguous row-major buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JlProjectionMatrix {
     n_rows: usize,
     cols: usize,
     row_bytes: usize,
-    packed_rows: Vec<Vec<u8>>,
+    packed_rows: Vec<u8>,
 }
 
 impl JlProjectionMatrix {
@@ -78,6 +79,12 @@ impl JlProjectionMatrix {
     /// Number of columns (the projected coefficient-vector length).
     pub fn cols(&self) -> usize {
         self.cols
+    }
+
+    #[inline]
+    fn row_slice(&self, row_idx: usize) -> &[u8] {
+        let start = row_idx * self.row_bytes;
+        &self.packed_rows[start..start + self.row_bytes]
     }
 
     /// Sample a dense ternary matrix deterministically from the transcript.
@@ -110,11 +117,10 @@ impl JlProjectionMatrix {
         let seed = transcript.challenge_bytes(CHALLENGE_JL_SEED, 32);
 
         let mut cursor = XofCursor::from_seed_with_domain(JL_PRG_DOMAIN, &seed);
-        let mut packed_rows = Vec::with_capacity(n_rows);
-        for _ in 0..n_rows {
-            let mut row = vec![0u8; row_bytes];
-            cursor.fill_bytes(&mut row);
-            packed_rows.push(row);
+        let mut packed_rows = vec![0u8; n_rows * row_bytes];
+        for row_idx in 0..n_rows {
+            let start = row_idx * row_bytes;
+            cursor.fill_bytes(&mut packed_rows[start..start + row_bytes]);
         }
 
         Ok(Self {
@@ -158,9 +164,37 @@ impl JlProjectionMatrix {
             .map(|c| center_to_i64(c.to_canonical_u128(), q, half_q))
             .collect::<Result<_, _>>()?;
 
-        let coords = (0..self.n_rows)
-            .map(|row_idx| project_row(&self.packed_rows[row_idx], &centered, self.cols))
-            .collect::<Result<Vec<i64>, _>>()?;
+        self.project_centered(&centered)
+    }
+
+    /// Project a pre-centered digit coefficient vector to its integer image.
+    ///
+    /// Callers that already hold balanced `i64` digits (e.g. from a witness
+    /// flattening pass) can skip repeated field centering. Row accumulation
+    /// parallelizes over `n_rows` when the `parallel` feature is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `centered.len() != cols` or if any coordinate
+    /// overflows `i64`.
+    pub fn project_centered(&self, centered: &[i64]) -> Result<JlImage, AkitaError> {
+        if centered.len() != self.cols {
+            return Err(AkitaError::InvalidInput(format!(
+                "JL projection expects {} centered coefficients, got {}",
+                self.cols,
+                centered.len()
+            )));
+        }
+
+        let coords = if use_parallel_projection(self.n_rows, self.cols) {
+            cfg_into_iter!(0..self.n_rows)
+                .map(|row_idx| project_row(self.row_slice(row_idx), centered, self.cols))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            (0..self.n_rows)
+                .map(|row_idx| project_row(self.row_slice(row_idx), centered, self.cols))
+                .collect::<Result<Vec<_>, _>>()?
+        };
 
         Ok(JlImage { coords })
     }
@@ -183,8 +217,9 @@ impl JlProjectionMatrix {
             ));
         }
 
-        let mut packed_rows = vec![vec![0u8; row_bytes]; n_rows];
+        let mut packed_rows = vec![0u8; n_rows * row_bytes];
         for (row_idx, row) in signs.iter().enumerate() {
+            let row_start = row_idx * row_bytes;
             for (col_idx, &sign) in row.iter().enumerate() {
                 let pair: u8 = match sign {
                     -1 => 0b00,
@@ -196,7 +231,7 @@ impl JlProjectionMatrix {
                         ))
                     }
                 };
-                packed_rows[row_idx][col_idx >> 2] |= pair << ((col_idx & 0b11) << 1);
+                packed_rows[row_start + (col_idx >> 2)] |= pair << ((col_idx & 0b11) << 1);
             }
         }
 
@@ -214,8 +249,24 @@ impl JlProjectionMatrix {
         if row_idx >= self.n_rows || col_idx >= self.cols {
             return None;
         }
-        Some(pair_to_sign(pair_at(&self.packed_rows[row_idx], col_idx)))
+        let shift = (col_idx & 0b11) << 1;
+        let pair = (self.row_slice(row_idx)[col_idx >> 2] >> shift) & 0b11;
+        Some(pair_to_sign(pair))
     }
+}
+
+/// Center a flat coefficient slice to balanced `i64` digits.
+///
+/// # Errors
+///
+/// Returns an error if any centered magnitude exceeds `i64` (non-digit input).
+pub fn center_coefficients<F: CanonicalField>(coeffs: &[F]) -> Result<Vec<i64>, AkitaError> {
+    let q = field_modulus::<F>();
+    let half_q = q / 2;
+    coeffs
+        .iter()
+        .map(|c| center_to_i64(c.to_canonical_u128(), q, half_q))
+        .collect()
 }
 
 /// Recover the field modulus `q` as a `u128` for a base prime field.
@@ -249,30 +300,72 @@ fn center_to_i64(canonical: u128, q: u128, half_q: u128) -> Result<i64, AkitaErr
     })
 }
 
+/// Add `sign(pair) * value` into `acc` with checked `i64` arithmetic.
+#[inline]
+fn accum_pair(acc: i64, pair: u8, value: i64) -> Result<i64, AkitaError> {
+    let sign = pair_to_sign(pair);
+    if sign == 0 {
+        return Ok(acc);
+    }
+    let term = if sign < 0 {
+        value
+            .checked_neg()
+            .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))?
+    } else {
+        value
+    };
+    acc.checked_add(term)
+        .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))
+}
+
 /// Accumulate one projection coordinate `sum_col sign(col) * centered[col]`
 /// with checked arithmetic, rejecting `i64` overflow.
+///
+/// Processes four packed column pairs per byte on the full-byte prefix.
 fn project_row(row: &[u8], centered: &[i64], cols: usize) -> Result<i64, AkitaError> {
+    let full_bytes = cols >> 2;
+    let remainder = cols & 0b11;
+    let mut coeff_idx = 0usize;
     let mut acc: i64 = 0;
-    for (col, &value) in centered.iter().enumerate().take(cols) {
-        let sign = pair_to_sign(pair_at(row, col));
-        if sign != 0 {
-            let term = if sign < 0 {
-                value
-                    .checked_neg()
-                    .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))?
-            } else {
-                value
-            };
-            acc = acc
-                .checked_add(term)
-                .ok_or_else(|| AkitaError::InvalidInput(jl_overflow_msg()))?;
+
+    for &byte in row.iter().take(full_bytes) {
+        acc = accum_pair(acc, byte & 0b11, centered[coeff_idx])?;
+        coeff_idx += 1;
+        acc = accum_pair(acc, (byte >> 2) & 0b11, centered[coeff_idx])?;
+        coeff_idx += 1;
+        acc = accum_pair(acc, (byte >> 4) & 0b11, centered[coeff_idx])?;
+        coeff_idx += 1;
+        acc = accum_pair(acc, (byte >> 6) & 0b11, centered[coeff_idx])?;
+        coeff_idx += 1;
+    }
+
+    if remainder > 0 {
+        let byte = row[full_bytes];
+        for lane in 0..remainder {
+            let pair = (byte >> (lane << 1)) & 0b11;
+            acc = accum_pair(acc, pair, centered[coeff_idx])?;
+            coeff_idx += 1;
         }
     }
+    debug_assert_eq!(coeff_idx, cols);
     Ok(acc)
 }
 
 fn jl_overflow_msg() -> String {
     "JL projection coordinate exceeds i64 range".to_string()
+}
+
+#[inline]
+fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
+    #[cfg(feature = "parallel")]
+    {
+        n_rows.saturating_mul(cols) >= JL_PARALLEL_ELEMS_THRESHOLD
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = (n_rows, cols);
+        false
+    }
 }
 
 /// Integer image `p = J · c` of a JL projection.
