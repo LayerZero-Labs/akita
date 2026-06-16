@@ -13,7 +13,7 @@ each prover stage with its verifier mirror.
 
 **Sources to fold in**
 
-- `crates/akita-verifier/src/lib.rs`, `protocol/batched.rs:441-613` (`verify_batched`).
+- `crates/akita-verifier/src/lib.rs`, `protocol/core/verify.rs` (`batched_verify`).
 - `crates/akita-verifier/src/protocol/levels/`, `levels/root_fold.rs`, `levels/suffix.rs`, `src/stages/`.
 - Paper §3.8 `sec:akita-full-pcs` (`Eval.V`), §4.1 `sec:verifier-cost-anatomy` (per-level verifier cost).
 - `specs/optimized_verifier.md` (M-at-a-point evaluation — durable reference).

@@ -149,13 +149,13 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
 
 ### Architecture
 
-- **Prover** (`akita-prover`): `flow::{recursive,root_fold}` thread
+- **Prover** (`akita-prover`): `core::{suffix,root_fold}` thread
   `setup_contribution_mode`. For `Recursive` on a non-terminal level they call
   `SetupSumcheckProver::prove`, which prepares the setup terms (required length,
   `bar_omega`, `alpha` powers) and runs the sumcheck, emitting a
   `SetupSumcheckProof` into the root fold proof's `stage3_sumcheck_proof`. For
   `Direct` the field is `None`.
-- **Verifier** (`akita-verifier`): `protocol::levels{,/recursive}` select the
+- **Verifier** (`akita-verifier`): `protocol::core::{suffix,root_fold}` select the
   stage-3 proof based on mode (`InvalidSetup` if present/absent inconsistently),
   construct `SetupSumcheckVerifier::new(...)` from the ring-switch row
   evaluation, and call `verify(...)`. The verifier replays the
