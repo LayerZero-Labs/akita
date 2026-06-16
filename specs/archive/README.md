@@ -1,0 +1,19 @@
+# Archived specs
+
+Specs here are reference-only. Their durable content has either been folded into
+the [Akita Book](../../book/README.md) or describes completed/superseded work.
+See [`specs/PRUNING.md`](../PRUNING.md) for the lifecycle and the audit that
+drives archiving.
+
+Archived specs are organized by the quarter they were archived. Do not edit them
+to track current behavior; update the owning book chapter instead.
+
+## Index
+
+| Spec | Final status | Book chapter | Archived |
+|------|--------------|--------------|----------|
+| `2026-Q2/w-to-e-notation.md` | archived | `book/src/foundations/glossary.md` | 2026-Q2 |
+| `2026-Q2/planner-refactor.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/planner-owns-schedule-expansion.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/planner-config-consolidation.md` | superseded | `book/src/how/configuration.md` | 2026-Q2 |
+| `2026-Q2/rust-file-line-cap.md` | archived | _(policy in CI)_ | 2026-Q2 |

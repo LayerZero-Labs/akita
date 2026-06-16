@@ -1,11 +1,33 @@
 # Spec: [Feature Name]
 
-| Field       | Value                          |
-|-------------|--------------------------------|
-| Author(s)   |                                |
-| Created     | YYYY-MM-DD                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Field         | Value                          |
+|---------------|--------------------------------|
+| Author(s)     |                                |
+| Created       | YYYY-MM-DD                     |
+| Status        | proposed                       |
+| PR            |                                |
+| Supersedes    |                                |
+| Superseded-by |                                |
+| Book-chapter  |                                |
+
+`Status` must be one of the lifecycle values below. Keep it accurate after the
+spec lands; stale `proposed` headers on shipped work are the main signal the
+quarterly audit looks for. See
+[`specs/PRUNING.md`](PRUNING.md) for the full lifecycle and archive workflow.
+
+| Status        | Meaning |
+|---------------|---------|
+| `proposed`    | Not approved / not started |
+| `approved`    | `spec-approved`, awaiting implementation |
+| `active`      | Approved, implementation in flight |
+| `implemented` | Shipped; durable reference value |
+| `superseded`  | Replaced by another spec (set `Superseded-by`) |
+| `historical`  | A retrospective/log of completed work; low forward value |
+| `archived`    | Moved to `specs/archive/`; the book owns the durable content |
+
+Fill `Book-chapter` with the Akita Book page that owns this spec's durable
+content once it is folded in. Use either `book/src/how/security.md` or the bare
+path under `book/src/` (e.g. `how/security.md`). Do not prefix with `src/`.
 
 ## Summary
 
@@ -59,7 +81,10 @@ What other approaches were evaluated? Why was this design chosen over them? This
 
 ## Documentation
 
-What README, spec, paper note, example, profile guide, crate docs, or developer-guide changes are required? List new pages, sections to update, or diagrams to add. If no documentation changes are needed, state why.
+What book, spec, `AGENTS.md`, or `docs/` changes are required? List owning book
+pages (`book/src/...`), spec header updates, and archive/fold plans. If none,
+state why. See [`docs/documentation.md`](../docs/documentation.md) and the
+blast-radius map [`docs/doc-blast-radius.json`](../docs/doc-blast-radius.json).
 
 ## Execution
 
