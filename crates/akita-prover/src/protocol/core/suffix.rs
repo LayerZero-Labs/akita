@@ -293,6 +293,8 @@ where
         opening_point,
         #[cfg(feature = "zk")]
         None,
+        #[cfg(feature = "zk")]
+        Some(current_state.opening_public),
         true,
         transcript,
         #[cfg(feature = "zk")]

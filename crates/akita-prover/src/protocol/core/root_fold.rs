@@ -118,6 +118,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     trace_opening_batch: &OpeningBatch,
     opening_point: &[E],
     #[cfg(feature = "zk")] public_openings: Option<&[E]>,
+    #[cfg(feature = "zk")] no_eor_trace_eval_target_public: Option<E>,
     pad_base_evals: bool,
     transcript: &mut T,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
@@ -239,6 +240,14 @@ where
         row_coefficients,
         transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let mut trace_target = trace_target;
+    #[cfg(feature = "zk")]
+    if reduction.is_none() {
+        if let Some(public_target) = no_eor_trace_eval_target_public {
+            trace_target.trace_eval_target_public = public_target;
+        }
+    }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
@@ -429,6 +438,8 @@ where
         opening_batch.clone(),
         &opening_batch,
         shared_opening_point,
+        #[cfg(feature = "zk")]
+        None,
         #[cfg(feature = "zk")]
         None,
         false,
