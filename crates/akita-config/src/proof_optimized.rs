@@ -141,8 +141,9 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     #[cfg(feature = "zk")]
     let mut max_zk_d_len: usize = 1;
     let mut saw_supported_shape = false;
+    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
     for num_vars in 1..=max_num_vars {
-        for num_polys in 1..=max_num_batched_polys {
+        for &num_polys in &poly_counts {
             let opening_batch = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
             let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)? else {
                 continue;
@@ -170,6 +171,22 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         #[cfg(feature = "zk")]
         max_zk_d_len,
     })
+}
+
+/// Batched polynomial counts scanned by [`proof_optimized_max_setup_matrix_size`].
+///
+/// Generated schedule tables (and the offline `gen_schedule_tables` emitter)
+/// materialize only singleton (`num_polys = 1`) and 4-batched roots. Scanning
+/// every intermediate count in `1..=max` forces table misses on `2` and `3` even
+/// though setup-matrix footprints are determined by the endpoint batch sizes.
+/// Role footprints can be non-monotone in `num_vars`, but not in these skipped
+/// intermediate batch counts for the shipped table key shapes.
+pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<usize> {
+    if max_num_batched_polys <= 1 {
+        vec![1]
+    } else {
+        vec![1, max_num_batched_polys]
+    }
 }
 
 /// Worst-case opening batch for a `(num_vars, num_claims)` shape.

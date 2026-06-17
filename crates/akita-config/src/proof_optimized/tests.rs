@@ -3,7 +3,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_planner::generated::{
-    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
 use akita_planner::generated::{
     fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
@@ -269,6 +269,58 @@ fn setup_matrix_scan_uses_one_shared_opening_point() {
     let opening_batch =
         worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
     assert_eq!(opening_batch.num_polys_per_commitment_group(), &[4]);
+}
+
+#[test]
+fn setup_envelope_poly_counts_match_shipped_table_keys() {
+    assert_eq!(super::setup_envelope_poly_counts(1), vec![1]);
+    assert_eq!(super::setup_envelope_poly_counts(2), vec![1, 2]);
+    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 4]);
+}
+
+#[test]
+fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
+    fn exhaustive_envelope<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> SetupMatrixEnvelope {
+        let mut max_setup_len = 1usize;
+        for num_vars in 1..=max_num_vars {
+            for num_polys in 1..=max_num_batched_polys {
+                let opening_batch =
+                    worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
+                if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
+                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                }
+            }
+        }
+        SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+        }
+    }
+
+    for max_nv in [16usize, 24, 30] {
+        let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(max_nv, 4);
+        let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(max_nv, 4)
+            .expect("endpoint poly scan");
+        assert_eq!(
+            exhaustive.max_setup_len, endpoint.max_setup_len,
+            "D64OneHot nv<={max_nv}: endpoint scan must match exhaustive poly scan"
+        );
+
+        let exhaustive_full = exhaustive_envelope::<fp128::D64Full>(max_nv, 4);
+        let endpoint_full =
+            super::proof_optimized_max_setup_matrix_size::<fp128::D64Full>(max_nv, 4)
+                .expect("endpoint poly scan");
+        assert_eq!(
+            exhaustive_full.max_setup_len, endpoint_full.max_setup_len,
+            "D64Full nv<={max_nv}: endpoint scan must match exhaustive poly scan"
+        );
+    }
 }
 
 #[test]
@@ -553,6 +605,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
     assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp128::D64Full>(fp128_d64_full_table());
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
