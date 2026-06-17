@@ -74,7 +74,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
-    T: Transcript<Cfg::Field>,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     B: ProverComputeBackend<Cfg::Field>,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
@@ -195,6 +195,7 @@ where
     let final_w_len = terminal.final_witness().num_elems();
     steps.push(AkitaLevelProof::Terminal {
         extension_opening_reduction: terminal.extension_opening_reduction,
+        fold_grind_nonce: terminal.fold_grind_nonce,
         stage2: terminal.stage2,
         final_w_len,
     });
@@ -245,7 +246,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
     B: ProverComputeBackend<F>,
 {
     {

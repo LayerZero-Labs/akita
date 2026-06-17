@@ -13,7 +13,9 @@ mod zk;
 use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage1::{
+    derive_stage1_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
+};
 use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
@@ -57,9 +59,9 @@ use akita_types::{
     trace_weight_layout_from_segment, w_ring_element_count_with_counts, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    FpExtEncoding, LevelParams, MRowLayout, OpeningBatch, PreparedOpeningPoint,
-    RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationInstance, Schedule, SetupContributionMode, SetupSumcheckProof,
+    FoldLinfProtocolBinding, FpExtEncoding, LevelParams, MRowLayout, OpeningBatch,
+    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, Schedule, SetupContributionMode, SetupSumcheckProof,
     TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
