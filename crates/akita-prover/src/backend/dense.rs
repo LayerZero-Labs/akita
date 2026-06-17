@@ -456,7 +456,7 @@ where
         prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
-        _num_blocks: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
@@ -472,9 +472,18 @@ where
             num_digits_commit,
             log_basis,
         )?;
-        let decomposed_inner_rows = decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)?;
+        if t.len() > num_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "dense commit produced {} inner blocks but layout only allows {num_blocks}",
+                t.len()
+            )));
+        }
+        let mut recomposed_inner_rows = t;
+        recomposed_inner_rows.resize_with(num_blocks, || vec![CyclotomicRing::<F, D>::zero(); n_a]);
+        let decomposed_inner_rows =
+            decompose_commit_rows::<F, D>(&recomposed_inner_rows, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
+            recomposed_inner_rows,
             decomposed_inner_rows,
         })
     }
