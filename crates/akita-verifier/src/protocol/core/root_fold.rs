@@ -65,6 +65,18 @@ where
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
+    if extension_opening_reduction.is_none() {
+        let prepared_point = prepare_opening_point::<F, E, D>(
+            shared_opening_point,
+            basis,
+            root_lp,
+            root_lp.ring_dimension.trailing_zeros() as usize,
+            BlockOrder::RowMajor,
+        )?;
+        for pt in &prepared_point.padded_point {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        }
+    }
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
     #[cfg(feature = "zk")]
@@ -97,6 +109,12 @@ where
     let eor_trace_final = root_eor.final_relation;
     #[cfg(feature = "zk")]
     let zk_eor_final = root_eor.final_relation;
+    let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
+    if extension_opening_reduction.is_some() {
+        for pt in &prepared_point.padded_point {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        }
+    }
     let trace_block_opening: Vec<E> = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
@@ -178,7 +196,6 @@ where
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
 
-    let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
