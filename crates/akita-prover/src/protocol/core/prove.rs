@@ -128,15 +128,20 @@ where
 pub fn prove_root_direct<F, L, const D: usize, P>(
     polys: &[&P],
     hints: &[AkitaCommitmentHint<F, D>],
+    num_vars: usize,
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,
     L: ExtField<F>,
     P: AkitaPolyOps<F, D>,
 {
+    let expected_witness_len = 1usize
+        .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
     let witnesses = polys
         .iter()
         .map(|poly| poly.direct_root_witness())
+        .map(|witness| pad_root_direct_witness(witness?, expected_witness_len))
         .collect::<Result<Vec<_>, _>>()?;
     #[cfg(feature = "zk")]
     {
@@ -165,6 +170,27 @@ where
             steps: Vec::new(),
         })
     }
+}
+
+fn pad_root_direct_witness<F: FieldCore>(
+    witness: CleartextWitnessProof<F>,
+    expected_len: usize,
+) -> Result<CleartextWitnessProof<F>, AkitaError> {
+    let Some(field_elems) = witness.as_field_elements() else {
+        return Ok(witness);
+    };
+    let len = field_elems.coeff_len();
+    if len > expected_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    if len == expected_len {
+        return Ok(witness);
+    }
+    let mut coeffs = field_elems.coeffs().to_vec();
+    coeffs.resize(expected_len, F::zero());
+    Ok(CleartextWitnessProof::FieldElements(
+        FlatRingVec::from_coeffs(coeffs),
+    ))
 }
 
 /// Drive batched proving end-to-end under config `Cfg`.
@@ -261,6 +287,7 @@ where
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
             &prepared_claims.flat_polys,
             &prepared_claims.commitment_hints,
+            prepared_claims.opening_batch.num_vars(),
         );
     }
 
