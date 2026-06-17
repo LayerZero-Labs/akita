@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::EqPolynomial;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
@@ -40,6 +41,34 @@ where
         });
     }
     Ok(())
+}
+
+fn evaluate_padded_extension<F, E, P, const D: usize>(
+    poly: &P,
+    point: &[E],
+    padded_num_vars: usize,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+    P: AkitaPolyOps<F, D>,
+{
+    if point.len() != padded_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: padded_num_vars,
+            actual: point.len(),
+        });
+    }
+    let natural_num_vars = poly.num_vars();
+    if natural_num_vars > padded_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: padded_num_vars,
+            actual: natural_num_vars,
+        });
+    }
+    let head_vars = padded_num_vars - natural_num_vars;
+    let head_selector = EqPolynomial::<E>::zero_selector(&point[..head_vars]);
+    Ok(head_selector * poly.evaluate_extension(&point[head_vars..])?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,7 +117,9 @@ where
             let mut padded_point = shared_opening_point.to_vec();
             padded_point.resize(opening_num_vars, E::zero());
             cfg_iter!(polys)
-                .map(|poly| poly.evaluate_extension(&padded_point))
+                .map(|poly| {
+                    evaluate_padded_extension::<F, E, P, D>(poly, &padded_point, opening_num_vars)
+                })
                 .collect::<Result<Vec<_>, _>>()?
         })
     } else {
