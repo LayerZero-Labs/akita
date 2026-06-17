@@ -42,8 +42,8 @@ pub use compute::{
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, commit_next_w, prepare_batched_prove_inputs, prove, prove_root,
-    prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
+    batched_prove, batched_prove_root_direct, commit_next_w, prepare_batched_prove_inputs, prove,
+    prove_root, prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, RingSwitchOutput,
     SuffixProverState,
 };

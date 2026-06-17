@@ -33,7 +33,7 @@ pub use akita_types::{
 };
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
-    batched_verify, batched_verify_shaped, prepare_ring_switch_row_eval, RingSwitchDeferredRowEval,
-    RingSwitchReplay,
+    batched_verify, batched_verify_shaped, batched_verify_shaped_root_direct,
+    prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay,
 };
 pub use stages::stage1::AkitaStage1Verifier;

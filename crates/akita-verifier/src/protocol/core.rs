@@ -75,7 +75,7 @@ mod root_fold;
 mod suffix;
 use root_fold::verify_root;
 
-pub use verify::{batched_verify, batched_verify_shaped};
+pub use verify::{batched_verify, batched_verify_shaped, batched_verify_shaped_root_direct};
 
 pub(in crate::protocol::core) use fold::{
     verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,

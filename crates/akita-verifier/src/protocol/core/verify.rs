@@ -539,6 +539,50 @@ where
     )
 }
 
+pub fn batched_verify_shaped_root_direct<'a, Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    claims: ShapedVerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
+    check_batched_proof_step_shape(proof)?;
+
+    let prepared_claims = prepare_shaped_verifier_claims(&setup.expanded, &claims)?;
+    let commit_params = Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let schedule = root_direct_schedule(prepared_claims.opening_batch.num_vars(), commit_params)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+        &setup.expanded,
+        &prepared_claims.opening_batch,
+        &schedule,
+        basis,
+        transcript,
+    )?;
+
+    verify::<Cfg, T, D>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        &schedule,
+        basis,
+        setup_contribution_mode,
+    )
+}
+
 /// Verify a prepared batched proof once the schedule and transcript descriptor
 /// are fixed.
 ///

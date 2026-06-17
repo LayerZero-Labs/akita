@@ -310,6 +310,61 @@ where
     .map(|(proof, _total_levels)| proof)
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn batched_prove_root_direct<'a, Cfg, T, P, B, const D: usize>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    claims: ProverClaims<
+        'a,
+        Cfg::ExtField,
+        P,
+        RingCommitment<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field, D>,
+    >,
+    transcript: &mut T,
+    basis: BasisMode,
+) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+    P: AkitaPolyOps<Cfg::Field, D>,
+    B: ProverComputeBackend<Cfg::Field>,
+{
+    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
+    let prepared_claims =
+        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?;
+    let commit_params = Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
+    let schedule = root_direct_schedule(prepared_claims.opening_batch.num_vars(), commit_params)?;
+    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+        expanded.as_ref(),
+        &prepared_claims.opening_batch,
+        &schedule,
+        basis,
+        transcript,
+    )?;
+    prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
+        &prepared_claims.flat_polys,
+        &prepared_claims.commitment_hints,
+        prepared_claims.opening_batch.num_vars(),
+    )
+}
+
 /// Prove a folded batched root and assemble the recursive suffix under config
 /// `Cfg`.
 ///
