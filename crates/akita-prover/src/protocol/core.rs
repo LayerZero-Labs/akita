@@ -90,9 +90,8 @@ mod suffix;
 mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
-pub(in crate::protocol::core) use fold::{prove_fold, PreparedFold};
+pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
 pub use prove::{batched_prove, prepare_batched_prove_inputs, prove, prove_root_direct};
-pub(in crate::protocol::core) use root_fold::evaluate_claims_at_prepared_point;
 pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 pub use suffix::{prove_suffix, SuffixProverState};
 
