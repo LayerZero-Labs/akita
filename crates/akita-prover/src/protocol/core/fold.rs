@@ -103,6 +103,313 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
+fn multiplier_ring_weights<F: FieldCore, const D: usize>(
+    point: &RingMultiplierOpeningPoint<F, D>,
+) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
+    let b = point.b_rings().ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+    })?;
+    let a = point.a_rings().ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+    })?;
+    Ok((b, a))
+}
+
+fn evaluate_poly_at_multiplier_point<F, P, const D: usize>(
+    poly: &P,
+    point: &RingMultiplierOpeningPoint<F, D>,
+    block_len: usize,
+) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
+where
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    if let Some(base_point) = point.as_base() {
+        return Ok(poly.evaluate_and_fold(&base_point.b, &base_point.a, block_len));
+    }
+
+    let (b, a) = multiplier_ring_weights(point)?;
+    Ok(poly.evaluate_and_fold_ring(b, a, block_len))
+}
+
+pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, P, const D: usize>(
+    polys: &[&P],
+    prepared_point: &PreparedOpeningPoint<F, C, D>,
+    block_len: usize,
+) -> Result<FoldedClaimEvals<F, D>, AkitaError>
+where
+    F: FieldCore,
+    C: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
+    let mut folded_rings = Vec::with_capacity(polys.len());
+    let mut folded_blocks = Vec::with_capacity(polys.len());
+    for poly in polys {
+        let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
+            *poly,
+            &prepared_point.ring_multiplier_point,
+            block_len,
+        )?;
+        folded_rings.push(folded_ring);
+        folded_blocks.push(folded_block);
+    }
+    Ok((folded_rings, folded_blocks))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
+    reduction: &Option<ExtensionOpeningReduction<E>>,
+    folded_rings: &[CyclotomicRing<F, D>],
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    protocol_point: &[E],
+    alpha_bits: usize,
+    basis: BasisMode,
+    opening_batch: &OpeningBatch,
+    row_coefficients: Option<Vec<E>>,
+    transcript: &mut T,
+) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F>,
+    T: Transcript<F>,
+{
+    let inner_claim_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
+    let openings = folded_rings
+        .iter()
+        .map(|folded_ring| {
+            scalar_opening_from_folded_ring::<F, E, E, D>(
+                folded_ring,
+                prepared_point,
+                inner_claim_point,
+                basis,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
+        row_coefficients
+    } else {
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+        if opening_batch.num_claims() == 1 {
+            vec![E::one()]
+        } else {
+            sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
+        }
+    };
+    let ordinary_trace_eval_target =
+        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+    let trace_eval_target =
+        reduction
+            .as_ref()
+            .map_or(Ok(ordinary_trace_eval_target), |reduction| {
+                check_extension_opening_reduction_output(
+                    reduction.final_claim,
+                    ordinary_trace_eval_target,
+                    reduction.final_factor,
+                )?;
+                Ok(reduction.final_claim)
+            })?;
+    #[cfg(feature = "zk")]
+    let trace_eval_target_public = reduction
+        .as_ref()
+        .map_or(trace_eval_target, |reduction| reduction.final_claim_public);
+    let trace_claim_scales = reduction
+        .as_ref()
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_claims()]);
+    let trace_scale = reduction
+        .as_ref()
+        .map_or(E::one(), |reduction| reduction.final_factor);
+
+    Ok((
+        TraceTarget {
+            trace_eval_target,
+            #[cfg(feature = "zk")]
+            trace_eval_target_public,
+            trace_claim_scales,
+            trace_scale,
+        },
+        row_coefficients,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prepare_fold_inner<
+    'a,
+    F,
+    E,
+    T,
+    EorP,
+    FoldP,
+    V,
+    B,
+    const D: usize,
+>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    needs_extension_reduction: bool,
+    eor_polys: &[&EorP],
+    fold_polys: &[&'a FoldP],
+    opening_batch: &OpeningBatch,
+    relation_opening_batch: OpeningBatch,
+    trace_opening_batch: &OpeningBatch,
+    opening_point: &[E],
+    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
+    #[cfg(feature = "zk")] no_eor_trace_eval_target_public: Option<E>,
+    pad_base_evals: bool,
+    transcript: &mut T,
+    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    expected_openings: Option<Vec<E>>,
+    non_eor_protocol_point: Vec<E>,
+    validate_non_eor: V,
+    level_params: &LevelParams,
+    alpha_bits: usize,
+    basis: BasisMode,
+    block_order: BlockOrder,
+    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitments: &[RingCommitment<F, D>],
+    m_row_layout: MRowLayout,
+    commitment: FlatRingVec<F>,
+) -> Result<PreparedFold<F, E, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + MulBaseUnreduced<F>
+        + AkitaSerialize,
+    T: Transcript<F>,
+    EorP: AkitaPolyOps<F, D>,
+    FoldP: AkitaPolyOps<F, D>,
+    V: FnOnce() -> Result<(), AkitaError>,
+    B: ProverComputeBackend<F>,
+{
+    let (fold_inputs, protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
+        let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
+            eor_polys,
+            opening_batch,
+            opening_point,
+            #[cfg(feature = "zk")]
+            public_openings,
+            pad_base_evals,
+            transcript,
+            if pad_base_evals { "recursive" } else { "root" },
+            #[cfg(feature = "zk")]
+            &mut zk_hiding,
+        )?;
+        if let Some(expected_openings) = expected_openings.as_ref() {
+            if proved.openings != *expected_openings {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        let fold_inputs = {
+            let _span =
+                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
+                    .entered();
+            cfg_iter!(fold_polys)
+                .map(|poly| {
+                    <FoldP as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(*poly)
+                })
+                .collect::<Result<Vec<FoldInputPoly<'a, F, FoldP, D>>, _>>()?
+        };
+        (
+            fold_inputs,
+            proved.protocol_point,
+            Some(proved.row_coefficients),
+            Some(proved.reduction),
+        )
+    } else {
+        validate_non_eor()?;
+        let fold_inputs = fold_polys
+            .iter()
+            .map(|poly| FoldInputPoly::Original(*poly))
+            .collect::<Vec<_>>();
+        let row_coefficients = if pad_base_evals {
+            Some(vec![E::one()])
+        } else {
+            None
+        };
+        (fold_inputs, non_eor_protocol_point, row_coefficients, None)
+    };
+    let prepared_point = prepare_opening_point::<F, E, D>(
+        &protocol_point,
+        basis,
+        level_params,
+        alpha_bits,
+        block_order,
+    )?;
+    let fold_refs = fold_inputs.iter().collect::<Vec<_>>();
+    let (folded_rings, e_folded_by_claim) =
+        evaluate_claims_at_prepared_point(&fold_refs, &prepared_point, level_params.block_len)?;
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+        &reduction,
+        &folded_rings,
+        &prepared_point,
+        &protocol_point,
+        alpha_bits,
+        basis,
+        trace_opening_batch,
+        row_coefficients,
+        transcript,
+    )?;
+    #[cfg(feature = "zk")]
+    let mut trace_target = trace_target;
+    #[cfg(feature = "zk")]
+    if reduction.is_none() {
+        if let Some(public_target) = no_eor_trace_eval_target_public {
+            trace_target.trace_eval_target_public = public_target;
+        }
+    }
+    let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        backend,
+        prepared,
+        prepared_point.ring_opening_point.clone(),
+        prepared_point.ring_multiplier_point.clone(),
+        &fold_refs,
+        e_folded_by_claim,
+        relation_opening_batch,
+        level_params.clone(),
+        commitment_hints,
+        transcript,
+        commitments,
+        row_coefficient_rings,
+        m_row_layout,
+    )?;
+
+    let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
+    let row_coefficients = if pad_base_evals {
+        None
+    } else {
+        Some(row_coefficients)
+    };
+    let trace_claim_scales = if pad_base_evals {
+        None
+    } else {
+        trace_target.trace_claim_scales
+    };
+
+    Ok(PreparedFold {
+        commitment,
+        instance,
+        witness,
+        extension_opening_reduction,
+        trace_eval_target: trace_target.trace_eval_target,
+        trace_scale: trace_target.trace_scale,
+        trace_prepared_point: Some(prepared_point),
+        trace_claim_scales,
+        #[cfg(feature = "zk")]
+        trace_eval_target_public: trace_target.trace_eval_target_public,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        row_coefficients,
+    })
+}
+
 #[cfg(not(feature = "zk"))]
 pub(in crate::protocol::core) type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
 #[cfg(feature = "zk")]

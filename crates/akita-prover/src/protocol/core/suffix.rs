@@ -316,7 +316,7 @@ where
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
-    use crate::protocol::core::root_fold::compute_trace_target;
+    use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;
