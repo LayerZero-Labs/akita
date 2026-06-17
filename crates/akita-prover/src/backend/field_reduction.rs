@@ -84,6 +84,20 @@ where
         dispatch_fold_input!(self, poly => poly.fold_blocks_ring(scalars, block_len))
     }
 
+    fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (
+        akita_algebra::CyclotomicRing<F, D>,
+        Vec<akita_algebra::CyclotomicRing<F, D>>,
+    ) {
+        dispatch_fold_input!(self, poly => {
+            poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+        })
+    }
+
     fn evaluate_and_fold_ring(
         &self,
         eval_outer_scalars: &[akita_algebra::CyclotomicRing<F, D>],
