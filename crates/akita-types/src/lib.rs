@@ -44,8 +44,9 @@ pub use field_reduction::{
 pub use golomb_rice::ZFoldEncodingStats;
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
-    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
+    FoldLinfProtocolBinding, PlanSection, ProtocolFeatureSet, SetupSection,
+    FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,
@@ -104,7 +105,7 @@ pub use proof::{
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
-pub use proof_size::level_proof_bytes;
+pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,

@@ -236,7 +236,14 @@ impl GeneratedFoldStep {
             onehot_chunk_size,
             tier_split,
             f_key,
-        };
+            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
+            ),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
+        }
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims);
         Ok(params)
     }
 }

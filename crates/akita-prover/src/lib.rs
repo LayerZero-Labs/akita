@@ -40,6 +40,8 @@ pub use compute::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
+pub use protocol::fold_grind::ProverTranscriptGrind;
+pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
     batched_prove, batched_prove_root_direct, commit_next_w, prepare_batched_prove_inputs, prove,

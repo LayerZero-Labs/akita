@@ -13,7 +13,8 @@ use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
     AkitaPolyOps, CommittedPolynomials, FoldInputPoly, ProverClaims, ProverComputeBackend,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
+    ProverTranscriptGrind, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
+    RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};

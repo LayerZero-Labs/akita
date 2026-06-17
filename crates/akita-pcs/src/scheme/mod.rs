@@ -6,6 +6,7 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
+use akita_prover::ProverTranscriptGrind;
 use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
     ProverComputeBackend,
@@ -121,7 +122,7 @@ where
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
-        T: Transcript<F>,
+        T: Transcript<F> + ProverTranscriptGrind<F>,
         P: AkitaPolyOps<F, D>,
         B: ProverComputeBackend<F>,
     {

@@ -12,13 +12,12 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_planner_bits_per_z_coord, golomb_rice_zigzag_width_from_beta, optimal_rice_k,
+    golomb_rice_planner_bits_per_z_coord, golomb_rice_zigzag_width, optimal_rice_k,
     ZFoldEncodingStats,
 };
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
-use crate::sis::{fold_witness_beta, FoldChallengeNorms};
 use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
@@ -444,22 +443,19 @@ where
 /// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
 ///
 /// Rice `k` and zigzag width `W` are priced from the per-coefficient fold-response
-/// bound `β_inf` ([`fold_witness_beta`]).
+/// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
+/// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
 ///
 /// # Errors
 ///
-/// Propagates [`fold_witness_beta`] setup errors.
+/// Propagates fold cap setup errors.
 pub fn tail_golomb_rice_z_params(
     lp: &LevelParams,
     num_t_vectors: usize,
 ) -> Result<(u32, u32), AkitaError> {
-    let challenge = FoldChallengeNorms {
-        infinity_norm: lp.challenge_infinity_norm() as u128,
-        l1_norm: lp.challenge_l1_mass() as u128,
-    };
-    let beta = fold_witness_beta(lp.r_vars, num_t_vectors, challenge, lp.fold_witness_norms())?;
-    let k = optimal_rice_k(beta);
-    let w = golomb_rice_zigzag_width_from_beta(beta);
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    let k = optimal_rice_k(cap);
+    let w = golomb_rice_zigzag_width(cap);
     Ok((k, w))
 }
 
@@ -495,15 +491,11 @@ pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
 ) -> Result<ZFoldEncodingStats, AkitaError> {
     let z_values = z_fold_decoded_from_segment(witness, lp, num_t_vectors)?;
     let (_, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
-    let challenge = FoldChallengeNorms {
-        infinity_norm: lp.challenge_infinity_norm() as u128,
-        l1_norm: lp.challenge_l1_mass() as u128,
-    };
-    let beta = fold_witness_beta(lp.r_vars, num_t_vectors, challenge, lp.fold_witness_norms())?;
+    let witness_linf_cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
     let depth_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     analyze_z_fold_golomb_encoding(
         &z_values,
-        beta,
+        witness_linf_cap,
         zigzag_w,
         depth_fold,
         lp.log_basis,
@@ -644,7 +636,7 @@ pub fn tail_segment_multiplicities_from_layout(
 
 /// Planner byte budget for the Golomb-coded `z` segment.
 ///
-/// Uses the public `β_inf`-derived Golomb rate (`k + O(1)` bits per coordinate),
+/// Uses the public fold `‖z‖_inf` cap (`k + O(1)` bits per coordinate),
 /// not the legacy packed-digit plane width (`num_digits_fold * bits_per_elem`).
 ///
 /// # Errors
