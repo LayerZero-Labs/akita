@@ -58,7 +58,7 @@ pub fn isqrt_ceil(v: u128) -> u128 {
 
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
 /// already accounting for the fold-challenge shape (flat vs tensor).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldChallengeNorms {
     /// Effective challenge L∞ norm `||c||_inf`.
     pub infinity_norm: u128,
@@ -67,7 +67,7 @@ pub struct FoldChallengeNorms {
 }
 
 /// Per-block committed-witness `(||s||_inf, ||s||_1)` for one fold level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldWitnessNorms {
     /// Witness L∞ norm `||s||_inf` (1 for one-hot, `b/2` for dense digits).
     infinity_norm: u128,
@@ -288,7 +288,7 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
 /// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FoldWitnessLinfCapPolicy {
     /// Proved sub-Gaussian tail: flat `ExactShell` at `D = 64` or
     /// `Uniform{[-1,1]}` at `D ∈ {128, 256}`; `cap = min(β_inf, t*)` and grind allowed.
@@ -455,7 +455,7 @@ pub fn fold_witness_linf_tail_bound_sq(
 ///
 /// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldWitnessLinfCapConfig {
     pub policy: FoldWitnessLinfCapPolicy,
     /// Family worst-case `max ‖c‖_2²` (per logical block); see
@@ -469,6 +469,8 @@ pub struct FoldWitnessLinfCapConfig {
     /// Operator-norm block acceptance `p_opnorm` (`NUM / DEN`; `1/1` when the cap does not bind).
     pub op_norm_accept_p_num: u128,
     pub op_norm_accept_p_den: u128,
+    /// Precomputed grind union ln term for [`FoldWitnessLinfCapPolicy::TailBoundWithGrind`].
+    pub grind_union_ln: u128,
 }
 
 impl FoldWitnessLinfCapConfig {
@@ -483,6 +485,7 @@ impl FoldWitnessLinfCapConfig {
             grind_target_accept_den: 1,
             op_norm_accept_p_num: 1,
             op_norm_accept_p_den: 1,
+            grind_union_ln: 0,
         }
     }
 
@@ -500,18 +503,61 @@ impl FoldWitnessLinfCapConfig {
     ) -> Self {
         let binding = crate::FoldLinfProtocolBinding::CURRENT;
         let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+        let policy =
+            fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, ring_dimension);
+        let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
+        let grind_union_ln = match policy {
+            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
+                num_fold_coeffs,
+                grind_target_accept_num,
+                grind_target_accept_den,
+            )
+            .unwrap_or(u128::MAX),
+        };
         Self {
-            policy: fold_witness_linf_cap_policy(
-                stage1_config,
-                fold_challenge_shape,
-                ring_dimension,
-            ),
+            policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
-            num_fold_coeffs: (inner_width as u128).saturating_mul(ring_dimension as u128),
+            num_fold_coeffs,
             grind_target_accept_num,
             grind_target_accept_den,
             op_norm_accept_p_num: 1,
             op_norm_accept_p_den: 1,
+            grind_union_ln,
+        }
+    }
+
+    /// Build a tail-aware config for [`optimal_m_r_split`] scoring with a known
+    /// inner width without re-reading the protocol binding each iteration.
+    #[inline]
+    pub fn for_fold_level_scoring(
+        policy: FoldWitnessLinfCapPolicy,
+        stage1_config: &SparseChallengeConfig,
+        fold_challenge_shape: TensorChallengeShape,
+        ring_dimension: usize,
+        inner_width: usize,
+        grind_target_accept_num: u128,
+        grind_target_accept_den: u128,
+    ) -> Self {
+        let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
+        let grind_union_ln = match policy {
+            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
+                num_fold_coeffs,
+                grind_target_accept_num,
+                grind_target_accept_den,
+            )
+            .unwrap_or(u128::MAX),
+        };
+        Self {
+            policy,
+            challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
+            num_fold_coeffs,
+            grind_target_accept_num,
+            grind_target_accept_den,
+            op_norm_accept_p_num: 1,
+            op_norm_accept_p_den: 1,
+            grind_union_ln,
         }
     }
 }
@@ -531,14 +577,15 @@ pub fn fold_witness_linf_cap(
     match config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
         FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let ln_term = fold_witness_linf_ln_term(
-                config.num_fold_coeffs,
-                num_fold_blocks,
-                config.grind_target_accept_num,
-                config.grind_target_accept_den,
-                config.op_norm_accept_p_num,
-                config.op_norm_accept_p_den,
-            )?;
+            let ln_inv_p = if config.op_norm_accept_p_num >= config.op_norm_accept_p_den {
+                0
+            } else {
+                let ratio = config
+                    .op_norm_accept_p_den
+                    .div_ceil(config.op_norm_accept_p_num);
+                num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
+            };
+            let ln_term = config.grind_union_ln.saturating_add(ln_inv_p);
             let t_sq = fold_witness_linf_tail_bound_sq(
                 num_fold_blocks,
                 config.challenge_l2_sq_max,

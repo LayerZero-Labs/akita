@@ -8,6 +8,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
+use std::collections::HashMap;
 
 use crate::sis::{
     committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
@@ -100,7 +101,13 @@ pub fn optimal_m_r_split(
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
 
+    let cap_policy =
+        crate::sis::fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, d as usize);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+
     let mut best: Option<(u64, usize, u32)> = None;
+    let mut fold_digit_cache: HashMap<(usize, usize), u64> = HashMap::new();
 
     for r in (1..reduced_vars).rev() {
         let num_blocks = 1u64 << r;
@@ -135,24 +142,34 @@ pub fn optimal_m_r_split(
 
         // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
         // from min(β_inf, t*) rather than β_inf alone.
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+            cap_policy,
             stage1_config,
             fold_challenge_shape,
             d as usize,
             inner_width,
+            grind_target_accept_num,
+            grind_target_accept_den,
         );
-        let Ok(delta_fold) = num_digits_fold(
-            r,
-            num_claims,
-            field_bits,
-            log_basis,
-            fold_challenge,
-            fold_witness,
-            cap_config,
-        ) else {
-            continue;
+        let delta_fold = match fold_digit_cache.get(&(r, inner_width)) {
+            Some(cached) => *cached,
+            None => {
+                let Ok(delta_fold) = num_digits_fold(
+                    r,
+                    num_claims,
+                    field_bits,
+                    log_basis,
+                    fold_challenge,
+                    fold_witness,
+                    cap_config,
+                ) else {
+                    continue;
+                };
+                let delta_fold = delta_fold as u64;
+                fold_digit_cache.insert((r, inner_width), delta_fold);
+                delta_fold
+            }
         };
-        let delta_fold = delta_fold as u64;
 
         let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
         let opening_cost = per_block_cost.saturating_mul(num_blocks);

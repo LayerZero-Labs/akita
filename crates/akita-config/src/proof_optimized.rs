@@ -9,6 +9,9 @@ use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatch;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 /// Minimum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
@@ -94,7 +97,36 @@ fn validate_proof_optimized_fold_entropy(
 ///
 /// Planned role footprints are not monotone across shapes, so scan all
 /// supported sub-shapes and keep the largest packed setup length.
+static SETUP_MATRIX_ENVELOPE_CACHE: LazyLock<
+    Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<SetupMatrixEnvelope, AkitaError> {
+    let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
+    if let Some(cached) = SETUP_MATRIX_ENVELOPE_CACHE
+        .lock()
+        .expect("setup matrix envelope cache poisoned")
+        .get(&cache_key)
+        .copied()
+    {
+        return Ok(cached);
+    }
+
+    let envelope =
+        proof_optimized_max_setup_matrix_size_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
+
+    SETUP_MATRIX_ENVELOPE_CACHE
+        .lock()
+        .expect("setup matrix envelope cache poisoned")
+        .insert(cache_key, envelope);
+
+    Ok(envelope)
+}
+
+fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {

@@ -16,7 +16,8 @@ use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
@@ -254,7 +255,13 @@ fn derive_candidate_level_params(
             onehot_chunk_size: 0,
             tier_split,
             f_key,
-        };
+            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
+        }
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1);
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
@@ -795,7 +802,13 @@ fn compute_root_direct_level_params(
         onehot_chunk_size,
         tier_split,
         f_key,
-    };
+        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        num_digits_fold_one: 1,
+        field_bits_hint: 0,
+        cached_num_digits_fold_claims: 0,
+        cached_num_digits_fold_value: 1,
+    }
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims);
     Ok(Some(root_direct_params))
 }
 
@@ -813,6 +826,15 @@ fn compute_root_direct_level_params(
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
 pub fn find_schedule(
+    key: AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<Schedule, AkitaError> {
+    find_schedule_inner(key, policy, stage1, fold_shape)
+}
+
+fn find_schedule_inner(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -993,7 +1015,13 @@ pub fn find_schedule(
                 onehot_chunk_size,
                 tier_split,
                 f_key,
-            };
+                fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+                num_digits_fold_one: 1,
+                field_bits_hint: 0,
+                cached_num_digits_fold_claims: 0,
+                cached_num_digits_fold_value: 1,
+            }
+            .with_fold_linf_cap_config(field_bits, key.num_t_vectors);
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(

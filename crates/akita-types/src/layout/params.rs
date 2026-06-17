@@ -9,7 +9,7 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
 
-pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
+pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -93,6 +93,16 @@ pub struct LevelParams {
     /// `tier_split · b_key.row_len() · num_digits_open` (the decomposed
     /// concatenated slice images). `None` is the single-tier layout.
     pub f_key: Option<AjtaiKeyParams>,
+    /// Level-static fold-linf cap inputs for [`crate::sis::num_digits_fold`].
+    pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
+    /// Cached [`crate::sis::num_digits_fold`] at `num_claims = 1` for the preset
+    /// field width used by the planner and setup envelope scan.
+    pub num_digits_fold_one: usize,
+    /// Field bit width used to populate [`Self::num_digits_fold_one`]; `0` means 128.
+    pub field_bits_hint: u32,
+    /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
+    pub cached_num_digits_fold_claims: usize,
+    pub cached_num_digits_fold_value: usize,
 }
 
 impl LevelParams {
@@ -128,6 +138,11 @@ impl LevelParams {
             onehot_chunk_size: 0,
             tier_split: 1,
             f_key: None,
+            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
         }
     }
 
@@ -174,6 +189,11 @@ impl LevelParams {
             onehot_chunk_size: 0,
             tier_split: 1,
             f_key: None,
+            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
         }
     }
 
@@ -252,12 +272,61 @@ impl LevelParams {
     /// Level-static config for [`crate::sis::fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
-        crate::sis::FoldWitnessLinfCapConfig::for_fold_level(
+        self.fold_linf_cap_config
+    }
+
+    #[inline]
+    fn field_bits_for_cache(&self) -> u32 {
+        let hint = self.field_bits_hint;
+        if hint == 0 {
+            128
+        } else {
+            hint
+        }
+    }
+
+    /// Attach the level-static fold-linf cap config derived from this layout.
+    #[must_use]
+    pub fn with_fold_linf_cap_config(mut self, field_bits: u32, root_num_claims: usize) -> Self {
+        self.field_bits_hint = field_bits;
+        self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
             self.inner_width(),
+        );
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        let witness = self.fold_witness_norms();
+        self.num_digits_fold_one = crate::sis::num_digits_fold(
+            self.r_vars,
+            1,
+            field_bits,
+            self.log_basis,
+            challenge,
+            witness,
+            self.fold_linf_cap_config,
         )
+        .unwrap_or(1);
+        if root_num_claims > 1 {
+            self.cached_num_digits_fold_claims = root_num_claims;
+            self.cached_num_digits_fold_value = crate::sis::num_digits_fold(
+                self.r_vars,
+                root_num_claims,
+                field_bits,
+                self.log_basis,
+                challenge,
+                witness,
+                self.fold_linf_cap_config,
+            )
+            .unwrap_or(self.num_digits_fold_one);
+        } else {
+            self.cached_num_digits_fold_claims = 0;
+            self.cached_num_digits_fold_value = self.num_digits_fold_one;
+        }
+        self
     }
 
     /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
@@ -296,7 +365,7 @@ impl LevelParams {
             beta,
             self.num_fold_blocks(num_claims)?,
             witness_linf_sq,
-            &self.fold_witness_linf_cap_config(),
+            &self.fold_linf_cap_config,
         )
     }
 
@@ -334,7 +403,7 @@ impl LevelParams {
     }
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let cap_config = self.fold_witness_linf_cap_config();
+        let cap_config = self.fold_linf_cap_config;
         if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
             return Err(AkitaError::InvalidSetup(
                 "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
@@ -378,6 +447,14 @@ impl LevelParams {
     /// fold bound (`r_vars >= 127`, `β` overflow, or `β == 0`).
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
+        if num_claims == 1 {
+            return Ok(self.num_digits_fold_one);
+        }
+        if num_claims == self.cached_num_digits_fold_claims
+            && self.cached_num_digits_fold_claims > 1
+        {
+            return Ok(self.cached_num_digits_fold_value);
+        }
         let challenge = crate::sis::FoldChallengeNorms {
             infinity_norm: self.challenge_infinity_norm() as u128,
             l1_norm: self.challenge_l1_mass() as u128,
@@ -389,7 +466,7 @@ impl LevelParams {
             self.log_basis,
             challenge,
             self.fold_witness_norms(),
-            self.fold_witness_linf_cap_config(),
+            self.fold_linf_cap_config,
         )
     }
 
@@ -737,8 +814,14 @@ impl LevelParams {
             // tiered level passed through here keeps its split/`f_key`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
+            fold_linf_cap_config: self.fold_linf_cap_config,
+            num_digits_fold_one: self.num_digits_fold_one,
+            field_bits_hint: self.field_bits_hint,
+            cached_num_digits_fold_claims: self.cached_num_digits_fold_claims,
+            cached_num_digits_fold_value: self.cached_num_digits_fold_value,
         };
-        Ok(rebuilt)
+        let field_bits = self.field_bits_for_cache();
+        Ok(rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims))
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
@@ -755,7 +838,7 @@ impl LevelParams {
     /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
     /// or threaded through [`Self::with_decomp`], and would let the SIS
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
-    pub fn with_layout(&self, other: &LevelParams) -> Self {
+    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Self {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
@@ -795,7 +878,13 @@ impl LevelParams {
             // placement of `b_key`'s `row_len`/`collision_l2_sq`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
+            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
         }
+        .with_fold_linf_cap_config(field_bits, 0)
     }
 }
 
@@ -876,7 +965,7 @@ mod tests {
         let params = sample_params_only();
         let layout_lp = sample_layout_lp();
 
-        let lp = params.with_layout(&layout_lp);
+        let lp = params.with_layout(&layout_lp, 128);
 
         assert_eq!(lp.ring_dimension, 64);
         assert_eq!(lp.log_basis, layout_lp.log_basis);
@@ -892,7 +981,7 @@ mod tests {
 
     #[test]
     fn derived_widths_match_ajtai_col_len() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp());
+        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
 
         assert_eq!(lp.inner_width(), lp.a_key.col_len());
         assert_eq!(lp.outer_width(), lp.b_key.col_len());
@@ -902,7 +991,7 @@ mod tests {
     #[test]
     fn derived_log_values() {
         let layout_lp = sample_layout_lp();
-        let lp = sample_params_only().with_layout(&layout_lp);
+        let lp = sample_params_only().with_layout(&layout_lp, 128);
 
         assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
         assert_eq!(lp.log_block_len(), layout_lp.m_vars);
@@ -911,7 +1000,7 @@ mod tests {
 
     #[test]
     fn m_row_count_values() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp());
+        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
 
         assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
@@ -924,7 +1013,7 @@ mod tests {
 
     #[test]
     fn canonical_row_offsets_match_open_coded_non_tiered() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp());
+        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
         let n_d = lp.d_key.row_len();
