@@ -182,12 +182,21 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
 /// every intermediate count in `1..=max` forces table misses on `2` and `3` even
 /// though setup-matrix footprints are determined by the endpoint batch sizes.
 /// Role footprints can be non-monotone in `num_vars`, but not in these skipped
-/// intermediate batch counts for the shipped table key shapes.
+/// intermediate batch counts for the shipped table key shapes under non-zk builds.
+/// With `zk`, blinding column sizing can peak at intermediate batch counts, so
+/// scan the full `1..=max` range there.
 pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<usize> {
     if max_num_batched_polys <= 1 {
         vec![1]
     } else {
-        vec![1, max_num_batched_polys]
+        #[cfg(feature = "zk")]
+        {
+            (1..=max_num_batched_polys).collect()
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            vec![1, max_num_batched_polys]
+        }
     }
 }
 
