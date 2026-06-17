@@ -101,7 +101,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
 
     #[inline]
     fn num_blocks_for_block_len(&self, block_len: usize) -> usize {
-        self.padded_ring_elems.div_ceil(block_len)
+        self.coeffs.len().div_ceil(block_len).max(1)
     }
 }
 
