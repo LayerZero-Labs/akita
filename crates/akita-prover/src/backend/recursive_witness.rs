@@ -194,7 +194,7 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let num_blocks = eval_outer_scalars.len();
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         let folded = cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
@@ -226,7 +226,7 @@ where
         fold_scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let num_blocks = eval_outer_scalars.len();
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         let folded = cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
@@ -398,6 +398,53 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn fused_evaluation_uses_layout_block_stride() {
+        const D: usize = 4;
+        let digits = (0..24).map(|idx| idx as i8 - 12).collect();
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let block_len = 3;
+        let eval_outer_scalars = vec![F::from_u64(2), F::from_u64(5)];
+        let fold_scalars = vec![F::from_u64(7), F::from_u64(11), F::from_u64(13)];
+
+        let expected_folded = view.fold_blocks(&fold_scalars, block_len);
+        let expected_eval = expected_folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
+        let (eval, folded) = view.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+
+        assert_eq!(folded, expected_folded);
+        assert_eq!(eval, expected_eval);
+    }
+
+    #[test]
+    fn fused_ring_evaluation_uses_layout_block_stride() {
+        const D: usize = 4;
+        let digits = (0..24).map(|idx| idx as i8 - 12).collect();
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let block_len = 3;
+        let eval_outer_scalars = vec![ring::<D>(2), ring::<D>(5)];
+        let fold_scalars = vec![ring::<D>(7), ring::<D>(11), ring::<D>(13)];
+
+        let expected_folded = view.fold_blocks_ring(&fold_scalars, block_len);
+        let expected_eval = expected_folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
+            });
+        let (eval, folded) =
+            view.evaluate_and_fold_ring(&eval_outer_scalars, &fold_scalars, block_len);
+
+        assert_eq!(folded, expected_folded);
+        assert_eq!(eval, expected_eval);
     }
 
     #[test]
