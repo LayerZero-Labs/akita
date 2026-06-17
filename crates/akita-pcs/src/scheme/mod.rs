@@ -15,7 +15,7 @@ use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
-use akita_verifier::{CommitmentVerifier, VerifierClaims};
+use akita_verifier::{CommitmentVerifier, ShapedVerifierClaims, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -192,6 +192,35 @@ where
             levels = proof.num_fold_levels() + 1,
             elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
             "akita batched verify complete"
+        );
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify_shaped")]
+    fn batched_verify_shaped<'a, T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        claims: ShapedVerifierClaims<'a, Self::ExtField, Self::Commitment>,
+        basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
+    ) -> Result<(), AkitaError> {
+        let t_verify_akita = Instant::now();
+        validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
+        akita_verifier::batched_verify_shaped::<Cfg, T, D>(
+            proof,
+            setup,
+            transcript,
+            claims,
+            basis,
+            setup_contribution_mode,
+        )?;
+
+        tracing::info!(
+            levels = proof.num_fold_levels() + 1,
+            elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
+            "akita shaped batched verify complete"
         );
 
         Ok(())

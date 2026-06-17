@@ -21,6 +21,17 @@ pub struct CommittedOpenings<'a, F, C> {
     pub commitment: &'a C,
 }
 
+/// One PCS commitment plus claimed openings with verifier-owned polynomial arities.
+#[derive(Debug, Clone)]
+pub struct ShapedCommittedOpenings<'a, F, C> {
+    /// Claimed evaluations for the bundled polynomials at the shared point.
+    pub openings: &'a [F],
+    /// Natural arity for each corresponding opening.
+    pub natural_num_vars: &'a [usize],
+    /// Commitment covering `openings`.
+    pub commitment: &'a C,
+}
+
 /// Batched verifier input: one shared opening point plus commitment bundles.
 ///
 /// Shape: `(shared_point, vec![CommittedOpenings, ...])`.
@@ -37,6 +48,8 @@ pub struct CommittedOpenings<'a, F, C> {
 /// - **Multiple commitment objects at one point** are representable in this
 ///   type but not yet supported on the folded recursion path (future work).
 pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>);
+pub type ShapedVerifierClaims<'a, F, C> =
+    (OpeningPoints<'a, F>, Vec<ShapedCommittedOpenings<'a, F, C>>);
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -78,6 +91,21 @@ where
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;
+
+    /// Verify a fused batched opening proof with per-opening natural arities.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_verify_shaped<'a, T: Transcript<F>>(
+        _proof: &Self::BatchedProof,
+        _setup: &Self::VerifierSetup,
+        _transcript: &mut T,
+        _claims: ShapedVerifierClaims<'a, Self::ExtField, Self::Commitment>,
+        _basis: BasisMode,
+        _setup_contribution_mode: SetupContributionMode,
+    ) -> Result<(), AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "shaped batched verification is not implemented for this commitment scheme".to_string(),
+        ))
+    }
 
     /// Protocol identifier.
     fn protocol_name() -> &'static [u8];

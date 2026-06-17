@@ -14,7 +14,7 @@
 //!
 //! Layout preparation may pad the shared point to the root fold arity.
 
-use super::VerifierClaims;
+use super::{ShapedVerifierClaims, VerifierClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
@@ -126,6 +126,39 @@ where
         })
         .collect();
     OpeningBatchInput { point, slots }
+}
+
+/// Normalize verifier claims that carry per-opening natural arities.
+pub fn shaped_verifier_claims_to_opening_batch<'a, F, C>(
+    claims: &ShapedVerifierClaims<'a, F, C>,
+) -> Result<OpeningBatchInput<'a, F>, AkitaError>
+where
+    F: Copy,
+{
+    let (point, openings_by_group) = claims;
+    let mut slots = Vec::new();
+    for (commitment_group, openings) in openings_by_group.iter().enumerate() {
+        if openings.openings.len() != openings.natural_num_vars.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: openings.openings.len(),
+                actual: openings.natural_num_vars.len(),
+            });
+        }
+        slots.extend(
+            openings
+                .openings
+                .iter()
+                .enumerate()
+                .map(|(poly_idx, &claimed_eval)| OpeningClaimSlot {
+                    commitment_group,
+                    poly_idx,
+                    claimed_eval,
+                    natural_num_vars: openings.natural_num_vars[poly_idx],
+                    kind: OpeningClaimKind::Polynomial,
+                }),
+        );
+    }
+    Ok(OpeningBatchInput { point, slots })
 }
 
 /// Capacity and dimension limits for opening-batch validation.

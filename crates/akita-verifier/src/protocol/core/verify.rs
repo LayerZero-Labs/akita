@@ -4,7 +4,9 @@ use super::*;
 use akita_r1cs::zk_ext_mask_lc_at;
 // Top-level batched verifier orchestration once a schedule is selected.
 
-use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
+use crate::proof::claims::{
+    prepare_shaped_verifier_claims, prepare_verifier_claims, PreparedVerifierClaims,
+};
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
@@ -19,8 +21,8 @@ use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode, Step,
-    VerifierClaims,
+    LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode,
+    ShapedVerifierClaims, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -464,6 +466,53 @@ where
     check_batched_proof_step_shape(proof)?;
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
+    let schedule = effective_batched_schedule::<Cfg, D>(
+        &prepared_claims.opening_batch,
+        prepared_claims.opening_point,
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
+    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
+
+    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+        &setup.expanded,
+        &prepared_claims.opening_batch,
+        &schedule,
+        basis,
+        transcript,
+    )?;
+
+    verify::<Cfg, T, D>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        &schedule,
+        basis,
+        setup_contribution_mode,
+    )
+}
+
+pub fn batched_verify_shaped<'a, Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    claims: ShapedVerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
+    check_batched_proof_step_shape(proof)?;
+
+    let prepared_claims = prepare_shaped_verifier_claims(&setup.expanded, &claims)?;
     let schedule = effective_batched_schedule::<Cfg, D>(
         &prepared_claims.opening_batch,
         prepared_claims.opening_point,

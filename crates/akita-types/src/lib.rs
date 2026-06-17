@@ -76,8 +76,8 @@ pub use proof::{
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
-    setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
-    tail_segment_multiplicities_from_layout, terminal_direct_witness_shape,
+    setup_prefix_slot_id, shaped_verifier_claims_to_opening_batch, tail_golomb_rice_z_params,
+    tail_segment_layout, tail_segment_multiplicities_from_layout, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, terminal_e_hat_bytes_from_blocks,
     terminal_fold_segment_counts, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
@@ -97,9 +97,10 @@ pub use proof::{
     RingSliceSerializer, SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope,
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
-    SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupSumcheckProof, ShapedCommittedOpenings, ShapedVerifierClaims, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};

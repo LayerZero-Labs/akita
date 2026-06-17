@@ -2,8 +2,9 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, verifier_claims_to_opening_batch, AkitaExpandedSetup, OpeningBatch,
-    OpeningBatchLimits, VerifierClaims,
+    shaped_verifier_claims_to_opening_batch, validate_batched_inputs,
+    verifier_claims_to_opening_batch, AkitaExpandedSetup, OpeningBatch, OpeningBatchLimits,
+    ShapedVerifierClaims, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
@@ -67,11 +68,53 @@ where
     })
 }
 
+pub(crate) fn prepare_shaped_verifier_claims<'a, F, E, C>(
+    setup: &AkitaExpandedSetup<F>,
+    claims: &ShapedVerifierClaims<'a, E, C>,
+) -> Result<PreparedVerifierClaims<'a, E, C>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore,
+    C: Clone,
+{
+    validate_batched_inputs(
+        setup,
+        claims,
+        |payloads| payloads.iter().map(|payload| payload.openings.len()).sum(),
+        false,
+    )?;
+
+    let (opening_point, payloads) = claims;
+    let batch = shaped_verifier_claims_to_opening_batch(claims)?;
+    let summary = batch
+        .validate(OpeningBatchLimits {
+            max_num_vars: setup.seed().max_num_vars,
+            max_num_claims: setup.seed().max_num_batched_polys,
+        })
+        .map_err(|_| AkitaError::InvalidProof)?;
+
+    let openings = payloads
+        .iter()
+        .flat_map(|payload| payload.openings.iter().copied())
+        .collect();
+    let commitments = payloads
+        .iter()
+        .map(|payload| (*payload.commitment).clone())
+        .collect();
+
+    Ok(PreparedVerifierClaims {
+        opening_point,
+        commitments,
+        openings,
+        opening_batch: summary,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_types::{AkitaSetupSeed, CommittedOpenings, FlatMatrix};
+    use akita_types::{AkitaSetupSeed, CommittedOpenings, FlatMatrix, ShapedCommittedOpenings};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
@@ -123,5 +166,34 @@ mod tests {
         assert_eq!(prepared.openings, openings);
         assert_eq!(prepared.commitments, vec![11usize]);
         assert_eq!(prepared.opening_batch.num_claims(), 2);
+    }
+
+    #[test]
+    fn shaped_verifier_claim_preparation_preserves_natural_num_vars() {
+        let point = [
+            E::new(F::from_u64(1), F::from_u64(2)),
+            E::new(F::from_u64(3), F::from_u64(4)),
+            E::new(F::from_u64(5), F::from_u64(6)),
+        ];
+        let openings = [
+            E::new(F::from_u64(7), F::from_u64(8)),
+            E::new(F::from_u64(9), F::from_u64(10)),
+        ];
+        let natural_num_vars = [1, 3];
+        let commitment = 11usize;
+        let claims = (
+            &point[..],
+            vec![ShapedCommittedOpenings {
+                openings: &openings[..],
+                natural_num_vars: &natural_num_vars[..],
+                commitment: &commitment,
+            }],
+        );
+
+        let prepared = prepare_shaped_verifier_claims(&setup(), &claims)
+            .expect("shaped verifier claims should validate");
+
+        assert_eq!(prepared.opening_batch.slots()[0].natural_num_vars(), 1);
+        assert_eq!(prepared.opening_batch.slots()[1].natural_num_vars(), 3);
     }
 }
