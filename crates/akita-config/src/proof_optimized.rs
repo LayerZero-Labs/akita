@@ -97,9 +97,11 @@ fn validate_proof_optimized_fold_entropy(
 ///
 /// Planned role footprints are not monotone across shapes, so scan all
 /// supported sub-shapes and keep the largest packed setup length.
-static SETUP_MATRIX_ENVELOPE_CACHE: LazyLock<
-    Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
+type SetupMatrixEnvelopeCache =
+    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>>;
+
+static SETUP_MATRIX_ENVELOPE_CACHE: SetupMatrixEnvelopeCache =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,

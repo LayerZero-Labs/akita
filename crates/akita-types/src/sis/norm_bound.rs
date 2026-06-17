@@ -527,7 +527,7 @@ impl FoldWitnessLinfCapConfig {
         }
     }
 
-    /// Build a tail-aware config for [`optimal_m_r_split`] scoring with a known
+    /// Build a tail-aware config for [`crate::layout::digit_math::optimal_m_r_split`] scoring with a known
     /// inner width without re-reading the protocol binding each iteration.
     #[inline]
     pub fn for_fold_level_scoring(

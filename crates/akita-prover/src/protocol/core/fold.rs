@@ -279,7 +279,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
     EorP: AkitaPolyOps<F, D>,
     FoldP: AkitaPolyOps<F, D>,
     V: FnOnce() -> Result<(), AkitaError>,
