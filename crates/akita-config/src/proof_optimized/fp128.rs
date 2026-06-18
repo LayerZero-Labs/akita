@@ -41,7 +41,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     128,
     128,
-    128
+    128,
+    schedules = ("schedules-fp128-d128-full", fp128_d128_full_table)
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -50,7 +51,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     128,
     128,
-    1
+    1,
+    schedules = ("schedules-fp128-d128-onehot", fp128_d128_onehot_table)
 );
 impl_proof_optimized_preset!(
     D64Full,
@@ -59,7 +61,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     64,
     128,
-    128
+    128,
+    schedules = ("schedules-fp128-d64-full", fp128_d64_full_table)
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -69,7 +72,8 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256
+    256,
+    schedules = ("schedules-fp128-d64-onehot", fp128_d64_onehot_table)
 );
 impl_proof_optimized_preset!(
     D64OneHotTiered,
@@ -80,7 +84,11 @@ impl_proof_optimized_preset!(
     128,
     1,
     256,
-    /* tiered = */ true
+    true,
+    schedules = (
+        "schedules-fp128-d64-onehot-tiered",
+        fp128_d64_onehot_tiered_table
+    )
 );
 impl_proof_optimized_preset!(
     D32Full,

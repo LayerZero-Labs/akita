@@ -34,7 +34,7 @@ all-features = true
 ignored = ["akita-setup"]
 
 [features]
-default = ["parallel"]
+default = ["parallel", "schedules-default"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -44,6 +44,7 @@ parallel = [
   "akita-sumcheck/parallel",
   "akita-verifier/parallel",
 ]
+schedules-default = ["akita-config/schedules-default"]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",

@@ -70,5 +70,16 @@ pub mod fp128 {
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
             )
         }
+
+        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            #[cfg(feature = "schedules-fp128-d64-onehot-tensor")]
+            {
+                Some(akita_schedules::fp128_d64_onehot_tensor_table())
+            }
+            #[cfg(not(feature = "schedules-fp128-d64-onehot-tensor"))]
+            {
+                None
+            }
+        }
     }
 }

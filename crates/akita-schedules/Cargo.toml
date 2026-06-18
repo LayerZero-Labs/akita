@@ -19,17 +19,9 @@ readme = "../../README.md"
 default = []
 zk = ["akita-planner/zk"]
 all-schedules = [
-  "fp128-d64-onehot",
-  "fp128-d64-full",
-  "fp128-d128-onehot",
-  "fp128-d128-full",
+  "schedules-default",
   "fp128-d64-onehot-tensor",
   "fp128-d64-onehot-tiered",
-  "fp32-d128-onehot",
-  "fp32-d256-onehot",
-  "fp64-d128",
-  "fp64-d128-onehot",
-  "fp64-d256-onehot",
 ]
 schedules-default = [
   "fp128-d64-onehot",

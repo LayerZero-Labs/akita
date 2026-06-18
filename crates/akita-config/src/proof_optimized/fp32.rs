@@ -65,7 +65,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q32,
     128,
     32,
-    1
+    1,
+    schedules = ("schedules-fp32-d128-onehot", fp32_d128_onehot_table)
 );
 impl_proof_optimized_preset!(
     D256Full,
@@ -83,5 +84,6 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q32,
     256,
     32,
-    1
+    1,
+    schedules = ("schedules-fp32-d256-onehot", fp32_d256_onehot_table)
 );

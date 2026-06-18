@@ -16,18 +16,48 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = []
-zk = ["akita-planner/zk", "akita-types/zk"]
-# Test-only layout helpers (e.g. `test_support::akita_batched_root_layout`).
-# Never enabled in production; switched on through the dev-dependency edges of
-# `akita-pcs` so its tests/examples can pre-size per-poly inputs to match the
-# batched commit layout.
+default = ["schedules-default"]
+zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
 test-support = []
+schedules-default = [
+  "schedules-fp128-d64-onehot",
+  "schedules-fp128-d64-full",
+  "schedules-fp128-d128-onehot",
+  "schedules-fp128-d128-full",
+  "schedules-fp32-d128-onehot",
+  "schedules-fp32-d256-onehot",
+  "schedules-fp64-d128",
+  "schedules-fp64-d128-onehot",
+  "schedules-fp64-d256-onehot",
+]
+all-schedules = [
+  "schedules-default",
+  "schedules-fp128-d64-onehot-tensor",
+  "schedules-fp128-d64-onehot-tiered",
+]
+schedules-fp128-d64-onehot = ["dep:akita-schedules", "akita-schedules/fp128-d64-onehot"]
+schedules-fp128-d64-full = ["dep:akita-schedules", "akita-schedules/fp128-d64-full"]
+schedules-fp128-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp128-d128-onehot"]
+schedules-fp128-d128-full = ["dep:akita-schedules", "akita-schedules/fp128-d128-full"]
+schedules-fp128-d64-onehot-tensor = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d64-onehot-tensor",
+]
+schedules-fp128-d64-onehot-tiered = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d64-onehot-tiered",
+]
+schedules-fp32-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp32-d128-onehot"]
+schedules-fp32-d256-onehot = ["dep:akita-schedules", "akita-schedules/fp32-d256-onehot"]
+schedules-fp64-d128 = ["dep:akita-schedules", "akita-schedules/fp64-d128"]
+schedules-fp64-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp64-d128-onehot"]
+schedules-fp64-d256-onehot = ["dep:akita-schedules", "akita-schedules/fp64-d256-onehot"]
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", optional = true, default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"

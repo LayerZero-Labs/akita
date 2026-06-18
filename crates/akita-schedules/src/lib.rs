@@ -5,3 +5,5 @@
 //! wiring lives in `akita-config`.
 
 pub mod generated;
+
+pub use generated::*;

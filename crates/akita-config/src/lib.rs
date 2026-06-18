@@ -192,6 +192,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         1
     }
 
+    /// Optional shipped schedule catalog for this preset.
+    ///
+    /// Presets with generated tables override this when the matching
+    /// `schedules-*` feature is enabled. The default is `None` (DP-only).
+    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+        None
+    }
+
     /// Build the runtime [`Schedule`] for `key`.
     ///
     /// Delegates entirely to the planner's cache-then-generate entry point
