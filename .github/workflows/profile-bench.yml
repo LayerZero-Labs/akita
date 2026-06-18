@@ -144,6 +144,9 @@ jobs:
       # PR deltas must compare binaries measured on this runner: ubuntu-latest
       # is a heterogeneous fleet, and baselines measured on different silicon
       # produced phantom double-digit deltas.
+      - name: Verify profile-ci feature coverage
+        run: ./scripts/check_profile_ci_features.sh
+
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request'
         run: |
@@ -151,14 +154,25 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bench-bins"
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
-              cargo build --release --quiet --example profile
+            if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile \
+                  --no-default-features --features parallel,profile-ci
+            else
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile
+            fi
           )
           cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
              "$RUNNER_TEMP/bench-bins/profile-base"
 
       - name: Build profile binary
-        run: cargo build --release --quiet --example profile
+        run: |
+          cargo build --release --quiet --example profile \
+            --no-default-features --features parallel,profile-ci
+
+      - name: Verify profile-ci linkage isolation
+        run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
 
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both

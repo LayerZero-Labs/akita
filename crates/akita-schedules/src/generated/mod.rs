@@ -7,70 +7,70 @@ pub use akita_planner::generated::{
 
 // @generated schedule module wiring begin
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp128-d128-full"))]
+#[cfg(feature = "fp128-d128-full")]
 pub mod fp128_d128_full;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp128-d128-full"))]
+#[cfg(feature = "fp128-d128-full")]
 pub mod fp128_d128_full_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp128-d128-onehot"))]
+#[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp128-d128-onehot"))]
+#[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp128-d64-full"))]
+#[cfg(feature = "fp128-d64-full")]
 pub mod fp128_d64_full;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp128-d64-full"))]
+#[cfg(feature = "fp128-d64-full")]
 pub mod fp128_d64_full_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp128-d64-onehot"))]
+#[cfg(feature = "fp128-d64-onehot")]
 pub mod fp128_d64_onehot;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp128-d64-onehot-tensor"))]
+#[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp128-d64-onehot-tensor"))]
+#[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor_zk;
 #[cfg(not(feature = "zk"))]
 #[cfg(all(feature = "fp128-d64-onehot-tiered", not(feature = "zk")))]
 pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp128-d64-onehot"))]
+#[cfg(feature = "fp128-d64-onehot")]
 pub mod fp128_d64_onehot_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp32-d128-onehot"))]
+#[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp32-d128-onehot"))]
+#[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp32-d256-onehot"))]
+#[cfg(feature = "fp32-d256-onehot")]
 pub mod fp32_d256_onehot;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp32-d256-onehot"))]
+#[cfg(feature = "fp32-d256-onehot")]
 pub mod fp32_d256_onehot_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp64-d128"))]
+#[cfg(feature = "fp64-d128")]
 pub mod fp64_d128;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp64-d128-onehot"))]
+#[cfg(feature = "fp64-d128-onehot")]
 pub mod fp64_d128_onehot;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp64-d128-onehot"))]
+#[cfg(feature = "fp64-d128-onehot")]
 pub mod fp64_d128_onehot_zk;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp64-d128"))]
+#[cfg(feature = "fp64-d128")]
 pub mod fp64_d128_zk;
 #[cfg(not(feature = "zk"))]
-#[cfg(all(feature = "fp64-d256-onehot"))]
+#[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot;
 #[cfg(feature = "zk")]
-#[cfg(all(feature = "fp64-d256-onehot"))]
+#[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot_zk;
 
-#[cfg(all(feature = "fp128-d128-full"))]
+#[cfg(feature = "fp128-d128-full")]
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -88,7 +88,7 @@ pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp128-d128-onehot"))]
+#[cfg(feature = "fp128-d128-onehot")]
 pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -106,7 +106,7 @@ pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp128-d64-full"))]
+#[cfg(feature = "fp128-d64-full")]
 pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -124,7 +124,7 @@ pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp128-d64-onehot"))]
+#[cfg(feature = "fp128-d64-onehot")]
 pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -142,7 +142,7 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp128-d64-onehot-tensor"))]
+#[cfg(feature = "fp128-d64-onehot-tensor")]
 pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -160,7 +160,7 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp32-d128-onehot"))]
+#[cfg(feature = "fp32-d128-onehot")]
 pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -178,7 +178,7 @@ pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp32-d256-onehot"))]
+#[cfg(feature = "fp32-d256-onehot")]
 pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -196,7 +196,7 @@ pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp64-d128"))]
+#[cfg(feature = "fp64-d128")]
 pub fn fp64_d128_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -214,7 +214,7 @@ pub fn fp64_d128_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp64-d128-onehot"))]
+#[cfg(feature = "fp64-d128-onehot")]
 pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
@@ -232,7 +232,7 @@ pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(all(feature = "fp64-d256-onehot"))]
+#[cfg(feature = "fp64-d256-onehot")]
 pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {

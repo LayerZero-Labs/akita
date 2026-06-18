@@ -274,10 +274,10 @@ fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, Str
             tiered_wired = true;
             continue;
         }
-        writeln!(out, "#[cfg(all(feature = \"{feat}\"))]").map_err(|e| e.to_string())?;
+        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(all(feature = \"{feat}\"))]").map_err(|e| e.to_string())?;
+        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
     }
@@ -301,7 +301,7 @@ fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
     let zk_const_base = zk_const_name(family.const_name)?;
     let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
     Ok(format!(
-        "#[cfg(all(feature = \"{feat}\"))]\n\
+        "#[cfg(feature = \"{feat}\")]\n\
          pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n            identity: None,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n        identity: None,\n    }}\n}}\n"
     ))
 }
