@@ -35,10 +35,22 @@ all-schedules = [
   "schedules-fp128-d64-onehot-tensor",
   "schedules-fp128-d64-onehot-tiered",
 ]
-schedules-fp128-d64-onehot = ["dep:akita-schedules", "akita-schedules/fp128-d64-onehot"]
-schedules-fp128-d64-full = ["dep:akita-schedules", "akita-schedules/fp128-d64-full"]
-schedules-fp128-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp128-d128-onehot"]
-schedules-fp128-d128-full = ["dep:akita-schedules", "akita-schedules/fp128-d128-full"]
+schedules-fp128-d64-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d64-onehot",
+]
+schedules-fp128-d64-full = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d64-full",
+]
+schedules-fp128-d128-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d128-onehot",
+]
+schedules-fp128-d128-full = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d128-full",
+]
 schedules-fp128-d64-onehot-tensor = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-tensor",
@@ -47,11 +59,23 @@ schedules-fp128-d64-onehot-tiered = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-tiered",
 ]
-schedules-fp32-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp32-d128-onehot"]
-schedules-fp32-d256-onehot = ["dep:akita-schedules", "akita-schedules/fp32-d256-onehot"]
+schedules-fp32-d128-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp32-d128-onehot",
+]
+schedules-fp32-d256-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp32-d256-onehot",
+]
 schedules-fp64-d128 = ["dep:akita-schedules", "akita-schedules/fp64-d128"]
-schedules-fp64-d128-onehot = ["dep:akita-schedules", "akita-schedules/fp64-d128-onehot"]
-schedules-fp64-d256-onehot = ["dep:akita-schedules", "akita-schedules/fp64-d256-onehot"]
+schedules-fp64-d128-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp64-d128-onehot",
+]
+schedules-fp64-d256-onehot = [
+  "dep:akita-schedules",
+  "akita-schedules/fp64-d256-onehot",
+]
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }

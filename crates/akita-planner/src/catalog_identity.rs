@@ -322,10 +322,14 @@ mod tests {
         }
     }
 
+    fn sample_entries() -> &'static [GeneratedScheduleTableEntry] {
+        Box::leak(Box::new([sample_entry()]))
+    }
+
     #[test]
     fn identity_mismatch_returns_error() {
         let policy = sample_policy();
-        let entries = [sample_entry()];
+        let entries = sample_entries();
         let ring_challenge_config = |_: usize| -> Result<SparseChallengeConfig, AkitaError> {
             Ok(SparseChallengeConfig::Uniform {
                 weight: 1,
@@ -344,7 +348,7 @@ mod tests {
         wrong.ring_dimension = 128;
         let catalog = GeneratedScheduleTable {
             sis_family: policy.sis_family,
-            entries: &entries,
+            entries,
             identity: Some(wrong),
         };
         let err = validate_catalog_identity(&catalog, &policy, ring_challenge_config, flat_fold)
@@ -355,10 +359,10 @@ mod tests {
     #[test]
     fn missing_identity_skips_validation() {
         let policy = sample_policy();
-        let entries = [sample_entry()];
+        let entries = sample_entries();
         let catalog = GeneratedScheduleTable {
             sis_family: policy.sis_family,
-            entries: &entries,
+            entries,
             identity: None,
         };
         validate_catalog_identity(&catalog, &policy, |_| unreachable!(), flat_fold)
