@@ -1,135 +1,28 @@
 //! Generate schedule tables using the DP planner.
 //!
-//! Produces one module per family in `GeneratedScheduleTableEntry` format.
-//! Each emitted file contains both:
+//! Adapts [`akita_config::generated_families::ALL_GENERATED_FAMILIES`] into
+//! [`akita_planner::EmitSpec`] values and delegates emission to the planner
+//! library. Output lands in `akita-schedules/src/generated/`.
 //!
-//! - singleton schedules (`num_claims=1`)
-//! - batched schedules for 4 polynomials, 1 group, 1 point
+//! Full regen (non-zk tables, ZK tables, then `mod.rs` wiring):
 //!
-//! The family list and per-family `(num_vars, num_claims)` key sequence
-//! live in `akita_config::generated_families::ALL_GENERATED_FAMILIES`,
-//! which the drift-guard test also consumes — adding a new generated
-//! family in one place picks it up in both the emitter and the guard.
-//!
-//! After writing the per-family table modules, the emitter also refreshes
-//! the `// @generated schedule module wiring` block in `akita-schedules`
-//! `generated/mod.rs`, sorted the same way `rustfmt` orders module
-//! declarations. It then runs `cargo fmt` on `akita-planner`, `akita-schedules`,
-//! and `akita-config` so emitted artifacts and this emitter stay fmt-clean.
+//! ```text
+//! cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
+//!   crates/akita-schedules/src/generated
+//! cargo run --release -p akita-config --no-default-features --features zk --bin gen_schedule_tables -- \
+//!   crates/akita-schedules/src/generated
+//! cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
+//!   crates/akita-schedules/src/generated --wiring-only
+//! ```
 
 use std::env;
-use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
-use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
-use akita_planner::generated::GeneratedScheduleKey;
-use akita_planner::generated_schedule_lookup_key;
-use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Schedule, Step};
-
-fn emit_key(key: GeneratedScheduleKey) -> String {
-    format!(
-        "GeneratedScheduleKey {{ num_vars: {}, num_commitment_groups: {}, num_t_vectors: {}, \
-         num_w_vectors: {}, num_z_vectors: {} }}",
-        key.num_vars,
-        key.num_commitment_groups,
-        key.num_t_vectors,
-        key.num_w_vectors,
-        key.num_z_vectors,
-    )
-}
-
-fn emit_fold_struct(p: &LevelParams) -> String {
-    let (tier_split, n_f) = match p.f_key.as_ref() {
-        Some(fk) => (
-            format!("Some({})", p.tier_split),
-            format!("Some({})", fk.row_len()),
-        ),
-        None => ("None".to_string(), "None".to_string()),
-    };
-    format!(
-        "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
-         tier_split: {}, n_f: {} }}",
-        p.ring_dimension,
-        p.log_basis,
-        p.log_block_len(),
-        p.log_num_blocks(),
-        p.a_key.row_len(),
-        p.b_key.row_len(),
-        p.d_key.row_len(),
-        tier_split,
-        n_f,
-    )
-}
-
-fn emit_fold(step: &FoldStep) -> String {
-    format!(
-        "        GeneratedStep::Fold({}),",
-        emit_fold_struct(&step.params)
-    )
-}
-
-fn emit_direct(direct: &DirectStep) -> String {
-    // A root-direct schedule carries its brute-forced root commit layout in
-    // `DirectStep.params`; a terminal-direct step ships the cleartext
-    // witness without committing and carries no commit payload.
-    match &direct.params {
-        Some(commit) => format!(
-            "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
-            emit_fold_struct(commit)
-        ),
-        None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
-    }
-}
-
-fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
-    writeln!(
-        out,
-        "    GeneratedScheduleTableEntry {{ key: {key_str}, steps: &[",
-    )
-    .map_err(|e| e.to_string())?;
-
-    for step in &schedule.steps {
-        match step {
-            Step::Fold(fold) => {
-                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
-            }
-            Step::Direct(direct) => {
-                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
-            }
-        }
-    }
-
-    writeln!(out, "    ] }},").map_err(|e| e.to_string())
-}
-
-fn output_module_name(family: &GeneratedFamily) -> String {
-    #[cfg(feature = "zk")]
-    {
-        format!("{}_zk", family.module_name)
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        family.module_name.to_string()
-    }
-}
-
-fn output_const_name(family: &GeneratedFamily) -> String {
-    #[cfg(feature = "zk")]
-    {
-        let base = family
-            .const_name
-            .strip_suffix("_SCHEDULES")
-            .expect("generated schedule const name should end in _SCHEDULES");
-        format!("{base}_ZK_SCHEDULES")
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        family.const_name.to_string()
-    }
-}
+use akita_config::generated_families::{
+    emit_spec_for_family, wiring_emit_spec, ALL_GENERATED_FAMILIES,
+};
+use akita_planner::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 
 fn generator_command() -> &'static str {
     #[cfg(feature = "zk")]
@@ -143,269 +36,64 @@ fn generator_command() -> &'static str {
     }
 }
 
-fn emit_module(family: &GeneratedFamily) -> Result<String, String> {
-    let mut out = String::new();
-    let const_name = output_const_name(family);
-    writeln!(out, "// Generated by `{}`", generator_command()).map_err(|e| e.to_string())?;
-    // A schedule may contain only `Direct` steps (no `Fold`), e.g. when the
-    // SIS-floor tables do not admit a secure commitment for the level's
-    // collision bound and the DP falls back to a cleartext schedule. In that
-    // case `GeneratedFoldStep` is unused, so allow the dead import rather than
-    // making the emitted module shape depend on the schedule contents.
-    writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, \
-         GeneratedScheduleTableEntry,\n    GeneratedStep,\n}};"
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(out).map_err(|e| e.to_string())?;
-    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "pub(crate) static {const_name}: &[GeneratedScheduleTableEntry] = &["
-    )
-    .map_err(|e| e.to_string())?;
-
-    let keys: Vec<AkitaScheduleLookupKey> =
-        family_keys(family).map_err(|e| format!("{}: build keys: {e}", family.module_name))?;
-    for key in keys {
-        let schedule = (family.regen)(key)
-            .map_err(|e| format!("{}: regen {key:?}: {e}", family.module_name))?;
-        let key_str = emit_key(generated_schedule_lookup_key(key));
-        emit_schedule_entry(&mut out, &key_str, &schedule)?;
-    }
-
-    writeln!(out, "];").map_err(|e| e.to_string())?;
-    Ok(out)
-}
-
-const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
-const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
-
-fn schedule_feature_name(module_name: &str) -> Result<&'static str, String> {
-    Ok(match module_name {
-        "fp128_d128_full" => "fp128-d128-full",
-        "fp128_d128_onehot" => "fp128-d128-onehot",
-        "fp128_d64_full" => "fp128-d64-full",
-        "fp128_d64_onehot" => "fp128-d64-onehot",
-        "fp128_d64_onehot_tensor" => "fp128-d64-onehot-tensor",
-        "fp128_d64_onehot_tiered" => "fp128-d64-onehot-tiered",
-        "fp32_d128_onehot" => "fp32-d128-onehot",
-        "fp32_d256_onehot" => "fp32-d256-onehot",
-        "fp64_d128" => "fp64-d128",
-        "fp64_d128_onehot" => "fp64-d128-onehot",
-        "fp64_d256_onehot" => "fp64-d256-onehot",
-        other => {
-            return Err(format!(
-                "unknown generated schedule module for feature map: {other}"
-            ));
-        }
-    })
-}
-
-fn sorted_families() -> Vec<&'static GeneratedFamily> {
-    let mut families: Vec<&'static GeneratedFamily> = ALL_GENERATED_FAMILIES.iter().collect();
-    families.sort_by_key(|family| family.module_name);
-    families
-}
-
-fn sis_family_for_module(module_name: &str) -> Result<&'static str, String> {
-    match module_name.split('_').next() {
-        Some("fp128") => Ok("SisModulusFamily::Q128"),
-        Some("fp64") => Ok("SisModulusFamily::Q64"),
-        Some("fp32") => Ok("SisModulusFamily::Q32"),
-        _ => Err(format!(
-            "unsupported generated schedule module prefix: {module_name}"
-        )),
-    }
-}
-
-fn zk_const_name(const_name: &str) -> Result<&str, String> {
-    const_name.strip_suffix("_SCHEDULES").ok_or_else(|| {
-        format!("generated schedule const name should end in _SCHEDULES: {const_name}")
-    })
-}
-
-fn table_fn_name(module_name: &str) -> String {
-    format!("{module_name}_table")
-}
-
-fn is_tiered_only_family(module_name: &str) -> bool {
-    module_name == "fp128_d64_onehot_tiered"
-}
-
-fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
-    writeln!(
-        out,
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]"
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-fn emit_tiered_table_accessor() -> String {
-    concat!(
-        "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
-        "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
-        "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
-        "/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n",
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]\n",
-        "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
-        "    GeneratedScheduleTable {\n",
-        "        sis_family: SisModulusFamily::Q128,\n",
-        "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
-        "        identity: None,\n",
-        "    }\n",
-        "}\n",
-    )
-    .to_string()
-}
-
-fn emit_module_declarations(families: &[&GeneratedFamily]) -> Result<String, String> {
-    let mut out = String::new();
-    let mut tiered_wired = false;
-    for family in families {
-        let module_name = family.module_name;
-        let feat = schedule_feature_name(module_name)?;
-        if is_tiered_only_family(module_name) {
-            emit_tiered_module_declaration(&mut out)?;
-            tiered_wired = true;
-            continue;
-        }
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
-    }
-    if !tiered_wired {
-        emit_tiered_module_declaration(&mut out)?;
-    }
-    writeln!(out).map_err(|e| e.to_string())?;
-    Ok(out)
-}
-
-fn emit_table_accessor(family: &GeneratedFamily) -> Result<String, String> {
-    if is_tiered_only_family(family.module_name) {
-        return Ok(emit_tiered_table_accessor());
-    }
-    let fn_name = table_fn_name(family.module_name);
-    let feat = schedule_feature_name(family.module_name)?;
-    let sis_family = sis_family_for_module(family.module_name)?;
-    let module_name = family.module_name;
-    let zk_module = format!("{module_name}_zk");
-    let const_name = family.const_name;
-    let zk_const_base = zk_const_name(family.const_name)?;
-    let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
-    Ok(format!(
-        "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n            identity: None,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n        identity: None,\n    }}\n}}\n"
-    ))
-}
-
-fn emit_mod_wiring(families: &[&GeneratedFamily]) -> Result<String, String> {
-    let mut out = emit_module_declarations(families)?;
-    let mut tiered_wired = false;
-    for family in families {
-        if is_tiered_only_family(family.module_name) {
-            tiered_wired = true;
-        }
-        out.push_str(&emit_table_accessor(family)?);
-        out.push('\n');
-    }
-    if !tiered_wired {
-        out.push_str(&emit_tiered_table_accessor());
-        out.push('\n');
-    }
-    Ok(out)
-}
-
-fn replace_between_markers(
-    content: &str,
-    begin: &str,
-    end: &str,
-    replacement: &str,
-) -> Result<String, String> {
-    let start = content
-        .find(begin)
-        .ok_or_else(|| format!("missing generated marker `{begin}`"))?
-        + begin.len();
-    let end_pos = content
-        .find(end)
-        .ok_or_else(|| format!("missing generated marker `{end}`"))?;
-    if end_pos < start {
-        return Err(format!(
-            "generated markers `{begin}` and `{end}` are out of order"
-        ));
-    }
-    let mut out = String::new();
-    out.push_str(&content[..start]);
-    out.push('\n');
-    out.push_str(replacement.trim_end());
-    out.push('\n');
-    out.push_str(&content[end_pos..]);
-    Ok(out)
-}
-
-fn refresh_generated_wiring(base_dir: &Path) -> Result<(), String> {
-    let families = sorted_families();
-    let mod_path = base_dir.join("mod.rs");
-    let mod_src =
-        fs::read_to_string(&mod_path).map_err(|e| format!("read {}: {e}", mod_path.display()))?;
-    let mod_wiring = emit_mod_wiring(&families)?;
-    let mod_src = replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?;
-    fs::write(&mod_path, mod_src).map_err(|e| format!("write {}: {e}", mod_path.display()))?;
-    println!("updated {}", mod_path.display());
-    Ok(())
-}
-
-fn run_regen_fmt() -> Result<(), String> {
-    for package in ["akita-planner", "akita-schedules", "akita-config"] {
-        let status = Command::new("cargo")
-            .args(["fmt", "-p", package])
-            .status()
-            .map_err(|e| format!("spawn cargo fmt: {e}"))?;
-        if !status.success() {
-            return Err(format!("cargo fmt -p {package} failed with {status}"));
-        }
-    }
-    Ok(())
+fn sorted_unique_specs(specs: &[EmitSpec]) -> Vec<EmitSpec> {
+    let mut out: Vec<EmitSpec> = specs.to_vec();
+    out.sort_by_key(|spec| spec.module_name);
+    out.dedup_by_key(|spec| spec.module_name);
+    out
 }
 
 fn main() -> Result<(), String> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    if args.is_empty() {
+    let raw_args: Vec<String> = env::args().skip(1).collect();
+    if raw_args.is_empty() {
         return Err(
             "usage: cargo run --release -p akita-config --bin gen_schedule_tables -- \
-             <output-dir> [family_module_name ...]"
+             <output-dir> [--wiring-only] [family_module_name ...]"
                 .to_string(),
         );
     }
-    let base_dir = PathBuf::from(&args[0]);
+    let base_dir = PathBuf::from(&raw_args[0]);
+    let wiring_only = raw_args.iter().any(|arg| arg == "--wiring-only");
+    let family_args: Vec<&str> = raw_args
+        .iter()
+        .skip(1)
+        .map(String::as_str)
+        .filter(|arg| *arg != "--wiring-only")
+        .collect();
     fs::create_dir_all(&base_dir).map_err(|e| format!("create {}: {e}", base_dir.display()))?;
 
-    let filter: Option<Vec<&str>> = if args.len() > 1 {
-        Some(args[1..].iter().map(|s| s.as_str()).collect())
-    } else {
+    let filter: Option<Vec<&str>> = if family_args.is_empty() {
         None
+    } else {
+        Some(family_args)
     };
 
-    for family in ALL_GENERATED_FAMILIES {
-        if let Some(ref names) = filter {
-            if !names.contains(&family.module_name) {
-                continue;
+    if !wiring_only {
+        let zk_enabled = cfg!(feature = "zk");
+        let generator_command = generator_command();
+        for family in ALL_GENERATED_FAMILIES {
+            if let Some(ref names) = filter {
+                if !names.contains(&family.module_name) {
+                    continue;
+                }
             }
+            let spec =
+                emit_spec_for_family(family, base_dir.clone(), zk_enabled, generator_command)
+                    .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
+            let dest = write_family_module(&spec)?;
+            println!("wrote {}", dest.display());
         }
-        let body = emit_module(family)?;
-        let dest = base_dir.join(format!("{}.rs", output_module_name(family)));
-        fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
-        println!("wrote {}", dest.display());
     }
 
-    refresh_generated_wiring(&base_dir)?;
-    run_regen_fmt()?;
+    if wiring_only {
+        let mod_path = base_dir.join("mod.rs");
+        let wiring_specs: Vec<EmitSpec> = ALL_GENERATED_FAMILIES
+            .iter()
+            .map(|family| wiring_emit_spec(family, base_dir.clone()))
+            .collect();
+        refresh_generated_wiring(&sorted_unique_specs(&wiring_specs), &mod_path)?;
+        println!("updated {}", mod_path.display());
+        run_regen_fmt()?;
+    }
     Ok(())
 }

@@ -74,10 +74,7 @@ pub mod fp128 {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
             #[cfg(feature = "schedules-fp128-d64-onehot-tensor")]
             {
-                crate::hydrate_schedule_catalog_identity::<Self>(
-                    "fp128_d64_onehot_tensor",
-                    akita_schedules::fp128_d64_onehot_tensor_table(),
-                )
+                Some(akita_schedules::fp128_d64_onehot_tensor_table())
             }
             #[cfg(not(feature = "schedules-fp128-d64-onehot-tensor"))]
             {

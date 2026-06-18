@@ -12,17 +12,20 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-use akita_types::{DecompositionParams, SisModulusFamily};
+pub use akita_types::{DecompositionParams, SisModulusFamily};
 
 pub mod catalog_identity;
+pub mod emit;
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
 
+pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
     validate_catalog_identity,
 };
+pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, resolve_schedule, schedule_from_entry,

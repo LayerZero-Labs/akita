@@ -87,7 +87,7 @@ fn check_family_catalog<Cfg: CommitmentConfig>(module_name: &str, keys: &[AkitaS
     });
     assert!(
         catalog.identity.is_some(),
-        "family {module_name} must hydrate catalog identity at schedule_catalog()"
+        "family {module_name} must embed catalog identity in the shipped table"
     );
     validate_catalog_identity(
         &catalog,

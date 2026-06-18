@@ -92,6 +92,7 @@ fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
 
 fn catalog_identity_expectation(
     family_name: &'static str,
+    zk_enabled: bool,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -108,7 +109,7 @@ fn catalog_identity_expectation(
     let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
     Ok(CatalogIdentityExpectation {
         family_name,
-        zk_enabled: cfg!(feature = "zk"),
+        zk_enabled,
         sis_family: policy.sis_family,
         ring_dimension: policy.ring_dimension,
         decomposition: policy.decomposition,
@@ -130,6 +131,7 @@ fn catalog_identity_expectation(
 /// runtime hooks. Used by tests and the table emitter.
 pub fn expected_catalog_identity(
     family_name: &'static str,
+    zk_enabled: bool,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -137,6 +139,7 @@ pub fn expected_catalog_identity(
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
     let expected = catalog_identity_expectation(
         family_name,
+        zk_enabled,
         policy,
         entries,
         ring_challenge_config,
@@ -179,6 +182,7 @@ pub fn validate_catalog_identity(
     };
     let expected = catalog_identity_expectation(
         embedded.family_name,
+        cfg!(feature = "zk"),
         policy,
         catalog.entries,
         ring_challenge_config,
@@ -383,6 +387,7 @@ mod tests {
         };
         let expected = expected_catalog_identity(
             "fp128_d64_onehot",
+            false,
             &policy,
             entries,
             ring_challenge_config,

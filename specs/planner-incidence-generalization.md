@@ -1,5 +1,10 @@
 # Spec: Planner Incidence Generalization
 
+> **Superseded (schedule keys):** portions of this spec that describe schedule lookup
+> keys, shipped-table selection, or preset↔table binding are superseded by
+> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md). This file remains
+> for historical witness-layout / incidence notes until archived.
+
 | Field         | Value                          |
 |---------------|--------------------------------|
 | Author(s)     |                                |

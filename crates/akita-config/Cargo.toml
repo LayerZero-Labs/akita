@@ -90,5 +90,13 @@ tracing = "0.1"
 name = "gen_schedule_tables"
 path = "src/bin/gen_schedule_tables.rs"
 
+[[test]]
+name = "schedule_catalog_miswire"
+path = "tests/schedule_catalog_miswire.rs"
+required-features = [
+  "schedules-fp128-d64-onehot",
+  "schedules-fp128-d64-full",
+]
+
 [lints]
 workspace = true
