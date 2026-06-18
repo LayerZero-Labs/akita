@@ -4,8 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao, Cursor agent (model: Claude Opus 4.8) |
 | Created     | 2026-06-15                     |
-| Status      | proposed prototype; security accounting unresolved |
-| PR          |                                |
+| Status      | **prototype landed** on branch `quang/jl-projection-tail` ([PR #191](https://github.com/LayerZero-Labs/akita/pull/191)): PR1 projection, PR1b MLE eval, PR2 consistency sumcheck. Fusion roadmap D1–D8 and security accounting remain open. |
+| PR          | [#191](https://github.com/LayerZero-Labs/akita/pull/191) |
+| Related     | Full cutover protocol design: [`akita-jl-projection-protocol.md`](akita-jl-projection-protocol.md) (Slot 2/3, stage-2 fusion, SIS repricing; not implemented here). |
 
 ## Summary
 
@@ -23,6 +24,20 @@ This prototype does not make that replacement in the recursive flow.
 
 The prototype is built as standalone, well-tested library code that is not wired into the recursive prove/verify flow.
 The goal is to land reusable JL primitives, exercise the consistency-sumcheck mechanics across representative fields and ring dimensions, and document the fusion roadmap so later protocol-integration work can measure any proof-size or rank impact on the real flow.
+
+### Implementation status (PR #191, 2026-06-18)
+
+| Slice | Crate / path | Landed |
+|-------|----------------|--------|
+| PR1 — matrix sample, integer projection, norm helpers | `akita-challenges::jl` | yes |
+| PR1 — fast kernels (column-panel `i8`/`i32`, runtime SIMD) | `akita-challenges::jl::kernels` | yes |
+| PR1b — `build_jl_row_weights`, `eval_jl_mle_at` | `akita-challenges::jl::mle` | yes (production MLE path is **LUT-amortized** per 4-column byte window; see **Joint MLE evaluation**) |
+| PR2 — consistency prove/verify harness | `akita-prover::protocol::jl` | yes |
+| Transcript labels | `akita-transcript::labels` (`ABSORB_JL_PROJECTION`, `CHALLENGE_JL_SEED`, `ABSORB_JL_IMAGE`, `CHALLENGE_JL_ROW`) | yes |
+| Benches | `benches/jl_projection.rs`, `benches/jl_mle.rs` | yes |
+| Fusion D1–D8 | — | not started |
+
+Tests (local): 26 in `akita-challenges` (`jl` filter), 7 in `akita-prover` (`jl` filter). Nothing in `prove_batched` / `verify_batched` calls the new modules.
 
 ## Motivation: why JL projection (and what it does *not* do)
 
@@ -215,7 +230,7 @@ Cost shape (updated after optimization investigation):
 |----------|-----|--------|------------|
 | Integer projection `p = J c` | Prover | PR1 (landed) | `Θ(n_rows · cols)` i32 add/sub |
 | Row weights `g[i] = Σ_j eq(r_J,j) J[j,i]` | Prover (sumcheck oracle table) | PR1b `build_jl_row_weights` | `Θ(n_rows · cols)`; must touch every matrix entry |
-| Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **fused** one-shot, no `2^{k_w}` weight table |
+| Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **LUT-amortized** one-shot eval over byte quads |
 | Consistency sumcheck | Prover + verifier | PR2 | `k_w` witness rounds; verifier JL work is dominated by `eval_jl_mle_at` |
 
 There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte-wide ternary decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Ternary sparsity (`P(J=0) = 1/2`) reduces ALU in the inner loop but **not** memory traffic. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
@@ -240,7 +255,7 @@ Depends on `akita-algebra` for `SplitEqEvals`. Shares packed-row decode (`SIGNS_
 
 - `eval_jl_mle_at<L>(matrix, r_J, r_w) -> Result<L, AkitaError>`: fused verifier contraction (see **Joint MLE evaluation**).
 - `build_jl_row_weights<L>(matrix, r_J) -> Result<Vec<L>, AkitaError>`: prover row-weight table `g`.
-- Scalar reference + arch-specific tile kernels (`kernels/mle_scalar.rs`, `mle_neon.rs`, `mle_x86.rs`); runtime dispatch like PR1.
+- Scalar reference + LUT production path (`mle/lut.rs`); row-weight builder uses row-eq accumulation in `mle/common.rs`. Runtime SIMD dispatch on projection kernels only (MLE is LUT + scalar/parallel panels).
 
 The matrix sampling and projection geometry (`n_rows`, seed domain) are intended to be bound into the instance descriptor when fusion lands; the prototype binds them through the transcript context buffer only and records descriptor binding as a fusion task.
 
@@ -393,29 +408,29 @@ Standalone slice between PR1 (projection) and PR2 (consistency sumcheck). Implem
 
 Both have the same asymptotic cost (`Θ(n_rows · cols)` matrix touches) but different memory behavior. The verifier path is the performance-critical one and must not allocate the weight hypercube.
 
-#### Default algorithm: tensor split-eq
+#### Production algorithm: LUT-amortized byte-quad eval (landed)
 
-Factor the product MLE by axes (not an arbitrary bisection of the concatenated challenge):
+The shipped `eval_jl_mle_at` path (PR #191) does **not** use split-eq nesting; it matches the projection kernels' byte geometry:
+
+1. Precompute `eq(r_J, ·)` and `eq(r_w, ·)` once (`EqPolynomial::evals`).
+2. Partition witness columns into byte-aligned 4-column quad windows (same panel convention as PR1).
+3. For each quad: build a 256-entry sign-weight LUT from the four `eq(r_w, ·)` weights (81 canonical ternary patterns via axis extension, remapped through `BYTE_TO_TERNARY4` so `01`/`10` zero pairs collapse).
+4. Scan every matrix row: one LUT lookup + one field add per packed byte into per-row accumulators `row_acc[j]`.
+5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
+
+On aarch64 fp128 at tail-scale column counts this LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`).
+
+`build_jl_row_weights` uses direct row-eq accumulation over packed matrix bytes (`mle/common.rs`), not the LUT (prover materializes the full `g` vector once).
+
+#### Alternative considered: tensor split-eq
+
+A split-eq nested contraction (Dao–Thaler; same template as `tensor_column_partials_split_fold`) was specced as the initial PR1b target. It remains a valid fallback if LUT amortization regresses on a target arch, but it is **not** the landed production path. Sketch:
 
 ```text
-J̃(r_J, r_w)
-  = Σ_{j_o,j_i,i_o,i_i}
-      e_J_out[j_o] · e_J_in[j_i] · e_w_out[i_o] · e_w_in[i_i] · J[j,i]
+J̃(r_J, r_w) = Σ_{j_o,j_i,i_o,i_i} e_J_out[j_o] · e_J_in[j_i] · e_w_out[i_o] · e_w_in[i_i] · J[j,i]
 ```
 
-with `j = (j_o, j_i)`, `i = (i_o, i_i)` (little-endian splits; `row_bits` and `k_w` each split near half, e.g. `8 → 4+4`, `17 → 9+8`).
-
-**Precompute** (once per eval, size `2^{m_Ji + m_wi}`, L2-resident at tail scale):
-
-```text
-W[j_i, i_i] = e_J_in[j_i] · e_w_in[i_i]
-```
-
-**Outer loop** (parallel over `(j_o, i_o)` tiles): for each tile, accumulate an inner sum over `(j_i, i_i)` by scanning the corresponding `J` submatrix in row-major packed form, then add `e_J_out[j_o] · e_w_out[i_o] · inner` to the running total.
-
-This matches `tensor_column_partials_split_fold`: outer `e_out` multiplies a deferred-reduction inner face sum. Use `GruenSplitEq` only inside incremental sumcheck rounds; this slice uses one-shot `SplitEqEvals`.
-
-**Loop order for cache:** within a tile, fix `(j_o, j_i)` and scan `i_o · 2^{m_wi} + i_i` along contiguous row bytes (same geometry as PR1 column-panel projection).
+with `W[j_i, i_i] = e_J_in[j_i] · e_w_in[i_i]` precomputed and outer tiles parallel over `(j_o, i_o)`.
 
 #### Inner hot loop: ternary × eq weight
 
@@ -434,10 +449,10 @@ Per matrix entry the update is `acc ± W` (add, subtract, or skip), not a genera
 **Helps (spec adopts):**
 
 1. **Fused verifier eval** — saves a `2^{k_w}` field-element write and a second pass; largest win for verifier memory bandwidth.
-2. **Tensor split-eq + precomputed `W`** — `O(2^{m_Ji+m_wi})` setup, nested loops with `2√{2^{row_bits+k_w}}`-scale eq tables instead of materializing `eq` on the full product hypercube.
-3. **`SIGNS_FOR_BYTE` + byte-wide scan** — correct memoization granularity; amortizes decode over four columns (already proven in PR1).
-4. **Column panels / outer-tile parallelism** — witness read once in projection; here, eq-weight blocks and row chunks read once per tile; `parallel` over outer `(j_o, i_o)` when above a threshold.
-5. **Branchless ternary via sign LUT** — `sign · W` with `sign ∈ {-1,0,+1}`; zeros cost a multiply-by-zero or masked add, not a unpredictable branch.
+2. **LUT-amortized byte-quad scan** (landed) — per 4-column window, one 256-entry sign-weight LUT reused across all rows; matches PR1 byte geometry.
+3. **`SIGNS_FOR_BYTE` / `BYTE_TO_TERNARY4` + byte-wide scan** — amortizes ternary decode over four columns.
+4. **Column panels / outer-tile parallelism** — witness read once in projection; MLE parallel path fans over quad windows when `parallel` is enabled.
+5. **Branchless ternary via sign LUT** — `sign · W` with `sign ∈ {-1,0,+1}`.
 
 **Does not help enough (spec rejects as primary strategies):**
 
@@ -584,25 +599,24 @@ D6 and D4 (security: size `n_rows` for the single projection, settle the weak-bi
 ## Documentation
 
 - This spec is the primary design record for the prototype and the fusion roadmap.
-- New crate-level module docs (`//!`) on `akita-challenges::jl`, `akita-challenges::jl::mle`, and `akita-prover::protocol::jl`.
+- Crate-level module docs (`//!`) landed on `akita-challenges::jl`, `akita-challenges::jl::mle`, `akita-prover::protocol::jl`, and the kernel/MLE submodules.
 - No public book or security-doc changes until fusion (the prototype changes no shipped behavior). When fusion lands, the security-model and norm-bounds pages need the JL paradigm-schedule and the weak-binding realized-norm pricing (operator factor retained).
 
 ## Execution
 
-Suggested order for the prototype:
+Prototype phases (all complete on PR #191):
 
-1. `akita-challenges::jl`: port the packed-ternary matrix, seed expansion, `project`, and norm helpers from the backup; re-host the seed on the current transcript; make `n_rows`/`cols` parameters; add unit tests (determinism, round-trip, projection-vs-reference, fp128, norm bound).
-2. Add signed-coordinate encoding and checked norm helpers before any consistency sumcheck work. The field embedding of `p` must be injective for accepted coordinates.
-3. `akita-challenges::jl::mle` (PR1b): `eval_jl_mle_at` + `build_jl_row_weights` with split-eq orchestration and SIMD ternary–eq tile kernels; differential tests vs naive reference; tail-geometry bench (`benches/jl_mle.rs`).
-4. `akita-prover::protocol::jl` (PR2): `JlConsistencyInstance` (degree-2 product); wire PR1b evaluators into prove/verify; standalone harness with public witness data or an explicit `w_tilde(r)` hook; cross-field/cross-dim round-trip, soundness-direction, and malformed-input tests.
-5. Lint and full test sweep (`parallel` on and off, if both feature combinations are supported by the touched crates).
+1. [x] `akita-challenges::jl`: packed-ternary matrix, transcript-seeded expansion, `project`, norm helpers, signed-coordinate embedding.
+2. [x] Signed-coordinate encoding and checked norm helpers (before consistency work).
+3. [x] `akita-challenges::jl::mle` (PR1b): `eval_jl_mle_at` + `build_jl_row_weights`; LUT production path; differential tests; `benches/jl_mle.rs`.
+4. [x] `akita-prover::protocol::jl` (PR2): degree-2 product sumcheck via `akita-sumcheck`; `JlWitnessLayout` pins flat order `w[x * 2^ring_bits + y]`; prove/verify with `w_eval_hook`; round-trip, tampered-image, norm-bound, and layout tests.
+5. [x] Lint and targeted test sweep (`cargo test -p akita-challenges -- jl`, `cargo test -p akita-prover -- jl`).
 
-Risks to resolve first:
+Open before fusion (D2):
 
-- Confirm the witness flatten map `index(x, y)` matches `center_coefficients` and stage-2 `w(x, y)` layout before building `JlWeight`.
-- Confirm the standalone verifier interface: it must not pretend to verify a hidden committed witness unless it has an external `w_tilde(r)` value from a real opening path.
-- Confirm `CanonicalField` plus current base-field types provide enough information for centered conversion and signed-coordinate injectivity across fp32/fp64/fp128.
-- Confirm accepted coordinate and norm bounds fit the selected integer type; reject overflow rather than saturating or silently reducing.
+- Confirm `JlWitnessLayout::flat_index` matches stage-2 `w(x, y)` / `build_w_coeffs` on real prover layouts (prototype tests use synthetic small layouts only).
+- Confirm gamma power and fused stage-2 oracle wiring against `akita_stage2` when cutting over.
+- Cross-field sweep in PR2 tests is fp64-only today; extend if fusion needs fp32/fp128 extension-field consistency paths.
 
 ## References
 

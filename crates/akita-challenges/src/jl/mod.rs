@@ -12,9 +12,10 @@
 //! `akita-challenges` at its field + transcript dependency layer.
 //!
 //! Scope: matrix sampling, integer projection, checked Euclidean-norm helpers,
-//! and an injective signed-coordinate field embedding. The nonce-regrind
-//! completeness loop, the consistency sumcheck, and any protocol wiring are
-//! deferred (see `specs/akita-jl-tail-projection-prototype.md`).
+//! and an injective signed-coordinate field embedding. Joint matrix MLE eval lives
+//! in [`mle`]; the standalone consistency sumcheck harness lives in
+//! `akita-prover::protocol::jl`. Nonce regrind and recursive-flow wiring remain
+//! deferred (see `specs/akita-jl-tail-projection-prototype.md`, fusion D1–D8).
 
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
