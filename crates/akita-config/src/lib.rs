@@ -202,16 +202,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Build the runtime [`Schedule`] for `key`.
     ///
-    /// Delegates entirely to the planner's cache-then-generate entry point
-    /// [`akita_planner::get_schedule`]: the planner owns the shipped tables,
-    /// so it selects the matching table from the `Cfg`-derived
-    /// [`policy_of::<Self>()`][policy_of] (and the level-0 fold shape),
-    /// expands the compact entry on a hit, and regenerates from scratch with
-    /// the offline DP on a miss. The result is deterministic in
+    /// Delegates to [`akita_planner::resolve_schedule`] with this preset's
+    /// optional [`Self::schedule_catalog`]: validates catalog identity on a hit,
+    /// expands the compact entry, and regenerates from scratch with the offline
+    /// DP on a miss. The result is deterministic in
     /// `(policy, key)` plus this config's `ring_challenge_config` / `fold_shape` hooks, so
     /// prover and verifier resolve identical schedules and the Fiat-Shamir
-    /// `PlanSection` digest stays consistent. Any lookup key is supported
-    /// with no reliance on a pre-shipped table.
+    /// `PlanSection` digest stays consistent.
     ///
     /// # Errors
     ///
@@ -219,11 +216,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        akita_planner::get_schedule(
+        akita_planner::resolve_schedule(
             key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog().as_ref(),
         )
     }
 

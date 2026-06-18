@@ -25,8 +25,7 @@ pub use catalog_identity::{
 };
 pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub use resolve::{
-    estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, resolve_schedule,
-    schedule_from_entry, shipped_table,
+    estimate_proof_bytes, generated_schedule_lookup_key, resolve_schedule, schedule_from_entry,
 };
 pub use schedule_params::find_schedule;
 
@@ -66,7 +65,7 @@ pub struct PlannerPolicy {
     /// per level whose first-tier footprint would otherwise exceed `A`. When
     /// `false`, every level emits `tier_split == 1` / `f_key == None` and the
     /// layout is identical to the historical single-tier scheme. Also keys the
-    /// [`shipped_table`] discriminator so a tiered policy never aliases a
+    /// tiered schedule catalog so a tiered policy never aliases a
     /// non-tiered table.
     pub tiered: bool,
 }

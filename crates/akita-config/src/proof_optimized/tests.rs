@@ -1,13 +1,14 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
+use akita_planner::generated::GeneratedScheduleTable;
 #[cfg(not(feature = "zk"))]
-use akita_planner::generated::{
+use akita_schedules::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
-use akita_planner::generated::{
+use akita_schedules::{
     fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
-    fp64_d256_onehot_table, GeneratedScheduleTable,
+    fp64_d256_onehot_table,
 };
 use akita_types::SisModulusFamily;
 

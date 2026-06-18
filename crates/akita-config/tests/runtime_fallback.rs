@@ -44,7 +44,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     // exercising the DP fallback path. (Shipped tables only hold
     // singleton / 4-batched keys; this 2-poly key misses every table.)
     let policy = policy_of::<Cfg>();
-    let table_has_key = akita_planner::shipped_table(&policy, false)
+    let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
             akita_planner::generated::table_entry(
                 table,
