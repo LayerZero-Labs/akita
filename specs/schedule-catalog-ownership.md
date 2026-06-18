@@ -32,17 +32,30 @@ tables into a dedicated `akita-schedules` crate (still in the Akita repo, still 
 `schedule_catalog()`. The selection logic that `shipped_table()` performs at runtime
 is redundant: the caller (`Cfg::runtime_schedule`) already knows the preset
 statically, so each preset names its own catalog and the global registry is deleted.
-The planner keeps DP fallback as the universal correctness path. Downstream repos
-ship their own catalogs (Jolt: D64 one-hot + Jolt-specific batch widths) without
-depending on `akita-schedules`.
+The planner keeps DP fallback as the universal correctness path.
 
-Per-preset feature gating makes link stripping fall out for free: the CI `profile`
-binary links table data only for the presets whose `schedules-*` feature is enabled.
-CI builds with a single `profile-ci` feature that enables the union of schedule
-families for the benchmark matrix. A **minimal CI guard** reads the existing
-`AKITA_BENCH_CASES` list in `profile-bench.yml` and asserts `profile-ci` enables the
-schedule feature each benched mode needs. No new manifest source-of-truth, exporter,
-or three-way reconciler is introduced.
+Because a preset can now hand the planner an arbitrary catalog, every generated table
+also carries a compact **catalog identity**. `resolve_schedule` validates that
+identity against the caller's `PlannerPolicy`, root fold shape, ZK mode, and generated
+ring-challenge digest before consulting the entries. A mismatched catalog is rejected
+with `AkitaError`, not silently treated as a cache miss. Table absence still falls
+back to DP.
+
+Downstream repos ship their own catalogs (Jolt: D64 one-hot + Jolt-specific batch
+widths) without depending on `akita-schedules`. The engine cutover includes the small
+reusable emit surface needed to generate such catalogs from an explicit
+`PlannerPolicy` + hook bundle, so downstream ownership is available when this design
+lands rather than deferred to a later archaeology step.
+
+Per-preset feature gating controls link stripping. Plain dev builds keep current
+table-backed behavior through forwarded default schedule bundles on the top-level
+crates that currently disable `akita-config` defaults. The CI `profile` binary is the
+exception: it builds with `--no-default-features --features parallel,profile-ci`, so
+it links only the schedule families whose `schedules-*` feature is enabled by
+`profile-ci`. A hard CI guard reads the existing `AKITA_BENCH_CASES` list in
+`profile-bench.yml` and asserts `profile-ci` enables the schedule feature each
+benched mode needs. No new manifest source-of-truth, exporter, or three-way
+reconciler is introduced.
 
 ## Intent
 
@@ -54,16 +67,24 @@ Refactor schedule resolution so:
    lookup). No global preset→table registry.
 2. **`akita-schedules` holds all Akita-shipped tables** on `main`, feature-gated per
    family, optional for consumers.
-3. **Each `CommitmentConfig` preset opt-ins** to zero or one catalog via
-   `schedule_catalog() -> Option<GeneratedScheduleTable>` (default `None` → DP only).
-   The table is a `Copy` value (tag + `&'static` entry slice), returned by value as
-   `shipped_table` already does.
-4. **Downstream projects** (Jolt) depend on the engine + their own generated catalog
-   crate, not on `akita-schedules`.
-5. **CI `profile` builds with `--features profile-ci`**, linking only schedules for
-   modes in the CI benchmark matrix, enforced by a minimal guard over the existing
-   `AKITA_BENCH_CASES` (no new manifest SSOT).
-6. **Rename planner misnomers** (`stage1` closure parameters) to match
+3. **Each `CommitmentConfig` preset opts in** to zero or one catalog via
+   `schedule_catalog() -> Option<GeneratedScheduleTable>` (default `None` means DP
+   only). The table is a `Copy` value (identity + `&'static` entry slice), returned
+   by value as `shipped_table` already does.
+4. **Catalog identity is verifier-reachable validation**, not just documentation.
+   A table whose identity does not match the current preset and hooks is rejected
+   before lookup.
+5. **Downstream projects** (Jolt) depend on the engine + their own generated catalog
+   crate, not on `akita-schedules`. The Akita emitter exposes the minimal API needed
+   to create those catalogs from an explicit emit spec.
+6. **Default Akita crate builds preserve current table-backed behavior**, even for
+   crates that depend on `akita-config` with `default-features = false`, by forwarding
+   a `schedules-default` bundle from `akita-pcs`, `akita-prover`, `akita-verifier`,
+   and `akita-setup`.
+7. **CI `profile` builds with `--no-default-features --features parallel,profile-ci`**,
+   linking only schedules for modes in the CI benchmark matrix, enforced by a minimal
+   guard over the existing `AKITA_BENCH_CASES` (no new manifest SSOT).
+8. **Rename planner misnomers** (`stage1` closure parameters) to match
    `CommitmentConfig` vocabulary exactly (`ring_challenge_config`).
 
 Schedule lookup remains keyed by **same-point opening batches only** (see
@@ -138,6 +159,13 @@ the `profile-ci` feature.
   `find_schedule(key, policy, …)` for the same policy and hooks. Drift guards enforce
   this per catalog (today: `generated_schedule_tables_match_find_schedule`; becomes
   per-family tests in `akita-schedules` and downstream catalogs).
+- **Catalog identity is checked before lookup.** A catalog is not just an entry slice.
+  It carries the generated policy identity, ZK mode, root fold shape, and a digest of
+  the ring-challenge configs used for every ring dimension represented by the table.
+  `resolve_schedule` compares that identity with the caller's `PlannerPolicy`,
+  `ring_challenge_config`, and `fold_challenge_shape_at_level`. A mismatch returns
+  `AkitaError::InvalidSetup`; it must not fall through to DP because that would hide
+  a broken preset/cargo-feature wiring bug.
 - **Verifier no-panic.** `resolve_schedule` and `find_schedule` return `Result`,
   never panic on malformed keys (existing contract).
 - **Determinism.** Prover and verifier both call `Cfg::runtime_schedule` with the
@@ -145,13 +173,18 @@ the `profile-ci` feature.
   for identical inputs. A table-backed prover and a DP-only verifier (different
   `schedules-*` feature sets) still agree **because** the drift guard enforces
   table ≡ DP for every shipped key; this is the load-bearing reason opt-out is safe.
-- **Default features preserve current behavior.** `akita-config` default features
-  keep every production preset table-backed, so plain `cargo test` / `cargo build` /
-  CI resolve byte-identical schedules to today. Only minimal/downstream consumers
-  (Jolt) turn `schedules-*` off.
+- **Default features preserve current behavior at the crate boundary.** `akita-config`
+  exposes `schedules-default`, and every Akita crate that currently suppresses
+  `akita-config` defaults forwards an equivalent default schedule bundle. Plain
+  `cargo test` / `cargo build` / CI resolve byte-identical schedules to today. Only
+  explicit minimal/downstream consumers (Jolt) turn `default-features = false` and
+  omit `schedules-*`.
 - **Default is DP-only for non-opted-in presets.** `schedule_catalog()` default
   `None` must not change schedules for presets that do not opt in (modulo explicit
   preset feature enables).
+- **ZK mode selects ZK table data.** When `zk` is enabled together with a schedule
+  family, Cargo forwards `zk` into `akita-schedules` through a weak dependency
+  feature, so the accessor cannot pair ZK planner semantics with non-ZK table data.
 - **Same-point batching only.** Lookup keys derive from `OpeningBatch` /
   `OpeningBatch::same_point(num_vars, num_polys)` (and `new_from_opening_batch`).
   No multipoint keys, no `ClaimIncidenceSummary` schedule path (type not in tree).
@@ -159,7 +192,8 @@ the `profile-ci` feature.
   DP itself rejects the key).
 - **CI bench coverage.** Every mode in `AKITA_BENCH_CASES` must have its `schedules-*`
   feature enabled by `profile-ci`, so the bench measures the shipped table rather than
-  the DP fallback (one-directional hard CI check).
+  the DP fallback (one-directional hard CI check). The benchmark binary is built with
+  defaults disabled so `profile-ci` can actually reduce linked table data.
 
 ### Non-Goals
 
@@ -185,9 +219,21 @@ the `profile-ci` feature.
 - [ ] `akita_planner::shipped_table` and `get_schedule` are removed, along with the
   global `crate::generated::*_table` import block and the `root_fold_is_tensor`
   disambiguation hack they required.
-- [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** — `GeneratedScheduleTable` is `Copy`).
+- [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
+- [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_family`:
+  generated policy fields, `zk_enabled`, root fold shape, ring dimensions covered by
+  the table, and a deterministic digest of `ring_challenge_config(d)` for those
+  dimensions.
+- [ ] `resolve_schedule` validates the catalog identity against the caller before
+  `table_entry`. A mismatch returns `AkitaError::InvalidSetup` with the family name
+  and the first mismatched field. A missing row still falls back to DP.
+- [ ] Add a negative unit test with a deliberately miswired catalog (e.g. D64 full
+  preset given a D64 one-hot catalog) proving `resolve_schedule` rejects the catalog
+  instead of falling back to DP.
 - [ ] Planner public closures use `ring_challenge_config` (not `stage1`) and `fold_challenge_shape_at_level` (not `fold_shape`) in signatures and docs.
 - [ ] Internal type `Stage1Fn` renamed to `RingChallengeConfigFn`.
+- [ ] `estimate_proof_bytes` and `schedule_from_entry` use the renamed closure
+  parameters so generated-table readers do not keep the old `stage1` terminology.
 
 #### `akita-schedules` crate
 
@@ -195,18 +241,23 @@ the `profile-ci` feature.
   modules moved from `akita-planner/src/generated/`.
 - [ ] Each family is behind a Cargo feature (e.g. `fp128-d64-onehot`, `fp128-d64-full`).
 - [ ] `akita-planner` default build contains **no** generated table `.rs` files.
-- [ ] `gen_schedule_tables` writes into `akita-schedules/src/generated/` and updates
-  family feature wiring (not `akita-planner`). The binary itself stays in
-  `akita-config` (only crate that can name presets); only its output dir changes.
+- [ ] `gen_schedule_tables` writes into `akita-schedules/src/generated/`, emits catalog
+  identities, and updates family feature wiring (not `akita-planner`). The binary
+  itself stays in `akita-config` (only crate that can name presets).
 - [ ] Table **types** (`GeneratedScheduleTable`, `GeneratedStep`, `GeneratedFoldStep`,
   `GeneratedScheduleKey`, `table_entry`, `expand`, `schedule_from_entry`) stay in
   `akita-planner`; `akita-schedules` is data-only and depends on `akita-planner` for
   them. No dependency cycle (`akita-schedules → akita-planner`; `akita-config →
   akita-schedules`).
+- [ ] `akita-schedules` has `default = []`, one feature per family, `all-schedules`,
+  and `zk`. Family features control modules; `zk` selects `_zk` data for every enabled
+  family. Enabling `zk` alone does not enable any family.
 - [ ] `ALL_GENERATED_FAMILIES` and the drift guard `generated_schedule_tables_match_find_schedule`
   **stay in `akita-config`** (they name preset `Cfg` types and call
   `Cfg::runtime_schedule`, which `akita-schedules` cannot do). Each family row is
   gated behind its `schedules-*` feature; a meta-feature runs the full cross-product.
+- [ ] `akita-planner` default build contains no `src/generated/fp*.rs` table data
+  modules. `akita_planner::generated` may remain as the type/expansion namespace.
 
 #### Opt-in presets
 
@@ -217,43 +268,91 @@ the `profile-ci` feature.
   `#[cfg(feature = "schedules-…")]` returning `Some(akita_schedules::…::table())`.
 - [ ] Preset feature flags documented in `akita-config/Cargo.toml`; default preset
   features preserve current dev/CI behavior for enabled families.
+- [ ] `akita-config` has optional dependency
+  `akita-schedules = { path = "../akita-schedules", optional = true, default-features = false }`.
+- [ ] `akita-config` schedule features use the exact shape
+  `schedules-fp128-d64-onehot = ["dep:akita-schedules", "akita-schedules/fp128-d64-onehot"]`
+  (modulo family name).
+- [ ] `akita-config/zk` forwards `akita-schedules?/zk` so ZK mode reaches the schedule
+  crate only when the optional schedule dependency is enabled.
+- [ ] `akita-config` exposes `schedules-default` and `all-schedules`. Defaults include
+  `schedules-default` unless a caller opts out with `default-features = false`.
+- [ ] `akita-pcs`, `akita-prover`, `akita-verifier`, and `akita-setup` each expose and
+  default-enable a `schedules-default` forwarding feature because they currently use
+  `akita-config` with `default-features = false` somewhere in the graph. `akita-pcs`
+  forwards it explicitly through its own default feature list.
+- [ ] Minimal consumers can still build DP-only by setting `default-features = false`
+  and not enabling any `schedules-*` feature.
 
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
   `AkitaScheduleLookupKey::new_from_opening_batch` / `OpeningBatch::same_point`.
+- [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
+  per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
+  emit `[1, 38]` without changing Akita core.
 - [ ] Spec [`planner-incidence-generalization.md`](planner-incidence-generalization.md)
   header notes schedule-key portions are **superseded** by this spec (file may remain
   for historical witness-layout notes until archived).
 
 #### CI profile isolation (Option B, minimal guard)
 
-- [ ] `cargo build --release --example profile --features profile-ci` is what CI uses.
+- [ ] The head profile binary in CI uses
+  `cargo build --release --example profile --no-default-features --features parallel,profile-ci`.
+  `--no-default-features` is required; otherwise default schedule bundles would link
+  all production tables and defeat profile isolation.
 - [ ] `profile-ci` on `akita-pcs` enables the union of `schedules-*` features for the
   presets exercised by the benchmark matrix (and nothing else).
 - [ ] `AKITA_BENCH_CASES` in `.github/workflows/profile-bench.yml` stays the single
   list of CI bench cases (no new manifest SSOT, no exporter script).
+- [ ] The PR merge-base profile binary has a transition probe: if the merge-base
+  checkout defines `profile-ci`, build it with the same `--no-default-features
+  --features parallel,profile-ci`; otherwise build it with the pre-refactor default
+  command. This keeps the introducing PR benchmarkable against old main.
 - [ ] A **hard CI gate** `scripts/check_profile_ci_features.sh` parses
   `AKITA_BENCH_CASES` from the workflow, maps each `mode` to its required
   `schedules-*` feature, and fails if `profile-ci` does not enable that feature.
   This is the only drift check; it does not reconcile three separate sources.
+- [ ] The same script warns (or fails if cheap to implement) when a bench case uses a
+  `num_polys` value outside the generated family key list, because that would measure
+  DP fallback even with the family feature enabled.
+- [ ] Add a hard link-isolation smoke check for the CI profile binary, such as
+  `scripts/check_profile_ci_linkage.sh`, that fails if an obvious non-`profile-ci`
+  schedule family symbol is present. This can be conservative; it only needs to catch
+  accidental all-table linkage.
 
-#### Downstream path (documented, Jolt follow-up)
+#### Downstream path (documented, Jolt-ready)
 
 - [ ] Spec documents Jolt pattern: `jolt-schedules` crate +
   `JoltD64OneHot::schedule_catalog()` without `akita-schedules` dependency.
-- [ ] A reusable emit API (`EmitSpec` accepting `PlannerPolicy` + hook fn pointers)
-  so Jolt can generate catalogs outside `ALL_GENERATED_FAMILIES`. This is **Phase 3+**
-  follow-up, not required for the engine cutover.
+- [ ] A reusable emit API (`EmitSpec` accepting `PlannerPolicy` + hook fn pointers,
+  key list, module name, const name, family name, and output directory) exists so Jolt
+  can generate catalogs outside `ALL_GENERATED_FAMILIES`. The CLI may keep using
+  `ALL_GENERATED_FAMILIES`; the library surface must not require Akita preset types.
+- [ ] Jolt can depend on `akita-planner` and its own catalog crate without depending
+  on `akita-config` or `akita-schedules`.
 
 #### Correctness
 
 - [ ] `cargo test --workspace` and `cargo test --workspace --features zk` pass.
 - [ ] Drift guard (kept in `akita-config`): every enabled family's table-hit
   expansion matches the DP (`generated_schedule_tables_match_find_schedule`).
+- [ ] The drift guard first asserts that `Cfg::schedule_catalog()` is `Some` for every
+  enabled family and that `table_entry` hits for every enumerated key. It must not
+  pass vacuously by comparing DP fallback against DP.
+- [ ] Run the full schedule cross-product guard in a dedicated job:
+  `cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule`
+  and the ZK variant:
+  `cargo test -p akita-config --features zk,all-schedules generated_schedule_tables_match_find_schedule`.
 - [ ] `runtime_fallback` tests pass. Note: `tests/runtime_fallback.rs` currently
   calls `akita_planner::shipped_table` directly (line ~47); migrate it to
   `Cfg::schedule_catalog()` + `table_entry` since `shipped_table` is removed.
+- [ ] `crates/akita-config/src/proof_optimized/tests.rs` migrates off direct
+  `akita_planner::generated::*_table` imports. Tests that require table data either
+  use `Cfg::schedule_catalog().expect(...)` under the matching schedule feature or
+  import `akita_schedules::*_table` behind the same feature.
+- [ ] Add feature-off tests for one table-backed preset proving `schedule_catalog()`
+  is `None` and `runtime_schedule` still equals `find_schedule` through DP.
 - [ ] Profile benchmark CI cases produce identical timing-quality results (median
   setup/prove/verify within noise of pre-refactor; no functional regression).
 
@@ -261,23 +360,31 @@ the `profile-ci` feature.
 
 | Area | Tests |
 |------|-------|
-| Engine | Existing `runtime_fallback.rs` (migrated off `shipped_table`), planner unit tests |
-| Per-family drift | `generated_schedule_tables_match_find_schedule` in `akita-config`, gated per `schedules-*` feature; meta-feature for full cross-product |
-| Preset opt-in | `akita-config` tests: with feature on, table hit; with feature off, DP path |
+| Engine | Existing `runtime_fallback.rs` (migrated off `shipped_table`), planner unit tests, negative mismatched-catalog rejection test |
+| Catalog identity | Unit tests for identity match/mismatch, ZK mismatch, root fold shape mismatch, and ring-challenge digest mismatch |
+| Per-family drift | `generated_schedule_tables_match_find_schedule` in `akita-config`, gated per `schedules-*` feature; `all-schedules` meta-feature for full cross-product |
+| Preset opt-in | `akita-config` tests: with feature on, catalog is `Some` and table hit; with feature off, catalog is `None` and runtime uses DP |
+| Direct table tests | `proof_optimized/tests.rs` migrated to feature-gated `schedule_catalog()` or `akita_schedules::*_table()` access |
 | profile-ci coverage | `scripts/check_profile_ci_features.sh` in CI (parses `AKITA_BENCH_CASES`) |
-| Profile compile | CI builds `profile` with only `profile-ci` (no `--all-features`) |
+| profile-ci linkage | Hard smoke check that profile-ci binary does not contain an obvious non-profile family symbol |
+| Profile compile | CI builds head with `--no-default-features --features parallel,profile-ci`; merge-base build probes feature availability |
 | E2E | `akita-pcs` e2e, `batched_aggregated_e2e`, tiered/tensor cases with appropriate features |
 
 Feature combinations: run drift guards under default and `zk` for families that ship
-`zk` tables (separate modules or `*_zk` features).
+`zk` tables. The required schedule-specific jobs are:
+
+```bash
+cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
+cargo test -p akita-config --features zk,all-schedules generated_schedule_tables_match_find_schedule
+```
 
 ### Performance
 
 - **No proof-size or transcript-byte change** for identical `(preset, key)` pairs
   when the same catalog row is used.
 - **Compile time / link size:** `profile` CI binary MUST NOT link `akita-schedules`
-  families outside the `profile-ci` union (verify via `cargo tree` / optional `nm`
-  symbol check).
+  families outside the `profile-ci` union (verify via `cargo tree` and a hard
+  symbol-smoke check).
 - **Runtime:** Table hit path unchanged (same `schedule_from_entry` code, different
   crate path). DP fallback unchanged.
 - **CI drift test duration:** May improve when the full cross-product guard runs in a
@@ -329,14 +436,72 @@ pub fn resolve_schedule(
 
 Behavior:
 
-1. If `catalog` is `Some`, look up `generated_schedule_lookup_key(key)` in the
-   table; on hit, `schedule_from_entry`.
-2. Otherwise (no catalog, or miss), `find_schedule`.
+1. If `catalog` is `Some`, validate the catalog identity against `policy`,
+   `ring_challenge_config`, and `fold_challenge_shape_at_level`.
+2. If identity validation fails, return `AkitaError::InvalidSetup`.
+3. If identity validation succeeds, look up `generated_schedule_lookup_key(key)` in
+   the table; on hit, `schedule_from_entry`.
+4. Otherwise (no catalog, or miss), `find_schedule`.
 
 `resolve_schedule` no longer computes `root_fold_is_tensor` at all — that hack only
 existed so the global registry could disambiguate the tensor table from the flat one.
 `fp128::D64OneHot` and `tensor_verifier::fp128::D64OneHotTensor` are different presets
 that each return their own `schedule_catalog()`, so the discriminator is deleted.
+
+#### Catalog identity
+
+`GeneratedScheduleTable` becomes:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedScheduleCatalogIdentity {
+    pub family_name: &'static str,
+    pub zk_enabled: bool,
+    pub sis_family: SisModulusFamily,
+    pub ring_dimension: usize,
+    pub decomposition: DecompositionParams,
+    pub ring_subfield_norm_bound: u32,
+    pub claim_ext_degree: usize,
+    pub chal_ext_degree: usize,
+    pub basis_range: (u32, u32),
+    pub onehot_chunk_size: usize,
+    pub tiered: bool,
+    pub root_fold_shape: TensorChallengeShape,
+    pub ring_dimensions: &'static [usize],
+    pub ring_challenge_config_digest: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GeneratedScheduleTable {
+    pub identity: GeneratedScheduleCatalogIdentity,
+    pub entries: &'static [GeneratedScheduleTableEntry],
+}
+```
+
+Validation derives the expected identity as follows:
+
+- Policy fields copy directly from `PlannerPolicy`.
+- `zk_enabled` is `cfg!(feature = "zk")` in `akita-planner`.
+- `root_fold_shape` is evaluated with `AkitaScheduleInputs { num_vars: key.num_vars,
+  level: 0, current_w_len: 1usize.checked_shl(key.num_vars as u32)? }`.
+- `ring_dimensions` are the distinct ring degrees represented by the compact table,
+  including fold steps and root-direct commit payloads. The emitter stores them sorted
+  and deduplicated.
+- `ring_challenge_config_digest` is a deterministic non-cryptographic digest over
+  `(d, ring_challenge_config(d)?)` for those ring dimensions. The digest is only a
+  wiring guard, not a security primitive.
+
+The emitter rejects a table whose key envelope would produce mixed root fold shapes.
+All current Akita families are constant across the envelope (flat, tensor, or tiered
+flat), and a future dynamic-shape family should be split into separate catalogs.
+
+If `checked_shl` or `ring_challenge_config(d)` fails while validating a `Some`
+catalog, return the same `AkitaError` shape the DP would return for invalid setup.
+Do not default to flat root shape on overflow.
+
+Catalog identity does not replace the drift guard. It catches wrong-family and
+wrong-feature wiring at runtime; the drift guard proves that every enabled table row
+is still the DP optimum for the exact hooks on this branch.
 
 #### `CommitmentConfig` hook
 
@@ -371,11 +536,17 @@ impl CommitmentConfig for D64OneHot {
 
 `akita-config` features:
 
-- `schedules-fp128-d64-onehot` → `akita-schedules/fp128-d64-onehot`
-- Preset bundles (e.g. `fp128-d64-onehot-preset`) enable schedule + preset impl
+- `schedules-fp128-d64-onehot` →
+  `["dep:akita-schedules", "akita-schedules/fp128-d64-onehot"]`
+- `zk` → `["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]`
+- `schedules-default` → current production table set
+- `all-schedules` → union of every `schedules-*` family, for drift CI
 
-Default `akita-config` features for dev can include common schedules; **Jolt omits
-all `schedules-*` features**.
+Default `akita-config` features include `schedules-default`. Since `akita-pcs`,
+`akita-prover`, and `akita-verifier` currently depend on `akita-config` with
+`default-features = false`, they must forward an equivalent `schedules-default`
+feature from their own default feature lists. **Jolt omits all `schedules-*` features**
+by depending with `default-features = false`.
 
 #### Naming: `stage1` → `ring_challenge_config`
 
@@ -416,6 +587,10 @@ num_commitment_groups = 1        (in generated key shape)
 - `num_vars` in `[min_num_vars, max_num_vars]`
 - `num_polys` in per-family list (e.g. `[1, 4]` default; Jolt may ship `[1, 38]`)
 
+The current `family_keys` helper hardcodes `[1, 4]`. This refactor moves that list
+onto `GeneratedFamily` so Akita and downstream catalogs can enumerate different batch
+widths without changing planner code.
+
 This replaces the stale incidence generalization plan. If multi-commitment same-point
 (`OpeningBatch::from_commitment_groups`) is enabled on the folded path in a future
 PR, key derivation may extend `new_from_opening_batch` without reviving multipoint.
@@ -428,7 +603,8 @@ PR, key derivation may extend `new_from_opening_batch` without reviving multipoi
 
 - `src/generated/*.rs` (moved from `akita-planner`), referencing the table types via
   `akita_planner::generated::…`
-- `src/lib.rs` exposes `*_table()` constructors per family
+- `src/lib.rs` exposes `*_table()` constructors per family. Each constructor returns
+  `GeneratedScheduleTable { identity, entries }`.
 - Table **types stay in `akita-planner`** (`GeneratedScheduleTable`, `GeneratedStep`,
   `table_entry`, `expand`, `schedule_from_entry`); `akita-schedules` is data-only and
   depends on `akita-planner` for them
@@ -448,8 +624,78 @@ PR, key derivation may extend `new_from_opening_batch` without reviving multipoi
 Meta-features:
 
 - `all-schedules` — union of every family (drift CI job, not default)
-- Individual `zk` variants: either `zk` feature on crate mirroring planner, or
-  separate `fp128-d64-onehot-zk` features (match current `cfg(zk)` split)
+- `zk` — switches enabled family accessors from non-ZK generated modules to `_zk`
+  generated modules. It does not enable any family by itself.
+
+`akita-schedules/Cargo.toml` shape:
+
+```toml
+[features]
+default = []
+zk = ["akita-planner/zk"]
+all-schedules = [
+    "fp128-d64-onehot",
+    "fp128-d64-full",
+    # every other family
+]
+fp128-d64-onehot = []
+fp128-d64-full = []
+```
+
+`akita-config/Cargo.toml` shape:
+
+```toml
+[features]
+default = ["schedules-default"]
+zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
+schedules-default = [
+    "schedules-fp128-d64-onehot",
+    "schedules-fp128-d64-full",
+    "schedules-fp128-d128-onehot",
+    "schedules-fp128-d128-full",
+    "schedules-fp32-d128-onehot",
+    "schedules-fp32-d256-onehot",
+    "schedules-fp64-d128-onehot",
+    "schedules-fp64-d128-full",
+    "schedules-fp64-d256-onehot",
+]
+all-schedules = [
+    "schedules-default",
+    "schedules-fp128-d64-onehot-tensor",
+    "schedules-fp128-d64-onehot-tiered",
+]
+schedules-fp128-d64-onehot = [
+    "dep:akita-schedules",
+    "akita-schedules/fp128-d64-onehot",
+]
+
+[dependencies]
+akita-schedules = {
+    version = "0.1.0",
+    path = "../akita-schedules",
+    optional = true,
+    default-features = false,
+}
+```
+
+`akita-pcs` keeps a smaller `profile-ci` feature:
+
+```toml
+[features]
+default = ["parallel", "schedules-default"]
+schedules-default = ["akita-config/schedules-default"]
+profile-ci = [
+    "akita-config/schedules-fp32-d128-onehot",
+    "akita-config/schedules-fp64-d128-onehot",
+    "akita-config/schedules-fp128-d64-onehot",
+    "akita-config/schedules-fp128-d64-full",
+]
+```
+
+`akita-prover`, `akita-verifier`, and `akita-setup` expose the same
+`schedules-default = ["akita-config/schedules-default"]` forwarding feature and add
+it to their defaults unless there is a concrete crate-specific reason not to. This is
+what preserves current table-backed behavior for standalone builds of those packages.
 
 **`ALL_GENERATED_FAMILIES`** **stays in `akita-config`.** It is a list of
 `regen::<Cfg>` / `table_backed::<Cfg>` function pointers that name preset `Cfg` types
@@ -458,27 +704,41 @@ and call `Cfg::runtime_schedule` — only `akita-config` can name presets, and
 guard both live in `akita-config` and share this list. `akita-schedules` holds **only**
 the static table data + `*_table()` constructors; it does not enumerate presets.
 
+After this refactor, `GeneratedFamily` also records the schedule feature name, the
+`family_name` string used in the catalog identity, and the per-family `num_polys`
+list. Rows are gated with `#[cfg(feature = "schedules-...")]`. Drift tests that are
+meant to exercise catalogs must assert that the enabled family list is non-empty, so
+they cannot pass by silently checking an empty set.
+
 ### Emitter (`gen_schedule_tables`)
 
 - Binary **stays in `akita-config`** (only crate that names preset `Cfg` types). The
-  single change in the engine cutover is its output directory.
+  main change in the engine cutover is its output directory plus catalog-identity
+  emission.
 - Output directory: `crates/akita-schedules/src/generated/`.
 - Updates `akita-schedules` `lib.rs` feature wiring (not `resolve.rs` imports).
+- Emits each table's `GeneratedScheduleCatalogIdentity`, including sorted distinct
+  ring dimensions and ring-challenge digest.
+- Runs `cargo fmt -p akita-planner -p akita-schedules -p akita-config` after regen.
 
-**Future Jolt-facing emit API** (Phase 3+ follow-up, not the engine cutover):
+**Jolt-facing emit API** (part of the engine cutover):
 
 ```rust
 pub struct EmitSpec {
     pub module_name: &'static str,
     pub const_name: &'static str,
+    pub family_name: &'static str,
     pub policy: PlannerPolicy,
     pub keys: Vec<AkitaScheduleLookupKey>,
+    pub num_polys: &'static [usize],
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    pub zk_enabled: bool,
 }
 ```
 
-Jolt runs emit with `policy_of::<JoltD64OneHot>()` and a `ScheduleKeyEnvelope` (e.g.
+The CLI path adapts `ALL_GENERATED_FAMILIES` into `EmitSpec` values. Jolt runs the same
+emitter library with `policy_of::<JoltD64OneHot>()` and a `ScheduleKeyEnvelope` (e.g.
 `num_vars: 18..=32`, `num_polys: [1, 38]`), writing `jolt-schedules/`.
 
 ### CI profile isolation (minimal guard)
@@ -495,14 +755,15 @@ This is the *only* drift that matters for the refactor. Note what is **not** a
 problem: link stripping already falls out of per-preset feature gating. The `profile`
 example names preset *types* (`type Cfg = fp128::D64Full`), which are always
 available; only the table *data* is feature-gated. So
-`--features profile-ci` linking the schedule families for the bench matrix needs no
-manifest — it is just a feature list. We do not need a new source of truth, a TOML
-file, an exporter script, or a three-way reconciler.
+`--no-default-features --features parallel,profile-ci` linking the schedule families
+for the bench matrix needs no manifest — it is just a feature list. We do not need a
+new source of truth, a TOML file, an exporter script, or a three-way reconciler.
 
 #### Solution: one feature + one coverage guard
 
 **`akita-pcs/Cargo.toml`** — `profile-ci` enables the `schedules-*` features for the
-presets the benchmark matrix exercises:
+presets the benchmark matrix exercises. It is intentionally separate from
+`schedules-default`:
 
 ```toml
 [features]
@@ -514,12 +775,29 @@ profile-ci = [
 ]
 ```
 
-**Workflow** keeps `AKITA_BENCH_CASES` as-is and just builds with the feature:
+**Workflow** keeps `AKITA_BENCH_CASES` as-is. The head build disables defaults so the
+profile-ci union is the only linked schedule set:
 
 ```yaml
 - name: Build profile binary
-  run: cargo build --release --quiet --example profile --features profile-ci
+  run: cargo build --release --quiet --example profile --no-default-features --features parallel,profile-ci
 ```
+
+The PR merge-base build has a compatibility probe because the introducing PR compares
+against a checkout that does not yet define `profile-ci`:
+
+```bash
+if cargo metadata --no-deps --format-version 1 \
+    | python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+  cargo build --release --quiet --example profile \
+    --no-default-features --features parallel,profile-ci
+else
+  cargo build --release --quiet --example profile
+fi
+```
+
+The helper can be a tiny Python script or an inline Python snippet. It must inspect the
+merge-base checkout, not the PR head.
 
 **`scripts/check_profile_ci_features.sh`** (hard CI gate) is the single drift check:
 
@@ -528,6 +806,8 @@ profile-ci = [
    in the script (e.g. `onehot_fp128_d64 → schedules-fp128-d64-onehot`).
 3. Parse the `profile-ci` feature list from `akita-pcs/Cargo.toml`.
 4. **Fail** if any benched mode's required feature is not enabled by `profile-ci`.
+5. Warn or fail if a bench case's `num_polys` is not generated for that family
+   (currently the Akita tables emit `[1, 4]`; Jolt-owned catalogs may emit `[1, 38]`).
 
 The check is one-directional (every benched mode must be covered); it does not force
 exact set equality, so `profile-ci` may carry a small extra family without failing.
@@ -538,6 +818,18 @@ uses a `num_polys` outside the family's emitted list (would hit DP, not the tabl
 Modes do **not** need `#[cfg]` gates in `modes.rs`: gating modes only saves compile
 time of unused mode code (a weaker goal) and is what forced the rejected three-way
 reconciler. Keeping all modes always-compiled keeps the guard to a single direction.
+
+#### Linkage smoke check
+
+Add `scripts/check_profile_ci_linkage.sh` after the head profile build:
+
+1. Build with `--no-default-features --features parallel,profile-ci`.
+2. Run `nm` (or `llvm-nm` if available) on `target/release/examples/profile`.
+3. Fail if a known non-profile family symbol is present, for example a D128 full or
+   D256 one-hot table that is not in `profile-ci`.
+
+This check is intentionally conservative. It only needs to catch accidental all-table
+linkage from default features or a stray dependency edge.
 
 #### Why Option B (one binary, feature union)
 
@@ -558,8 +850,9 @@ measure binary footprint.
   name preset types, which are always available). No `#[cfg]` gating of modes.
 - A mode whose `schedules-*` feature is off still runs — it resolves via the DP
   fallback. The `profile-ci` feature ensures the benched modes hit their tables.
-- Local dev: `cargo run --release --example profile --features akita-config/schedules-fp128-d64-onehot`
-  links one family; without it, the same mode runs DP-backed.
+- Local dev single-family isolation:
+  `cargo run --release --example profile --no-default-features --features parallel,akita-config/schedules-fp128-d64-onehot`.
+  Without a schedule feature, the same mode runs DP-backed.
 
 ### Downstream: Jolt
 
@@ -567,10 +860,13 @@ measure binary footprint.
    thin newtype).
 2. Crate `jolt-schedules` with generated `jolt_fp128_d64_onehot.rs` (keys:
    `num_vars` envelope × `num_polys` e.g. `[1, 38]`).
-3. `schedule_catalog()` returns `Some(jolt_schedules::…_table())`; **no**
+3. Jolt invokes the shared emitter library through `EmitSpec`, not
+   `akita_config::generated_families::ALL_GENERATED_FAMILIES`.
+4. `schedule_catalog()` returns `Some(jolt_schedules::…_table())`; **no**
    `akita-schedules` dependency.
-4. Jolt CI drift test: `assert_catalog_matches_dp` on Jolt keys only.
-5. LayerZero PR #198 style changes (wide batch rows in Akita core) are **not**
+5. Jolt CI drift test: `assert_catalog_matches_dp` on Jolt keys only, including an
+   assertion that each generated Jolt key hits the Jolt catalog.
+6. LayerZero PR #198 style changes (wide batch rows in Akita core) are **not**
    required for Jolt integration.
 
 ### Alternatives considered
@@ -578,6 +874,7 @@ measure binary footprint.
 | Alternative | Why rejected |
 |-------------|--------------|
 | Keep `shipped_table()` global registry | Cannot isolate link-time catalogs; forces downstream upstreaming |
+| Trust per-preset catalog wiring without runtime identity | Too easy to silently attach a one-hot/tensor/tiered catalog to the wrong preset; verifier-reachable code should reject this as invalid setup |
 | Move all tables out of Akita repo | User requirement: tables stay on `main`, grow as needed (e.g. D32) |
 | Runtime plugin / dynamic loading | Rust static tables; unnecessary complexity |
 | Per-case CI binaries (Option A) | Compile cost; user chose Option B |
@@ -591,11 +888,18 @@ measure binary footprint.
 
 - Update [`AGENTS.md`](../AGENTS.md): crate graph (`akita-schedules`), opt-in
   catalogs, one-line "edit the mode→feature table in `check_profile_ci_features.sh`
-  when adding a bench case" note, and the `stage1 → ring_challenge_config` rename.
+  when adding a bench case" note, the `--no-default-features --features
+  parallel,profile-ci` benchmark build, and the `stage1 → ring_challenge_config`
+  rename.
 - Fold into [`book/src/how/configuration.md`](../book/src/how/configuration.md) when
   implemented.
 - Update [`docs/doc-blast-radius.json`](../docs/doc-blast-radius.json): add
-  `akita-schedules` and `scripts/check_profile_ci_features.sh`.
+  `akita-schedules`, `scripts/check_profile_ci_features.sh`,
+  `scripts/check_profile_ci_linkage.sh`, and the merge-base feature-probe helper if it
+  is added as a standalone script.
+- Update CI docs/comments near `.github/workflows/profile-bench.yml`: the merge-base
+  profile build intentionally probes for `profile-ci` because the introducing PR must
+  benchmark against pre-refactor main.
 - Add note to [`planner-incidence-generalization.md`](planner-incidence-generalization.md)
   `Status` / header: schedule-key portions superseded.
 - [`crates/akita-planner/README.md`](../crates/akita-planner/README.md): engine vs
@@ -608,30 +912,38 @@ measure binary footprint.
 1. Add `resolve_schedule` with `catalog: Option<GeneratedScheduleTable>` parameter
    (by value); rename planner `stage1`/`Stage1Fn` → `ring_challenge_config`/
    `RingChallengeConfigFn`.
-2. Add `CommitmentConfig::schedule_catalog()` default `None`; wire `runtime_schedule`.
-3. Create `akita-schedules` (data-only, depends on `akita-planner` types); move
+2. Add `GeneratedScheduleCatalogIdentity` and runtime identity validation, including
+   negative tests for wrong family, wrong root fold shape, wrong ZK mode, and wrong
+   ring-challenge digest.
+3. Add `CommitmentConfig::schedule_catalog()` default `None`; wire `runtime_schedule`.
+4. Create `akita-schedules` (data-only, depends on `akita-planner` types); move
    generated `.rs` modules there; feature-gate families. Retarget `gen_schedule_tables`
    output dir.
-4. Point presets at catalogs via `#[cfg]`-gated `schedule_catalog()` overrides
-   (default features = current behavior).
-5. Delete `shipped_table`, `get_schedule`, the planner `generated/` `*_table` import
+5. Point presets at catalogs via `#[cfg]`-gated `schedule_catalog()` overrides
+   (default features = current behavior through forwarded `schedules-default`).
+6. Delete `shipped_table`, `get_schedule`, the planner `generated/` `*_table` import
    block, and the `root_fold_is_tensor` hack in `resolve.rs`.
-6. Keep `ALL_GENERATED_FAMILIES` + drift guard in `akita-config`; gate each family row
+7. Keep `ALL_GENERATED_FAMILIES` + drift guard in `akita-config`; gate each family row
    behind its `schedules-*` feature; add `all-schedules` meta-feature. Migrate
-   `tests/runtime_fallback.rs` off `shipped_table` to `Cfg::schedule_catalog()`.
+   `tests/runtime_fallback.rs` and `proof_optimized/tests.rs` off direct planner table
+   constructors.
+8. Add `schedules-default` forwarding features to `akita-pcs`, `akita-prover`,
+   `akita-verifier`, and `akita-setup`.
 
 ### Phase 2 — `profile-ci` and the coverage guard
 
 1. Add `profile-ci` feature on `akita-pcs` enabling the bench matrix's `schedules-*`.
 2. Add `scripts/check_profile_ci_features.sh` (parses `AKITA_BENCH_CASES`).
-3. Update `profile-bench.yml` to build `--features profile-ci`; keep `AKITA_BENCH_CASES`.
-4. Wire the coverage guard into CI (doc-guardrails or the profile workflow).
+3. Add the conservative linkage smoke check for the profile-ci binary.
+4. Update `profile-bench.yml` head build to use `--no-default-features --features
+   parallel,profile-ci`; add the merge-base compatibility probe.
+5. Wire both guards into CI (doc-guardrails or the profile workflow).
 
-### Phase 3 — Emitter and D32 expansion
+### Phase 3 — Emitter API and D32 expansion
 
-1. Retarget `gen_schedule_tables` output to `akita-schedules`.
-2. Emit D32 families if missing (user: "maybe even more").
-3. Expose `EmitSpec` for downstream (Jolt).
+1. Extract the reusable `EmitSpec` API used by both Akita and downstream catalogs.
+2. Retarget `gen_schedule_tables` output to `akita-schedules`.
+3. Emit D32 families if missing (user: "maybe even more").
 
 ### Phase 4 — Jolt (separate repo PR)
 
@@ -643,9 +955,11 @@ measure binary footprint.
 |------|------------|
 | Feature matrix explosion | One feature per family; meta `all-schedules` for full drift only |
 | Bench case added without its schedule feature | `check_profile_ci_features.sh` hard gate parses `AKITA_BENCH_CASES`; one-line AGENTS.md note |
-| Production preset silently degraded to DP by a missing feature | `akita-config` default features keep production presets table-backed; drift guard runs under those defaults |
-| `zk` / non-`zk` table split | Mirror current `cfg(zk)` module split in features |
+| Production preset silently degraded to DP by a missing feature | Forward `schedules-default` through top-level crates; drift guard asserts `schedule_catalog().is_some()` and table hits for enabled rows |
+| Wrong catalog attached to a preset | Runtime catalog identity validation rejects the mismatch before lookup |
+| `zk` / non-`zk` table split | `akita-config/zk` forwards `akita-schedules?/zk`; identity includes `zk_enabled` |
 | Tensor/tiered presets | Separate families (already separate tables); each names its own catalog, so the `root_fold_is_tensor` runtime hack is deleted |
+| Profile-ci accidentally links defaults | Build with `--no-default-features` and run linkage smoke check |
 
 ## References
 
