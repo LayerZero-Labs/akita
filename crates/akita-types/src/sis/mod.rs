@@ -22,6 +22,7 @@
 pub mod ajtai_key;
 pub mod decomposition_digits;
 pub mod fold_l2_certificate;
+pub mod fold_witness_grind;
 pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
@@ -42,10 +43,14 @@ pub use fold_l2_certificate::{
     l2_collision_bucket_for_z_squared, realizable_carry_budget, select_l2_certificate_realization,
     CarryCellLayout, FoldNormGrouping, L2CertificateRealization,
 };
+pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use four_square::{four_squares, four_squares_u128};
 pub use norm_bound::{
-    committed_fold_collision_l2_sq, fold_witness_beta, isqrt_ceil, l2_sq_from_linf,
-    ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
-    FoldWitnessNorms,
+    committed_fold_collision_l2_sq, fold_witness_beta, fold_witness_linf_cap,
+    fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
+    isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
+    rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessLinfCapPolicy, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };

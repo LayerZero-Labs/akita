@@ -6,11 +6,13 @@
 //! the gadget row scalars and the `(m, r)`-split search, which *compose* those
 //! primitives but contain no SIS formula of their own.
 
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
+use std::collections::HashMap;
 
 use crate::sis::{
     committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
-    FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
 };
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
@@ -81,6 +83,8 @@ pub fn optimal_m_r_split(
     ring_subfield_norm_bound: u32,
     fold_challenge: FoldChallengeNorms,
     fold_witness: FoldWitnessNorms,
+    stage1_config: &SparseChallengeConfig,
+    fold_challenge_shape: TensorChallengeShape,
     log_commit_bound: u32,
     log_basis: u32,
     reduced_vars: usize,
@@ -97,7 +101,13 @@ pub fn optimal_m_r_split(
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
 
+    let cap_policy =
+        crate::sis::fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, d as usize);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+
     let mut best: Option<(u64, usize, u32)> = None;
+    let mut fold_digit_cache: HashMap<(usize, usize), u64> = HashMap::new();
 
     for r in (1..reduced_vars).rev() {
         let num_blocks = 1u64 << r;
@@ -130,20 +140,36 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r and num_claims: num_digits_fold derives
-        // β = num_claims · 2^r · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
-        // An overflowing/degenerate β makes this `r` infeasible — skip it.
-        let Ok(delta_fold) = num_digits_fold(
-            r,
-            num_claims,
-            field_bits,
-            log_basis,
-            fold_challenge,
-            fold_witness,
-        ) else {
-            continue;
+        // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
+        // from min(β_inf, t*) rather than β_inf alone.
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+            cap_policy,
+            stage1_config,
+            fold_challenge_shape,
+            d as usize,
+            inner_width,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        );
+        let delta_fold = match fold_digit_cache.get(&(r, inner_width)) {
+            Some(cached) => *cached,
+            None => {
+                let Ok(delta_fold) = num_digits_fold(
+                    r,
+                    num_claims,
+                    field_bits,
+                    log_basis,
+                    fold_challenge,
+                    fold_witness,
+                    cap_config,
+                ) else {
+                    continue;
+                };
+                let delta_fold = delta_fold as u64;
+                fold_digit_cache.insert((r, inner_width), delta_fold);
+                delta_fold
+            }
         };
-        let delta_fold = delta_fold as u64;
 
         let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
@@ -170,9 +196,15 @@ pub fn optimal_m_r_split(
 mod tests {
     use super::*;
     use crate::sis::FoldWitnessNorms;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+        let stage1_config = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
         let fold_challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
@@ -185,6 +217,8 @@ mod tests {
             1,
             fold_challenge,
             fold_witness,
+            &stage1_config,
+            TensorChallengeShape::Flat,
             128,
             3,
             20,
@@ -198,6 +232,8 @@ mod tests {
             1,
             fold_challenge,
             fold_witness,
+            &stage1_config,
+            TensorChallengeShape::Flat,
             128,
             3,
             20,

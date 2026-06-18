@@ -340,6 +340,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
 > {
     pub(in crate::protocol::core) lp: &'a LevelParams,
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
+    pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
     pub(in crate::protocol::core) commitment_rows: &'a [CyclotomicRing<F, D>],
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
@@ -568,6 +569,13 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    validate_fold_grind_nonce(
+        &prepared.lp.fold_witness_grind_contract(
+            prepared.opening_batch.num_claims(),
+            FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
+        )?,
+        prepared.fold_grind_nonce,
+    )?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         &prepared.v,
@@ -575,6 +583,7 @@ where
         prepared.opening_batch.num_claims(),
         prepared.lp,
         prepared.m_row_layout,
+        prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) =
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(

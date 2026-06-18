@@ -804,6 +804,7 @@ mod tests {
         let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
@@ -898,6 +899,7 @@ mod tests {
                 #[cfg(feature = "zk")]
                 dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
+                0,
             );
 
             // The planner accounts for the final witness separately

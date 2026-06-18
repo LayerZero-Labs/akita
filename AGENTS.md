@@ -110,7 +110,7 @@ require Sage or an initialized submodule.
 
 Canonical: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.
 
-Under committed-fold A-role SIS pricing, **fp128** production is **D=64** (exact-shell; ~20% smaller than D128). Shipped tables: `fp128_d64_onehot`, `fp128_d128_*`. **D32** presets always use planner DP (no shipped table); **fp128 D64 dense** is also DP-only. **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128 one-hot** (CI benches at nv=28). Use `akita_config::proof_optimized::fp128::best_onehot_schedule` / `best_full_schedule` to compare ring degrees. See `.github/workflows/profile-bench.yml` for the active CI matrix.
+Under committed-fold A-role SIS pricing, **fp128** production is **D=64** (exact-shell; ~20% smaller than D128). Shipped tables: `fp128_d64_onehot`, `fp128_d64_full`, `fp128_d128_*`. **D32** presets always use planner DP (no shipped table). **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128 one-hot** (CI benches at nv=28). Use `akita_config::proof_optimized::fp128::best_onehot_schedule` / `best_full_schedule` to compare ring degrees. See `.github/workflows/profile-bench.yml` for the active CI matrix.
 
 Knobs (`AKITA_MODE`, `AKITA_NUM_VARS`, `AKITA_PROFILE_TRACE`, `AKITA_PROFILE_LOG`, `AKITA_PROFILE_ANSI`, `AKITA_PROFILE_SPAN_CLOSES`, `AKITA_ALLOW_DEBUG_PROFILE`): defaults and details in `examples/profile.rs`. `RAYON_NUM_THREADS` caps Rayon threads; `--no-default-features` disables `parallel`. The `--release` guard can be bypassed with `AKITA_ALLOW_DEBUG_PROFILE=1`.
 

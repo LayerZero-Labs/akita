@@ -150,6 +150,38 @@ impl SparseChallengeConfig {
         }
     }
 
+    /// Worst-case squared ℓ₂ norm `max ‖c‖_2²` over the challenge family.
+    ///
+    /// Used by the folded-witness `‖z‖_inf` tail bound (`t*`) in
+    /// `akita-types::sis::fold_witness_linf_tail_bound_sq`. Exact integers for every
+    /// shipping preset; see `specs/fold-linf-rejection.md`.
+    #[inline]
+    #[must_use]
+    pub fn challenge_l2_sq_max(&self) -> u128 {
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                let max_coeff_sq = nonzero_coeffs
+                    .iter()
+                    .map(|c| i128::from(*c).pow(2) as u128)
+                    .max()
+                    .unwrap_or(1);
+                (*weight as u128).saturating_mul(max_coeff_sq)
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+                ..
+            } => (*count_mag1 as u128).saturating_add(4u128.saturating_mul(*count_mag2 as u128)),
+            Self::BoundedL1Norm => {
+                // Safe upper bound `M·B` with `M = 8`, `B = 121` (exact max is 961).
+                (COEFFS_BOUND_32 as u128).saturating_mul(MAX_L1_NORM_32 as u128)
+            }
+        }
+    }
+
     /// Worst-case `L_infinity` norm of the sampled coefficients.
     #[inline]
     pub fn infinity_norm(&self) -> u32 {
@@ -421,5 +453,30 @@ mod entropy_tests {
             nonzero_coeffs: vec![-1, 1],
         };
         assert!((uni.log2_support_bits::<4>() - 24.0_f64.log2()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn challenge_l2_sq_max_matches_spec_table() {
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
+        assert_eq!(shell.challenge_l2_sq_max(), 78);
+
+        let uni128 = SparseChallengeConfig::Uniform {
+            weight: 31,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert_eq!(uni128.challenge_l2_sq_max(), 31);
+
+        let uni256 = SparseChallengeConfig::Uniform {
+            weight: 23,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert_eq!(uni256.challenge_l2_sq_max(), 23);
+
+        let bounded = SparseChallengeConfig::BoundedL1Norm;
+        assert_eq!(bounded.challenge_l2_sq_max(), 8 * 121);
     }
 }

@@ -124,6 +124,14 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         table_backed: table_backed::<fp128::D64OneHot>,
     },
     GeneratedFamily {
+        module_name: "fp128_d64_full",
+        const_name: "FP128_D64_FULL_SCHEDULES",
+        min_num_vars: 1,
+        max_num_vars: 50,
+        regen: regen::<fp128::D64Full>,
+        table_backed: table_backed::<fp128::D64Full>,
+    },
+    GeneratedFamily {
         module_name: "fp128_d64_onehot_tensor",
         const_name: "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
         min_num_vars: 1,
