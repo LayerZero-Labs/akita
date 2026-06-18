@@ -24,9 +24,10 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::eval_poly;
 use akita_types::{
-    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
-    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    AkitaStage1Proof, LevelParams, MRowLayout, RingSliceSerializer,
+    combine_polys, linear_combination, sis::FoldWitnessGrindContract,
+    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
+    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
+    MRowLayout, RingSliceSerializer,
 };
 
 #[cfg(feature = "zk")]
@@ -34,6 +35,21 @@ type Stage1VerifyOutput<E> = (Vec<E>, ZkR1csLinearCombination<E>);
 
 #[cfg(not(feature = "zk"))]
 type Stage1VerifyOutput<E> = Vec<E>;
+
+/// Reject malformed fold grind nonces before challenge replay.
+///
+/// Worst-case-β-only policies forbid reroll (`nonce = 0` only). Tail-bound-with-grind
+/// policies accept `nonce < contract.max_nonce_exclusive`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
+pub(crate) fn validate_fold_grind_nonce(
+    contract: &FoldWitnessGrindContract,
+    fold_grind_nonce: u32,
+) -> Result<(), AkitaError> {
+    contract.validate_nonce(fold_grind_nonce)
+}
 
 /// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
 /// returned [`Challenges`] is either `Flat` (per-block sparse) or
@@ -49,6 +65,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
+    grind_nonce: u32,
 ) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -68,6 +85,7 @@ where
         &lp.stage1_config,
         &lp.fold_challenge_shape,
         stage1_fold_challenge_labels(),
+        grind_nonce,
     )
 }
 
@@ -477,5 +495,61 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod fold_grind_nonce_tests {
+    use super::*;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+    use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
+
+    fn sample_level_params(fold_shape: TensorChallengeShape) -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+                operator_norm_threshold: 0,
+            },
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("level params")
+        .with_fold_challenge_shape(fold_shape)
+    }
+
+    #[test]
+    fn worst_case_beta_only_rejects_nonzero_nonce() {
+        let lp = sample_level_params(TensorChallengeShape::Tensor);
+        let contract = lp
+            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
+            .expect("contract");
+        assert_eq!(
+            contract.policy,
+            akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
+        );
+        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
+        assert!(validate_fold_grind_nonce(&contract, 1).is_err());
+    }
+
+    #[test]
+    fn tail_bound_with_grind_accepts_nonce_below_cap() {
+        let lp = sample_level_params(TensorChallengeShape::Flat);
+        let contract = lp
+            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
+            .expect("contract");
+        assert_eq!(
+            contract.policy,
+            akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        );
+        let cap = contract.max_nonce_exclusive;
+        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
+        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
+        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
     }
 }

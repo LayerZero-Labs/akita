@@ -331,12 +331,19 @@ fn terminal_level_proof_serde_round_trip() {
         #[cfg(feature = "zk")]
         tiny_terminal_stage2_masked(),
         final_witness.clone(),
+        7,
     );
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
         .extension_opening_reduction
         .is_none());
+    assert_eq!(
+        AkitaBatchedRootProof::new_terminal(without_reduction.clone())
+            .fold_grind_nonce()
+            .expect("terminal root has fold nonce"),
+        7
+    );
 
     let mut bytes = Vec::new();
     without_reduction
@@ -356,6 +363,7 @@ fn terminal_level_proof_serde_round_trip() {
         #[cfg(feature = "zk")]
         tiny_terminal_stage2_masked(),
         final_witness,
+        0,
     );
     let mut bytes_with_reduction = Vec::new();
     with_reduction

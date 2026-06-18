@@ -37,6 +37,7 @@ use crate::generated::{
     // @generated schedule table imports begin
     fp128_d128_full_table,
     fp128_d128_onehot_table,
+    fp128_d64_full_table,
     fp128_d64_onehot_table,
     fp128_d64_onehot_tensor_table,
     fp32_d128_onehot_table,
@@ -85,10 +86,9 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 /// optimum and the shipped production dimension for every field; the small
 /// primes ship one-hot only (full-field small primes exceed the small-modulus
 /// SIS floor at realistic `num_vars`). `(family, ring_degree, onehot)`
-/// combinations with no shipped table (full-field small primes, the retired
-/// `D<=64` small-prime / full-field-`fp128` presets, or any recursive-w
-/// derived policy whose `log_commit_bound` is its `log_basis`) return `None`,
-/// so the caller regenerates from scratch.
+/// combinations with no shipped table (full-field small primes, or any
+/// recursive-w derived policy whose `log_commit_bound` is its `log_basis`)
+/// return `None`, so the caller regenerates from scratch.
 pub fn shipped_table(
     policy: &PlannerPolicy,
     root_fold_is_tensor: bool,
@@ -119,9 +119,7 @@ pub fn shipped_table(
                 fp128_d64_onehot_table()
             }
         }
-        // Full-field fp128 D=64 was retired in favour of D=128; let it
-        // regenerate from scratch.
-        (SisModulusFamily::Q128, 64, false) => return None,
+        (SisModulusFamily::Q128, 64, false) => fp128_d64_full_table(),
         (SisModulusFamily::Q32, 128, true) => fp32_d128_onehot_table(),
         // Full-field fp32 is unsecurable at any audited D (small-modulus SIS
         // floor), so there is no shipped table.

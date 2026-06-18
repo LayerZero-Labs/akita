@@ -1,6 +1,7 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
+use crate::ProverTranscriptGrind;
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
@@ -112,7 +113,7 @@ where
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
-        T: Transcript<F>,
+        T: Transcript<F> + ProverTranscriptGrind<F>,
         P: AkitaPolyOps<F, D>,
         B: ProverComputeBackend<F>;
 }
