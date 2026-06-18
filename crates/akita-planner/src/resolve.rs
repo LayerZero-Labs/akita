@@ -39,17 +39,38 @@ pub fn resolve_schedule(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    catalog: Option<&GeneratedScheduleTable>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
     let Some(table) = catalog else {
-        return find_schedule(key, policy, ring_challenge_config, fold_shape);
+        return find_schedule(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
     };
-    validate_catalog_identity(table, policy, &ring_challenge_config, &fold_shape)?;
-    if let Some(entry) = table_entry(*table, generated_schedule_lookup_key(key)) {
-        return schedule_from_entry(entry, key, policy, ring_challenge_config, fold_shape);
+    validate_catalog_identity(
+        &table,
+        policy,
+        &ring_challenge_config,
+        &fold_challenge_shape_at_level,
+    )?;
+    if let Some(entry) = table_entry(table, generated_schedule_lookup_key(key)) {
+        return schedule_from_entry(
+            entry,
+            key,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
     }
-    find_schedule(key, policy, ring_challenge_config, fold_shape)
+    find_schedule(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
 }
 
 fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
@@ -91,7 +112,7 @@ pub fn schedule_from_entry(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     entry.validate()?;
     let extension_opening_width = policy.claim_ext_degree;
@@ -135,7 +156,7 @@ pub fn schedule_from_entry(
                     &ring_challenge_config,
                     fold_level,
                     current_w_len,
-                    fold_shape(inputs),
+                    fold_challenge_shape_at_level(inputs),
                     level_num_claims,
                 )?;
                 let (np, nt, nw, nz) = if fold_level == 0 {
@@ -182,7 +203,7 @@ pub fn schedule_from_entry(
                         &ring_challenge_config,
                         fold_level + 1,
                         len,
-                        fold_shape(next_inputs),
+                        fold_challenge_shape_at_level(next_inputs),
                         1,
                     )?;
                     (len, Some(next_lp), MRowLayout::WithDBlock)
@@ -239,7 +260,7 @@ pub fn schedule_from_entry(
                                 &ring_challenge_config,
                                 0,
                                 expected_root_w_len,
-                                fold_shape(AkitaScheduleInputs {
+                                fold_challenge_shape_at_level(AkitaScheduleInputs {
                                     num_vars: key.num_vars,
                                     level: 0,
                                     current_w_len: expected_root_w_len,
@@ -311,9 +332,16 @@ pub fn estimate_proof_bytes(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<usize, AkitaError> {
-    Ok(schedule_from_entry(entry, key, policy, ring_challenge_config, fold_shape)?.total_bytes)
+    Ok(schedule_from_entry(
+        entry,
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )?
+    .total_bytes)
 }
 
 #[cfg(test)]

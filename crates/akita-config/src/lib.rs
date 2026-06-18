@@ -206,7 +206,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// optional [`Self::schedule_catalog`]: validates catalog identity on a hit,
     /// expands the compact entry, and regenerates from scratch with the offline
     /// DP on a miss. The result is deterministic in
-    /// `(policy, key)` plus this config's `ring_challenge_config` / `fold_shape` hooks, so
+    /// `(policy, key)` plus this config's `ring_challenge_config` /
+    /// `fold_challenge_shape_at_level` hooks, so
     /// prover and verifier resolve identical schedules and the Fiat-Shamir
     /// `PlanSection` digest stays consistent.
     ///
@@ -221,7 +222,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
-            Self::schedule_catalog().as_ref(),
+            Self::schedule_catalog(),
         )
     }
 

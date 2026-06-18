@@ -1,5 +1,5 @@
 //! Shared metadata describing every `Cfg` family that ships with a
-//! generated schedule table in `akita-types::generated`.
+//! generated schedule table in `akita-schedules`.
 //!
 //! Both the `gen_schedule_tables` binary (the offline table emitter) and
 //! the drift-guard test consume [`ALL_GENERATED_FAMILIES`] so the two

@@ -4,7 +4,7 @@
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
-//! `fold_shape` closure pair, so the planner names no `CommitmentConfig`
+//! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-types` / `akita-challenges` /
 //! `akita-field`.
 //!

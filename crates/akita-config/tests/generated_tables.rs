@@ -85,10 +85,6 @@ fn check_family_catalog<Cfg: CommitmentConfig>(module_name: &str, keys: &[AkitaS
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
-    assert!(
-        catalog.identity.is_some(),
-        "family {module_name} must embed catalog identity in the shipped table"
-    );
     validate_catalog_identity(
         &catalog,
         &policy_of::<Cfg>(),

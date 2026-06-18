@@ -344,7 +344,7 @@ fn emit_tiered_table_accessor() -> String {
         "    GeneratedScheduleTable {\n",
         "        sis_family: SisModulusFamily::Q128,\n",
         "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
-        "        identity: Some(fp128_d64_onehot_tiered::CATALOG_IDENTITY),\n",
+        "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
         "    }\n",
         "}\n",
     )
@@ -399,7 +399,7 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n            identity: Some({zk_module}::CATALOG_IDENTITY),\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n        identity: Some({module_name}::CATALOG_IDENTITY),\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n            identity: {zk_module}::CATALOG_IDENTITY,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 

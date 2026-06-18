@@ -16,7 +16,7 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 ## Inputs And Outputs
 
-The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_shape)`.
+The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the root opening shape:
 
@@ -35,15 +35,16 @@ The public search entry point is `find_schedule(key, &policy, ring_challenge_con
 - One-hot chunk size.
 - Whether tiered commitments are enabled.
 
-The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_shape` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
+The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_challenge_shape_at_level` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
 
 ## Resolution Flow
 
-Most runtime callers use `get_schedule`, not `find_schedule` directly. `get_schedule` is the planner's cache-then-generate entry point:
+Most runtime callers use `resolve_schedule`, not `find_schedule` directly. `resolve_schedule` is the planner's cache-then-generate entry point:
 
-1. It selects a shipped table with `shipped_table(policy, root_fold_is_tensor)`.
-2. If the table contains the lookup key, it expands the compact `GeneratedScheduleTableEntry` with `schedule_from_entry`.
-3. If there is no table or no matching entry, it calls `find_schedule` and regenerates the schedule from scratch.
+1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
+2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
+3. If the validated table contains the lookup key, it expands the compact `GeneratedScheduleTableEntry` with `schedule_from_entry`.
+4. If there is no catalog or no matching entry, it calls `find_schedule` and regenerates the schedule from scratch.
 
 Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
@@ -124,7 +125,7 @@ One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. 
 
 ## Generated Tables
 
-The planner owns the generated schedule-table representation and the shipped table data under `src/generated/`. Compact entries store only the brute-forced values needed to reconstruct a full level:
+The planner owns the generated schedule-table representation and expansion logic under `src/generated/`. Shipped table data lives in the `akita-schedules` crate. Compact entries store only the brute-forced values needed to reconstruct a full level:
 
 - `ring_d`
 - `log_basis`
@@ -137,18 +138,18 @@ The planner owns the generated schedule-table representation and the shipped tab
 
 Everything else in `LevelParams` is deterministically reconstructed by `GeneratedFoldStep::expand_to_level_params`.
 
-The generated-table emitter lives in `akita-config` because only `akita-config` can name concrete preset `Cfg` types. The emitted modules are written into `akita-planner/src/generated/`, where the runtime resolver can use them without exposing generated table internals to prover or verifier code.
+The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary lives in `akita-config` because only `akita-config` can name concrete preset `Cfg` types. The emitted modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
 
 To regenerate the non-`zk` tables:
 
 ```bash
-cargo run --release -p akita-config --bin gen_schedule_tables -- crates/akita-planner/src/generated
+cargo run --release -p akita-config --bin gen_schedule_tables -- crates/akita-schedules/src/generated
 ```
 
 To regenerate the `zk` tables:
 
 ```bash
-cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- crates/akita-planner/src/generated
+cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- crates/akita-schedules/src/generated
 ```
 
 The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so shipped entries and regeneration hooks stay aligned.
@@ -169,7 +170,7 @@ When `PlannerPolicy::tiered` is enabled, the planner may split an oversized firs
 
 ### Tensor Challenges
 
-Some presets use a tensor-shaped level-0 fold challenge. `get_schedule` evaluates `fold_shape` at the root to distinguish tensor and flat tables when both policies otherwise have the same field and ring dimension.
+Some presets use a tensor-shaped level-0 fold challenge. Catalog identity records the root fold shape, so tensor and flat tables cannot be accidentally interchanged when both policies otherwise have the same field and ring dimension.
 
 Recursive levels use the flat fold shape in the current planner search.
 
@@ -187,18 +188,21 @@ The dependency direction is:
 
 ```text
 akita-config -> akita-planner -> akita-types / akita-challenges / akita-field
+akita-config -> akita-schedules -> akita-planner
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_planner::get_schedule`. The planner never names a preset type.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_planner::resolve_schedule`. The planner never names a preset type.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. It also means the DP fallback is verifier-reachable through config, so planner code follows the verifier no-panic contract: malformed verifier-facing input must return `AkitaError` rather than panic.
 
 ## Source Map
 
 - `src/lib.rs`: public planner surface and `PlannerPolicy`.
-- `src/resolve.rs`: cache-then-generate resolution, table selection, compact entry expansion, and proof-byte estimation.
+- `src/resolve.rs`: cache-then-generate resolution, catalog validation, compact entry expansion, and proof-byte estimation.
 - `src/schedule_params.rs`: DP search, root enumeration, recursive suffix search, and tiering search.
-- `src/generated/mod.rs`: generated table types, table constructors, and shipped table modules.
+- `src/generated/mod.rs`: generated table types and table lookup helpers.
 - `src/generated/expand.rs`: compact `GeneratedFoldStep` to runtime `LevelParams` expansion.
-- `crates/akita-config/src/bin/gen_schedule_tables.rs`: offline table emitter for concrete presets.
+- `src/emit/mod.rs`: reusable generated-table emitter.
+- `crates/akita-config/src/bin/gen_schedule_tables.rs`: offline table emitter adapter for concrete presets.
 - `crates/akita-config/src/generated_families.rs`: preset family list and regeneration hooks.
+- `crates/akita-schedules/src/generated/`: feature-gated shipped schedule table data.

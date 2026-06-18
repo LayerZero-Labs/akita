@@ -82,7 +82,7 @@ pub struct GeneratedScheduleCatalogIdentity {
 pub struct GeneratedScheduleTable {
     pub sis_family: SisModulusFamily,
     pub entries: &'static [GeneratedScheduleTableEntry],
-    pub identity: Option<GeneratedScheduleCatalogIdentity>,
+    pub identity: GeneratedScheduleCatalogIdentity,
 }
 
 pub mod expand;

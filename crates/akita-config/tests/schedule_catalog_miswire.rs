@@ -20,7 +20,7 @@ fn miswired_catalog_rejects_before_lookup() {
         &policy_of::<fp128::D64Full>(),
         fp128::D64Full::ring_challenge_config,
         fp128::D64Full::fold_challenge_shape_at_level,
-        Some(&wrong_catalog),
+        Some(wrong_catalog),
     )
     .expect_err("D64 full preset must reject D64 one-hot catalog");
 

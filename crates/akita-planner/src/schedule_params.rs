@@ -2,8 +2,8 @@
 //!
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
-//! the `ring_challenge_config` / `fold_shape` closures, exactly the shape
-//! `crate::schedule_from_entry` already consumes. This keeps the
+//! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
+//! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
 //! DP a pure function of `(policy, key)` so `akita-config` can call it
 //! directly on a schedule-table miss without a dependency cycle.
 
@@ -816,7 +816,7 @@ fn compute_root_direct_level_params(
 ///
 /// Runs an exhaustive DP that minimizes proof size. The result is a pure,
 /// deterministic function of `(policy, key)` (plus the `ring_challenge_config` /
-/// `fold_shape` closures, which presets derive from the same hooks the
+/// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
 /// generated tables were emitted from), so the prover and verifier
 /// regenerate identical schedules on a table miss.
 ///
@@ -829,19 +829,24 @@ pub fn find_schedule(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule_inner(key, policy, ring_challenge_config, fold_shape)
+    find_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
 }
 
 fn find_schedule_inner(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let fold_shape: FoldShapeFn<'_> = &fold_shape;
+    let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,

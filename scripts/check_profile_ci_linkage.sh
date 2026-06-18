@@ -20,7 +20,11 @@ else
   exit 1
 fi
 
-symbols=$("${nm_cmd[@]}" "$binary" 2>/dev/null || true)
+if ! symbols=$("${nm_cmd[@]}" "$binary" 2>&1); then
+  echo "failed to inspect profile binary with ${nm_cmd[0]}:" >&2
+  echo "$symbols" >&2
+  exit 1
+fi
 
 # Families outside the profile-ci union; presence indicates accidental full-table linkage.
 forbidden=(
