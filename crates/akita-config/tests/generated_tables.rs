@@ -182,10 +182,10 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
 fn regen_hint() -> &'static str {
     if cfg!(feature = "zk") {
         "cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- \
-         crates/akita-planner/src/generated"
+         crates/akita-schedules/src/generated"
     } else {
         "cargo run --release -p akita-config --bin gen_schedule_tables -- \
-         crates/akita-planner/src/generated"
+         crates/akita-schedules/src/generated"
     }
 }
 
