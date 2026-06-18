@@ -9,6 +9,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use crate::generated::{
     GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
@@ -55,26 +58,55 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
     }
 }
 
-/// Derive the expected catalog identity for `policy` and `entries` under the
-/// runtime hooks. Used by tests and the table emitter.
-pub fn expected_catalog_identity(
+/// Fields derived from policy, entries, and runtime hooks for identity checks.
+struct CatalogIdentityExpectation {
+    family_name: &'static str,
+    zk_enabled: bool,
+    sis_family: akita_types::SisModulusFamily,
+    ring_dimension: usize,
+    decomposition: akita_types::DecompositionParams,
+    ring_subfield_norm_bound: u32,
+    claim_ext_degree: usize,
+    chal_ext_degree: usize,
+    basis_range: (u32, u32),
+    onehot_chunk_size: usize,
+    tiered: bool,
+    root_fold_shape: TensorChallengeShape,
+    ring_dimensions: Vec<usize>,
+    ring_challenge_config_digest: u64,
+    key_count: usize,
+    key_digest: u64,
+}
+
+fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
+    static INTERN: Mutex<Option<HashMap<Vec<usize>, &'static [usize]>>> = Mutex::new(None);
+    let mut guard = INTERN.lock().expect("ring-dimension intern lock");
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(&slice) = map.get(&dimensions) {
+        return slice;
+    }
+    let leaked = Box::leak(dimensions.clone().into_boxed_slice());
+    map.insert(dimensions, leaked);
+    leaked
+}
+
+fn catalog_identity_expectation(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
+) -> Result<CatalogIdentityExpectation, AkitaError> {
     let sample_key = entries
         .first()
         .map(|e| e.key)
         .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
     let root_fold_shape = root_fold_shape_for_key(sample_key, &fold_shape)?;
-    let ring_dimensions_vec = collect_ring_dimensions(entries);
-    let ring_dimensions: &'static [usize] = Box::leak(ring_dimensions_vec.into_boxed_slice());
+    let ring_dimensions = collect_ring_dimensions(entries);
     let ring_challenge_config_digest =
-        ring_challenge_config_digest(ring_dimensions, &ring_challenge_config)?;
+        ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
     let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
-    Ok(GeneratedScheduleCatalogIdentity {
+    Ok(CatalogIdentityExpectation {
         family_name,
         zk_enabled: cfg!(feature = "zk"),
         sis_family: policy.sis_family,
@@ -94,6 +126,42 @@ pub fn expected_catalog_identity(
     })
 }
 
+/// Derive the expected catalog identity for `policy` and `entries` under the
+/// runtime hooks. Used by tests and the table emitter.
+pub fn expected_catalog_identity(
+    family_name: &'static str,
+    policy: &PlannerPolicy,
+    entries: &[GeneratedScheduleTableEntry],
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
+    let expected = catalog_identity_expectation(
+        family_name,
+        policy,
+        entries,
+        ring_challenge_config,
+        fold_shape,
+    )?;
+    Ok(GeneratedScheduleCatalogIdentity {
+        family_name: expected.family_name,
+        zk_enabled: expected.zk_enabled,
+        sis_family: expected.sis_family,
+        ring_dimension: expected.ring_dimension,
+        decomposition: expected.decomposition,
+        ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
+        claim_ext_degree: expected.claim_ext_degree,
+        chal_ext_degree: expected.chal_ext_degree,
+        basis_range: expected.basis_range,
+        onehot_chunk_size: expected.onehot_chunk_size,
+        tiered: expected.tiered,
+        root_fold_shape: expected.root_fold_shape,
+        ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
+        ring_challenge_config_digest: expected.ring_challenge_config_digest,
+        key_count: expected.key_count,
+        key_digest: expected.key_digest,
+    })
+}
+
 /// Validate that `catalog`'s embedded identity matches the runtime policy and hooks.
 pub fn validate_catalog_identity(
     catalog: &GeneratedScheduleTable,
@@ -102,16 +170,20 @@ pub fn validate_catalog_identity(
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     let Some(embedded) = catalog.identity else {
-        return Ok(());
+        if catalog.entries.is_empty() {
+            return Ok(());
+        }
+        return Err(AkitaError::InvalidSetup(
+            "schedule catalog missing embedded identity".to_string(),
+        ));
     };
-    let expected = expected_catalog_identity(
+    let expected = catalog_identity_expectation(
         embedded.family_name,
         policy,
         catalog.entries,
         ring_challenge_config,
         fold_shape,
     )?;
-    let ring_dimensions = collect_ring_dimensions(catalog.entries);
     if embedded.family_name != expected.family_name
         || embedded.zk_enabled != expected.zk_enabled
         || embedded.sis_family != expected.sis_family
@@ -124,7 +196,7 @@ pub fn validate_catalog_identity(
         || embedded.onehot_chunk_size != expected.onehot_chunk_size
         || embedded.tiered != expected.tiered
         || embedded.root_fold_shape != expected.root_fold_shape
-        || embedded.ring_dimensions != ring_dimensions.as_slice()
+        || embedded.ring_dimensions != expected.ring_dimensions.as_slice()
         || embedded.ring_challenge_config_digest != expected.ring_challenge_config_digest
         || embedded.key_count != expected.key_count
         || embedded.key_digest != expected.key_digest
@@ -330,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_identity_skips_validation() {
+    fn missing_identity_errors_for_nonempty_catalog() {
         let policy = sample_policy();
         let entries = sample_entries();
         let catalog = GeneratedScheduleTable {
@@ -338,7 +410,8 @@ mod tests {
             entries,
             identity: None,
         };
-        validate_catalog_identity(&catalog, &policy, |_| unreachable!(), flat_fold)
-            .expect("None identity skips validation");
+        let err = validate_catalog_identity(&catalog, &policy, |_| unreachable!(), flat_fold)
+            .expect_err("missing identity should error for a non-empty catalog");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

@@ -644,10 +644,10 @@ macro_rules! impl_proof_optimized_preset {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
             #[cfg(feature = $feat)]
             {
-                Some($crate::hydrate_schedule_catalog_identity::<Self>(
+                $crate::hydrate_schedule_catalog_identity::<Self>(
                     $family,
                     akita_schedules::$table(),
-                ))
+                )
             }
             #[cfg(not(feature = $feat))]
             {
@@ -659,10 +659,10 @@ macro_rules! impl_proof_optimized_preset {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
             #[cfg(all(feature = $feat, not(feature = "zk")))]
             {
-                Some($crate::hydrate_schedule_catalog_identity::<Self>(
+                $crate::hydrate_schedule_catalog_identity::<Self>(
                     $family,
                     akita_schedules::$table(),
-                ))
+                )
             }
             #[cfg(not(all(feature = $feat, not(feature = "zk"))))]
             {
