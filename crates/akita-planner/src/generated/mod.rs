@@ -80,7 +80,6 @@ pub struct GeneratedScheduleCatalogIdentity {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
-    pub sis_family: SisModulusFamily,
     pub entries: &'static [GeneratedScheduleTableEntry],
     pub identity: GeneratedScheduleCatalogIdentity,
 }

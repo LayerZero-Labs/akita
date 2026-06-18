@@ -420,7 +420,6 @@ mod tests {
         let mut wrong = expected;
         wrong.ring_dimension = 128;
         let catalog = GeneratedScheduleTable {
-            sis_family: policy.sis_family,
             entries,
             identity: wrong,
         };
@@ -437,7 +436,6 @@ mod tests {
         let mut wrong = expected_identity(&policy, entries);
         wrong.zk_enabled = !cfg!(feature = "zk");
         let catalog = GeneratedScheduleTable {
-            sis_family: policy.sis_family,
             entries,
             identity: wrong,
         };
@@ -454,7 +452,6 @@ mod tests {
         let mut wrong = expected_identity(&policy, entries);
         wrong.ring_challenge_config_digest ^= 1;
         let catalog = GeneratedScheduleTable {
-            sis_family: policy.sis_family,
             entries,
             identity: wrong,
         };
@@ -471,7 +468,6 @@ mod tests {
         let mut wrong = expected_identity(&policy, entries);
         wrong.key_digest ^= 1;
         let catalog = GeneratedScheduleTable {
-            sis_family: policy.sis_family,
             entries,
             identity: wrong,
         };

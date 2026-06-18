@@ -308,17 +308,6 @@ fn is_tiered_only_family(module_name: &str) -> bool {
     module_name == "fp128_d64_onehot_tiered"
 }
 
-fn sis_family_for_module(module_name: &str) -> Result<&'static str, String> {
-    match module_name.split('_').next() {
-        Some("fp128") => Ok("SisModulusFamily::Q128"),
-        Some("fp64") => Ok("SisModulusFamily::Q64"),
-        Some("fp32") => Ok("SisModulusFamily::Q32"),
-        _ => Err(format!(
-            "unsupported generated schedule module prefix: {module_name}"
-        )),
-    }
-}
-
 fn table_fn_name(module_name: &str) -> String {
     format!("{module_name}_table")
 }
@@ -342,7 +331,6 @@ fn emit_tiered_table_accessor() -> String {
         "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]\n",
         "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
         "    GeneratedScheduleTable {\n",
-        "        sis_family: SisModulusFamily::Q128,\n",
         "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
         "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
         "    }\n",
@@ -386,7 +374,6 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     }
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
-    let sis_family = sis_family_for_module(spec.module_name)?;
     let module_name = spec.module_name;
     let zk_module = format!("{module_name}_zk");
     let const_name = spec.const_name;
@@ -399,7 +386,7 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            sis_family: {sis_family},\n            entries: {zk_module}::{zk_const},\n            identity: {zk_module}::CATALOG_IDENTITY,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        sis_family: {sis_family},\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            entries: {zk_module}::{zk_const},\n            identity: {zk_module}::CATALOG_IDENTITY,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 
