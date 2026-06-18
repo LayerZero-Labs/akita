@@ -3,7 +3,7 @@
 //! This crate is a **pure, `Cfg`-free DP library**. The single entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
-//! carried by the plain-value [`PlannerPolicy`] plus a `stage1` /
+//! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_shape` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-types` / `akita-challenges` /
 //! `akita-field`.
@@ -14,14 +14,19 @@
 
 use akita_types::{DecompositionParams, SisModulusFamily};
 
+pub mod catalog_identity;
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
 
-pub use generated::GeneratedScheduleTable;
+pub use catalog_identity::{
+    expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
+    validate_catalog_identity,
+};
+pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub use resolve::{
-    estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
-    shipped_table,
+    estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, resolve_schedule,
+    schedule_from_entry, shipped_table,
 };
 pub use schedule_params::find_schedule;
 

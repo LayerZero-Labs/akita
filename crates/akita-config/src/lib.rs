@@ -200,7 +200,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`policy_of::<Self>()`][policy_of] (and the level-0 fold shape),
     /// expands the compact entry on a hit, and regenerates from scratch with
     /// the offline DP on a miss. The result is deterministic in
-    /// `(policy, key)` plus this config's `stage1` / `fold_shape` hooks, so
+    /// `(policy, key)` plus this config's `ring_challenge_config` / `fold_shape` hooks, so
     /// prover and verifier resolve identical schedules and the Fiat-Shamir
     /// `PlanSection` digest stays consistent. Any lookup key is supported
     /// with no reliance on a pre-shipped table.

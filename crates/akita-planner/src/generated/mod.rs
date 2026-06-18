@@ -58,10 +58,31 @@ pub struct GeneratedScheduleTableEntry {
     pub steps: &'static [GeneratedStep],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedScheduleCatalogIdentity {
+    pub family_name: &'static str,
+    pub zk_enabled: bool,
+    pub sis_family: SisModulusFamily,
+    pub ring_dimension: usize,
+    pub decomposition: akita_types::DecompositionParams,
+    pub ring_subfield_norm_bound: u32,
+    pub claim_ext_degree: usize,
+    pub chal_ext_degree: usize,
+    pub basis_range: (u32, u32),
+    pub onehot_chunk_size: usize,
+    pub tiered: bool,
+    pub root_fold_shape: akita_challenges::TensorChallengeShape,
+    pub ring_dimensions: &'static [usize],
+    pub ring_challenge_config_digest: u64,
+    pub key_count: usize,
+    pub key_digest: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub sis_family: SisModulusFamily,
     pub entries: &'static [GeneratedScheduleTableEntry],
+    pub identity: Option<GeneratedScheduleCatalogIdentity>,
 }
 
 pub mod expand;
@@ -115,12 +136,14 @@ pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
             entries: fp128_d128_full_zk::FP128_D128_FULL_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d128_full::FP128_D128_FULL_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -130,12 +153,14 @@ pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
             entries: fp128_d128_onehot_zk::FP128_D128_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -145,12 +170,14 @@ pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
             entries: fp128_d64_full_zk::FP128_D64_FULL_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -160,12 +187,14 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
             entries: fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -175,12 +204,14 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
             entries: fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -190,12 +221,14 @@ pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q32,
             entries: fp32_d128_onehot_zk::FP32_D128_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q32,
         entries: fp32_d128_onehot::FP32_D128_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -205,12 +238,14 @@ pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q32,
             entries: fp32_d256_onehot_zk::FP32_D256_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q32,
         entries: fp32_d256_onehot::FP32_D256_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -220,12 +255,14 @@ pub fn fp64_d128_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q64,
             entries: fp64_d128_zk::FP64_D128_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q64,
         entries: fp64_d128::FP64_D128_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -235,12 +272,14 @@ pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q64,
             entries: fp64_d128_onehot_zk::FP64_D128_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q64,
         entries: fp64_d128_onehot::FP64_D128_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -250,12 +289,14 @@ pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q64,
             entries: fp64_d256_onehot_zk::FP64_D256_ONEHOT_ZK_SCHEDULES,
+            identity: None,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q64,
         entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
+        identity: None,
     }
 }
 
@@ -268,6 +309,7 @@ pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
+        identity: None,
     }
 }
 // @generated schedule module wiring end

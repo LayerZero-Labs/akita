@@ -16,7 +16,7 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 ## Inputs And Outputs
 
-The public search entry point is `find_schedule(key, &policy, stage1, fold_shape)`.
+The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_shape)`.
 
 `key: AkitaScheduleLookupKey` describes the root opening shape:
 
@@ -35,7 +35,7 @@ The public search entry point is `find_schedule(key, &policy, stage1, fold_shape
 - One-hot chunk size.
 - Whether tiered commitments are enabled.
 
-The `stage1` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_shape` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
+The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_shape` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
 
 ## Resolution Flow
 
