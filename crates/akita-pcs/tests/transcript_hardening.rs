@@ -359,13 +359,6 @@ fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
     assert_terminal_tamper_rejected_at_num_vars(TRANSCRIPT_HARDENING_NUM_VARS, tamper);
 }
 
-fn packed_digits_mut(witness: &mut CleartextWitnessProof<F>) -> &mut PackedDigits {
-    let CleartextWitnessProof::PackedDigits(packed) = witness else {
-        panic!("expected packed-digit witness");
-    };
-    packed
-}
-
 fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
     let mut digits = (0..packed.num_elems)
         .map(|digit| packed.digit_at(digit).expect("packed digit"))

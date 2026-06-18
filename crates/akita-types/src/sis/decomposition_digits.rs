@@ -33,7 +33,10 @@
 
 use akita_field::AkitaError;
 
-use super::norm_bound::{fold_witness_beta, FoldChallengeNorms, FoldWitnessNorms};
+use super::norm_bound::{
+    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessNorms,
+};
 use crate::DecompositionParams;
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -163,7 +166,9 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
-/// norms, then returns the balanced-digit count needed to represent `[-β, β]`.
+/// norms. Under [`crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind`], the signed range is
+/// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_witness_linf_tail_bound_sq`];
+/// deterministic policies use `β_inf` alone.
 ///
 /// # Errors
 ///
@@ -178,6 +183,7 @@ pub fn num_digits_fold(
     log_basis: u32,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
+    cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
     let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
     if beta == 0 {
@@ -185,10 +191,24 @@ pub fn num_digits_fold(
             "num_digits_fold: folded-witness bound β = 0".to_string(),
         ));
     }
-    // `beta` bounds `|v|`, so `+beta` itself must be representable: add one bit
-    // so the signed range's positive end covers `+beta`.
-    let log_beta = (128 - beta.leading_zeros()).saturating_add(1);
-    Ok(num_digits_for_bound(log_beta, field_bits, log_basis))
+    let num_fold_blocks = (num_claims as u128)
+        .checked_mul(1u128 << r_vars)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("num_digits_fold: num_fold_blocks overflows u128".to_string())
+        })?;
+    let witness_linf_sq = witness
+        .infinity_norm()
+        .saturating_mul(witness.infinity_norm());
+    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &cap_config)?;
+    if cap == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "num_digits_fold: fold witness L∞ cap is zero".to_string(),
+        ));
+    }
+    // `cap` bounds `|v|`, so `+cap` itself must be representable: add one bit
+    // so the signed range's positive end covers `+cap`.
+    let log_cap = (128 - cap.leading_zeros()).saturating_add(1);
+    Ok(num_digits_for_bound(log_cap, field_bits, log_basis))
 }
 
 /// A-matrix committed width (ring columns): `block_len · δ_commit`.
@@ -309,12 +329,42 @@ mod tests {
         let dense = FoldWitnessNorms::new(3, 64, 1, false);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::new(3, 64, 64, true);
-        let dense_digits = num_digits_fold(8, 1, 128, 3, challenge, dense).unwrap();
-        let onehot_digits = num_digits_fold(8, 1, 128, 3, challenge, onehot).unwrap();
+        let dense_digits = num_digits_fold(
+            8,
+            1,
+            128,
+            3,
+            challenge,
+            dense,
+            FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        )
+        .unwrap();
+        let onehot_digits = num_digits_fold(
+            8,
+            1,
+            128,
+            3,
+            challenge,
+            onehot,
+            FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        )
+        .unwrap();
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        assert!(num_digits_fold(8, 4, 128, 3, challenge, dense).unwrap() >= dense_digits);
+        assert!(
+            num_digits_fold(
+                8,
+                4,
+                128,
+                3,
+                challenge,
+                dense,
+                FoldWitnessLinfCapConfig::worst_case_beta_only()
+            )
+            .unwrap()
+                >= dense_digits
+        );
     }
 
     #[test]
@@ -325,8 +375,26 @@ mod tests {
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
         // r_vars >= 127 is rejected.
-        assert!(num_digits_fold(127, 1, 128, 3, challenge, witness).is_err());
+        assert!(num_digits_fold(
+            127,
+            1,
+            128,
+            3,
+            challenge,
+            witness,
+            FoldWitnessLinfCapConfig::worst_case_beta_only()
+        )
+        .is_err());
         // num_claims == 0 ⇒ β = 0 is rejected.
-        assert!(num_digits_fold(8, 0, 128, 3, challenge, witness).is_err());
+        assert!(num_digits_fold(
+            8,
+            0,
+            128,
+            3,
+            challenge,
+            witness,
+            FoldWitnessLinfCapConfig::worst_case_beta_only()
+        )
+        .is_err());
     }
 }

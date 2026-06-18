@@ -221,6 +221,70 @@ where
         }
         out
     }
+
+    /// Preview squeeze output after hypothetically absorbing `absorb_payload`,
+    /// without advancing the live transcript (prover-side fold grind probing).
+    pub fn preview_challenge_bytes_after_absorb(
+        &self,
+        absorb_payload: &[u8],
+        len: usize,
+    ) -> Vec<u8> {
+        let TranscriptState::Prover(state) = self
+            .state
+            .as_ref()
+            .expect("AkitaTranscript must be instance-bound before use")
+        else {
+            panic!("preview_challenge_bytes_after_absorb requires a prover transcript");
+        };
+        let mut sponge = state.duplex_sponge_state.clone();
+        let framed = FramedBytes {
+            bytes: absorb_payload,
+        };
+        sponge.absorb(framed.encode().as_ref());
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let mut chunk = [0u8; SQUEEZE_CHUNK_LEN];
+            sponge.squeeze(chunk.as_mut());
+            let take = (len - out.len()).min(chunk.len());
+            out.extend_from_slice(&chunk[..take]);
+        }
+        out
+    }
+
+    /// Preview squeeze output after a chain of hypothetical absorbs and squeezes.
+    pub fn preview_challenge_bytes_after_absorb_chain(
+        &self,
+        absorbs: &[&[u8]],
+        squeeze_lens: &[usize],
+    ) -> Vec<u8> {
+        assert_eq!(
+            absorbs.len(),
+            squeeze_lens.len(),
+            "absorb/squeeze chain length mismatch"
+        );
+        let TranscriptState::Prover(state) = self
+            .state
+            .as_ref()
+            .expect("AkitaTranscript must be instance-bound before use")
+        else {
+            panic!("preview_challenge_bytes_after_absorb_chain requires a prover transcript");
+        };
+        let mut sponge = state.duplex_sponge_state.clone();
+        let mut out = Vec::new();
+        for (&absorb, &squeeze_len) in absorbs.iter().zip(squeeze_lens.iter()) {
+            let framed = FramedBytes { bytes: absorb };
+            sponge.absorb(framed.encode().as_ref());
+            out.clear();
+            out.reserve(squeeze_len);
+            while out.len() < squeeze_len {
+                let mut chunk = [0u8; SQUEEZE_CHUNK_LEN];
+                sponge.squeeze(chunk.as_mut());
+                let take = (squeeze_len - out.len()).min(chunk.len());
+                out.extend_from_slice(&chunk[..take]);
+            }
+        }
+        out
+    }
 }
 
 impl<F, S> Transcript<F> for AkitaTranscript<F, S>
@@ -297,6 +361,24 @@ fn session_tag(session_label: &[u8]) -> [u8; 64] {
     );
     tag[..session_label.len()].copy_from_slice(session_label);
     tag
+}
+
+impl<F, S> crate::FoldChallengeSeedPreview for AkitaTranscript<F, S>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
+{
+    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
+        Self::preview_challenge_bytes_after_absorb(self, absorb_payload, len)
+    }
+
+    fn preview_challenge_bytes_after_absorb_chain(
+        &self,
+        absorbs: &[&[u8]],
+        squeeze_lens: &[usize],
+    ) -> Vec<u8> {
+        Self::preview_challenge_bytes_after_absorb_chain(self, absorbs, squeeze_lens)
+    }
 }
 
 #[cfg(test)]

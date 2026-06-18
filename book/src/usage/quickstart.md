@@ -32,7 +32,7 @@ does **not** retune `D` per recursion level (pick a preset, then plan).
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **D64 one-hot** (`onehot_fp128_d64`) | **Production default** (Paper §3.5 exact-shell at d=64). Planner picks **D64 over D128** (~20% smaller proof); both fold securely. Shipped tables: D128 full/onehot, D64 onehot. **D32** can win marginally on bytes but has **no shipped table** (always DP) and uses bounded-L₁ challenges; Jolt cycle benches pin **D32OneHot**. **fp128 D64 dense** is also DP-only (retired from tables). |
+| **fp128** | **D64 one-hot** (`onehot_fp128_d64`) | **Production default** (Paper §3.5 exact-shell at d=64). Planner picks **D64 over D128** (~20% smaller proof); both fold securely. Shipped tables: D128 full/onehot, D64 full/onehot. **D32** can win marginally on bytes but has **no shipped table** (always DP) and uses bounded-L₁ challenges; Jolt cycle benches pin **D32OneHot**. |
 | **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice (collapse to cleartext root-direct). CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 full/onehot and D256 onehot. |
 
 Use `akita_config::proof_optimized::fp128::best_onehot_schedule` /

@@ -11,10 +11,7 @@ use crate::{
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{
-    sample_folding_challenges, stage1_fold_challenge_labels, Challenges, IntegerChallenge,
-    SparseChallenge,
-};
+use akita_challenges::{Challenges, IntegerChallenge, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
@@ -29,6 +26,7 @@ use akita_types::{
 use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
+use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::RingRelationWitness;
 use std::time::Instant;
 
@@ -37,53 +35,6 @@ mod repeated_b;
 
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
-
-/// Worst-case `||z||_inf` of the folded witness `z = Σ c_i · s_i`, matching the
-/// planner's folded-witness bound `β` (the input to `num_digits_fold`):
-///
-/// ```text
-/// β = num_claims · 2^r_vars · min( ||c||_inf·||s||_1 , ||c||_1·||s||_inf ).
-/// ```
-///
-/// Computed from the level's challenge shape and committed-witness sparsity so
-/// the prover's abort threshold never drifts from the planner's digit sizing.
-fn beta_linf_fold_bound_with_num_claims(
-    lp: &LevelParams,
-    num_claims: usize,
-) -> Result<u128, AkitaError> {
-    if !(1..128).contains(&lp.log_basis) {
-        return Err(AkitaError::InvalidSetup("invalid LOG_BASIS".to_string()));
-    }
-    if lp.r_vars >= 128 {
-        return Err(AkitaError::InvalidSetup("r_vars must be < 128".to_string()));
-    }
-    let witness = lp.fold_witness_norms();
-    let beta_block = akita_types::sis::ring_product_infinity_norm_bound(
-        lp.challenge_infinity_norm() as u128,
-        lp.challenge_l1_mass() as u128,
-        witness.infinity_norm(),
-        witness.l1_norm(),
-    );
-    beta_block
-        .checked_mul(1u128 << lp.r_vars)
-        .and_then(|t| t.checked_mul(num_claims as u128))
-        .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))
-}
-
-fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
-    z: DecomposeFoldWitness<F, D>,
-    lp: &LevelParams,
-    num_claims: usize,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-    let norm = u128::from(z.centered_inf_norm);
-    let beta = beta_linf_fold_bound_with_num_claims(lp, num_claims)?;
-    if norm > beta {
-        return Err(AkitaError::InvalidInput(format!(
-            "prover abort: ||z||_inf = {norm} > beta = {beta}"
-        )));
-    }
-    Ok(z)
-}
 
 #[cfg(feature = "zk")]
 fn absorb_terminal_e_hat<F, T, const D: usize>(
@@ -253,23 +204,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     })
 }
 
-fn decompose_fold_witness<F, P, const D: usize>(
-    challenges: &Challenges,
-    polys: &[&P],
-    lp: &LevelParams,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    P: AkitaPolyOps<F, D>,
-{
-    let _span = tracing::info_span!("compute_batched_z_folded").entered();
-    let point_indices = (0..polys.len()).collect::<Vec<_>>();
-    let witness =
-        build_point_decompose_fold_witness::<F, P, D>(challenges, polys, &point_indices, lp)?;
-    validate_decompose_fold(witness, lp, polys.len())
-}
-
-fn build_point_decompose_fold_witness<F, P, const D: usize>(
+pub(super) fn build_point_decompose_fold_witness<F, P, const D: usize>(
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
@@ -475,7 +410,7 @@ impl RingRelationProver {
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField,
-        T: Transcript<F>,
+        T: Transcript<F> + ProverTranscriptGrind<F>,
         P: AkitaPolyOps<F, D>,
         B: DigitRowsComputeBackend<F>,
     {
@@ -579,16 +514,10 @@ impl RingRelationProver {
             #[cfg(feature = "zk")]
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
-        let challenges = sample_folding_challenges::<F, T, D>(
-            transcript,
-            lp.num_blocks,
-            num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
-            stage1_fold_challenge_labels(),
-        )?;
-
-        let z_folded_rings = decompose_fold_witness::<F, _, D>(&challenges, polys, &lp)?;
+        let (z_folded_rings, challenges, fold_grind_nonce) =
+            fold_grind::sample_fold_decompose_witness::<F, _, T, D>(
+                transcript, polys, &lp, num_claims,
+            )?;
 
         let commitment_rows = commitments
             .iter()
@@ -626,6 +555,7 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
+            fold_grind_nonce,
             e_hat,
             e_folded,
             hint: flattened_hint,

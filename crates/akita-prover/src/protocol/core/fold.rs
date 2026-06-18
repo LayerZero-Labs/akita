@@ -279,7 +279,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
     EorP: AkitaPolyOps<F, D>,
     FoldP: AkitaPolyOps<F, D>,
     V: FnOnce() -> Result<(), AkitaError>,
@@ -489,13 +489,14 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
     #[cfg(feature = "zk")]
     let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
+    let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
     let build_output = ring_switch_build_w::<F, B, D>(
         &prepared_fold.instance,
@@ -675,6 +676,7 @@ where
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof,
             final_witness,
+            fold_grind_nonce,
         );
         cfg_if! {
             if #[cfg(feature = "zk")] {
@@ -720,6 +722,7 @@ where
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]

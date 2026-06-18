@@ -246,6 +246,8 @@ pub enum AkitaLevelProof<F: FieldCore, L: FieldCore> {
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         /// `v = D · ŵ` (ring dim = current level's D).
         v: FlatRingVec<F>,
+        /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+        fold_grind_nonce: u32,
         /// Stage-1 norm-check payload.
         stage1: AkitaStage1Proof<L>,
         /// Stage-2 fused payload.
@@ -257,6 +259,8 @@ pub enum AkitaLevelProof<F: FieldCore, L: FieldCore> {
     Terminal {
         /// Optional extension-opening reduction payload.
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+        fold_grind_nonce: u32,
         /// Terminal stage-2 payload.
         stage2: AkitaStage2Proof<F, L>,
         /// Scheduled final witness length in field elements.
@@ -275,6 +279,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         Self::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            fold_grind_nonce: 0,
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
@@ -346,6 +351,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         Self::Intermediate {
             extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            fold_grind_nonce: 0,
             stage1,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
@@ -370,9 +376,11 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
         final_witness: CleartextWitnessProof<F>,
         final_w_len: usize,
+        fold_grind_nonce: u32,
     ) -> Self {
         Self::Terminal {
             extension_opening_reduction,
+            fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
@@ -381,6 +389,18 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 final_witness,
             }),
             final_w_len,
+        }
+    }
+
+    /// Accepted fold grind nonce (`0` under deterministic policy).
+    pub fn fold_grind_nonce(&self) -> u32 {
+        match self {
+            Self::Intermediate {
+                fold_grind_nonce, ..
+            } => *fold_grind_nonce,
+            Self::Terminal {
+                fold_grind_nonce, ..
+            } => *fold_grind_nonce,
         }
     }
 
@@ -637,6 +657,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             stage1,
             stage2,
             stage3_sumcheck_proof,
+            ..
         } = self
         else {
             panic!("shape() called on terminal level proof");
@@ -704,6 +725,8 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+    pub fold_grind_nonce: u32,
     /// Terminal stage-2 payload.
     pub stage2: AkitaStage2Proof<F, L>,
 }
@@ -718,9 +741,11 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         #[cfg(not(feature = "zk"))] stage2_sumcheck: SumcheckProof<L>,
         #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
         final_witness: CleartextWitnessProof<F>,
+        fold_grind_nonce: u32,
     ) -> Self {
         Self {
             extension_opening_reduction,
+            fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
@@ -766,8 +791,10 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// Optional extension-opening reduction payload. `None` until the
     /// extension-opening reduction cutover is wired into the root path.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Aggregated `v = Σ_ell D_ell · e_hat_ell`.
+    /// Aggregated `v = D · ŵ`.
     pub v: FlatRingVec<F>,
+    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+    pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
@@ -811,6 +838,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         let AkitaLevelProof::Intermediate {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,
@@ -821,6 +849,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         Self::Fold(AkitaBatchedFoldRoot {
             extension_opening_reduction,
             v,
+            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,
@@ -903,6 +932,15 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         match self {
             Self::Terminal(terminal) => Some(terminal),
             Self::Fold(_) | Self::ZeroFold { .. } => None,
+        }
+    }
+
+    /// Accepted fold grind nonce for root proofs that run fold challenge sampling.
+    pub fn fold_grind_nonce(&self) -> Result<u32, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(fold.fold_grind_nonce),
+            Self::Terminal(terminal) => Ok(terminal.fold_grind_nonce),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }
 
