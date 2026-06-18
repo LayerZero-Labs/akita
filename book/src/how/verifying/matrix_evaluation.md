@@ -571,7 +571,154 @@ runs one offset-equality evaluation over it.
 
 ## Setup components
 
-This section will explain the contribution of the shared setup (SIS commitment)
-matrix to $\widetilde{M}$.
+The remaining row blocks of $M$ are the **rows of the shared SIS commitment
+matrix**. These are fundamentally different from the tensor components: a tensor
+entry is a product of small public scalars, but a setup entry is an actual
+cyclotomic **ring element** of the commitment matrix. Before it can enter the
+scalar sum-check, each such ring element must be evaluated at the ring-switch
+challenge $\alpha$ — turning a degree-$D$ ring element into a single
+extension-field scalar. That $\alpha$-evaluation costs $O(D)$ and there are many
+entries, which is exactly why the setup contribution dominates verifier time.
+The whole game here is to do the expensive $\alpha$-evaluations **once** and let
+each one feed all the products that need it.
 
-_(Coming soon.)_
+### The three setup row blocks
+
+Three row blocks of $M$ are sub-views of the **same** backing SIS matrix:
+
+- **`D · e_hat`** — $n_d$ rows of `D`, over the `e_hat` columns.
+- **`B · t_hat`** — $n_b$ rows of `B`, over the `t_hat` columns, one set per
+  commitment group $g$.
+- **`A · z_hat`** — $n_A$ rows of `A`, over the `z_hat` columns.
+
+`D`, `B`, and `A` are not separate matrices: they are co-located blocks of one
+shared matrix, all anchored at its top-left corner. They differ only in how many
+rows they use ($n_d$, $n_b$, $n_A$), how wide their column range is, and the
+per-row equality weight they carry. As in the tensor sections, those per-row
+weights are just `row_weight[i]` for the appropriate rows of $M$: write
+`d_w[r]`, `b_w[g][r]`, and `a_w[r]` for the weights of the $r$-th `D`-row,
+$g$-th group's $r$-th `B`-row, and $r$-th `A`-row.
+
+### Why fuse: the $\alpha$-evaluation is the cost
+
+Because `D`, `B`, and `A` overlap on the same backing entries, a naive
+evaluation that scanned `D`'s block, then `B`'s block, then `A`'s block would
+$\alpha$-evaluate the same shared ring elements up to **three times**. Since the
+$\alpha$-evaluation is the dominant cost, the verifier instead scans the shared
+matrix **once** and reuses each $\alpha$-evaluated entry across all three
+products.
+
+### The fused per-entry computation
+
+The verifier treats the shared matrix as one flat list of ring entries. For each
+entry at (row $r$, column $c$) it does three things:
+
+1. $\alpha$-evaluate it **once**: $r_{\text{eval}}(r, c) = $
+   `eval_ring_at_pows(matrix[r][c], α)`, an $O(D)$ operation.
+2. Build the **aggregated column weight** that bundles every product touching
+   that entry:
+   $$
+   \bar{\omega}(r, c) \;=\; d_w[r] \cdot W_{\text{col}}[c]
+   \;+\; \sum_g b_w[g][r] \cdot T_{\text{col}}^{(g)}[c]
+   \;+\; a_w[r] \cdot Z_{\text{col}}[c].
+   $$
+3. Accumulate $r_{\text{eval}}(r, c) \cdot \bar{\omega}(r, c)$ into a running sum.
+
+The entire setup contribution is then a single dot product over the shared
+matrix:
+
+$$
+\text{setup} \;=\; \sum_{r, c} r_{\text{eval}}(r, c) \cdot \bar{\omega}(r, c).
+$$
+
+In pseudocode:
+
+```text
+acc = 0
+for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)
+  for c in 0..n_cols:              # columns of the shared matrix, scanned once
+    r_eval = eval_ring_at_pows(matrix[r][c], alpha)     # the ONE O(D) alpha-eval
+    bar_omega = d_w[r] * W_col[c]                         # D · e_hat   (0 if r >= n_d)
+              + sum_g b_w[g][r] * T_col[g][c]             # B · t_hat   (0 if r >= n_b)
+              + a_w[r] * Z_col[c]                          # A · z_hat   (0 if r >= n_A)
+    acc += r_eval * bar_omega
+```
+
+Each column pattern is zero outside its own segment, and each row weight is zero
+past its row count, so a given entry simply contributes to whichever of the
+three products actually cover it — but its $\alpha$-evaluation happens exactly
+once. This is the "free" `D·e_hat` + `B·t_hat` + `A·z_hat` fusion: the dominant
+cost (the $\alpha$-evaluations) is shared across all three.
+
+### The three column patterns
+
+The column patterns convert a shared-matrix column $c$ into the equality weight
+of the corresponding witness entry — and they reuse the very same `eq_low` /
+`eq_high` tables (and block-window carry machinery) built for the tensor
+components. They are precomputed once (not per row).
+
+**`W_col[c]` (for `D · e_hat`).** Decode $c$ and translate it to the `e_hat`
+equality weight, in $O(1)$ per cell:
+
+```text
+dig   = c mod do
+b     = (c / do) mod B
+claim = c / (B * do)
+q     = dig * C + claim
+s     = block_offset_low + b
+W_col[c] = eq_low[s mod B] * eq_high_e[q + (s / B)]      # s / B in {0, 1} is the carry
+```
+
+This is exactly the peeled-block factorization from the `e_hat` tensor section,
+reusing the same `eq_low` table and the `e_hat` high table `eq_high_e`.
+
+**`T_col[g][c]` (for `B · t_hat`).** The same shape with the extra `a_row` axis
+and per-group sparsity: a group-local polynomial slot is decoded from $c$, then
+mapped to its global flat claim (or skipped if that slot is not opened in group
+$g$). It reuses the `t_hat` high table.
+
+**`Z_col[c]` (for `A · z_hat`).** This follows the two `z_hat` cases. When
+`block_len` is a power of two it uses the peeled-block form with a small
+precomputed table that has already folded in the fold-digit (`df`) sum:
+
+```text
+Z_col[c] = eq_low_z[low_idx] * S_per_dc_per_carry[dc][carry]
+S_per_dc_per_carry[dc][carry]
+    = -sum_{df} g_fold[df] * eq_high_z[z_offset_high + (df + DF*dc) + carry]
+```
+
+When `block_len` is not a power of two it builds `Z_col` densely from a one-shot
+peeled equality cache. Either way the per-row inner-product loop above is
+identical — only the `Z_col` build differs.
+
+### Two coordinate systems
+
+There is one subtlety in the scan. The witness segments are stored in
+**M-layout** (block innermost — the layout that defines the MLE and that the
+tensor sections used), while the SIS matrix is stored in **D-physical layout**
+(digit innermost — the prover's natural commit-loop order). These are two
+different orderings of the same logical `(claim, block, dig)` cells.
+
+The verifier walks $c$ in **D-physical order** so the dominant matrix scan stays
+contiguous and cache-friendly, and the column-pattern builds above bake in the
+translation to the M-layout equality address (that is what the `dig`/`b`/`claim`
+decode followed by the `q`/`s` recomposition does). So the hot per-row loop never
+has to think about layouts — it is just a dot product of $\alpha$-evaluated
+entries against a precomputed weight vector.
+
+### Cost
+
+| step | cost | done once per |
+|---|---|---|
+| `eq_high_e`, `eq_high_t`, `eq_high_z` tables | $O(C \cdot \text{do} + C \cdot \text{do} \cdot n_A + \text{DF} \cdot \text{DC})$ | verifier |
+| `W_col`, `T_col`, `Z_col` builds | $O(n_{\text{cols}} \cdot (1 + G))$ | verifier |
+| $\alpha$-evaluations $r_{\text{eval}}(r, c)$ | $O(n_{\text{cols}} \cdot D)$ ring ops | per row |
+| per-row inner product | $O(n_{\text{cols}} \cdot (1 + G))$ | per row |
+| **dominant** | $O(r_{\max} \cdot n_{\text{cols}} \cdot D)$ $\alpha$-evaluations | total |
+
+Here $r_{\max} = \max(n_d, n_b, n_A)$, $G$ is the number of commitment groups,
+and $n_{\text{cols}}$ is the width of the shared scan (the max of the three
+blocks' column widths). The decisive point is the bottom row: the $O(D)$
+$\alpha$-evaluations — the verifier's true bottleneck — are performed exactly
+once per shared-matrix entry and amortized across `D·e_hat`, `B·t_hat`, and
+`A·z_hat`, rather than once per product.

@@ -714,6 +714,131 @@ tables once, and emit a single scalar.
 
 ---
 
+## 11. TODO — partial peeling for non-power-of-two `block_len` (`ẑ`)
+
+**Status:** not implemented. Design note for a future optimization of the
+§6.4 dense fallback. Captured here so the reasoning and the expected gain do
+not have to be re-derived.
+
+### 11.1 Context
+
+The §6.3 fast path requires `block_len.is_power_of_two()`. When it is not (some
+recursive levels — `block_len = ceil(num_ring / num_blocks)` need not be a power
+of two), §6.4 materialises the structured `z` segment and runs a single
+`eval_offset_eq_tensor` over it, at cost `O(DF · DC · block_len)`. The question
+is whether a *partial* peel — peeling the largest power of two that divides
+`block_len` — can beat that, and by how much.
+
+### 11.2 Why only the 2-adic factor can be peeled
+
+A peeled window of size `w = 2^k` isolates the block axis (so its `eq` factor is
+reusable across the outer `(df, dc)` axes) only if **both**:
+
+1. **the window contains the whole block index** — `w ≥ block_len`, so all of
+   `blk ∈ [0, block_len)` lives in the low `k` bits; and
+2. **the window divides the outer stride** — `w | block_len`, so incrementing an
+   outer index shifts the column by a whole number of windows and leaves the low
+   `k` bits undisturbed.
+
+Both at once force `w = block_len` and `w` a power of two — i.e. exactly the
+§6.3 case. For non-power-of-two `block_len` the only window satisfying (2) is the
+2-adic factor `w = 2^v`, `v = v₂(block_len)`. It satisfies (2) but not (1):
+peeling it isolates `blk mod 2^v`, but the **odd cofactor** `odd = block_len / 2^v`
+stays entangled with `(df, dc)` and remains dense. (Underlying fact: `eq`
+factorises over *binary bits*, so it only splits at power-of-two boundaries;
+`x mod block_len` is a fixed low-bit window iff `block_len` is a power of two.
+The largest power of two *below* `block_len` does **not** divide it, so it does
+not help — it must *divide*, not merely be smaller.)
+
+For odd `block_len`, `2^v = 1` and there is nothing to peel.
+
+### 11.3 Cost model
+
+Let `2^v = 2-adic factor of block_len` and `odd = block_len / 2^v`. Write
+`blk = blk_lo + 2^v · blk_hi`. Build a low summary **per `blk_hi`** (scanning
+each `a[blk]` once), then combine over the high index
+`q = z_hi + blk_hi + odd · df + odd · DF · dc`:
+
+```text
+dense (§6.4):   O(block_len · DF · DC)                 [ = z_len ]
+partial peel:   O(block_len + (block_len / 2^v) · DF · DC)
+```
+
+The `DF · DC`-multiplied term shrinks by exactly `2^v`; the `O(block_len)`
+summary-build floor is unavoidable (every in-block weight is read once). For
+one-hot presets `DC = 1`, so `z_len = DF · block_len`.
+
+### 11.4 Worked example — `nv = 32`, fp128 `D64` one-hot
+
+Per-level schedule (`depth_commit = 1`, `z_first = true` on all 8 levels). The
+dense cost equals `z_len`; the partial-peel cost is
+`block_len + (block_len / 2^v) · DF`:
+
+| level | block_len | DF | pow2? | `2^v` | odd | dense (`z_len`) | partial peel | speedup |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 65536 | 7 | yes (2¹⁶) | full | 1 | ~65536 (fast path) | — (already peeled) | — |
+| 1 | 6660 | 6 | no | 4 | 1665 | 39960 | 16650 | 2.4× |
+| 2 | 2801 | 4 | no | 1 | 2801 | 11204 | 11204 | 1× |
+| 3 | 1238 | 4 | no | 2 | 619 | 4952 | 3714 | 1.33× |
+| 4 | 1087 | 3 | no | 1 | 1087 | 3261 | 3261 | 1× |
+| 5 | 596 | 3 | no | 4 | 149 | 1788 | 1043 | 1.7× |
+| 6 | 412 | 3 | no | 4 | 103 | 1236 | 721 | 1.7× |
+| 7 | 343 | 3 | no | 1 | 343 | 1029 | 1029 | 1× |
+
+Totals (including L0's fast path ≈ 65536):
+
+- all dense: ≈ **128,966**
+- with partial peel: ≈ **103,158**
+- reduction: ≈ **20%** of total `z`-tensor work.
+
+### 11.5 What the numbers say
+
+- **L0 dominates and is untouched.** `block_len = 65536` already runs the full
+  §6.3 peel (cost ≈ `block_len` ≈ 65536) — roughly half the total `z`-work — and
+  partial peeling cannot improve it.
+- **Almost all the saving is one level.** Of the ≈ 25.8k saved, ≈ **23.3k (90%)
+  is L1 alone** (`DF = 6`, `block_len = 6660`).
+- **Odd levels gain nothing.** L2 (2801), L4 (1087), L7 (343) have `2^v = 1`.
+- **The factor is tiny.** `2^v ≤ 4` here, and the `O(block_len)` floor remains,
+  so the win is a small constant, not asymptotic.
+
+### 11.6 Verdict
+
+Technically helpful on 4 of the 7 recursive levels, but **not worth it now**:
+
+- It is a sub-20% improvement on the `z`-tensor component, which is **not** the
+  verifier bottleneck — the §7 setup-matrix α-evaluation scan dominates; the
+  structured tensor blocks (§4–§6) are the cheap part.
+- The gain is concentrated in a single level and is zero for odd `block_len`
+  (the generic non-power-of-two case).
+- It requires a third `z` evaluation path (hybrid peel + dense) inside the
+  verifier no-panic boundary — more code and more surface for bugs.
+
+It would become attractive only if `depth_fold · depth_commit` were large **and**
+recursive `block_len`s were consistently `2^v · (small odd)` with large `2^v`.
+The current planner splits do not produce that, so the implementation keeps the
+plain `ZDenseSlicesEvaluator` materialisation (§6.4).
+
+### 11.7 Implementation sketch (if revisited)
+
+- Add a `ZPartialPeelSlicesEvaluator`, dispatched when
+  `!block_len.is_power_of_two() && v₂(block_len) >= threshold`; otherwise keep
+  `ZDenseSlicesEvaluator`.
+- Peel `w = 2^{v₂(block_len)}` low bits: `eq_low_z` over those bits, two carry
+  buckets (the carry-≤-1 argument of §6.3 holds for the power-of-two window
+  `w`).
+- Build per-`blk_hi` summaries
+  `A[blk_hi][carry] = Σ_{blk_lo} a[blk_lo + w · blk_hi] · eq_low_z(...)`,
+  cost `O(block_len)`.
+- Outer combine over `(dc, df, blk_hi, carry)` with
+  `q = z_hi + blk_hi + odd · df + odd · DF · dc` and `eq_high(q + carry)`, cost
+  `O(odd · DF · DC)`.
+- Reuse the `crates/akita-algebra/src/offset_eq.rs` peeled primitives
+  (`summarize_pow2_block_carries`, `eval_offset_eq_peeled_carry_terms`) at window
+  `2^v` instead of `block_len`.
+
+---
+
 ## References
 
 ### Code
