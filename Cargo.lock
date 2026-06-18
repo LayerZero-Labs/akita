@@ -159,10 +159,7 @@ dependencies = [
 name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
- "akita-challenges",
- "akita-field",
  "akita-planner",
- "akita-types",
 ]
 
 [[package]]

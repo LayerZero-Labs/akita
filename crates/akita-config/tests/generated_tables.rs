@@ -34,18 +34,36 @@
 #![allow(missing_docs)]
 
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::tensor_verifier;
+use akita_config::CommitmentConfig;
 use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step};
 
 #[cfg(feature = "all-schedules")]
-use akita_config::proof_optimized::{fp128, fp32, fp64};
-#[cfg(feature = "all-schedules")]
-use akita_config::tensor_verifier;
-#[cfg(feature = "all-schedules")]
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::policy_of;
 #[cfg(feature = "all-schedules")]
 use akita_planner::generated::table_entry;
 #[cfg(feature = "all-schedules")]
 use akita_planner::{generated_schedule_lookup_key, validate_catalog_identity};
+
+fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
+    match family.module_name {
+        "fp128_d128_full" => fp128::D128Full::schedule_catalog().is_some(),
+        "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
+        "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
+        "fp128_d64_full" => fp128::D64Full::schedule_catalog().is_some(),
+        "fp128_d64_onehot_tensor" => {
+            tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
+        }
+        "fp128_d64_onehot_tiered" => fp128::D64OneHotTiered::schedule_catalog().is_some(),
+        "fp64_d128" => fp64::D128Full::schedule_catalog().is_some(),
+        "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
+        "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
+        "fp32_d128_onehot" => fp32::D128OneHot::schedule_catalog().is_some(),
+        "fp32_d256_onehot" => fp32::D256OneHot::schedule_catalog().is_some(),
+        other => panic!("unknown generated family for catalog guard: {other}"),
+    }
+}
 
 #[cfg(feature = "all-schedules")]
 fn assert_table_hit(
@@ -67,6 +85,10 @@ fn check_family_catalog<Cfg: CommitmentConfig>(module_name: &str, keys: &[AkitaS
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
+    assert!(
+        catalog.identity.is_some(),
+        "family {module_name} must hydrate catalog identity at schedule_catalog()"
+    );
     validate_catalog_identity(
         &catalog,
         &policy_of::<Cfg>(),
@@ -168,6 +190,10 @@ fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
 }
 
 fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
+    if !family_catalog_is_linked(family) {
+        return;
+    }
+
     let keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
         .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
 

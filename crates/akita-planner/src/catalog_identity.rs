@@ -69,9 +69,10 @@ pub fn expected_catalog_identity(
         .map(|e| e.key)
         .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
     let root_fold_shape = root_fold_shape_for_key(sample_key, &fold_shape)?;
-    let ring_dimensions = collect_ring_dimensions(entries);
+    let ring_dimensions_vec = collect_ring_dimensions(entries);
+    let ring_dimensions: &'static [usize] = Box::leak(ring_dimensions_vec.into_boxed_slice());
     let ring_challenge_config_digest =
-        ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
+        ring_challenge_config_digest(ring_dimensions, &ring_challenge_config)?;
     let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
     Ok(GeneratedScheduleCatalogIdentity {
         family_name,
@@ -86,7 +87,7 @@ pub fn expected_catalog_identity(
         onehot_chunk_size: policy.onehot_chunk_size,
         tiered: policy.tiered,
         root_fold_shape,
-        ring_dimensions: &[],
+        ring_dimensions,
         ring_challenge_config_digest,
         key_count: keys.len(),
         key_digest: key_digest(&keys),
@@ -221,35 +222,7 @@ fn write_decomposition(h: &mut Fnv64, d: akita_types::DecompositionParams) {
 }
 
 fn encode_sparse_challenge_config(h: &mut Fnv64, cfg: &SparseChallengeConfig) {
-    match cfg {
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } => {
-            h.write_u64(0);
-            h.write_u64(*weight as u64);
-            h.write_u64(nonzero_coeffs.len() as u64);
-            for c in nonzero_coeffs {
-                h.write_u64(i64::from(*c) as u64);
-            }
-        }
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-            operator_norm_threshold,
-        } => {
-            h.write_u64(1);
-            h.write_u64(*count_mag1 as u64);
-            h.write_u64(*count_mag2 as u64);
-            h.write_u64(u64::from(*operator_norm_threshold));
-        }
-        SparseChallengeConfig::BoundedL1Norm => {
-            h.write_u64(2);
-            h.write_u64(32);
-            h.write_u64(121);
-            h.write_u64(8);
-        }
-    }
+    h.write_bytes(&cfg.domain_separator_bytes());
 }
 
 struct Fnv64 {
@@ -339,7 +312,7 @@ mod tests {
         let expected = expected_catalog_identity(
             "fp128_d64_onehot",
             &policy,
-            &entries,
+            entries,
             ring_challenge_config,
             flat_fold,
         )

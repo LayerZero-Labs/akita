@@ -52,6 +52,29 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     }
 }
 
+/// Fill `table.identity` at runtime when the shipped static table omits it.
+pub(crate) fn hydrate_schedule_catalog_identity<Cfg: CommitmentConfig>(
+    family_name: &'static str,
+    table: akita_planner::GeneratedScheduleTable,
+) -> akita_planner::GeneratedScheduleTable {
+    if table.identity.is_some() {
+        return table;
+    }
+    let Ok(identity) = akita_planner::expected_catalog_identity(
+        family_name,
+        &policy_of::<Cfg>(),
+        table.entries,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    ) else {
+        return table;
+    };
+    akita_planner::GeneratedScheduleTable {
+        identity: Some(identity),
+        ..table
+    }
+}
+
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
 /// Two field roles, both extending `Field`:

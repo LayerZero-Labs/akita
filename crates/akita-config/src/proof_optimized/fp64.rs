@@ -83,7 +83,7 @@ impl_proof_optimized_preset!(
     128,
     64,
     64,
-    schedules = ("schedules-fp64-d128", fp64_d128_table)
+    schedules = ("schedules-fp64-d128", "fp64_d128", fp64_d128_table)
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -93,7 +93,11 @@ impl_proof_optimized_preset!(
     128,
     64,
     1,
-    schedules = ("schedules-fp64-d128-onehot", fp64_d128_onehot_table)
+    schedules = (
+        "schedules-fp64-d128-onehot",
+        "fp64_d128_onehot",
+        fp64_d128_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     D256Full,
@@ -112,5 +116,9 @@ impl_proof_optimized_preset!(
     256,
     64,
     1,
-    schedules = ("schedules-fp64-d256-onehot", fp64_d256_onehot_table)
+    schedules = (
+        "schedules-fp64-d256-onehot",
+        "fp64_d256_onehot",
+        fp64_d256_onehot_table
+    )
 );
