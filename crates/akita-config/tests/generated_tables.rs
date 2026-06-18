@@ -36,6 +36,72 @@
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step};
 
+#[cfg(feature = "all-schedules")]
+use akita_config::proof_optimized::{fp128, fp32, fp64};
+#[cfg(feature = "all-schedules")]
+use akita_config::tensor_verifier;
+#[cfg(feature = "all-schedules")]
+use akita_config::{policy_of, CommitmentConfig};
+#[cfg(feature = "all-schedules")]
+use akita_planner::generated::table_entry;
+#[cfg(feature = "all-schedules")]
+use akita_planner::{generated_schedule_lookup_key, validate_catalog_identity};
+
+#[cfg(feature = "all-schedules")]
+fn assert_table_hit(
+    module_name: &str,
+    catalog: &akita_planner::GeneratedScheduleTable,
+    keys: &[AkitaScheduleLookupKey],
+) {
+    let hit = keys
+        .iter()
+        .any(|&key| table_entry(*catalog, generated_schedule_lookup_key(key)).is_some());
+    assert!(
+        hit,
+        "family {module_name} must have at least one shipped-table key hit (non-vacuous catalog guard)"
+    );
+}
+
+#[cfg(feature = "all-schedules")]
+fn check_family_catalog<Cfg: CommitmentConfig>(module_name: &str, keys: &[AkitaScheduleLookupKey]) {
+    let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
+        panic!("family {module_name} must expose schedule_catalog() under all-schedules")
+    });
+    validate_catalog_identity(
+        &catalog,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+    .unwrap_or_else(|e| panic!("catalog identity validation failed for {module_name}: {e}"));
+    assert_table_hit(module_name, &catalog, keys);
+}
+
+#[cfg(feature = "all-schedules")]
+fn assert_family_catalog_enabled(family: &GeneratedFamily, keys: &[AkitaScheduleLookupKey]) {
+    match family.module_name {
+        "fp128_d128_full" => check_family_catalog::<fp128::D128Full>(family.module_name, keys),
+        "fp128_d128_onehot" => check_family_catalog::<fp128::D128OneHot>(family.module_name, keys),
+        "fp128_d64_onehot" => check_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
+        "fp128_d64_full" => check_family_catalog::<fp128::D64Full>(family.module_name, keys),
+        "fp128_d64_onehot_tensor" => {
+            check_family_catalog::<tensor_verifier::fp128::D64OneHotTensor>(
+                family.module_name,
+                keys,
+            )
+        }
+        "fp128_d64_onehot_tiered" => {
+            check_family_catalog::<fp128::D64OneHotTiered>(family.module_name, keys)
+        }
+        "fp64_d128" => check_family_catalog::<fp64::D128Full>(family.module_name, keys),
+        "fp64_d128_onehot" => check_family_catalog::<fp64::D128OneHot>(family.module_name, keys),
+        "fp64_d256_onehot" => check_family_catalog::<fp64::D256OneHot>(family.module_name, keys),
+        "fp32_d128_onehot" => check_family_catalog::<fp32::D128OneHot>(family.module_name, keys),
+        "fp32_d256_onehot" => check_family_catalog::<fp32::D256OneHot>(family.module_name, keys),
+        other => panic!("unknown generated family for catalog guard: {other}"),
+    }
+}
+
 /// One `(family, key)` whose table-hit expansion disagrees with the DP.
 struct Mismatch {
     family: &'static str,
@@ -104,6 +170,9 @@ fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
 fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     let keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
         .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
+
+    #[cfg(feature = "all-schedules")]
+    assert_family_catalog_enabled(family, &keys);
 
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
