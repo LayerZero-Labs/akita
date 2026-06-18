@@ -53,6 +53,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 }
 
 /// Fill `table.identity` at runtime when the shipped static table omits it.
+#[allow(dead_code)] // macro-generated `schedule_catalog` only references this with `schedules-*` enabled
 pub(crate) fn hydrate_schedule_catalog_identity<Cfg: CommitmentConfig>(
     family_name: &'static str,
     table: akita_planner::GeneratedScheduleTable,
