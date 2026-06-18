@@ -1,5 +1,5 @@
 use akita_field::{CanonicalField, FieldCore};
-use akita_prover::PreparedCrtNttProfile;
+use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
@@ -86,12 +86,12 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             .unwrap_or(0);
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
-        let z_beta_inf = z_stats.as_ref().map(|s| s.beta_inf).unwrap_or(0);
-        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_beta).unwrap_or(0);
+        let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
+        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_public).unwrap_or(0);
         let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
-            .map(|s| s.bits_per_coord_k_beta)
+            .map(|s| s.bits_per_coord_k_public)
             .unwrap_or(0.0);
         let z_bits_per_coord_packed = z_stats
             .as_ref()
@@ -127,7 +127,7 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
             tail_r_bytes = r_bytes,
-            z_beta_inf,
+            z_witness_linf_cap,
             z_rice_k,
             z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
@@ -140,16 +140,16 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: beta_inf={} k_beta={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
-                     {:.2} bits/coord@k_beta vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
+                    " Golomb z: witness_linf_cap={} k_public={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@k_public vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
                      dist max={} median={} p90={} p99={}",
-                    stats.beta_inf,
-                    stats.rice_k_beta,
+                    stats.witness_linf_cap,
+                    stats.rice_k_public,
                     stats.rice_k_empirical,
                     stats.coord_count,
-                    stats.bits_per_coord_k_beta,
+                    stats.bits_per_coord_k_public,
                     stats.bits_per_coord_k_empirical,
                     stats.bits_per_coord_packed_digits,
                     stats.total_bits_packed_digits.div_ceil(8),
@@ -248,7 +248,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         return;
     };
     let k_hi = stats
-        .rice_k_beta
+        .rice_k_public
         .saturating_add(4)
         .max(stats.rice_k_empirical);
     let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
@@ -257,8 +257,8 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
     eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
     for &(k, bytes) in &sweep {
-        let marker = if k == stats.rice_k_beta {
-            "  <-- public k_beta (sound)"
+        let marker = if k == stats.rice_k_public {
+            "  <-- public k (sound)"
         } else if k == stats.rice_k_empirical {
             "  <-- empirical min on this witness"
         } else if k == k_observed {
@@ -276,9 +276,9 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
         eprintln!(
             "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
-             (vs actual {actual_z_payload_bytes} B at k_beta={}, delta {save_vs_beta} B; \
-             sound tightening needs public k <= k_beta)",
-            stats.rice_k_beta,
+             (vs actual {actual_z_payload_bytes} B at k_public={}, delta {save_vs_beta} B; \
+             sound tightening needs public k <= k_public)",
+            stats.rice_k_public,
         );
     }
 }
@@ -448,10 +448,97 @@ where
     root_bytes + step_bytes
 }
 
+fn fold_grind_nonce_wire_bytes() -> usize {
+    0u32.serialized_size(Compress::No)
+}
+
+fn take_fold_grind_observation<'a>(
+    grind_observations: &'a [FoldGrindObservation],
+    obs_idx: &mut usize,
+    grind_nonce: u32,
+) -> &'a FoldGrindObservation {
+    let obs = grind_observations.get(*obs_idx).unwrap_or_else(|| {
+        panic!(
+            "missing fold grind observation for level obs_idx={obs_idx} grind_nonce={grind_nonce}"
+        )
+    });
+    assert_eq!(
+        obs.grind_nonce, grind_nonce,
+        "fold grind observation nonce mismatch at obs_idx={obs_idx}"
+    );
+    *obs_idx += 1;
+    obs
+}
+
+fn collect_fold_grind_nonces<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> Vec<u32>
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    if proof.is_root_direct() {
+        return Vec::new();
+    }
+
+    let mut nonces = Vec::with_capacity(1 + proof.steps.len());
+    if let Ok(root_nonce) = proof.root.fold_grind_nonce() {
+        nonces.push(root_nonce);
+    }
+    for step in &proof.steps {
+        nonces.push(step.fold_grind_nonce());
+    }
+    nonces
+}
+
+fn emit_fold_grind_summary(label: &str, grind_observations: &[FoldGrindObservation]) {
+    if grind_observations.is_empty() {
+        tracing::info!(label, grind_levels = 0u32, "fold grind summary");
+        eprintln!("[{label}] fold grind: no tail-bound fold levels");
+        return;
+    }
+
+    let max_nonce = grind_observations
+        .iter()
+        .map(|obs| obs.grind_nonce)
+        .max()
+        .expect("non-empty observation list");
+    let attempts_sum: u64 = grind_observations
+        .iter()
+        .map(|obs| u64::from(obs.grind_probe_count))
+        .sum();
+    let nonces_csv = grind_observations
+        .iter()
+        .map(|obs| obs.grind_nonce.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let probe_counts_csv = grind_observations
+        .iter()
+        .map(|obs| obs.grind_probe_count.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    tracing::info!(
+        label,
+        grind_levels = grind_observations.len(),
+        grind_nonce_max = max_nonce,
+        grind_attempts_sum = attempts_sum,
+        grind_nonces = nonces_csv.as_str(),
+        grind_probe_counts = probe_counts_csv.as_str(),
+        "fold grind summary"
+    );
+    eprintln!(
+        "[{label}] fold grind: levels={}, attempts_sum={}, max_nonce={}, nonces=[{nonces_csv}], probe_counts=[{probe_counts_csv}]",
+        grind_observations.len(),
+        attempts_sum,
+        max_nonce,
+    );
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
     level: &AkitaLevelProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -510,6 +597,11 @@ where
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce();
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
+
     tracing::info!(
         label,
         level = level_idx,
@@ -518,6 +610,9 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -529,6 +624,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -544,6 +640,7 @@ where
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
@@ -561,6 +658,7 @@ trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
     ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>>;
     fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L>;
     fn final_witness(&self) -> &CleartextWitnessProof<FF>;
+    fn fold_grind_nonce_value(&self) -> u32;
 }
 
 impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
@@ -578,6 +676,10 @@ impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerial
 
     fn final_witness(&self) -> &CleartextWitnessProof<FF> {
         self.final_witness()
+    }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce
     }
 }
 
@@ -599,6 +701,10 @@ impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerial
             .final_witness()
             .expect("terminal Akita level proof must carry final witness")
     }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce()
+    }
 }
 
 fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
@@ -606,6 +712,8 @@ fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
     level_idx: usize,
     level: &P,
     root_variant: &'static str,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -628,6 +736,10 @@ where
         }
     };
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce_value();
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -647,6 +759,9 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -663,12 +778,14 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + fold_grind_nonce_size
             + stage2_sumcheck_size
             + final_witness_size
     );
@@ -678,13 +795,22 @@ where
 fn print_batched_root_breakdown<FF, L, const D: usize>(
     label: &str,
     root: &AkitaBatchedRootProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
-        return print_terminal_level_breakdown::<FF, L, _, D>(label, 0, terminal, "terminal");
+        return print_terminal_level_breakdown::<FF, L, _, D>(
+            label,
+            0,
+            terminal,
+            "terminal",
+            grind_observations,
+            obs_idx,
+        );
     }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -748,6 +874,10 @@ where
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = fold.fold_grind_nonce;
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
         label,
@@ -757,6 +887,9 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -776,6 +909,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -791,6 +925,7 @@ where
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
@@ -805,6 +940,7 @@ where
 pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
@@ -867,18 +1003,49 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    print_batched_root_breakdown::<FF, L, D>(label, &proof.root);
+    let mut obs_idx = 0usize;
+    print_batched_root_breakdown::<FF, L, D>(label, &proof.root, grind_observations, &mut obs_idx);
     for (i, step) in proof.steps.iter().enumerate() {
         let level_idx = i + 1;
         match step {
             AkitaLevelProof::Intermediate { .. } => {
-                print_akita_level_breakdown::<FF, L, D>(label, level_idx, step);
+                print_akita_level_breakdown::<FF, L, D>(
+                    label,
+                    level_idx,
+                    step,
+                    grind_observations,
+                    &mut obs_idx,
+                );
             }
             AkitaLevelProof::Terminal { .. } => {
-                print_terminal_level_breakdown::<FF, L, _, D>(label, level_idx, step, "fold");
+                print_terminal_level_breakdown::<FF, L, _, D>(
+                    label,
+                    level_idx,
+                    step,
+                    "fold",
+                    grind_observations,
+                    &mut obs_idx,
+                );
             }
         }
     }
+    if !proof.is_root_direct() {
+        assert_eq!(
+            obs_idx,
+            grind_observations.len(),
+            "[{label}] fold grind observation count must match folded proof levels"
+        );
+        let proof_nonces = collect_fold_grind_nonces(proof);
+        assert_eq!(
+            proof_nonces,
+            grind_observations
+                .iter()
+                .map(|obs| obs.grind_nonce)
+                .collect::<Vec<_>>(),
+            "[{label}] fold grind observation nonces must match proof wire nonces"
+        );
+    }
+    emit_fold_grind_summary(label, grind_observations);
 }
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {

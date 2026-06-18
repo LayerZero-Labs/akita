@@ -213,7 +213,7 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<Cfg::Field>,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>,
 {
@@ -325,7 +325,7 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<Cfg::Field>,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     P: AkitaPolyOps<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>,
 {

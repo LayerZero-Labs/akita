@@ -68,6 +68,7 @@ where
     }
     let RingRelationWitness {
         z_folded_rings,
+        fold_grind_nonce: _,
         e_hat,
         e_folded,
         mut hint,

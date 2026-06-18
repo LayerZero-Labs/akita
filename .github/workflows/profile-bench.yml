@@ -35,6 +35,9 @@ env:
   # prime caches and lazily-initialized statics; cache misses on the
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
+  # The profile example installs FoldGrindObserverGuard during prove and emits
+  # per-fold grind_nonce (wire) plus grind_probe_count / grind_attempts (true
+  # prover probes). scripts/profile_bench_report.py surfaces Grind Σ / Grind max.
   # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
   # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
   # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
@@ -157,25 +160,9 @@ jobs:
       - name: Build profile binary
         run: cargo build --release --quiet --example profile
 
-      - name: Run merge-base baseline benchmark
-        if: github.event_name == 'pull_request'
-        run: |
-          case_args=()
-          while IFS= read -r case_spec; do
-            if [ -n "$case_spec" ]; then
-              case_args+=(--case "$case_spec")
-            fi
-          done <<< "$AKITA_BENCH_CASES"
-
-          echo "Benchmarking merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
-          python3 scripts/profile_bench_report.py run \
-            --binary "$RUNNER_TEMP/bench-bins/profile-base" \
-            --output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
-            --mode "$AKITA_BENCH_MODE" \
-            --runs "$AKITA_BENCH_RUNS" \
-            --warmups "$AKITA_BENCH_WARMUPS" \
-            "${case_args[@]}"
-
+      # On PRs the head and merge-base binaries run interleaved (PR, base,
+      # PR, base, ...) so machine-state drift on shared runners lands on both
+      # sides of every pair instead of on one whole block.
       - name: Run profile benchmark cases
         run: |
           case_args=()
@@ -185,8 +172,13 @@ jobs:
             fi
           done <<< "$AKITA_BENCH_CASES"
 
+          baseline_args=()
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA"
+            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA interleaved with merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
+            baseline_args+=(
+              --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
+              --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
+            )
           else
             echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
           fi
@@ -196,6 +188,7 @@ jobs:
             --mode "$AKITA_BENCH_MODE" \
             --runs "$AKITA_BENCH_RUNS" \
             --warmups "$AKITA_BENCH_WARMUPS" \
+            "${baseline_args[@]}" \
             "${case_args[@]}"
 
       - name: Determine previous benchmark run for this PR
