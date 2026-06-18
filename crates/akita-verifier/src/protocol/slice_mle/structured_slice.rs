@@ -116,13 +116,8 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     /// Gadget vector for the digit decomposition of `e`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
-    /// Per-claim carry summary of the public-row ring multiplier after any
-    /// claim batching coefficient has been applied.
-    pub public_block_summaries: &'a [[E; 2]],
     /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// `tau1` equality weight for each claim's public input row.
-    pub public_row_weights_by_claim: &'a [E],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub challenge_weight: E,
 }
@@ -134,7 +129,7 @@ where
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.public_block_summaries.len() * self.gadget_vector.len()
+        self.challenge_block_summaries.len() * self.gadget_vector.len()
     }
 
     #[inline]
@@ -149,21 +144,17 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_claims = self.public_block_summaries.len();
+        let num_claims = self.challenge_block_summaries.len();
         let digit = outer_index / num_claims;
         let claim_idx = outer_index % num_claims;
 
-        let [aggregated_opening_carry0, aggregated_opening_carry1] =
-            self.public_block_summaries[claim_idx];
         let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
             self.challenge_block_summaries[claim_idx];
 
         [
-            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
-                + self.challenge_weight * aggregated_challenge_carry0)
+            (self.challenge_weight * aggregated_challenge_carry0)
                 .mul_base(self.gadget_vector[digit]),
-            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
-                + self.challenge_weight * aggregated_challenge_carry1)
+            (self.challenge_weight * aggregated_challenge_carry1)
                 .mul_base(self.gadget_vector[digit]),
         ]
     }
@@ -495,7 +486,6 @@ mod tests {
             rows,
             claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             num_polys_per_commitment_group: vec![num_claims],
-            gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
             witness_segment_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
@@ -535,8 +525,6 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_e & (p.num_blocks - 1);
 
-        let public_block_summaries = vec![[F::zero(); 2]; p.num_claims];
-        let public_row_weights_by_claim = vec![F::zero(); p.num_claims];
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
@@ -553,9 +541,7 @@ mod tests {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_e >> offset_low_bits,
             gadget_vector: &fx.g1_open,
-            public_block_summaries: &public_block_summaries,
             challenge_block_summaries: &challenge_block_summaries,
-            public_row_weights_by_claim: &public_row_weights_by_claim,
             challenge_weight: p.eq_tau1[0],
         }
         .evaluate();

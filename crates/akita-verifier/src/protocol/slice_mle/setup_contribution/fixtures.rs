@@ -287,7 +287,6 @@ impl SetupContributionFixture {
             rows,
             claim_to_commitment_group_poly: shape.claim_to_commitment_group_poly.clone(),
             num_polys_per_commitment_group: shape.num_polys_per_commitment_group.clone(),
-            gamma: vec![TestField::one(); shape.num_claims],
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,

@@ -266,7 +266,6 @@ mod tests {
             rows,
             claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             num_polys_per_commitment_group,
-            gamma: vec![F::one(); num_claims],
             witness_segment_layout,
         };
         ZkFixture {

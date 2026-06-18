@@ -72,13 +72,13 @@ section; for now we just record the two shapes.
 When `z_first = true`:
 
 ```text
-z_hat ‖ w_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ r_tail
+z_hat ‖ e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ r_tail
 ```
 
 When `z_first = false`:
 
 ```text
-w_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ z_hat ‖ r_tail
+e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ z_hat ‖ r_tail
 ```
 
 Each segment occupies a disjoint, contiguous range of columns. The `b_zk` and
@@ -102,16 +102,16 @@ from **outermost to innermost**, so the last-named axis is the fastest-varying:
 
 | segment | size (ring elements) | axis order (outermost → innermost) | role |
 |---|---|---|---|
-| `w_hat` | `do · C · B` | `dig → claim → block` | opening witness |
+| `e_hat` | `do · C · B` | `dig → claim → block` | opening witness |
 | `t_hat` | `do · n_A · C · B` | `a_row → dig → claim → block` | per-`A`-row opening witness |
 | `z_hat` | `dc · df · block_len` | `dc → df → block` | committed fold response |
 | `b_zk` | (zk only) | blinding planes | `B`-side blinding |
 | `d_zk` | (zk only) | blinding planes | `D`-side blinding |
 | `r_tail` | `rows · levels` | `level → row` | gadget residue rows |
 
-For example, `w_hat` has the digit index as its outermost axis, then the claim
+For example, `e_hat` has the digit index as its outermost axis, then the claim
 index, and finally the block index as the innermost axis. Concretely, the flat
-column coordinate of a `w_hat` cell is
+column coordinate of a `e_hat` cell is
 
 $$
 \text{block} \;+\; B \cdot \text{claim} \;+\; (B \cdot C) \cdot \text{dig},
@@ -136,15 +136,15 @@ Three of $M$'s row blocks act on the witness with fully separable
 (tensor-product) structure: every entry on these rows is a product of small,
 public per-axis factors. That structure is what lets the verifier avoid scanning
 the rows cell by cell — it peels the block axis off once and combines a few
-small tables. These blocks act on `w_hat`, `t_hat`, and `z_hat`. We work through
-`w_hat` in full detail; `t_hat` and `z_hat` follow the same recipe.
+small tables. These blocks act on `e_hat`, `t_hat`, and `z_hat`. We work through
+`e_hat` in full detail; `t_hat` and `z_hat` follow the same recipe.
 
-### w-related tensor components
+### e-related tensor components
 
-One row block of $M$ acts on the `w_hat` columns with fully separable
+One row block of $M$ acts on the `e_hat` columns with fully separable
 (tensor-product) structure — every entry on the row is a product of small,
 public per-axis factors. This is the **consistency component**
-($c^{\top} \otimes G$): it ties `w_hat` to the stage-1 challenge combination
+($c^{\top} \otimes G$): it ties `e_hat` to the stage-1 challenge combination
 after the ring-switch evaluation at $\alpha$.
 
 It occupies a single fixed row $i$ of $M$ — the **consistency row**. (The rows
@@ -156,15 +156,15 @@ the very end.
 
 #### The cell formula
 
-A `w_hat` cell is indexed by a digit, a claim, and a block, with local column
+A `e_hat` cell is indexed by a digit, a claim, and a block, with local column
 coordinate
 
 $$
 c \;=\; \text{block} \;+\; B \cdot (\text{claim} + C \cdot \text{dig}),
 $$
 
-so the global column is $w_{\text{start}} + c$, where $w_{\text{start}}$ is the
-start of the `w_hat` segment. The entry on the consistency row is a product of
+so the global column is $e_{\text{start}} + c$, where $e_{\text{start}}$ is the
+start of the `e_hat` segment. The entry on the consistency row is a product of
 two public per-axis factors:
 
 $$
@@ -190,7 +190,7 @@ for dig   in 0..do:
     for block in 0..B:
       c = block + B*(claim + C*dig)
       acc += row_weight[i] * c_alpha[claim][block] * g_open[dig]
-                 * eq(w_start + c, r_col)
+                 * eq(e_start + c, r_col)
 ```
 
 This costs $O(B \cdot C \cdot \text{do})$ multiplications for the triple loop,
@@ -207,22 +207,22 @@ loop and reuse it.
 Split the segment offset into a low part (the block window) and a high part:
 
 $$
-w_{\text{start}} \;=\; w_{\text{lo}} \;+\; B \cdot w_{\text{hi}},
-\qquad w_{\text{lo}} = w_{\text{start}} \bmod B,
-\quad w_{\text{hi}} = \lfloor w_{\text{start}} / B \rfloor.
+e_{\text{start}} \;=\; e_{\text{lo}} \;+\; B \cdot e_{\text{hi}},
+\qquad e_{\text{lo}} = e_{\text{start}} \bmod B,
+\quad e_{\text{hi}} = \lfloor e_{\text{start}} / B \rfloor.
 $$
 
 Then the global column is
 
 $$
-w_{\text{start}} + c \;=\; (w_{\text{lo}} + \text{block}) \;+\; B \cdot (w_{\text{hi}} + \text{claim} + C \cdot \text{dig}).
+e_{\text{start}} + c \;=\; (e_{\text{lo}} + \text{block}) \;+\; B \cdot (e_{\text{hi}} + \text{claim} + C \cdot \text{dig}).
 $$
 
-The low part $s = w_{\text{lo}} + \text{block}$ ranges over $[0, 2B - 2]$, so it
+The low part $s = e_{\text{lo}} + \text{block}$ ranges over $[0, 2B - 2]$, so it
 produces **at most one carry bit**:
 
 $$
-w_{\text{start}} + c \;=\; (s \bmod B) \;+\; B \cdot (w_{\text{hi}} + \text{claim} + C \cdot \text{dig} + \text{carry}),
+e_{\text{start}} + c \;=\; (s \bmod B) \;+\; B \cdot (e_{\text{hi}} + \text{claim} + C \cdot \text{dig} + \text{carry}),
 \qquad \text{carry} = \lfloor s / B \rfloor \in \{0, 1\}.
 $$
 
@@ -230,9 +230,9 @@ The low part now occupies exactly the low $\log_2 B$ bits and the high part the
 rest, so the equality polynomial factors:
 
 $$
-\mathrm{eq}(w_{\text{start}} + c, \; r_{\text{col}})
+\mathrm{eq}(e_{\text{start}} + c, \; r_{\text{col}})
 \;=\;
-\mathrm{eq}_{\text{low}}(s \bmod B) \cdot \mathrm{eq}_{\text{high}}(w_{\text{hi}} + \text{claim} + C \cdot \text{dig} + \text{carry}),
+\mathrm{eq}_{\text{low}}(s \bmod B) \cdot \mathrm{eq}_{\text{high}}(e_{\text{hi}} + \text{claim} + C \cdot \text{dig} + \text{carry}),
 $$
 
 where $\mathrm{eq}_{\text{low}}$ uses the low $\log_2 B$ challenge bits of
@@ -249,7 +249,7 @@ for claim in 0..C:
     S0[claim] = 0      # carry = 0 bucket
     S1[claim] = 0      # carry = 1 bucket
     for block in 0..B:
-        s = w_lo + block
+        s = e_lo + block
         if s >= B:
             S1[claim] += c_alpha[claim][block] * eq_low[s - B]
         else:
@@ -264,7 +264,7 @@ summaries:
 acc = 0
 for dig   in 0..do:
   for claim in 0..C:
-    q = w_hi + claim + C*dig
+    q = e_hi + claim + C*dig
     acc += g_open[dig] * (S0[claim] * eq_high[q] + S1[claim] * eq_high[q + 1])
 acc *= row_weight[i]
 ```
@@ -290,14 +290,14 @@ weight did not depend on the claim, a single $O(B)$ summary would suffice.
 
 One row block of $M$ acts on the `t_hat` columns. It is the **per-`A`-row
 consistency component** ($c^{\top} \otimes G_{n_A}$): the same consistency check
-as the `w_hat` component, but applied once per row of the consistency-check
+as the `e_hat` component, but applied once per row of the consistency-check
 matrix `A`. So instead of a single row it occupies $n_A$ rows of $M$ — the
 `A`-rows — each carrying its own `row_weight`.
 
 #### The cell formula
 
 A `t_hat` cell is indexed by an `A`-row, a digit, a claim, and a block (this is
-the same `w_hat` shape with one extra `a_row` axis tensored on). Its local
+the same `e_hat` shape with one extra `a_row` axis tensored on). Its local
 column coordinate is
 
 $$
@@ -318,7 +318,7 @@ with the whole slice weighted by `row_weight[a_row]`, the equality weight of tha
 `A`-row. As before, $g_{\text{open}}[\text{dig}]$ is the open-side gadget weight
 and $c_{\alpha}[\text{claim}, \text{block}]$ is the $\alpha$-evaluation of the
 stage-1 sparse challenge for $(\text{claim}, \text{block})$ — the same
-claim-and-block-coupled quantity that appears in the `w_hat` consistency
+claim-and-block-coupled quantity that appears in the `e_hat` consistency
 component.
 
 #### The naive evaluation
@@ -357,7 +357,7 @@ $$
 t_{\text{start}} + c \;=\; (t_{\text{lo}} + \text{block}) \;+\; B \cdot (t_{\text{hi}} + \text{claim} + C \cdot \text{dig} + C \cdot \text{do} \cdot \text{a\_row}).
 $$
 
-As in the `w_hat` case, $s = t_{\text{lo}} + \text{block}$ lies in $[0, 2B - 2]$,
+As in the `e_hat` case, $s = t_{\text{lo}} + \text{block}$ lies in $[0, 2B - 2]$,
 giving **at most one carry bit**, and the equality polynomial factors into a low
 (block-window) factor and a high factor:
 
@@ -368,20 +368,20 @@ $$
 $$
 
 The block-dependent factor is again $c_{\alpha}[\text{claim}, \text{block}] \cdot \mathrm{eq}_{\text{low}}(\cdot)$
-— **identical** to the `w_hat` consistency component. In fact the two segments
+— **identical** to the `e_hat` consistency component. In fact the two segments
 share the same $\mathrm{eq}_{\text{low}}$ table: their offsets differ by a
-multiple of $B$ (the `w_hat` segment length is a multiple of $B$), so
-$t_{\text{lo}} = w_{\text{lo}}$ and the carry split is the same. Therefore the
+multiple of $B$ (the `e_hat` segment length is a multiple of $B$), so
+$t_{\text{lo}} = e_{\text{lo}}$ and the carry split is the same. Therefore the
 **per-claim block summaries are exactly the same**, and are computed only once
 and reused here:
 
 ```text
-# Per-claim block summaries — O(C * B), shared with the w_hat component:
+# Per-claim block summaries — O(C * B), shared with the e_hat component:
 for claim in 0..C:
     S0[claim] = 0      # carry = 0 bucket
     S1[claim] = 0      # carry = 1 bucket
     for block in 0..B:
-        s = t_lo + block            # = w_lo + block
+        s = t_lo + block            # = e_lo + block
         if s >= B:
             S1[claim] += c_alpha[claim][block] * eq_low[s - B]
         else:
@@ -404,7 +404,7 @@ for a_row in 0..n_A:
 
 #### Cost
 
-The per-claim summaries cost $O(C \cdot B)$ (and are shared with the `w_hat`
+The per-claim summaries cost $O(C \cdot B)$ (and are shared with the `e_hat`
 component, so in practice they are free here), and the outer combine costs
 $O(n_A \cdot C \cdot \text{do})$ ($\mathrm{eq}_{\text{high}}$ is cheap and
 ignored). The total overhead is therefore
@@ -414,19 +414,19 @@ O(C \cdot B + n_A \cdot C \cdot \text{do}),
 $$
 
 versus the naive $O(n_A \cdot B \cdot C \cdot \text{do})$, with no dense table to
-store. As with `w_hat`, the heavy block scan is lifted out of the inner loops:
-the only difference from the `w_hat` consistency component is the extra `a_row`
+store. As with `e_hat`, the heavy block scan is lifted out of the inner loops:
+the only difference from the `e_hat` consistency component is the extra `a_row`
 axis on the (cheap) outer combine.
 
 ### z-related tensor components
 
 One row block of $M$ acts on the `z_hat` columns: the **in-block consistency
 contribution** that ties `z_hat` to the opening point's in-block weights. Like
-the `w_hat` consistency component, it sits on the consistency row of $M$, so it
+the `e_hat` consistency component, it sits on the consistency row of $M$, so it
 shares that single row's `row_weight` (applied, with the relation's minus sign,
 at the end).
 
-Its block axis is `block_len`, and this is where `z_hat` differs from `w_hat`
+Its block axis is `block_len`, and this is where `z_hat` differs from `e_hat`
 and `t_hat`: their block axis is `B = num_blocks`, which is **always** a power of
 two, but `block_len` is a power of two only at the root level. At recursive
 levels `block_len = ceil(num_ring / num_blocks)` can be any integer. Whether the
@@ -454,7 +454,7 @@ where $g_{\text{commit}}[\text{dc}]$ is the commit-side gadget weight,
 $g_{\text{fold}}[\text{df}]$ is the fold-side gadget weight, and $a[\text{blk}]$
 is the opening point's in-block weight. The consistency row contributes this
 weighted by $-\,\text{consistency\_weight}$ (its `row_weight`, negated by the
-relation). Note that, unlike the `w_hat`/`t_hat` consistency weight
+relation). Note that, unlike the `e_hat`/`t_hat` consistency weight
 $c_{\alpha}$, the block factor $a[\text{blk}]$ depends on the block **only** — it
 is not coupled to the digit axes.
 
@@ -477,7 +477,7 @@ $\mathrm{eq}(\cdot, r_{\text{col}})$ table over the segment.
 
 #### Case 1: `block_len` is a power of two (peeled fast path)
 
-This is the situation at the root level, and it works exactly like the `w_hat`
+This is the situation at the root level, and it works exactly like the `e_hat`
 component — except the peeled window is `block_len` (not `B`) and the small outer
 axes are the gadget digits `(dc, df)` (not the claims).
 
@@ -499,7 +499,7 @@ $$
 $$
 
 The block-dependent factor $a[\text{blk}] \cdot \mathrm{eq}_{\text{low}}(\cdot)$
-depends only on the block, so — exactly like the `w_hat` public weight — we sum
+depends only on the block, so — exactly like the `e_hat` public weight — we sum
 it over all blocks **once** into two carry buckets:
 
 ```text

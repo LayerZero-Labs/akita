@@ -74,7 +74,6 @@ This spec uses short dimension names for fields on
 | `B` | `num_blocks` | witness-side block count |
 | `C` | `num_claims` | number of batched evaluation claims |
 | `L` | `depth_open` | open-side digit depth |
-| `P` | `num_points` | number of distinct opening points |
 | `DC` | `depth_commit` | commit-side digit depth |
 | `DF` | `depth_fold` | fold-side digit depth |
 | `n_A` | `n_a` | number of `A` rows |
@@ -87,7 +86,7 @@ This spec uses short dimension names for fields on
 | **structured (tensor) rows** over `ŵ`, `t̂`, `ẑ` | rows of the form `vᵀ ⊗ G` for known small public vectors `v` and gadget vectors `G` | every entry factors as a product of public scalars → no SIS-matrix scan | §4, §5, §6 |
 | **setup-matrix rows** `D·ŵ + B·t̂ + A·ẑ` | rows of the shared SIS commitment matrix evaluated at `α` | one column-pattern build + a single SIS-row scan, with `r_eval` shared across all three halves | §7 |
 | **r-tail** | the `rows × levels` `r`-tail planes | pow2: multi-factor `eval_offset_eq_tensor`; non-pow2: materialise + single-factor | §8 |
-| **ZK B-blinding** *(feature-gated)* | point-local `B`-side blinding planes over a per-commitment `zkB` prefix view | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.1 |
+| **ZK B-blinding** *(feature-gated)* | `B`-side blinding planes over a per-commitment `zkB` prefix view | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.1 |
 | **ZK D-blinding** *(feature-gated)* | global `D`-side blinding planes | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.2 |
 
 The first row of the table — structured rows — uses the same algorithmic
@@ -113,8 +112,8 @@ Segment lengths and axes:
 |---|---|---|---|
 | `ŵ` | `L · C · B` | `block → claim → dig` | open-side digit depth `L`, claims `C`, blocks `B` |
 | `t̂` | `L · n_A · C · B` | `block → claim → dig → a_row` | adds the `A`-row axis `n_A` |
-| `ẑ` | `DF · DC · P · block_len` | `blk → pt → df → dc` | commit-side `DC`, fold-side `DF`, points `P`, in-block `block_len` |
-| `b_blind` | `prepared.b_blinding_segment_len` (0 without zk) | point-local blinding segment (§9.1) | fresh digits per B commitment; stored `zkB` uses a per-commitment prefix view |
+| `ẑ` | `DF · DC · block_len` | `blk → df → dc` | commit-side `DC`, fold-side `DF`, in-block `block_len` |
+| `b_blind` | `prepared.b_blinding_segment_len` (0 without zk) | blinding segment (§9.1) | fresh digits per B commitment; stored `zkB` uses a per-commitment prefix view |
 | `d_blind` | `prepared.d_blinding_segment_len` (0 without zk) | global D-side tail (§9.2) | per-row append after `b_blind` |
 | `r-tail` | `rows · levels` | `level → row` | rows-of-`M` × gadget levels |
 
@@ -138,8 +137,8 @@ where `idx_M` is the bijection given by the nested order above. Sections
 Two row blocks of `M` act on `ŵ` with **fully separable** (tensor-product)
 structure — every entry is a product of small public scalars:
 
-- **Row block A** (`bᵀ ⊗ G_{2^r}`): `P` rows, one per opening point. Reads
-  off the public claim value `y_p` from the digit-decomposed `ŵ`.
+- **Row block A** (`bᵀ ⊗ G_{2^r}`): one row for the opening point. Reads
+  off the public claim value `y` from the digit-decomposed `ŵ`.
 - **Row block B** (`cᵀ ⊗ G_1`): one row. Ties `ŵ` to the stage-1
   sparse-challenge linear combination after ring-switch evaluation at `α`.
 
@@ -152,19 +151,18 @@ $$
 
 Row weights:
 
-- Row block A row `pt` carries weight `y_w[pt] = eq_τ₁[1 + pt]`.
+- Row block A carries weight `y_w = eq_τ₁[1]`.
 - Row block B carries weight `consistency_weight = eq_τ₁[0]`.
 
 ### 4.2 Entry formulas
 
-For row block A, fixed point `pt`:
+For row block A:
 
 $$
-A_{pt}[c] \;=\; \gamma_\text{claim} \cdot b_p[\text{block}] \cdot g_1[\text{dig}]
-\cdot \mathbb{1}[\text{claim\_to\_point}(\text{claim}) = pt],
+A[c] \;=\; \gamma_\text{claim} \cdot b[\text{block}] \cdot g_1[\text{dig}],
 $$
 
-with tensor view `A_{pt}[\cdot] = g_1 \otimes (\gamma \circ \mathbb{1}[\cdot \to pt]) \otimes b_p`.
+with tensor view `A[\cdot] = g_1 \otimes \gamma \otimes b`.
 
 For row block B:
 
@@ -175,7 +173,7 @@ $$
 
 Notation:
 - `g_1[dig] = b^{dig}` (gadget weight, basis `b = 2^r`)
-- `b_p[block]` — outer-block weight of opening point `p`
+- `b[block]` — outer-block weight of the opening point
 - `c_α[claim, block]` — α-evaluation of the stage-1 sparse challenge for
   `(claim, block)`
 - `γ_claim` — batching coefficient
@@ -200,8 +198,8 @@ Precompute, **once per verifier**:
 
 - `eq_low` — size `B` (shared with `t_structured`, `setup_contribution`).
 - `eq_hi_w[k]` for `k ∈ [0, C · L]`.
-- Per-opening-point block summary
-  $\text{BLOCK\_SUMMARY\_A}[pt] = \bigl[\sum_{b:\text{carry}=0} \text{eq\_low}[\dots] \cdot b_p[b], \;\sum_{b:\text{carry}=1} \dots\bigr]$.
+- Block summary
+  $\text{BLOCK\_SUMMARY\_A} = \bigl[\sum_{b:\text{carry}=0} \text{eq\_low}[\dots] \cdot b[b], \;\sum_{b:\text{carry}=1} \dots\bigr]$.
 - Per-claim block summary
   $\text{BLOCK\_SUMMARY\_B}[\text{claim}] = \bigl[\sum_{b:\text{carry}=0} \text{eq\_low}[\dots] \cdot c_\alpha[\text{claim}, b], \;\sum_{b:\text{carry}=1} \dots\bigr]$
   (reused by `t_structured` — see §5.3).
@@ -210,9 +208,8 @@ The per-row inner sum then collapses to a two-term lookup per
 `(dig, claim)`:
 
 ```text
-A_pt row contribution at (dig, claim, carry)
-   = y_w[pt] · γ_claim · g1[dig] · BLOCK_SUMMARY_A[pt][carry]
-                                  · 1[claim_to_point(claim) = pt]
+A row contribution at (dig, claim, carry)
+   = y_w · γ_claim · g1[dig] · BLOCK_SUMMARY_A[carry]
 B row contribution at (dig, claim, carry)
    = consistency_weight · g1[dig] · BLOCK_SUMMARY_B[claim][carry]
 ```
@@ -225,10 +222,10 @@ multiplied by `eq_hi_w[q + carry]` and summed over `(dig, claim, carry)`.
 |---|---|---|
 | `eq_low` (size `B`) | `O(B)` | verifier |
 | `eq_hi_w` (size `C · L + 1`) | `O((C · L) · log)` | verifier |
-| `BLOCK_SUMMARY_A[pt]` for `pt ∈ [0, P)` | `O(P · B)` | verifier |
+| `BLOCK_SUMMARY_A` | `O(B)` | verifier |
 | `BLOCK_SUMMARY_B[claim]` for `claim ∈ [0, C)` | `O(C · B)` | verifier (shared with `t_structured`) |
 | evaluate one row over its `(dig, claim, carry)` outer | `O(C · L)` | per row |
-| sum over `P + 1` rows | `O((P + 1) · C · L)` | total |
+| sum over `2` rows (A + B) | `O(C · L)` | total |
 
 **No SIS-matrix read.** Implementation: `WStructuredSlicesEvaluator` via
 the `StructuredSliceMleEvaluator` trait;
@@ -326,61 +323,61 @@ contribution that ties `ẑ` to the openings' in-block weights:
 
 $$
 Z_\text{sep}[r, c]
-\;=\; -\,\text{consistency\_weight} \cdot g_1^\text{commit}[\text{dc}] \cdot \text{fold\_gadget}[\text{df}] \cdot a_p[\text{blk}],
+\;=\; -\,\text{consistency\_weight} \cdot g_1^\text{commit}[\text{dc}] \cdot \text{fold\_gadget}[\text{df}] \cdot a[\text{blk}],
 $$
 
-with `a_p = opening_points[pt].a` the in-block weight vector of point `p`.
+with `a = opening_point.a` the in-block weight vector of the opening point.
 
 ### 6.2 Format
 
-`ẑ` has length `DF · DC · P · block_len` and the nested order
-`[blk, pt, df, dc]`, so
+`ẑ` has length `DF · DC · block_len` and the nested order
+`[blk, df, dc]`, so
 
 $$
-j_M^Z(\text{dc}, \text{df}, \text{pt}, \text{blk})
-\;=\; \text{blk} \;+\; \text{block\_len} \cdot \bigl(\text{pt} + P \cdot \text{df} + P \cdot DF \cdot \text{dc}\bigr).
+j_M^Z(\text{dc}, \text{df}, \text{blk})
+\;=\; \text{blk} \;+\; \text{block\_len} \cdot \bigl(\text{df} + DF \cdot \text{dc}\bigr).
 $$
 
 Each cell carries a distinct base-field value — the `n_A` axes of `t̂`
-don't appear here, and the four nested axes (`dc, df, pt, blk`) each
-encode an independent dimension of the gadget × point × in-block
+don't appear here, and the three nested axes (`dc, df, blk`) each
+encode an independent dimension of the gadget × in-block
 decomposition.
 
 The entry formula is a tensor product:
 
 $$
-Z_\text{sep}[\cdot] \;=\; -\text{consistency\_weight} \cdot (g_1^\text{commit} \otimes \text{fold\_gadget} \otimes a_p).
+Z_\text{sep}[\cdot] \;=\; -\text{consistency\_weight} \cdot (g_1^\text{commit} \otimes \text{fold\_gadget} \otimes a).
 $$
 
 ### 6.3 Evaluation: peeled-block over `block_len` (pow2 path)
 
 When `block_len.is_power_of_two()`, peel the low `log₂(block_len)` bits
 of `r_col` off into `eq_low_z` (size `block_len`), and the rest becomes
-`eq_high_z`. Precompute the per-opening-point block summary:
+`eq_high_z`. Precompute the block summary:
 
 $$
-\text{A\_BLOCK\_SUMMARY}[pt] \;=\; \bigl[\,
-\sum_{\text{blk}:\text{carry}=0} \text{eq\_low\_z}[\text{low\_idx}(\text{blk})] \cdot a_p[\text{blk}],
+\text{A\_BLOCK\_SUMMARY} \;=\; \bigl[\,
+\sum_{\text{blk}:\text{carry}=0} \text{eq\_low\_z}[\text{low\_idx}(\text{blk})] \cdot a[\text{blk}],
 \quad \sum_{\text{blk}:\text{carry}=1} \dots
 \,\bigr].
 $$
 
-Then for each `(pt, df, dc, carry)`:
+Then for each `(df, dc, carry)`:
 
 ```text
 Z_sep contribution = -consistency_weight · g1_commit[dc] · fold_gadget[df]
-                      · A_BLOCK_SUMMARY[pt][carry]
+                      · A_BLOCK_SUMMARY[carry]
                       · eq_hi_z[q_z + carry]
 ```
 
-with `q_z = pt + P · df + P · DF · dc`.
+with `q_z = df + DF · dc`.
 
 ### 6.4 Non-power-of-two `block_len` (dense fallback)
 
 When `block_len` is not a power of two (some recursive levels) the
 peeled-block carry algebra is not defined cleanly. The verifier falls
 back to materialising the structured `z` segment of length
-`DF · DC · P · block_len` and calling single-factor `eval_offset_eq_tensor`
+`DF · DC · block_len` and calling single-factor `eval_offset_eq_tensor`
 over it.
 
 This dispatch happens at the `eval_at_point` call site: pow2 levels use
@@ -392,10 +389,10 @@ This dispatch happens at the `eval_at_point` call site: pow2 levels use
 | step | cost | done once per |
 |---|---|---|
 | `eq_low_z` (size `block_len`) | `O(block_len)` | verifier |
-| `eq_hi_z` (size `P · DF · DC + 1`) | `O(P · DF · DC · log)` | verifier |
-| `A_BLOCK_SUMMARY[pt]` for `pt ∈ [0, P)` | `O(P · block_len)` | verifier (pow2 only) |
-| pow2 evaluate | `O(P · DF · DC)` | total |
-| non-pow2 fallback | `O(DF · DC · P · block_len)` materialisation + single-factor MLE | total |
+| `eq_hi_z` (size `DF · DC + 1`) | `O(DF · DC · log)` | verifier |
+| `A_BLOCK_SUMMARY` | `O(block_len)` | verifier (pow2 only) |
+| pow2 evaluate | `O(DF · DC)` | total |
+| non-pow2 fallback | `O(DF · DC · block_len)` materialisation + single-factor MLE | total |
 
 **No SIS-matrix read.** Implementation: `ZStructuredPow2SlicesEvaluator`
 via the `StructuredSliceMleEvaluator` trait for pow2 `block_len`, and
@@ -485,18 +482,18 @@ then `flat_claim_for_group[g][poly_idx]` resolves the global
 `flat_claim` (or returns `None` if that polynomial slot is not opened).
 
 **`Z_col[c]`** — pow2 mode uses peeled-block with a precomputed
-`S_per_dc_per_carry[dc][carry]` table that absorbs the `(pt, df)`
+`S_per_dc_per_carry[dc][carry]` table that absorbs the `df`
 aggregation:
 
 ```text
 Z_col[c] = eq_low_z[low_idx] · S_per_dc_per_carry[dc][carry]
 S_per_dc_per_carry[dc][carry]
-    = -Σ_{pt, df} fold_gadget[df] · eq_hi_z[z_offset_high + (pt + P·df + P·DF·dc) + carry]
+    = -Σ_{df} fold_gadget[df] · eq_hi_z[z_offset_high + (df + DF·dc) + carry]
 ```
 
 Non-pow2 mode builds `Z_col` densely with a one-shot peeled eq cache
 (`EqPolynomial::evals` over the low `log₂(z_len)` bits + a tiny high-bit
-factor table), giving the same `Vec<E>` shape with O(P · DF) per-cell
+factor table), giving the same `Vec<E>` shape with O(DF) per-cell
 cost. The per-row inner-product loop is identical in both modes.
 
 ### 7.5 No post-loop dense fallback
@@ -514,8 +511,8 @@ branch for `r ∈ [max(n_d, n_b), n_A)`).
 |---|---|---|
 | `eq_hi_w` (size `C · L + 1`) | `O(C · L · log)` | verifier |
 | `eq_hi_t` (size `C · L · n_A + 1`) | `O(C · L · n_A · log)` | verifier |
-| `eq_hi_z` (size `P · DF · DC + 1`) | `O(P · DF · DC · log)` | verifier |
-| `S_per_dc_per_carry` (pow2 only) | `O(DC · DF · P)` | verifier |
+| `eq_hi_z` (size `DF · DC + 1`) | `O(DF · DC · log)` | verifier |
+| `S_per_dc_per_carry` (pow2 only) | `O(DC · DF)` | verifier |
 | `W_col`, `T_col^{(g)}`, `Z_col` builds | `O(n_cols_total · (1 + G))` | verifier |
 | `r_eval[c]` for `c ∈ row_range` | `O(n_cols_total · D)` extension-field ops per row | per row |
 | per-row inner product | `O(n_cols_total · (1 + G))` | per row |
@@ -605,23 +602,21 @@ compiled out otherwise.
 ### 9.1 B-blinding segment
 
 A small B-blinding segment is appended after `t̂` in the M-layout. The
-witness has one segment per point, but each point reuses the same stored
-per-commitment `zkB` prefix view with fresh blinding digits. The verifier
-weights the materialised segment by the per-point B-row eq weights and
-combines it with single-factor `eval_offset_eq_tensor`.
+segment reuses the stored per-commitment `zkB` prefix view with fresh
+blinding digits. The verifier weights the materialised segment by the
+B-row eq weights and combines it with single-factor
+`eval_offset_eq_tensor`.
 
 Format:
 
 - Located at witness offset `b_blinding_segment_offset = offset_t + t_len`.
 - Length `prepared.b_blinding_segment_len`, equal to
-  `num_points * b_blinding_digit_planes_per_point`.
+  `b_blinding_digit_planes_per_point`.
 - Per-cell entry at index `idx`:
 
   ```text
-  group_idx = idx / b_blinding_digit_planes_per_point;
-  local     = idx % b_blinding_digit_planes_per_point;
-  local_col = local;
-  entry     = Σ_{row_idx ∈ [b_start + group_idx·n_b, b_start + (group_idx+1)·n_b)} eq_τ₁[row_idx]
+  local_col = idx;
+  entry     = Σ_{row_idx ∈ [b_start, b_start + n_b)} eq_τ₁[row_idx]
                                   · eval_ring_at_pows(zkB[row_idx, local_col], α)
   ```
 

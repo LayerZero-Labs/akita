@@ -14,10 +14,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout, SetupContributionPlanInputs,
-    TerminalWitnessTranscriptParts,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
+    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+    RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -134,7 +133,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) rows: usize,
     pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
     pub(crate) num_polys_per_commitment_group: Vec<usize>,
-    pub(crate) gamma: Vec<F>,
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
 
@@ -555,7 +553,6 @@ where
         rows,
         claim_to_commitment_group_poly,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        gamma: gamma.to_vec(),
         witness_segment_layout,
     })
 }
@@ -713,51 +710,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- E-hat ---------------------------------------------------------
         let e_structured_contribution = {
             let _span = tracing::info_span!("e_structured").entered();
-            let uses_ring_multipliers = ring_multiplier_point.as_base().is_none();
-            let row_coefficient_rings = if uses_ring_multipliers {
-                Some(
-                    self.gamma
-                        .iter()
-                        .copied()
-                        .map(|coefficient| {
-                            embed_ring_subfield_scalar::<F, E, D>(
-                                coefficient,
-                                AkitaError::InvalidProof,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            } else {
-                None
-            };
-            let public_block_summaries: Vec<[E; 2]> = (0..self.num_claims)
-                .map(|claim_idx| {
-                    let coefficient_ring = row_coefficient_rings
-                        .as_ref()
-                        .map(|rings| &rings[claim_idx]);
-                    summarize_pow2_multiplier_block_carries(
-                        &eq_low,
-                        block_offset_low,
-                        ring_multiplier_point.b_len(),
-                        |idx| {
-                            ring_multiplier_point.eval_b_with_coefficient(
-                                idx,
-                                self.gamma[claim_idx],
-                                coefficient_ring,
-                                &alpha_pows,
-                            )
-                        },
-                    )
-                })
-                .collect::<Result<_, _>>()?;
-            let public_row_weights_by_claim: Vec<E> = vec![E::zero(); self.num_claims];
             EStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: layout.offset_e >> offset_low_bits,
                 gadget_vector: &g1_open,
-                public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
-                public_row_weights_by_claim: &public_row_weights_by_claim,
                 challenge_weight: self.eq_tau1[0],
             }
             .evaluate()
