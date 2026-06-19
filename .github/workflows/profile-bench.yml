@@ -193,6 +193,9 @@ jobs:
             "${baseline_args[@]}" \
             "${case_args[@]}"
 
+      # One artifact per job (pr/ and base/ roots). `if: always()` so a failed
+      # case still uploads: summary.json marks failed cases and keeps metrics
+      # for passing ones, so `report` can still render a comparison.
       - name: Upload per-group benchmark artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -202,15 +205,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  # report downloads the handoff summaries, renders the comparison, upserts the
-  # PR comment, and uploads the canonical `profile-bench-data` artifact. Runs on
-  # always() so a failed case still posts a comment for the cases that passed; a
-  # build failure produces no summary, so report fails before commenting ->
-  # red check, no comment.
+  # `always() && !cancelled()` — `needs: bench` skips dependents on failure unless
+  # `always()` is present; `!cancelled()` keeps a manual cancel from running report.
+  # A failed bench leg still uploads (see upload step), so report can post a partial
+  # comment, upload `profile-bench-data`, then fail the check in the final step.
   report:
     name: Report
     needs: bench
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -395,6 +397,8 @@ jobs:
           AKITA_BENCH_MAIN_BASELINE_SHA: ${{ github.event_name == 'pull_request' && env.AKITA_BENCH_MERGE_BASE_SHA || '' }}
           AKITA_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
+          # 'success' only if every bench leg passed; drives the warning banner.
+          BENCH_RESULT: ${{ needs.bench.result }}
         run: |
           summary_path="$AKITA_BENCH_ARTIFACT_DIR/summary.json"
           python3 scripts/profile_bench_report.py render \
@@ -411,6 +415,14 @@ jobs:
           {
             echo '<!-- akita-profile-bench-report -->'
             echo
+            # A failed leg means a case errored; the table still compares the
+            # passing cases, so flag the partial result.
+            if [ "$BENCH_RESULT" != "success" ]; then
+              echo '> [!WARNING]'
+              echo '> One or more benchmark cases failed; the comparison below covers'
+              echo '> only the passing cases. See the **Failed cases** list for details.'
+              echo
+            fi
             cat "$AKITA_BENCH_COMMENT"
           } > "$AKITA_BENCH_COMMENT.marked"
           mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
@@ -475,3 +487,12 @@ jobs:
           path: ${{ env.AKITA_BENCH_ARTIFACT_DIR }}
           if-no-files-found: warn
           retention-days: 30
+
+      # Last step, after the comment and artifact: fail the run if any bench leg
+      # failed, turning this `report` check red (require it in branch protection
+      # to block merge). Skipped on green runs, leaving `report` green.
+      - name: Fail the run if any benchmark case failed
+        if: ${{ needs.bench.result != 'success' }}
+        run: |
+          echo "::error::A benchmark case failed; see the 'Failed cases' list in the PR comment." >&2
+          exit 1
