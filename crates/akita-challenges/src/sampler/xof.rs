@@ -155,14 +155,4 @@ impl XofCursor {
             u128::from_le_bytes(bytes)
         }
     }
-
-    /// Draw a uniformly random sign in `{-1, +1}`.
-    #[inline]
-    pub(crate) fn next_sign(&mut self) -> i8 {
-        if (self.next_u8() & 1) == 0 {
-            1
-        } else {
-            -1
-        }
-    }
 }

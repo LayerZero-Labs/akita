@@ -62,6 +62,7 @@ where
 ///
 /// Returns an error if count arithmetic overflows, tensor splitting is invalid,
 /// or sparse challenge expansion fails.
+#[allow(clippy::too_many_arguments)]
 pub fn preview_folding_challenges<const D: usize>(
     preview: &dyn FoldChallengeSeedPreview,
     num_blocks: usize,
@@ -144,6 +145,7 @@ pub fn preview_folding_challenges<const D: usize>(
 ///
 /// Returns an error if count arithmetic overflows, if tensor splitting is
 /// invalid, or if sparse challenge sampling fails.
+#[allow(clippy::too_many_arguments)]
 pub fn sample_folding_challenges<F, T, const D: usize>(
     transcript: &mut T,
     num_blocks: usize,

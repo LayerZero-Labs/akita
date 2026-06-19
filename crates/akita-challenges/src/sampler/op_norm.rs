@@ -29,7 +29,7 @@
 //!   so acceptance is always sound. A frequency whose *lower* bound already
 //!   exceeds the threshold forces [`Decision::Reject`]; anything in between is
 //!   [`Decision::Indeterminate`]. Callers that fold the boundary band into a
-//!   reject (see [`OpNormTable::accept_strict`]) stay sound, at the cost of a
+//!   reject (see [`OpNormTable::accept_strict_parts`]) stay sound, at the cost of a
 //!   slightly smaller accepted support.
 //!
 //! Only the `D/2` frequencies `k = 0..D/2` are scanned: `zeta_{D-1-k} =
@@ -37,12 +37,10 @@
 //!
 //! This is the acceptance oracle for operator-norm rejection sampling of fold
 //! challenges: [`crate::sample_sparse_challenges`] retains a sampled challenge
-//! only if it passes [`OpNormTable::accept_strict`] (see the rejection loop in
+//! only if it passes [`OpNormTable::accept_strict_parts`] (see the rejection loop in
 //! [`crate::sampler`]).
 
 use akita_field::AkitaError;
-
-use crate::SparseChallenge;
 
 /// Internal fixed-point scale for the certified `pi` and trig interval math.
 /// Chosen so that products of two scaled values stay within `i128`
@@ -124,37 +122,7 @@ impl OpNormTable {
         })
     }
 
-    /// Decide `gamma_D(c) <= t` for a sparse challenge.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidInput`] if a position is `>= D`, the
-    /// positions/coefficients lengths disagree, or `||c||_1` / `t` exceed the
-    /// `max_l1` / `max_t` this table validated (either could overflow the
-    /// accumulators or the threshold).
-    pub(crate) fn decide(
-        &self,
-        challenge: &SparseChallenge,
-        t: u64,
-    ) -> Result<Decision, AkitaError> {
-        self.decide_parts(&challenge.positions, &challenge.coeffs, t, self.d / 2)
-    }
-
-    /// `true` iff [`Decision::Accept`]; the production (strict) predicate, which
-    /// treats the certified boundary band as a reject.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the validation errors of [`Self::decide`].
-    pub(crate) fn accept_strict(
-        &self,
-        challenge: &SparseChallenge,
-        t: u64,
-    ) -> Result<bool, AkitaError> {
-        Ok(self.decide(challenge, t)? == Decision::Accept)
-    }
-
-    /// Slice form of [`Self::accept_strict`] for stack-buffered rejection draws.
+    /// Slice form of the production (strict) predicate for stack-buffered rejection draws.
     pub(crate) fn accept_strict_parts(
         &self,
         positions: &[u32],
@@ -243,16 +211,6 @@ impl OpNormTable {
         } else {
             Ok(Decision::Accept)
         }
-    }
-
-    #[cfg(test)]
-    fn decide_with_freqs(
-        &self,
-        challenge: &SparseChallenge,
-        t: u64,
-        num_freqs: usize,
-    ) -> Result<Decision, AkitaError> {
-        self.decide_parts(&challenge.positions, &challenge.coeffs, t, num_freqs)
     }
 }
 
@@ -523,6 +481,33 @@ mod tests {
         OpNormTable::new(d, Q, (2 * d) as u64, 64).unwrap()
     }
 
+    fn decide_ch(
+        table: &OpNormTable,
+        challenge: &SparseChallenge,
+        threshold: u64,
+    ) -> Result<Decision, AkitaError> {
+        table.decide_parts(
+            &challenge.positions,
+            &challenge.coeffs,
+            threshold,
+            table.d / 2,
+        )
+    }
+
+    fn decide_with_freqs(
+        table: &OpNormTable,
+        challenge: &SparseChallenge,
+        threshold: u64,
+        num_freqs: usize,
+    ) -> Result<Decision, AkitaError> {
+        table.decide_parts(
+            &challenge.positions,
+            &challenge.coeffs,
+            threshold,
+            num_freqs,
+        )
+    }
+
     /// f64 reference, used ONLY to sanity-check the certified integer path.
     fn gamma_sq_f64(d: usize, ch: &SparseChallenge) -> f64 {
         let mut max = 0.0f64;
@@ -604,10 +589,10 @@ mod tests {
         // A single coefficient of magnitude m gives gamma = m exactly, so the
         // predicate accepts strictly above, rejects strictly below, and reports
         // the exact tie (T = m) as the indeterminate boundary band.
-        assert_eq!(t.decide(&ch, 0).unwrap(), Decision::Reject);
-        assert_eq!(t.decide(&ch, 1).unwrap(), Decision::Indeterminate);
-        assert_eq!(t.decide(&ch, 2).unwrap(), Decision::Accept);
-        assert_eq!(t.decide(&ch, 5).unwrap(), Decision::Accept);
+        assert_eq!(decide_ch(&t, &ch, 0).unwrap(), Decision::Reject);
+        assert_eq!(decide_ch(&t, &ch, 1).unwrap(), Decision::Indeterminate);
+        assert_eq!(decide_ch(&t, &ch, 2).unwrap(), Decision::Accept);
+        assert_eq!(decide_ch(&t, &ch, 5).unwrap(), Decision::Accept);
     }
 
     #[test]
@@ -619,9 +604,9 @@ mod tests {
             positions: vec![3],
             coeffs: vec![5],
         };
-        assert_eq!(t.decide(&ch, 4).unwrap(), Decision::Reject);
-        assert_eq!(t.decide(&ch, 5).unwrap(), Decision::Indeterminate);
-        assert_eq!(t.decide(&ch, 6).unwrap(), Decision::Accept);
+        assert_eq!(decide_ch(&t, &ch, 4).unwrap(), Decision::Reject);
+        assert_eq!(decide_ch(&t, &ch, 5).unwrap(), Decision::Indeterminate);
+        assert_eq!(decide_ch(&t, &ch, 6).unwrap(), Decision::Accept);
     }
 
     /// Tiny deterministic PRNG (xorshift) so the test is fully reproducible.
@@ -659,8 +644,8 @@ mod tests {
         let mut state = 0x1234_5678_9abc_def0u64;
         for _ in 0..2000 {
             let ch = random_shell(&mut state, d, 31, 11);
-            let reduced = t.decide_with_freqs(&ch, 16, d / 2).unwrap();
-            let full = t.decide_with_freqs(&ch, 16, d).unwrap();
+            let reduced = decide_with_freqs(&t, &ch, 16, d / 2).unwrap();
+            let full = decide_with_freqs(&t, &ch, 16, d).unwrap();
             assert_eq!(reduced, full, "challenge {ch:?}");
         }
     }
@@ -676,7 +661,7 @@ mod tests {
         for _ in 0..5000 {
             let ch = random_shell(&mut state, d, 31, 11);
             let g2 = gamma_sq_f64(d, &ch);
-            match t.decide(&ch, threshold).unwrap() {
+            match decide_ch(&t, &ch, threshold).unwrap() {
                 Decision::Accept => {
                     accepts += 1;
                     assert!(
@@ -707,7 +692,7 @@ mod tests {
             positions: vec![0, 1, 2, 3, 4],
             coeffs: vec![1, 1, 1, 1, 1],
         };
-        assert!(t.decide(&ch, 8).is_err());
+        assert!(decide_ch(&t, &ch, 8).is_err());
     }
 
     #[test]
@@ -720,10 +705,10 @@ mod tests {
             positions: vec![0, 1],
             coeffs: vec![1, 1],
         };
-        assert!(table.decide(&ch, 17).is_err());
-        assert!(table.decide(&ch, u64::MAX).is_err());
+        assert!(decide_ch(&table, &ch, 17).is_err());
+        assert!(decide_ch(&table, &ch, u64::MAX).is_err());
         // A threshold at the validated boundary is still accepted as input.
-        assert!(table.decide(&ch, 16).is_ok());
+        assert!(decide_ch(&table, &ch, 16).is_ok());
     }
 
     #[test]
@@ -744,6 +729,7 @@ mod tests {
 #[cfg(all(test, not(feature = "zk")))]
 mod perf {
     use super::{Decision, OpNormTable};
+    use akita_field::AkitaError;
     use crate::sampler::exact_shell::sample_exact_shell_challenge;
     use crate::sampler::xof::XofCursor;
     use crate::{SparseChallenge, SparseChallengeConfig};
@@ -763,6 +749,33 @@ mod perf {
 
     fn build_table() -> OpNormTable {
         OpNormTable::new(D, Q, (2 * D) as u64, 64).unwrap()
+    }
+
+    fn decide_ch(
+        table: &OpNormTable,
+        challenge: &SparseChallenge,
+        threshold: u64,
+    ) -> Result<Decision, AkitaError> {
+        table.decide_parts(
+            &challenge.positions,
+            &challenge.coeffs,
+            threshold,
+            table.d / 2,
+        )
+    }
+
+    fn decide_with_freqs(
+        table: &OpNormTable,
+        challenge: &SparseChallenge,
+        threshold: u64,
+        num_freqs: usize,
+    ) -> Result<Decision, AkitaError> {
+        table.decide_parts(
+            &challenge.positions,
+            &challenge.coeffs,
+            threshold,
+            num_freqs,
+        )
     }
 
     /// Float reference for the operator norm `gamma(c) = max_k |c(zeta_k)|`,
@@ -908,23 +921,26 @@ mod perf {
             .collect();
         let accepted: SparseChallenge = pool
             .iter()
-            .find(|ch| tbl.accept_strict(ch, T).unwrap())
+            .find(|ch| {
+                tbl.accept_strict_parts(&ch.positions, &ch.coeffs, T)
+                    .unwrap()
+            })
             .cloned()
             .expect("some (31,11) shell accepts at T=16");
         // The reference variant must agree with production on every challenge.
         for ch in &pool {
-            assert_eq!(decide_opt(&tbl, ch, T), tbl.decide(ch, T).unwrap());
+            assert_eq!(decide_opt(&tbl, ch, T), decide_ch(&tbl, ch, T).unwrap());
         }
 
         // (B) op-norm check, production d/2 scan, averaged over the pool.
         for ch in &pool {
-            black_box(tbl.decide(ch, T).unwrap());
+            black_box(decide_ch(&tbl, ch, T).unwrap());
         }
         let mut i = 0usize;
         let decide_ns = time_ns(1_000_000, || {
             let ch = &pool[i & (pool.len() - 1)];
             i += 1;
-            black_box(tbl.decide(ch, T).unwrap());
+            black_box(decide_ch(&tbl, ch, T).unwrap());
         });
 
         // (B-opt) reference: inner loop also moved to i64 accumulators.
@@ -937,7 +953,7 @@ mod perf {
 
         // (B') worst case: an accepted challenge always scans all d/2 frequencies.
         let decide_worst_ns = time_ns(1_000_000, || {
-            black_box(tbl.decide(&accepted, T).unwrap());
+            black_box(decide_ch(&tbl, &accepted, T).unwrap());
         });
 
         // (B'') full-spectrum scan (all d frequencies) for the symmetry saving.
@@ -945,7 +961,7 @@ mod perf {
         let decide_full_ns = time_ns(1_000_000, || {
             let ch = &pool[j & (pool.len() - 1)];
             j += 1;
-            black_box(tbl.decide_with_freqs(ch, T, D).unwrap());
+            black_box(decide_with_freqs(&tbl, ch, T, D).unwrap());
         });
 
         // (D) rejection sampling end-to-end (the verifier-side replay): draw and
@@ -956,7 +972,7 @@ mod perf {
         while accepts < n_accepted {
             attempts += 1;
             let ch = sample_exact_shell_challenge(&mut cur, D, C1, C2);
-            match tbl.decide(&ch, T).unwrap() {
+            match decide_ch(&tbl, &ch, T).unwrap() {
                 Decision::Accept => accepts += 1,
                 Decision::Reject => rejects += 1,
                 Decision::Indeterminate => indet += 1,
