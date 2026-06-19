@@ -44,17 +44,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # bench benchmarks one group of cases per job. Each job builds both the PR and
-  # merge-base binaries and runs them interleaved, uploading its pr/ + base/
-  # summaries as a per-group artifact; `report` concatenates the groups. (One
-  # group for now; a later change fans the cases out across parallel jobs.)
+  # Cases are split across two parallel jobs. Each job builds BOTH the PR and
+  # merge-base binaries and benchmarks them interleaved (PR, base, ...) to cancel
+  # drift; the build is paid per job, but the jobs run concurrently. The split
+  # isolates the slowest case (fp128 dense nv24, ~26s commit) in its own job; the
+  # rest share the second. `report` then concatenates per-job summaries.
   bench:
     name: Bench (${{ matrix.group.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # `cases` is a newline-separated list of MODE:NUM_VARS:NUM_POLYS specs.
+        # Group names are index-prefixed so the `report` glob sorts
+        # deterministically, fixing case order in the comment. `cases` is a
+        # newline-separated list of MODE:NUM_VARS:NUM_POLYS specs.
         #
         # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
         # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
@@ -65,11 +68,13 @@ jobs:
         # through multiple recursive levels. The fp128 cells fold aggressively enough
         # to stay at nv=32.
         group:
-          - name: all
+          - name: 1-slowest
+            cases: |
+              dense_fp128_d64:24:1
+          - name: 2-rest
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
-              dense_fp128_d64:24:1
               onehot_fp128_d64:32:1
               onehot_fp128_d64:30:4
     steps:
