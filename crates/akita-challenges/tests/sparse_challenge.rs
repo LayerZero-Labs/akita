@@ -3,9 +3,9 @@
 
 use akita_challenges::{
     sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
-    ChallengeShape, Challenges, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
-    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD, IntegerChallenge, SparseChallenge,
-    SparseChallengeConfig, TensorChallenges,
+    ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
+    TensorChallenges, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -449,7 +449,10 @@ fn production_d64_exact_shell_op_norm_rejection_at_gamma_18() {
 
     let first = sample();
     let second = sample();
-    assert_eq!(first, second, "production rejection must be transcript-stable");
+    assert_eq!(
+        first, second,
+        "production rejection must be transcript-stable"
+    );
 
     for c in &first {
         assert_eq!(l1_norm(c), cfg.l1_norm() as u64);

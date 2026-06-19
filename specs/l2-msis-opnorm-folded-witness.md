@@ -614,14 +614,29 @@ The certificate certifies the **fold response** `z`, not committed `s`.
 It proves the integer inequality
 
 ```text
-Z_SQUARED = sum_{row, coeff} z[row][coeff]^2 <= B_l2
+Z_SQUARED = sum_{row, coeff} z[row][coeff]^2 <= B_l2_pub
 ```
 
 without revealing `Z_SQUARED` or any folded-witness inner product, in both
 transparent and ZK builds.
-When a certificate is emitted, the prover chooses a bucket `B_l2` from the L2
-MSIS ladder with `Z_SQUARED <= B_l2`. The deterministic ceiling (no-wrap gate
-fallback when no certificate is emitted) is
+`B_l2_pub` is a **public per-level parameter** fixed from challenge family and
+witness class before proving. It is **not** chosen from the realized
+`Z_SQUARED` at prove time.
+
+```text
+B_l2_pub = ceil_ladder( rho2 · B · ||s||_2^2_block_max )
+         = ceil_ladder( challenge_l2_sq_per_block · num_fold_blocks · witness.l1_norm · witness.infinity_norm )
+```
+
+where `rho2 = ||c||_2^2` on the exact-shell family (e.g. `78` for `(30,12)`),
+`B = num_claims · 2^{r_vars}` fold blocks, and `||s||_2^2_block_max` is the
+witness-class envelope `‖s‖_1 · ‖s‖_∞` per block (`FoldWitnessNorms` in code).
+The prover proves `Z_SQUARED <= B_l2_pub`; the certificate slack uses
+`B_l2_pub − Z_SQUARED`. Lemma-7 A-role rank still uses `8 · Γ · …` on
+`β_inf`, not `Z_SQUARED` or `B_l2_pub`.
+
+The deterministic ceiling (no-wrap gate fallback when no certificate is emitted)
+is
 
 ```text
 Z_SQUARED <= L2_BOUND_SQUARED
@@ -1822,9 +1837,11 @@ inner-product payload is serialized under `feature = "zk"`.
 1. Resolved: [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md) defines the
    canonical offline regen path: general fixes in `malb/lattice-estimator`, pinned submodule,
    `scripts/gen_sis_table.py`, and Akita-local golden checks (no in-repo Rust estimator).
-2. Should the certified bucket `B_l2` be a fixed worst-case-per-level value, or
-   may the prover abort against a tighter `B_l2` with a separately proved
-   acceptance probability?
+2. Resolved: `B_l2_pub` is a fixed public per-level parameter from
+   `challenge_l2_sq_per_block · num_fold_blocks · witness.l1_norm · witness.infinity_norm`,
+   rounded up on the L2 MSIS ladder (`fold_witness_l2_pub_collision_bucket` in code).
+   The prover may abort if realized `Z_SQUARED` exceeds `B_l2_pub` (same as any other
+   public bound); it must not pick a tighter witness-dependent bucket at prove time.
 3. Resolved: the default realized certificate is the grouped-carry design.
    It commits `ell_hat` (four-square slack) and `carry_hat` (carry limbs) in
    `w_next`, proves one squared-sum sumcheck `sum_x Z_alpha(x)^2 = V`, and folds

@@ -210,7 +210,8 @@ mod tests {
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
             operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        let fold_challenge = crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
+        let fold_challenge =
+            crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
         let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
         let singleton = optimal_m_r_split(
             SisModulusFamily::Q32,

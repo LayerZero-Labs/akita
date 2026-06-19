@@ -166,8 +166,7 @@ impl SparseChallengeConfig {
     /// Shared by the sampler oracle and tail-bound acceptance-probability lookup.
     #[inline]
     pub fn operator_norm_rejection_binds(&self) -> bool {
-        matches!(self, Self::ExactShell { .. })
-            && self.operator_norm_cap() < self.l1_norm() as u32
+        matches!(self, Self::ExactShell { .. }) && self.operator_norm_cap() < self.l1_norm() as u32
     }
 
     /// Rational lower bound on `Pr[gamma(c) <= T]` for tail-bound sizing.
@@ -178,7 +177,10 @@ impl SparseChallengeConfig {
     /// # Errors
     ///
     /// Returns an error when `ring_dim` is unsupported for a binding preset.
-    pub fn operator_norm_acceptance_prob(&self, ring_dim: usize) -> Result<(u128, u128), &'static str> {
+    pub fn operator_norm_acceptance_prob(
+        &self,
+        ring_dim: usize,
+    ) -> Result<(u128, u128), &'static str> {
         if !self.operator_norm_rejection_binds() {
             return Ok((1, 1));
         }
@@ -488,7 +490,10 @@ mod entropy_tests {
         };
         assert!(!non_binding.operator_norm_rejection_binds());
         assert_eq!(non_binding.operator_norm_cap(), 53);
-        assert_eq!(non_binding.operator_norm_acceptance_prob(64).unwrap(), (1, 1));
+        assert_eq!(
+            non_binding.operator_norm_acceptance_prob(64).unwrap(),
+            (1, 1)
+        );
 
         let legacy = SparseChallengeConfig::ExactShell {
             count_mag1: 30,
@@ -506,9 +511,7 @@ mod entropy_tests {
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
             operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        assert!(production
-            .operator_norm_acceptance_prob(32)
-            .is_err());
+        assert!(production.operator_norm_acceptance_prob(32).is_err());
 
         let binding_other = SparseChallengeConfig::ExactShell {
             count_mag1: 31,

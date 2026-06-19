@@ -185,7 +185,9 @@ pub fn fold_witness_l2_pub_bound_sq(
         .checked_mul(num_fold_blocks)
         .and_then(|t| t.checked_mul(s2_block))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("fold_witness_l2_pub_bound_sq: product overflows u128".to_string())
+            AkitaError::InvalidSetup(
+                "fold_witness_l2_pub_bound_sq: product overflows u128".to_string(),
+            )
         })
 }
 
@@ -198,12 +200,8 @@ pub fn fold_witness_l2_pub_collision_bucket(
     challenge_l2_sq_per_block: u128,
     witness: FoldWitnessNorms,
 ) -> Result<Option<u128>, AkitaError> {
-    let bound_sq = fold_witness_l2_pub_bound_sq(
-        r_vars,
-        num_claims,
-        challenge_l2_sq_per_block,
-        witness,
-    )?;
+    let bound_sq =
+        fold_witness_l2_pub_bound_sq(r_vars, num_claims, challenge_l2_sq_per_block, witness)?;
     Ok(super::ajtai_key::ceil_supported_collision(
         sis_family,
         ring_dimension,
@@ -234,6 +232,7 @@ pub fn fold_witness_l2_pub_collision_bucket(
 /// Returns `None` on overflow or when the collision exceeds every audited bucket
 /// for `(sis_family, d)`.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn committed_fold_collision_l2_sq(
     sis_family: SisModulusFamily,
     d: u32,
@@ -882,7 +881,6 @@ mod tests {
     #[test]
     fn fold_witness_linf_ln_term_includes_op_norm_when_binding() {
         use akita_challenges::{
-            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN, D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
             D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
             D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
@@ -892,15 +890,11 @@ mod tests {
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
             operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        let with_p = fold_witness_linf_ln_term(
-            1 << 16,
-            16,
-            1,
-            8,
-            D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
-            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN,
-        )
-        .unwrap();
+        let (op_norm_accept_num, op_norm_accept_den) =
+            shell.operator_norm_acceptance_prob(64).unwrap();
+        let with_p =
+            fold_witness_linf_ln_term(1 << 16, 16, 1, 8, op_norm_accept_num, op_norm_accept_den)
+                .unwrap();
         let without_p = fold_witness_linf_ln_term(1 << 16, 16, 1, 8, 1, 1).unwrap();
         assert!(with_p > without_p);
     }
@@ -961,16 +955,10 @@ mod tests {
     #[test]
     fn fold_witness_l2_pub_collision_bucket_rounds_up() {
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
-        let bucket = fold_witness_l2_pub_collision_bucket(
-            SisModulusFamily::Q32,
-            64,
-            2,
-            1,
-            78,
-            witness,
-        )
-        .unwrap()
-        .unwrap();
+        let bucket =
+            fold_witness_l2_pub_collision_bucket(SisModulusFamily::Q32, 64, 2, 1, 78, witness)
+                .unwrap()
+                .unwrap();
         let raw = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
         assert!(bucket >= raw);
     }

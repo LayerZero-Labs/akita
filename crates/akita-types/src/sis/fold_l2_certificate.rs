@@ -27,7 +27,7 @@ use super::norm_bound::{fold_witness_l2_pub_bound_sq, FoldWitnessNorms};
 /// How a certifying fold level proves its Euclidean norm bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum L2CertificateRealization {
-    /// `Σ_x z_aug(x)² = B_l2` in one sumcheck; no carries.
+    /// `Σ_x z_aug(x)² = B_l2_pub` in one sumcheck; no carries.
     FieldFitting,
     /// Grouped limbs with `group_digits` original digits per limb and a carry chain.
     GroupedCarry {
@@ -458,6 +458,7 @@ pub fn select_l2_certificate_realization(
 }
 
 /// Select realization using the public `B_l2_pub` from challenge family and witness class.
+#[allow(clippy::too_many_arguments)]
 pub fn select_l2_certificate_realization_for_level(
     num_fold_coeffs: usize,
     log_basis: u32,
@@ -468,12 +469,8 @@ pub fn select_l2_certificate_realization_for_level(
     witness: FoldWitnessNorms,
     field_characteristic: u128,
 ) -> Result<L2CertificateRealization, AkitaError> {
-    let b_l2_pub = fold_witness_l2_pub_bound_sq(
-        r_vars,
-        num_claims,
-        challenge_l2_sq_per_block,
-        witness,
-    )?;
+    let b_l2_pub =
+        fold_witness_l2_pub_bound_sq(r_vars, num_claims, challenge_l2_sq_per_block, witness)?;
     select_l2_certificate_realization(
         num_fold_coeffs,
         log_basis,
@@ -515,10 +512,8 @@ mod tests {
         let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
         assert!(field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP128).unwrap());
         assert_eq!(
-            select_l2_certificate_realization_for_level(
-                n, 2, k, 2, 1, 78, witness, Q_FP128
-            )
-            .unwrap(),
+            select_l2_certificate_realization_for_level(n, 2, k, 2, 1, 78, witness, Q_FP128)
+                .unwrap(),
             L2CertificateRealization::FieldFitting,
         );
     }
@@ -530,10 +525,9 @@ mod tests {
         let witness = FoldWitnessNorms::new(2, 64, 64, true);
         let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
         assert!(!field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP32).unwrap());
-        let realization = select_l2_certificate_realization_for_level(
-            n, 2, k, 2, 1, 78, witness, Q_FP32,
-        )
-        .unwrap();
+        let realization =
+            select_l2_certificate_realization_for_level(n, 2, k, 2, 1, 78, witness, Q_FP32)
+                .unwrap();
         assert!(matches!(
             realization,
             L2CertificateRealization::GroupedCarry { .. }
@@ -570,8 +564,7 @@ mod tests {
         let k = 5usize;
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
         let b_l2_pub = fold_witness_l2_pub_bound_sq(3, 1, 78, witness).unwrap();
-        let realization =
-            select_l2_certificate_realization(n, 3, k, b_l2_pub, Q_FP32).unwrap();
+        let realization = select_l2_certificate_realization(n, 3, k, b_l2_pub, Q_FP32).unwrap();
         assert!(matches!(
             realization,
             L2CertificateRealization::GroupedCarry { .. } | L2CertificateRealization::FieldFitting
