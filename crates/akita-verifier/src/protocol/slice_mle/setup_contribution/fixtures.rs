@@ -49,7 +49,6 @@ pub(crate) struct SetupContributionShape {
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
-    pub claim_to_commitment_group_poly: Vec<(usize, usize)>,
     /// Tiered split factor `f` (`1` = single-tier).
     pub tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
@@ -73,7 +72,6 @@ impl SetupContributionShape {
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_to_commitment_group_poly: vec![(0, 0)],
             tier_split: 1,
             n_f: 0,
         }
@@ -107,7 +105,6 @@ impl SetupContributionShape {
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             tier_split: 1,
             n_f: 0,
         }
@@ -130,7 +127,6 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
-        shape.claim_to_commitment_group_poly = vec![(0, 0), (0, 0), (0, 0), (0, 0)];
         shape
     }
 
@@ -285,7 +281,6 @@ impl SetupContributionFixture {
             tier_split: shape.tier_split,
             n_f: shape.n_f,
             rows,
-            claim_to_commitment_group_poly: shape.claim_to_commitment_group_poly.clone(),
             num_polys_per_commitment_group: shape.num_polys_per_commitment_group.clone(),
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,

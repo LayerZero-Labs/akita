@@ -264,7 +264,6 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             num_polys_per_commitment_group,
             witness_segment_layout,
         };

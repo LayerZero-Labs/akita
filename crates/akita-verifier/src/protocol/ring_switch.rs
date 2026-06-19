@@ -131,7 +131,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
-    pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
     pub(crate) num_polys_per_commitment_group: Vec<usize>,
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
@@ -520,12 +519,6 @@ where
         }
     };
 
-    let claim_to_commitment_group_poly: Vec<(usize, usize)> = claim_to_commitment_group
-        .iter()
-        .zip(claim_poly_in_commitment_group.iter())
-        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
-        .collect();
-
     Ok(RingSwitchDeferredRowEval {
         c_alphas,
         eq_tau1,
@@ -551,7 +544,6 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
-        claim_to_commitment_group_poly,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         witness_segment_layout,
     })
@@ -685,27 +677,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 block_offset_low,
                 self.num_blocks,
             )?;
-        let mut challenge_block_summaries_by_t_vector =
-            vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        // Per-commitment-group t-vector starting indices. Under the current
-        // relation-routing contract these match opening-point groups.
-        let t_vector_offsets: Vec<usize> = self
-            .num_polys_per_commitment_group
-            .iter()
-            .scan(0usize, |acc, &count| {
-                let offset = *acc;
-                *acc += count;
-                Some(offset)
-            })
-            .collect();
-        for (claim_idx, &(group_idx, poly_idx)) in
-            self.claim_to_commitment_group_poly.iter().enumerate()
-        {
-            let t_vector_idx = t_vector_offsets[group_idx] + poly_idx;
-            let [carry0, carry1] = challenge_block_summaries[claim_idx];
-            challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
-            challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
-        }
 
         // ----- E-hat ---------------------------------------------------------
         let e_structured_contribution = {
@@ -741,7 +712,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 high_challenges,
                 offset_high: layout.offset_t >> offset_low_bits,
                 gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries_by_t_vector,
+                challenge_block_summaries: &challenge_block_summaries,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
             }
             .evaluate()
