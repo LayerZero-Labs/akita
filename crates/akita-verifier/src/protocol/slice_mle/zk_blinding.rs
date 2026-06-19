@@ -8,7 +8,7 @@ use akita_types::AkitaExpandedSetup;
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
-/// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
+/// ZK B-blinding contribution.
 pub(crate) fn compute_b_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
@@ -61,7 +61,7 @@ where
     )
 }
 
-/// ZK D-blinding contribution. See `specs/optimized_verifier.md`.
+/// ZK D-blinding contribution.
 pub(crate) fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
@@ -264,9 +264,7 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
             num_polys_per_commitment_group,
-            gamma: vec![F::one(); num_claims],
             witness_segment_layout,
         };
         ZkFixture {

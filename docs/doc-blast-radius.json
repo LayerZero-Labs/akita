@@ -92,7 +92,6 @@
         "book/src/how/verification.md",
         "AGENTS.md",
         "docs/verifier-panic-audit.md",
-        "specs/optimized_verifier.md",
         "specs/security-hardening.md"
       ]
     },
