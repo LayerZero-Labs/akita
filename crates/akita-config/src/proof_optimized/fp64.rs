@@ -122,3 +122,129 @@ impl_proof_optimized_preset!(
         fp64_d256_onehot_table
     )
 );
+
+/// Concrete fp64 onehot preset selected by a schedule-family query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fp64OneHotPreset {
+    D32OneHot,
+    D64OneHot,
+    D128OneHot,
+    D256OneHot,
+}
+
+impl Fp64OneHotPreset {
+    pub const fn ring_dimension(self) -> usize {
+        match self {
+            Self::D32OneHot => 32,
+            Self::D64OneHot => 64,
+            Self::D128OneHot => 128,
+            Self::D256OneHot => 256,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::D32OneHot => "D32OneHot",
+            Self::D64OneHot => "D64OneHot",
+            Self::D128OneHot => "D128OneHot",
+            Self::D256OneHot => "D256OneHot",
+        }
+    }
+}
+
+/// Concrete fp64 full-field preset selected by a schedule-family query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fp64FullPreset {
+    D32Full,
+    D64Full,
+    D128Full,
+    D256Full,
+}
+
+impl Fp64FullPreset {
+    pub const fn ring_dimension(self) -> usize {
+        match self {
+            Self::D32Full => 32,
+            Self::D64Full => 64,
+            Self::D128Full => 128,
+            Self::D256Full => 256,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::D32Full => "D32Full",
+            Self::D64Full => "D64Full",
+            Self::D128Full => "D128Full",
+            Self::D256Full => "D256Full",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Fp64OneHotScheduleSelection {
+    pub preset: Fp64OneHotPreset,
+    pub schedule: akita_types::Schedule,
+}
+
+#[derive(Clone, Debug)]
+pub struct Fp64FullScheduleSelection {
+    pub preset: Fp64FullPreset,
+    pub schedule: akita_types::Schedule,
+}
+
+fn fp64_onehot_candidate<Cfg: CommitmentConfig>(
+    preset: Fp64OneHotPreset,
+    key: akita_types::AkitaScheduleLookupKey,
+) -> Option<Fp64OneHotScheduleSelection> {
+    let schedule = Cfg::runtime_schedule(key).ok()?;
+    Some(Fp64OneHotScheduleSelection { preset, schedule })
+}
+
+fn fp64_full_candidate<Cfg: CommitmentConfig>(
+    preset: Fp64FullPreset,
+    key: akita_types::AkitaScheduleLookupKey,
+) -> Option<Fp64FullScheduleSelection> {
+    let schedule = Cfg::runtime_schedule(key).ok()?;
+    Some(Fp64FullScheduleSelection { preset, schedule })
+}
+
+/// Select the best fp64 onehot preset for a schedule lookup key.
+pub fn best_onehot_schedule(
+    key: akita_types::AkitaScheduleLookupKey,
+) -> Result<Option<Fp64OneHotScheduleSelection>, akita_field::AkitaError> {
+    Ok([
+        fp64_onehot_candidate::<D32OneHot>(Fp64OneHotPreset::D32OneHot, key),
+        fp64_onehot_candidate::<D64OneHot>(Fp64OneHotPreset::D64OneHot, key),
+        fp64_onehot_candidate::<D128OneHot>(Fp64OneHotPreset::D128OneHot, key),
+        fp64_onehot_candidate::<D256OneHot>(Fp64OneHotPreset::D256OneHot, key),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by_key(|selection| {
+        (
+            selection.schedule.total_bytes,
+            selection.preset.ring_dimension(),
+        )
+    }))
+}
+
+/// Select the best fp64 full-field preset for a schedule lookup key.
+pub fn best_full_schedule(
+    key: akita_types::AkitaScheduleLookupKey,
+) -> Result<Option<Fp64FullScheduleSelection>, akita_field::AkitaError> {
+    Ok([
+        fp64_full_candidate::<D32Full>(Fp64FullPreset::D32Full, key),
+        fp64_full_candidate::<D64Full>(Fp64FullPreset::D64Full, key),
+        fp64_full_candidate::<D128Full>(Fp64FullPreset::D128Full, key),
+        fp64_full_candidate::<D256Full>(Fp64FullPreset::D256Full, key),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by_key(|selection| {
+        (
+            selection.schedule.total_bytes,
+            selection.preset.ring_dimension(),
+        )
+    }))
+}

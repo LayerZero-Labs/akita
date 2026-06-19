@@ -95,5 +95,9 @@ name = "schedule_catalog_miswire"
 path = "tests/schedule_catalog_miswire.rs"
 required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-full"]
 
+[[bin]]
+name = "ladder_byte_model"
+path = "src/bin/ladder_byte_model.rs"
+
 [lints]
 workspace = true

@@ -39,7 +39,7 @@ type FoldShapeFn<'a> = &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape;
 // Suffix-DP depth cap. Schedules in our working parameter range never need
 // more than this many recursive fold levels; deeper search only blows up
 // memo state without changing emitted tables.
-const MAX_RECURSION_DEPTH: usize = 12;
+pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Largest tiered split factor `f` the planner will consider. `B'` matrix size
 /// is monotone non-increasing in `f`, so scanning `f = 2..=MAX` ascending and
@@ -72,7 +72,7 @@ const MAX_TIERED_SPLIT_FACTOR: usize = 16;
 /// product is checked and every emitted key passes [`AjtaiKeyParams::try_new`].
 /// This is the DP's source of truth for the `B'`/`F` split; the shipped tiered
 /// table stores the resulting layout directly, so expansion never re-runs it.
-fn multi_tiered_keys(
+pub(crate) fn multi_tiered_keys(
     a_matrix_size: usize,
     b_key: &AjtaiKeyParams,
     delta_open: usize,
@@ -141,24 +141,28 @@ fn multi_tiered_keys(
     Ok((1, b_key.clone(), None))
 }
 
-/// Compute parameters that generate the smallest witness for the next
-/// fold level. Note that this is not the optimum case: in the optimum
-/// case (similar to `find_schedule`), we should check that current proof
-/// size + suffix cost is the smallest. However, as time blows up, we
-/// don't do that here.
-fn derive_candidate_level_params(
+/// Recursive fold candidate at an explicit ring degree `ring_d`.
+///
+/// Used by the fixed-`D` DP ([`find_schedule`]) and the ladder byte model
+/// ([`crate::ladder_byte_model::find_ladder_schedule`]).
+///
+/// Note that this is not the optimum case: in the optimum case (similar to
+/// [`find_schedule`]), we should check that current proof size + suffix cost is
+/// the smallest. However, as time blows up, we don't do that here.
+pub(crate) fn derive_candidate_level_params(
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
+    ring_d: usize,
     current_witness_len: usize,
     log_basis: u32,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
-    let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
+    let Ok(ring_challenge_cfg) = ring_challenge_config(ring_d) else {
         return Ok(None);
     };
-    if !current_witness_len.is_multiple_of(policy.ring_dimension) {
+    if !current_witness_len.is_multiple_of(ring_d) {
         return Ok(None);
     }
-    let num_ring_elems = current_witness_len / policy.ring_dimension;
+    let num_ring_elems = current_witness_len / ring_d;
     let reduced_vars = num_ring_elems.next_power_of_two().max(1).trailing_zeros() as usize;
 
     if reduced_vars <= 2 || reduced_vars >= 53 {
@@ -179,7 +183,7 @@ fn derive_candidate_level_params(
         // false`, flat fold). Compose the three SIS-secure keys from the
         // `akita_types::sis` primitives: norm -> width -> rank -> key.
         let family = policy.sis_family;
-        let d = policy.ring_dimension;
+        let d = ring_d;
         let decomp = DecompositionParams {
             log_basis,
             ..policy.decomposition
@@ -238,7 +242,7 @@ fn derive_candidate_level_params(
         };
 
         let candidate_params = LevelParams {
-            ring_dimension: policy.ring_dimension,
+            ring_dimension: ring_d,
             log_basis,
             a_key,
             b_key,
@@ -272,7 +276,7 @@ fn derive_candidate_level_params(
             1,
             MRowLayout::WithDBlock,
         )?
-        .checked_mul(policy.ring_dimension)
+        .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
@@ -283,7 +287,7 @@ fn derive_candidate_level_params(
             1,
             MRowLayout::WithoutDBlock,
         )?
-        .checked_mul(policy.ring_dimension)
+        .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
 
         if best.as_ref().is_none_or(|(_, c, _)| next_witness_len < *c) {
@@ -317,7 +321,7 @@ fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
     Ok(padded.trailing_zeros() as usize)
 }
 
-fn extension_opening_reduction_level_bytes(
+pub(crate) fn extension_opening_reduction_level_bytes(
     policy: &PlannerPolicy,
     key: AkitaScheduleLookupKey,
     fold_level: usize,
@@ -410,7 +414,7 @@ fn make_terminal_direct_step(
     })
 }
 
-fn terminal_direct_suffix_cost(
+pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
@@ -491,6 +495,7 @@ fn derive_optimal_suffix_schedule(
     let best_direct = if derive_candidate_level_params(
         policy,
         ring_challenge_config,
+        policy.ring_dimension,
         current_witness_len,
         current_lb,
     )?
@@ -519,7 +524,13 @@ fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
+            derive_candidate_level_params(
+                policy,
+                ring_challenge_config,
+                policy.ring_dimension,
+                current_witness_len,
+                lb,
+            )?
         else {
             continue;
         };

@@ -16,6 +16,7 @@ pub use akita_types::{DecompositionParams, SisModulusFamily};
 
 pub mod catalog_identity;
 pub mod emit;
+pub mod ladder_byte_model;
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
