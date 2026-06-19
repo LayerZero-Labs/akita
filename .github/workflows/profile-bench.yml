@@ -38,29 +38,45 @@ env:
   # The profile example installs FoldGrindObserverGuard during prove and emits
   # per-fold grind_nonce (wire) plus grind_probe_count / grind_attempts (true
   # prover probes). scripts/profile_bench_report.py surfaces Grind Σ / Grind max.
-  # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
-  # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
-  # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
-  # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
-  # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
-  # is the largest validated size that both fits that budget and still folds
-  # through multiple recursive levels. The fp128 cells fold aggressively enough
-  # to stay at nv=32.
-  AKITA_BENCH_CASES: |
-    onehot_fp32_d128:28:1
-    onehot_fp64_d128:28:1
-    dense_fp128_d64:24:1
-    onehot_fp128_d64:32:1
-    onehot_fp128_d64:30:4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Cases are split across two parallel jobs. Each job builds BOTH the PR and
+  # merge-base binaries and benchmarks them interleaved (PR, base, ...) to cancel
+  # drift; the build is paid per job, but the jobs run concurrently. The split
+  # isolates the slowest case (fp128 dense nv24, ~26s commit) in its own job; the
+  # rest share the second. `report` then concatenates per-job summaries.
   bench:
-    name: Profile benchmarks
+    name: Bench (${{ matrix.group.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Group names are index-prefixed so the `report` glob sorts
+        # deterministically, fixing case order in the comment. `cases` is a
+        # newline-separated list of MODE:NUM_VARS:NUM_POLYS specs.
+        #
+        # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
+        # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
+        # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
+        # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
+        # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
+        # is the largest validated size that both fits that budget and still folds
+        # through multiple recursive levels. The fp128 cells fold aggressively enough
+        # to stay at nv=32.
+        group:
+          - name: 1-slowest
+            cases: |
+              dense_fp128_d64:24:1
+          - name: 2-rest
+            cases: |
+              onehot_fp32_d128:28:1
+              onehot_fp64_d128:28:1
+              onehot_fp128_d64:32:1
+              onehot_fp128_d64:30:4
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -68,8 +84,160 @@ jobs:
 
       - name: Initialize benchmark paths
         run: |
-          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/profile-bench-artifact" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/profile-bench-main-baseline" >> "$GITHUB_ENV"
+          group_dir="$RUNNER_TEMP/bench/${{ matrix.group.name }}"
+          echo "AKITA_BENCH_GROUP_DIR=$group_dir" >> "$GITHUB_ENV"
+          # pr/ holds the PR-side summary, base/ the merge-base side; both go
+          # into one per-group handoff artifact for the report job.
+          echo "AKITA_BENCH_ARTIFACT_DIR=$group_dir/pr" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$group_dir/base" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
+
+      - name: Determine PR benchmark merge base
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { execFileSync } = require('child_process');
+            const pullRequest = context.payload.pull_request;
+
+            core.exportVariable('AKITA_BENCH_BASE_REF', pullRequest.base.ref);
+            core.exportVariable('AKITA_BENCH_SOURCE_SHA', pullRequest.head.sha);
+            core.exportVariable('AKITA_BENCH_SOURCE_BRANCH', pullRequest.head.ref);
+
+            let mergeBaseSha = '';
+            try {
+              mergeBaseSha = execFileSync(
+                'git',
+                ['merge-base', pullRequest.base.sha, pullRequest.head.sha],
+                { encoding: 'utf8' }
+              ).trim();
+            } catch (error) {
+              core.warning(`Could not determine benchmark merge base: ${error.message}`);
+            }
+            if (mergeBaseSha) {
+              core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
+            }
+
+      # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
+      # GitHub-hosted `ubuntu-latest` is a heterogeneous fleet (Skylake,
+      # Cascade Lake, Ice Lake, Zen3), so `native` compiles a different binary
+      # per run. The PR run and the main-baseline run then build for, and
+      # execute on, different CPUs, which makes the per-baseline deltas
+      # apples-to-oranges and produced phantom setup-time "regressions". Every
+      # CPU in that fleet supports AVX2, so `x86-64-v3` is a deterministic
+      # floor that still keeps SIMD enabled so bench wall-time stays within the
+      # hosted-runner budget.
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          rustflags: -D warnings -C target-cpu=x86-64-v3
+          cache: false
+
+      - name: Record CPU fingerprint
+        run: |
+          echo "::group::CPU fingerprint"
+          lscpu || head -n 40 /proc/cpuinfo
+          echo "::endgroup::"
+
+      # PR deltas must compare binaries measured on this runner: ubuntu-latest
+      # is a heterogeneous fleet, and baselines measured on different silicon
+      # produced phantom double-digit deltas.
+      - name: Verify profile-ci feature coverage
+        run: ./scripts/check_profile_ci_features.sh
+
+      - name: Build merge-base profile binary
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
+          mkdir -p "$RUNNER_TEMP/bench-bins"
+          (
+            cd "$RUNNER_TEMP/bench-base" &&
+            if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile \
+                  --no-default-features --features parallel,profile-ci
+            else
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile
+            fi
+          )
+          cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
+             "$RUNNER_TEMP/bench-bins/profile-base"
+
+      - name: Build profile binary
+        run: |
+          cargo build --release --quiet --example profile \
+            --no-default-features --features parallel,profile-ci
+
+      - name: Verify profile-ci linkage isolation
+        run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
+
+      # On PRs the head and merge-base binaries run interleaved (PR, base,
+      # PR, base, ...) so machine-state drift on shared runners lands on both
+      # sides of every pair instead of on one whole block.
+      - name: Run profile benchmark cases
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+        run: |
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_GROUP_CASES"
+
+          baseline_args=()
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA interleaved with merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
+            baseline_args+=(
+              --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
+              --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
+            )
+          else
+            echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
+          fi
+          python3 scripts/profile_bench_report.py run \
+            --binary ./target/release/examples/profile \
+            --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+            --mode "$AKITA_BENCH_MODE" \
+            --runs "$AKITA_BENCH_RUNS" \
+            --warmups "$AKITA_BENCH_WARMUPS" \
+            "${baseline_args[@]}" \
+            "${case_args[@]}"
+
+      # One artifact per job (pr/ and base/ roots). `if: always()` so a failed
+      # case still uploads: summary.json marks failed cases and keeps metrics
+      # for passing ones, so `report` can still render a comparison.
+      - name: Upload per-group benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}-${{ matrix.group.name }}
+          path: ${{ env.AKITA_BENCH_GROUP_DIR }}
+          if-no-files-found: warn
+          retention-days: 3
+
+  # `always() && !cancelled()` — `needs: bench` skips dependents on failure unless
+  # `always()` is present; `!cancelled()` keeps a manual cancel from running report.
+  # A failed bench leg still uploads (see upload step), so report can post a partial
+  # comment, upload `profile-bench-data`, then fail the check in the final step.
+  report:
+    name: Report
+    needs: bench
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize report paths
+        run: |
+          echo "AKITA_BENCH_PARTS_DIR=$RUNNER_TEMP/profile-bench-parts" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/profile-bench-combined" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/profile-bench-combined-base" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/profile-bench-previous-run" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/profile-bench.md" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/profile-bench-comment.md" >> "$GITHUB_ENV"
@@ -121,78 +289,8 @@ jobs:
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
             }
 
-      # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
-      # GitHub-hosted `ubuntu-latest` is a heterogeneous fleet (Skylake,
-      # Cascade Lake, Ice Lake, Zen3), so `native` compiles a different binary
-      # per run. The PR run and the main-baseline run then build for, and
-      # execute on, different CPUs, which makes the per-baseline deltas
-      # apples-to-oranges and produced phantom setup-time "regressions". Every
-      # CPU in that fleet supports AVX2, so `x86-64-v3` is a deterministic
-      # floor that still keeps SIMD enabled so bench wall-time stays within the
-      # hosted-runner budget.
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-        with:
-          rustflags: -D warnings -C target-cpu=x86-64-v3
-          cache: false
-
-      - name: Record CPU fingerprint
-        run: |
-          echo "::group::CPU fingerprint"
-          lscpu || head -n 40 /proc/cpuinfo
-          echo "::endgroup::"
-
-      # PR deltas must compare binaries measured on this runner: ubuntu-latest
-      # is a heterogeneous fleet, and baselines measured on different silicon
-      # produced phantom double-digit deltas.
-      - name: Build merge-base profile binary
-        if: github.event_name == 'pull_request'
-        run: |
-          git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
-          mkdir -p "$RUNNER_TEMP/bench-bins"
-          (
-            cd "$RUNNER_TEMP/bench-base" &&
-            CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
-              cargo build --release --quiet --example profile
-          )
-          cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
-             "$RUNNER_TEMP/bench-bins/profile-base"
-
-      - name: Build profile binary
-        run: cargo build --release --quiet --example profile
-
-      # On PRs the head and merge-base binaries run interleaved (PR, base,
-      # PR, base, ...) so machine-state drift on shared runners lands on both
-      # sides of every pair instead of on one whole block.
-      - name: Run profile benchmark cases
-        run: |
-          case_args=()
-          while IFS= read -r case_spec; do
-            if [ -n "$case_spec" ]; then
-              case_args+=(--case "$case_spec")
-            fi
-          done <<< "$AKITA_BENCH_CASES"
-
-          baseline_args=()
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA interleaved with merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
-            baseline_args+=(
-              --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
-              --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
-            )
-          else
-            echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
-          fi
-          python3 scripts/profile_bench_report.py run \
-            --binary ./target/release/examples/profile \
-            --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
-            --mode "$AKITA_BENCH_MODE" \
-            --runs "$AKITA_BENCH_RUNS" \
-            --warmups "$AKITA_BENCH_WARMUPS" \
-            "${baseline_args[@]}" \
-            "${case_args[@]}"
-
       - name: Determine previous benchmark run for this PR
-        if: always() && github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request'
         id: bench-baselines
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
@@ -267,7 +365,7 @@ jobs:
             }
 
       - name: Download previous PR run artifact
-        if: always() && steps.bench-baselines.outputs.previous-run-id != ''
+        if: github.event_name == 'pull_request' && steps.bench-baselines.outputs.previous-run-id != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
@@ -275,31 +373,48 @@ jobs:
           run-id: ${{ steps.bench-baselines.outputs.previous-run-id }}
           github-token: ${{ github.token }}
 
+      - name: Download per-group benchmark artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}-*
+          path: ${{ env.AKITA_BENCH_PARTS_DIR }}
+          merge-multiple: false
+
+      # Each artifact lands at parts/<name>/{pr,base}/summary.json. Concatenate
+      # the per-group `cases[]` into one combined summary per side. The glob
+      # expands in group-index order, so case order stays deterministic. The
+      # base side exists only on PRs.
+      - name: Combine per-group summaries
+        run: |
+          shopt -s nullglob
+          mkdir -p "$AKITA_BENCH_ARTIFACT_DIR" "$AKITA_BENCH_MAIN_BASELINE_DIR"
+
+          # Rebuild the summary envelope; render reads only warmups + cases, so
+          # those must survive the merge.
+          combine='{schema_version:(.[0].schema_version), warmups:(map(.warmups)|max), cases:(map(.cases)|add)}'
+
+          pr_parts=("$AKITA_BENCH_PARTS_DIR"/*/pr/summary.json)
+          if [ ${#pr_parts[@]} -eq 0 ]; then
+            echo "No PR-side per-group summaries found under $AKITA_BENCH_PARTS_DIR" >&2
+            exit 1
+          fi
+          jq -s "$combine" "${pr_parts[@]}" > "$AKITA_BENCH_ARTIFACT_DIR/summary.json"
+
+          base_parts=("$AKITA_BENCH_PARTS_DIR"/*/base/summary.json)
+          if [ ${#base_parts[@]} -gt 0 ]; then
+            jq -s "$combine" "${base_parts[@]}" > "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json"
+          fi
+
       - name: Render benchmark report
-        if: always()
         env:
           AKITA_BENCH_MAIN_BASELINE_LABEL: ${{ github.event_name == 'pull_request' && 'the merge-base benchmarked on this runner' || '' }}
           AKITA_BENCH_MAIN_BASELINE_SHA: ${{ github.event_name == 'pull_request' && env.AKITA_BENCH_MERGE_BASE_SHA || '' }}
           AKITA_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
+          # 'success' only if every bench leg passed; drives the warning banner.
+          BENCH_RESULT: ${{ needs.bench.result }}
         run: |
-          mkdir -p "$AKITA_BENCH_ARTIFACT_DIR"
           summary_path="$AKITA_BENCH_ARTIFACT_DIR/summary.json"
-          if [ ! -f "$summary_path" ]; then
-            case_args=()
-            while IFS= read -r case_spec; do
-              if [ -n "$case_spec" ]; then
-                case_args+=(--case "$case_spec")
-              fi
-            done <<< "$AKITA_BENCH_CASES"
-
-            python3 scripts/profile_bench_report.py failure-summary \
-              --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
-              --mode "$AKITA_BENCH_MODE" \
-              --failure-phase "benchmark workflow" \
-              --error "Benchmark step failed before writing summary.json." \
-              "${case_args[@]}"
-          fi
           python3 scripts/profile_bench_report.py render \
             "$summary_path" \
             --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
@@ -314,19 +429,21 @@ jobs:
           {
             echo '<!-- akita-profile-bench-report -->'
             echo
+            # A failed leg means a case errored; the table still compares the
+            # passing cases, so flag the partial result.
+            if [ "$BENCH_RESULT" != "success" ]; then
+              echo '> [!WARNING]'
+              echo '> One or more benchmark cases failed; the comparison below covers'
+              echo '> only the passing cases. See the **Failed cases** list for details.'
+              echo
+            fi
             cat "$AKITA_BENCH_COMMENT"
           } > "$AKITA_BENCH_COMMENT.marked"
           mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -f "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" ]; then
-            mkdir -p "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline"
-            cp "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" \
-               "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline/summary.json"
-          fi
 
       - name: Upsert benchmark PR comment
         if: >-
-          always() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
@@ -384,3 +501,12 @@ jobs:
           path: ${{ env.AKITA_BENCH_ARTIFACT_DIR }}
           if-no-files-found: warn
           retention-days: 30
+
+      # Last step, after the comment and artifact: fail the run if any bench leg
+      # failed, turning this `report` check red (require it in branch protection
+      # to block merge). Skipped on green runs, leaving `report` green.
+      - name: Fail the run if any benchmark case failed
+        if: ${{ needs.bench.result != 'success' }}
+        run: |
+          echo "::error::A benchmark case failed; see the 'Failed cases' list in the PR comment." >&2
+          exit 1
