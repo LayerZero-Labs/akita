@@ -62,6 +62,10 @@ pub struct LevelParams {
     /// levels `block_len` is not necessarily `2^r_vars`.
     pub r_vars: usize,
     pub stage1_config: SparseChallengeConfig,
+    /// When true, fold challenges are operator-norm rejected and A-role SIS
+    /// collision is priced with `Γ`; when false, samples from the full shell
+    /// and prices with L1 mass `ω`.
+    pub op_norm_rejection: bool,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
     /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
@@ -132,6 +136,7 @@ impl LevelParams {
                 weight: 0,
                 nonzero_coeffs: Vec::new(),
             },
+            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -183,6 +188,7 @@ impl LevelParams {
             m_vars: 0,
             r_vars: 0,
             stage1_config,
+            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -252,6 +258,9 @@ impl LevelParams {
     /// Operator-norm acceptance probability `p_opnorm` as a rational `p_num / p_den`.
     #[inline]
     pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
+        if !self.op_norm_rejection {
+            return (1, 1);
+        }
         self.stage1_config
             .operator_norm_acceptance_prob(self.ring_dimension)
             .unwrap_or((1, 1))
@@ -291,6 +300,7 @@ impl LevelParams {
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
+            self.op_norm_rejection,
             self.inner_width(),
         );
         let challenge =
@@ -511,6 +521,7 @@ impl LevelParams {
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        bytes.push(u8::from(self.op_norm_rejection));
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
@@ -796,6 +807,7 @@ impl LevelParams {
             m_vars,
             r_vars,
             stage1_config: self.stage1_config.clone(),
+            op_norm_rejection: self.op_norm_rejection,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
@@ -861,6 +873,7 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
+            op_norm_rejection: other.op_norm_rejection,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,

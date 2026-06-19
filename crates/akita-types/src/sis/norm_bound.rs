@@ -65,6 +65,24 @@ pub struct FoldChallengeNorms {
     pub l1_norm: u128,
 }
 
+/// Lemma-7 outer multiplier for A-role collision sizing at one fold level.
+///
+/// When [`op_norm_rejection`] is false, prices with L1 mass `ω`. When true,
+/// prices with the operator-norm cap `Γ` (flat `Γ`, tensor `Γ²`).
+#[inline]
+#[must_use]
+pub fn committed_fold_a_role_mass(
+    fold_shape: TensorChallengeShape,
+    stage1_config: &SparseChallengeConfig,
+    op_norm_rejection: bool,
+) -> u128 {
+    if op_norm_rejection {
+        fold_shape.effective_operator_norm_cap(stage1_config) as u128
+    } else {
+        fold_shape.effective_l1_mass(stage1_config) as u128
+    }
+}
+
 /// Build the `beta_inf` envelope norms for one fold level from config and shape.
 #[inline]
 #[must_use]
@@ -219,15 +237,15 @@ pub fn fold_witness_l2_pub_collision_bucket(
 /// via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
 ///
 /// ```text
-/// collision_A_inf = 8 · Gamma · beta_inf · nu,
+/// collision_A_inf = 8 · mass · beta_inf · nu,
 /// collision_l2_sq   = ceil_bucket(d · collision_A_inf^2),
-///   Gamma = effective_operator_norm_cap(cfg, shape),
+///   mass   = ω (L1) or Γ (operator-norm cap) per [`committed_fold_a_role_mass`],
 ///   beta_inf = fold_witness_beta(..., omega from l1_mass, ...),
 ///   nu     = ring_subfield_norm_bound.
 /// ```
 ///
 /// `beta_inf` still uses `||c||_1` from [`FoldChallengeNorms`]; only the Lemma-7
-/// outer multiplier reads `op_norm_cap` (`min(T, ||c||_1)` per factor, tensor `Gamma^2`).
+/// outer multiplier is `op_norm_cap` (`ω` or `Γ` per level policy).
 ///
 /// Returns `None` on overflow or when the collision exceeds every audited bucket
 /// for `(sis_family, d)`.
@@ -244,7 +262,7 @@ pub fn committed_fold_collision_l2_sq(
     ring_subfield_norm_bound: u32,
 ) -> Option<u128> {
     let fold_beta = fold_witness_beta(r_vars, num_claims, challenge, witness).ok()?;
-    // 2·κ̄·β̄·ν = 2·(2·Gamma)·(2·fold_beta)·ν = 8·Gamma·fold_beta·ν.
+    // 2·κ̄·β̄·ν = 2·(2·mass)·(2·fold_beta)·ν = 8·mass·fold_beta·ν.
     let collision_linf = 8u128
         .checked_mul(op_norm_cap)?
         .checked_mul(fold_beta)?
@@ -277,10 +295,11 @@ pub fn rounded_up_collision_norm_s(
     ring_subfield_norm_bound: u32,
     r_vars: usize,
     num_claims: usize,
+    op_norm_rejection: bool,
 ) -> Option<u128> {
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
     let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let op_norm_cap = fold_shape.effective_operator_norm_cap(stage1_config) as u128;
+    let op_norm_cap = committed_fold_a_role_mass(fold_shape, stage1_config, op_norm_rejection);
     let challenge = fold_challenge_norms(stage1_config, fold_shape);
     committed_fold_collision_l2_sq(
         sis_family,
@@ -292,6 +311,52 @@ pub fn rounded_up_collision_norm_s(
         num_claims,
         ring_subfield_norm_bound,
     )
+}
+
+/// Choose per-level operator-norm rejection for A-role SIS sizing.
+///
+/// Rejection is enabled only when pricing with the operator-norm cap `Γ` yields
+/// a strictly smaller audited [`min_secure_rank`] than L1-mass `ω` pricing at
+/// the same inner width. When both ranks match, rejection is off (no proof-size
+/// benefit; avoids wasteful rejection sampling).
+#[allow(clippy::too_many_arguments)]
+pub fn choose_op_norm_rejection_for_a_role(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomposition: DecompositionParams,
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    is_root: bool,
+    onehot_chunk_size: usize,
+    ring_subfield_norm_bound: u32,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: u64,
+) -> Option<(bool, u128, usize)> {
+    let rank_for = |op_norm_rejection: bool| -> Option<(u128, usize)> {
+        let bucket = rounded_up_collision_norm_s(
+            sis_family,
+            d,
+            decomposition,
+            stage1_config,
+            fold_shape,
+            is_root,
+            onehot_chunk_size,
+            ring_subfield_norm_bound,
+            r_vars,
+            num_claims,
+            op_norm_rejection,
+        )?;
+        let rank = super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket, inner_width)?;
+        Some((bucket, rank))
+    };
+    let (bucket_l1, rank_l1) = rank_for(false)?;
+    let (bucket_gamma, rank_gamma) = rank_for(true)?;
+    if rank_gamma < rank_l1 {
+        Some((true, bucket_gamma, rank_gamma))
+    } else {
+        Some((false, bucket_l1, rank_l1))
+    }
 }
 
 /// B-role (`t̂`) rounded-up SIS collision bucket via `||v||_2^2 <= d·||v||_inf^2`.
@@ -587,6 +652,7 @@ impl FoldWitnessLinfCapConfig {
         stage1_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
+        op_norm_rejection: bool,
         inner_width: usize,
     ) -> Self {
         let binding = crate::FoldLinfProtocolBinding::CURRENT;
@@ -603,9 +669,13 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
-        let (op_norm_accept_p_num, op_norm_accept_p_den) = stage1_config
-            .operator_norm_acceptance_prob(ring_dimension)
-            .unwrap_or((1, 1));
+        let (op_norm_accept_p_num, op_norm_accept_p_den) = if op_norm_rejection {
+            stage1_config
+                .operator_norm_acceptance_prob(ring_dimension)
+                .unwrap_or((1, 1))
+        } else {
+            (1, 1)
+        };
         Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
@@ -626,6 +696,7 @@ impl FoldWitnessLinfCapConfig {
         stage1_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
+        op_norm_rejection: bool,
         inner_width: usize,
         grind_target_accept_num: u128,
         grind_target_accept_den: u128,
@@ -640,9 +711,13 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
-        let (op_norm_accept_p_num, op_norm_accept_p_den) = stage1_config
-            .operator_norm_acceptance_prob(ring_dimension)
-            .unwrap_or((1, 1));
+        let (op_norm_accept_p_num, op_norm_accept_p_den) = if op_norm_rejection {
+            stage1_config
+                .operator_norm_acceptance_prob(ring_dimension)
+                .unwrap_or((1, 1))
+        } else {
+            (1, 1)
+        };
         Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
@@ -791,6 +866,125 @@ mod tests {
         assert!(
             envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
             "derived bucket ceilings L∞ before squaring",
+        );
+    }
+
+    #[test]
+    fn choose_op_norm_rejection_only_when_gamma_lowers_rank() {
+        use super::super::ajtai_key::min_secure_rank;
+        use crate::DecompositionParams;
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let decomp = DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 1,
+            log_open_bound: Some(128),
+        };
+        let mut saw_gamma_win = false;
+        for r_vars in 1usize..=12 {
+            for &inner_width in &[
+                1_000_000u64,
+                5_000_000,
+                20_000_000,
+                50_000_000,
+                80_000_000,
+                120_000_000,
+                500_000_000,
+            ] {
+                let Some((reject, bucket, rank)) = choose_op_norm_rejection_for_a_role(
+                    SisModulusFamily::Q128,
+                    64,
+                    decomp,
+                    &shell,
+                    TensorChallengeShape::Flat,
+                    true,
+                    256,
+                    1,
+                    r_vars,
+                    1,
+                    inner_width,
+                ) else {
+                    continue;
+                };
+                let bucket_l1 = rounded_up_collision_norm_s(
+                    SisModulusFamily::Q128,
+                    64,
+                    decomp,
+                    &shell,
+                    TensorChallengeShape::Flat,
+                    true,
+                    256,
+                    1,
+                    r_vars,
+                    1,
+                    false,
+                )
+                .expect("l1 bucket");
+                let bucket_gamma = rounded_up_collision_norm_s(
+                    SisModulusFamily::Q128,
+                    64,
+                    decomp,
+                    &shell,
+                    TensorChallengeShape::Flat,
+                    true,
+                    256,
+                    1,
+                    r_vars,
+                    1,
+                    true,
+                )
+                .expect("gamma bucket");
+                let rank_l1 =
+                    min_secure_rank(SisModulusFamily::Q128, 64, bucket_l1, inner_width).unwrap();
+                let rank_gamma =
+                    min_secure_rank(SisModulusFamily::Q128, 64, bucket_gamma, inner_width).unwrap();
+                if reject {
+                    saw_gamma_win = true;
+                    assert_eq!(bucket, bucket_gamma);
+                    assert_eq!(rank, rank_gamma);
+                    assert!(rank_gamma < rank_l1);
+                } else {
+                    assert_eq!(bucket, bucket_l1);
+                    assert_eq!(rank, rank_l1);
+                    assert!(rank_gamma >= rank_l1);
+                }
+            }
+        }
+        assert!(
+            saw_gamma_win,
+            "expected some (r, width) where Gamma=18 lowers n_a vs omega=53"
+        );
+
+        let loose = SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+            operator_norm_threshold: 54,
+        };
+        let (reject_loose, _, _) = choose_op_norm_rejection_for_a_role(
+            SisModulusFamily::Q128,
+            64,
+            decomp,
+            &loose,
+            TensorChallengeShape::Flat,
+            true,
+            256,
+            1,
+            3,
+            1,
+            10_000,
+        )
+        .expect("main shell should size");
+        assert!(
+            !reject_loose,
+            "non-binding T=54 should not enable rejection when ranks tie"
         );
     }
 

@@ -11,9 +11,10 @@ use akita_field::{CanonicalField, FieldCore};
 use std::collections::HashMap;
 
 use crate::sis::{
-    committed_fold_collision_l2_sq, min_secure_rank, num_digits_fold, num_digits_for_bound,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
+    choose_op_norm_rejection_for_a_role, num_digits_fold, num_digits_for_bound, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
 };
+use crate::DecompositionParams;
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
 pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
@@ -87,6 +88,7 @@ pub fn optimal_m_r_split(
     fold_challenge_shape: TensorChallengeShape,
     log_commit_bound: u32,
     log_basis: u32,
+    onehot_chunk_size: usize,
     reduced_vars: usize,
     num_ring: usize,
     field_bits: u32,
@@ -107,7 +109,7 @@ pub fn optimal_m_r_split(
     let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
 
     let mut best: Option<(u64, usize, u32)> = None;
-    let mut fold_digit_cache: HashMap<(usize, usize), u64> = HashMap::new();
+    let mut fold_digit_cache: HashMap<(usize, usize, usize), u64> = HashMap::new();
 
     for r in (1..reduced_vars).rev() {
         let num_blocks = 1u64 << r;
@@ -121,22 +123,23 @@ pub fn optimal_m_r_split(
         let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
         };
-        // The committed-level A collision is fold-priced, so it grows with `r`
-        // (and `num_claims`); recompute its bucket per split rather than reusing
-        // one fixed bucket.
-        let Some(a_collision) = committed_fold_collision_l2_sq(
+        let Some((op_norm_rejection, _a_collision, n_a)) = choose_op_norm_rejection_for_a_role(
             sis_family,
-            d,
-            fold_challenge_shape.effective_operator_norm_cap(stage1_config) as u128,
-            fold_challenge,
-            fold_witness,
+            d as usize,
+            DecompositionParams {
+                log_basis,
+                log_commit_bound,
+                log_open_bound: None,
+            },
+            stage1_config,
+            fold_challenge_shape,
+            log_commit_bound == 1,
+            onehot_chunk_size,
+            ring_subfield_norm_bound,
             r,
             num_claims,
-            ring_subfield_norm_bound,
+            inner_width as u64,
         ) else {
-            continue;
-        };
-        let Some(n_a) = min_secure_rank(sis_family, d, a_collision, inner_width as u64) else {
             continue;
         };
         let n_a_u32 = n_a as u32;
@@ -148,11 +151,12 @@ pub fn optimal_m_r_split(
             stage1_config,
             fold_challenge_shape,
             d as usize,
+            op_norm_rejection,
             inner_width,
             grind_target_accept_num,
             grind_target_accept_den,
         );
-        let delta_fold = match fold_digit_cache.get(&(r, inner_width)) {
+        let delta_fold = match fold_digit_cache.get(&(r, inner_width, num_claims)) {
             Some(cached) => *cached,
             None => {
                 let Ok(delta_fold) = num_digits_fold(
@@ -167,7 +171,7 @@ pub fn optimal_m_r_split(
                     continue;
                 };
                 let delta_fold = delta_fold as u64;
-                fold_digit_cache.insert((r, inner_width), delta_fold);
+                fold_digit_cache.insert((r, inner_width, num_claims), delta_fold);
                 delta_fold
             }
         };
@@ -213,39 +217,33 @@ mod tests {
         let fold_challenge =
             crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
         let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
-        let singleton = optimal_m_r_split(
-            SisModulusFamily::Q32,
-            64,
-            1,
-            1,
-            fold_challenge,
-            fold_witness,
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+            crate::sis::fold_witness_linf_cap_policy(
+                &stage1_config,
+                TensorChallengeShape::Flat,
+                64,
+            ),
             &stage1_config,
             TensorChallengeShape::Flat,
-            128,
-            3,
-            20,
-            0,
-            32,
-        );
-        let batched = optimal_m_r_split(
-            SisModulusFamily::Q32,
             64,
-            4,
-            1,
-            fold_challenge,
-            fold_witness,
-            &stage1_config,
-            TensorChallengeShape::Flat,
-            128,
-            3,
-            20,
-            0,
-            32,
+            false,
+            64,
+            crate::FoldLinfProtocolBinding::CURRENT
+                .grind_target_accept_prob()
+                .0,
+            crate::FoldLinfProtocolBinding::CURRENT
+                .grind_target_accept_prob()
+                .1,
         );
+        let singleton_fold_digits =
+            num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
+                .expect("singleton fold digits");
+        let batched_fold_digits =
+            num_digits_fold(5, 4, 128, 3, fold_challenge, fold_witness, cap_config)
+                .expect("batched fold digits");
         assert_ne!(
-            singleton, batched,
-            "batched roots must not score fold digits as singleton"
+            singleton_fold_digits, batched_fold_digits,
+            "fold digit depth must grow with batched num_claims"
         );
     }
 }

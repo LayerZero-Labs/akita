@@ -62,9 +62,15 @@ pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     cursor: &mut XofCursor,
     n: usize,
     cfg: &SparseChallengeConfig,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut challenges = Vec::with_capacity(n);
-    match op_norm_rejection_oracle::<D>(cfg)? {
+    let oracle = if op_norm_rejection {
+        op_norm_rejection_oracle::<D>(cfg)?
+    } else {
+        None
+    };
+    match oracle {
         Some((table, t)) => {
             for _ in 0..n {
                 challenges.push(sample_with_op_norm_rejection::<D>(cursor, cfg, &table, t)?);
@@ -97,9 +103,10 @@ pub fn sparse_challenges_from_seed<const D: usize>(
     seed: &[u8],
     n: usize,
     cfg: &SparseChallengeConfig,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut cursor = XofCursor::from_seed(seed);
-    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
+    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg, op_norm_rejection)
 }
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
@@ -224,6 +231,7 @@ pub fn sample_sparse_challenges<F, T, const D: usize>(
     n: usize,
     cfg: &SparseChallengeConfig,
     grind_nonce: u32,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -233,5 +241,5 @@ where
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
-    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
+    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg, op_norm_rejection)
 }

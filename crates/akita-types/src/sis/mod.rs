@@ -47,6 +47,7 @@ pub use fold_l2_certificate::{
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use four_square::{four_squares, four_squares_u128};
 pub use norm_bound::{
+    choose_op_norm_rejection_for_a_role, committed_fold_a_role_mass,
     committed_fold_collision_l2_sq, fold_challenge_norms, fold_witness_beta,
     fold_witness_l2_pub_bound_sq, fold_witness_l2_pub_collision_bucket, fold_witness_linf_cap,
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,

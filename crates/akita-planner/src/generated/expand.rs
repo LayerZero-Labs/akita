@@ -21,8 +21,8 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t,
     rounded_up_collision_norm_w,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, LevelParams};
@@ -117,7 +117,9 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let a_bucket = rounded_up_collision_norm_s(
+        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+            .ok_or_else(|| no_layout("A"))?;
+        let (op_norm_rejection, a_bucket) = choose_op_norm_rejection_for_a_role(
             sis_family,
             ring_d,
             decomp,
@@ -128,10 +130,10 @@ impl GeneratedFoldStep {
             policy.ring_subfield_norm_bound,
             r_vars,
             num_claims,
+            inner_width as u64,
         )
+        .map(|(rej, bucket, _n_a)| (rej, bucket))
         .ok_or_else(|| no_layout("A"))?;
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
-            .ok_or_else(|| no_layout("A"))?;
 
         let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
@@ -230,6 +232,7 @@ impl GeneratedFoldStep {
             m_vars,
             r_vars,
             stage1_config: ring_challenge_cfg,
+            op_norm_rejection,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,

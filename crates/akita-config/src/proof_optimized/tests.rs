@@ -858,11 +858,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         (
             64,
             SparseChallengeConfig::ExactShell {
-                count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
-                count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
-                operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+                count_mag1: 30,
+                count_mag2: 12,
+                operator_norm_threshold: 54,
             },
-            (53, 2),
+            (54, 2),
         ),
         (
             128,
@@ -897,16 +897,9 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     }
 
     let d64 = proof_optimized_ring_challenge_config(64).unwrap();
-    assert!(d64.operator_norm_rejection_binds());
-    assert_eq!(d64.operator_norm_cap(), 18);
-    assert_eq!(d64.challenge_l2_sq_max(), 75);
-    assert_eq!(
-        d64.operator_norm_acceptance_prob(64).unwrap(),
-        (
-            akita_challenges::D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
-            akita_challenges::D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN,
-        )
-    );
+    assert!(!d64.operator_norm_rejection_binds());
+    assert_eq!(d64.operator_norm_cap(), 54);
+    assert_eq!(d64.challenge_l2_sq_max(), 78);
 
     // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
     // the one degree its sampler accepts.

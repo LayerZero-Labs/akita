@@ -13,8 +13,8 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
     rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
@@ -185,7 +185,10 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(norm_s) = rounded_up_collision_norm_s(
+        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+            continue;
+        };
+        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
             family,
             d,
             decomp,
@@ -196,13 +199,8 @@ fn derive_candidate_level_params(
             policy.ring_subfield_norm_bound,
             r,
             1,
+            width_s as u64,
         ) else {
-            continue;
-        };
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
-            continue;
-        };
-        let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
             continue;
         };
         let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -247,6 +245,7 @@ fn derive_candidate_level_params(
             m_vars: reduced_vars - r,
             r_vars: r,
             stage1_config: ring_challenge_cfg.clone(),
+            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -701,6 +700,7 @@ fn compute_root_direct_level_params(
             TensorChallengeShape::Flat,
             decomp.log_commit_bound,
             log_basis,
+            policy.onehot_chunk_size,
             num_vars - alpha,
             0,
             decomp.field_bits(),
@@ -721,7 +721,10 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(norm_s) = rounded_up_collision_norm_s(
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+        return Ok(None);
+    };
+    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
         sis_family,
         d,
         level_decomp,
@@ -732,13 +735,8 @@ fn compute_root_direct_level_params(
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        width_s as u64,
     ) else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
-        return Ok(None);
-    };
-    let Some(n_a) = min_secure_rank(sis_family, d as u32, norm_s, width_s as u64) else {
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
@@ -792,6 +790,7 @@ fn compute_root_direct_level_params(
         m_vars,
         r_vars,
         stage1_config: ring_challenge_cfg,
+        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -935,7 +934,10 @@ fn find_schedule_inner(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(norm_s) = rounded_up_collision_norm_s(
+            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+                continue;
+            };
+            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
                 family,
                 d,
                 level_decomp,
@@ -946,13 +948,8 @@ fn find_schedule_inner(
                 policy.ring_subfield_norm_bound,
                 r_vars,
                 t_vectors,
+                width_s as u64,
             ) else {
-                continue;
-            };
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-                continue;
-            };
-            let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
                 continue;
             };
             let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -1010,6 +1007,7 @@ fn find_schedule_inner(
                 m_vars,
                 r_vars,
                 stage1_config: ring_challenge_cfg.clone(),
+                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
