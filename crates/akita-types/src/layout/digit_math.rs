@@ -201,15 +201,16 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
         let stage1_config = SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            operator_norm_threshold: 54,
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        let fold_challenge = FoldChallengeNorms {
-            infinity_norm: 8,
-            l1_norm: 54,
-        };
+        let fold_challenge = crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
         let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
         let singleton = optimal_m_r_split(
             SisModulusFamily::Q32,

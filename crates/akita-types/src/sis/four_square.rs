@@ -13,9 +13,10 @@
 //! `ell_0..ell_3`.
 //!
 //! The prover uses it to certify a Euclidean-norm bound on the folded witness
-//! `z`: there `value` is the realized squared norm `Σ z[i]^2` and `bound` is the
-//! proven upper bound, so the four squares become the committed slack witnesses
-//! of the certificate.
+//! `z`: there `value` is the realized squared norm `Σ z[i]²` and `bound` is the
+//! **public** level parameter `B_l2_pub` (from
+//! [`crate::sis::fold_witness_l2_pub_bound_sq`]), so the four squares become the
+//! committed slack witnesses `ell_hat` with `Σ ell_h² = B_l2_pub − Z_SQUARED`.
 //!
 //! ## Bound guarantee
 //!
@@ -80,7 +81,7 @@ pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
 
 /// Decompose `target` into four squares when the slack may exceed `2^64`.
 ///
-/// This is the entry point for small-field certificates where `B_l2 - Z_SQUARED`
+/// This is the entry point for small-field certificates where `B_l2_pub − Z_SQUARED`
 /// can be a full `u128`. Each returned witness fits `u64` (see module docs).
 ///
 /// # Errors

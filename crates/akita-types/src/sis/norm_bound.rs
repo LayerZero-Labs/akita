@@ -849,9 +849,9 @@ mod tests {
         use akita_challenges::TensorChallengeShape;
 
         let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            operator_norm_threshold: 54,
+            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
         assert_eq!(
             fold_witness_linf_cap_policy(&shell, TensorChallengeShape::Flat, 64),
@@ -877,6 +877,32 @@ mod tests {
             ),
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
         );
+    }
+
+    #[test]
+    fn fold_witness_linf_ln_term_includes_op_norm_when_binding() {
+        use akita_challenges::{
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN, D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let with_p = fold_witness_linf_ln_term(
+            1 << 16,
+            16,
+            1,
+            8,
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN,
+        )
+        .unwrap();
+        let without_p = fold_witness_linf_ln_term(1 << 16, 16, 1, 8, 1, 1).unwrap();
+        assert!(with_p > without_p);
     }
 
     #[test]

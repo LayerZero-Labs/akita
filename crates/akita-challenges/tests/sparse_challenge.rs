@@ -3,8 +3,9 @@
 
 use akita_challenges::{
     sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
-    ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
-    TensorChallenges,
+    ChallengeShape, Challenges, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD, IntegerChallenge, SparseChallenge,
+    SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -423,6 +424,38 @@ fn exact_shell_op_norm_rejection_is_deterministic_and_bounded() {
         assert!(
             gamma_f64::<DR>(c) <= 16.0 + 1e-6,
             "accepted challenge exceeds the operator-norm cap: gamma = {}",
+            gamma_f64::<DR>(c)
+        );
+    }
+}
+
+#[test]
+fn production_d64_exact_shell_op_norm_rejection_at_gamma_18() {
+    const DR: usize = 64;
+    let cfg = SparseChallengeConfig::ExactShell {
+        count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+        count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+    };
+    cfg.validate::<DR>().unwrap();
+    assert!(cfg.operator_norm_rejection_binds());
+    assert_eq!(cfg.operator_norm_cap(), 18);
+
+    let sample = || {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0xD64));
+        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm-prod", 64, &cfg, 0).unwrap()
+    };
+
+    let first = sample();
+    let second = sample();
+    assert_eq!(first, second, "production rejection must be transcript-stable");
+
+    for c in &first {
+        assert_eq!(l1_norm(c), cfg.l1_norm() as u64);
+        assert!(
+            gamma_f64::<DR>(c) <= 18.0 + 1e-6,
+            "accepted challenge exceeds Gamma=18: gamma = {}",
             gamma_f64::<DR>(c)
         );
     }

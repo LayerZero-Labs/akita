@@ -41,14 +41,15 @@ pub use fold_l2_certificate::{
     carry_cell_count_for_budget, carry_cell_layout, field_fitting_certificate_fits,
     folded_witness_l2_bound_squared, grouped_carry_no_wrap_gate_holds, grouped_fold_limb_bound,
     ceil_l2_msis_collision_bucket, realizable_carry_budget, select_l2_certificate_realization,
-    CarryCellLayout, FoldNormGrouping, L2CertificateRealization,
+    select_l2_certificate_realization_for_level, CarryCellLayout, FoldNormGrouping,
+    L2CertificateRealization,
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use four_square::{four_squares, four_squares_u128};
 pub use norm_bound::{
-    committed_fold_collision_l2_sq, fold_witness_beta, fold_witness_linf_cap,
+    committed_fold_collision_l2_sq, fold_challenge_norms, fold_witness_beta, fold_witness_linf_cap,
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
-    fold_challenge_norms, isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_s,
+    fold_witness_l2_pub_bound_sq, fold_witness_l2_pub_collision_bucket,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
     rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessLinfCapConfig,
     FoldWitnessLinfCapPolicy, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,

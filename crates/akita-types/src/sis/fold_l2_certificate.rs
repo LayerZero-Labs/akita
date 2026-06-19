@@ -2,15 +2,19 @@
 //! grouped-digit layout, and the structural no-wrap gate for grouped-carry proofs.
 //!
 //! The certificate proves an exact integer equality
-//! `Σ z[i]² + Σ ell_h² = B_l2` on the committed fold-response digits `z_hat`.
-//! This module holds the **public, value-independent** sizing that picks among:
+//! `Σ z[i]² + Σ ell_h² = B_l2_pub` on the committed fold-response digits `z_hat`,
+//! where `B_l2_pub` is fixed from public level parameters (see
+//! [`super::norm_bound::fold_witness_l2_pub_bound_sq`]), not from realized
+//! `Z_SQUARED`.
+//!
+//! This module holds **public, value-independent** geometry that picks among:
 //!
 //! - **Field-fitting** — one degree-2 sumcheck when the squared norm and bound
-//!   fit the base field (`N · digit_max² + 4·B_l2 < q`).
+//!   fit the base field (`N · digit_max² + 4·B_l2_pub < q`).
 //! - **Grouped-carry** — digit grouping plus a carry chain when the field is too
 //!   small but every convolution exponent passes the no-wrap gate.
 //! - **Deterministic fallback** — no realized certificate; A-role pricing uses
-//!   [`folded_witness_l2_bound_squared`].
+//!   [`folded_witness_l2_bound_squared`] (worst-case digit envelope).
 //!
 //! `q` is always the **base-field characteristic** (extension degree does not
 //! widen the gate).
@@ -18,6 +22,7 @@
 use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_collision, SisModulusFamily};
+use super::norm_bound::{fold_witness_l2_pub_bound_sq, FoldWitnessNorms};
 
 /// How a certifying fold level proves its Euclidean norm bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,8 +127,9 @@ pub fn grouped_fold_limb_bound(log_basis: u32, limb_width: usize) -> Result<u128
     Ok(numerator / (base - 1))
 }
 
-/// Deterministic worst-case squared Euclidean bound on the fold response:
-/// `N · digit_abs_max(lb, K)²`.
+/// Deterministic worst-case squared Euclidean bound (`L2_BOUND_SQUARED`):
+/// `N · digit_abs_max(lb, K)²`. Used for no-certificate fallback pricing,
+/// not as the certifying-level public `B_l2_pub`.
 ///
 /// # Errors
 ///
@@ -151,13 +157,17 @@ pub fn folded_witness_l2_bound_squared(
     })
 }
 
-/// Round a realized squared norm up to the next audited L2 MSIS collision bucket.
-pub fn l2_collision_bucket_for_z_squared(
+/// Round a squared collision bound up to the next audited L2 MSIS ladder entry.
+///
+/// Generic MSIS bucket helper. For the public certificate scalar use
+/// [`super::norm_bound::fold_witness_l2_pub_collision_bucket`]; do not derive
+/// `B_l2_pub` from prover-side `Z_SQUARED`.
+pub fn ceil_l2_msis_collision_bucket(
     sis_family: SisModulusFamily,
     ring_dimension: u32,
-    z_squared: u128,
+    collision_l2_sq: u128,
 ) -> Option<u128> {
-    ceil_supported_collision(sis_family, ring_dimension, z_squared)
+    ceil_supported_collision(sis_family, ring_dimension, collision_l2_sq)
 }
 
 /// Field-fitting realization: `N·m² + 4·B_l2 < q` for
@@ -405,8 +415,8 @@ pub fn grouped_carry_no_wrap_gate_holds(
 
 /// Select the certificate realization from public fold geometry and field size.
 ///
-/// `b_l2_for_field_fit` is the bound used in the field-fitting inequality (typically
-/// the deterministic [`folded_witness_l2_bound_squared`] or the audited bucket).
+/// `b_l2_pub` is the level's public bound scalar (typically
+/// [`fold_witness_l2_pub_bound_sq`]), not realized `Z_SQUARED`.
 ///
 /// # Errors
 ///
@@ -415,7 +425,7 @@ pub fn select_l2_certificate_realization(
     num_fold_coeffs: usize,
     log_basis: u32,
     num_digits_fold: usize,
-    b_l2_for_field_fit: u128,
+    b_l2_pub: u128,
     field_characteristic: u128,
 ) -> Result<L2CertificateRealization, AkitaError> {
     if num_digits_fold == 0 {
@@ -427,7 +437,7 @@ pub fn select_l2_certificate_realization(
         num_fold_coeffs,
         log_basis,
         num_digits_fold,
-        b_l2_for_field_fit,
+        b_l2_pub,
         field_characteristic,
     )? {
         return Ok(L2CertificateRealization::FieldFitting);
@@ -445,6 +455,32 @@ pub fn select_l2_certificate_realization(
         }
     }
     Ok(L2CertificateRealization::DeterministicFallback)
+}
+
+/// Select realization using the public `B_l2_pub` from challenge family and witness class.
+pub fn select_l2_certificate_realization_for_level(
+    num_fold_coeffs: usize,
+    log_basis: u32,
+    num_digits_fold: usize,
+    r_vars: usize,
+    num_claims: usize,
+    challenge_l2_sq_per_block: u128,
+    witness: FoldWitnessNorms,
+    field_characteristic: u128,
+) -> Result<L2CertificateRealization, AkitaError> {
+    let b_l2_pub = fold_witness_l2_pub_bound_sq(
+        r_vars,
+        num_claims,
+        challenge_l2_sq_per_block,
+        witness,
+    )?;
+    select_l2_certificate_realization(
+        num_fold_coeffs,
+        log_basis,
+        num_digits_fold,
+        b_l2_pub,
+        field_characteristic,
+    )
 }
 
 #[cfg(test)]
@@ -475,10 +511,14 @@ mod tests {
     fn fp128_large_root_uses_field_fitting() {
         let n = 67_108_864usize;
         let k = 9usize;
-        let b_l2 = folded_witness_l2_bound_squared(n, 2, k).unwrap();
-        assert!(field_fitting_certificate_fits(n, 2, k, b_l2, Q_FP128).unwrap());
+        let witness = FoldWitnessNorms::new(2, 64, 64, true);
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        assert!(field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP128).unwrap());
         assert_eq!(
-            select_l2_certificate_realization(n, 2, k, b_l2, Q_FP128).unwrap(),
+            select_l2_certificate_realization_for_level(
+                n, 2, k, 2, 1, 78, witness, Q_FP128
+            )
+            .unwrap(),
             L2CertificateRealization::FieldFitting,
         );
     }
@@ -486,9 +526,14 @@ mod tests {
     #[test]
     fn fp32_large_root_grouped_carry_when_k_grows() {
         let n = 67_108_864usize;
-        let b_l2 = folded_witness_l2_bound_squared(n, 2, 5).unwrap();
-        assert!(!field_fitting_certificate_fits(n, 2, 5, b_l2, Q_FP32).unwrap());
-        let realization = select_l2_certificate_realization(n, 2, 5, b_l2, Q_FP32).unwrap();
+        let k = 5usize;
+        let witness = FoldWitnessNorms::new(2, 64, 64, true);
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        assert!(!field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP32).unwrap());
+        let realization = select_l2_certificate_realization_for_level(
+            n, 2, k, 2, 1, 78, witness, Q_FP32,
+        )
+        .unwrap();
         assert!(matches!(
             realization,
             L2CertificateRealization::GroupedCarry { .. }
@@ -498,9 +543,11 @@ mod tests {
     #[test]
     fn fp32_total_fallback_when_n_and_k_both_large() {
         let n = 67_108_864usize;
-        let b_l2 = folded_witness_l2_bound_squared(n, 2, 9).unwrap();
+        let k = 9usize;
+        let witness = FoldWitnessNorms::new(2, 64, 64, true);
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
         assert_eq!(
-            select_l2_certificate_realization(n, 2, 9, b_l2, Q_FP32).unwrap(),
+            select_l2_certificate_realization(n, 2, k, b_l2_pub, Q_FP32).unwrap(),
             L2CertificateRealization::DeterministicFallback,
         );
     }
@@ -520,8 +567,11 @@ mod tests {
     #[test]
     fn recursive_dense_level_certifies_on_fp32() {
         let n = 57_344usize;
-        let b_l2 = folded_witness_l2_bound_squared(n, 3, 5).unwrap();
-        let realization = select_l2_certificate_realization(n, 3, 5, b_l2, Q_FP32).unwrap();
+        let k = 5usize;
+        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(3, 1, 78, witness).unwrap();
+        let realization =
+            select_l2_certificate_realization(n, 3, k, b_l2_pub, Q_FP32).unwrap();
         assert!(matches!(
             realization,
             L2CertificateRealization::GroupedCarry { .. } | L2CertificateRealization::FieldFitting
@@ -537,8 +587,8 @@ mod tests {
     }
 
     #[test]
-    fn l2_collision_bucket_rounds_up() {
-        let bucket = l2_collision_bucket_for_z_squared(SisModulusFamily::Q32, 64, 1_000).unwrap();
+    fn ceil_l2_msis_collision_bucket_rounds_up() {
+        let bucket = ceil_l2_msis_collision_bucket(SisModulusFamily::Q32, 64, 1_000).unwrap();
         assert!(bucket >= 1_000);
     }
 }
