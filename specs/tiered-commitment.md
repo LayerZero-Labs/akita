@@ -929,7 +929,7 @@ flowchart TB
 - Crate docs: `LevelParams` (`f_key`, `tier_split`), `PlannerPolicy.tiered`,
   `CommitmentConfig::TIERED_COMMITMENT`, and the `setup_contribution` module
   header (the new `F` block) get doc comments.
-- `specs/optimized_verifier.md` / `specs/setup-layout-repack.md` cross-reference
+- `book/src/how/verifying/matrix_evaluation.md` / `specs/setup-layout-repack.md` cross-reference
   the new tier in their "row layout" / "packed prefix" sections.
 
 ## Execution
@@ -1066,5 +1066,5 @@ small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
   [`crates/akita-types/src/proof/relation.rs`](crates/akita-types/src/proof/relation.rs),
   [`crates/akita-verifier/src/protocol/ring_switch.rs`](crates/akita-verifier/src/protocol/ring_switch.rs),
   [`crates/akita-verifier/src/protocol/batched.rs`](crates/akita-verifier/src/protocol/batched.rs).
-- Prior art: `specs/optimized_verifier.md`, `specs/setup-product-sumcheck.md`,
+- Prior art: `book/src/how/verifying/matrix_evaluation.md`, `specs/setup-product-sumcheck.md`,
   `specs/setup-layout-repack.md`, `specs/tensor-structured-folding-challenges.md`.
