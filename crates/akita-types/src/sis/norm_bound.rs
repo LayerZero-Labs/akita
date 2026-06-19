@@ -68,7 +68,7 @@ pub struct FoldChallengeNorms {
 
 /// Lemma-7 outer multiplier for A-role collision sizing at one fold level.
 ///
-/// When [`op_norm_rejection`] is false, prices with L1 mass `ω`. When true,
+/// When `op_norm_rejection` is false, prices with L1 mass `ω`. When true,
 /// prices with the operator-norm cap `Γ` (flat `Γ`, tensor `Γ²`).
 #[inline]
 #[must_use]
@@ -383,7 +383,7 @@ pub fn fold_level_witness_scoring_cost(
 /// Choose per-level operator-norm rejection for A-role SIS sizing.
 ///
 /// Rejection is enabled only when pricing with the operator-norm cap `Γ` yields
-/// a strictly smaller audited [`min_secure_rank`] than L1-mass `ω` pricing at
+/// a strictly smaller audited [`crate::sis::min_secure_rank`] than L1-mass `ω` pricing at
 /// the same inner width **and** [`fold_level_witness_scoring_cost`] is strictly
 /// lower with rejection on at that geometry. When both ranks match, rejection is
 /// off (no proof-size benefit; avoids wasteful rejection sampling).
@@ -827,6 +827,7 @@ impl FoldWitnessLinfCapConfig {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
     /// binding preset without a certified acceptance floor.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn for_fold_level_scoring(
         policy: FoldWitnessLinfCapPolicy,

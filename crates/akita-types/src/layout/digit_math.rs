@@ -44,7 +44,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// ```
 ///
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
-/// `inner_width(r) = block_len(r) · δ_commit` (via [`min_secure_rank`]). The
+/// `inner_width(r) = block_len(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
 /// A collision is itself recomputed per `r` via
 /// [`crate::sis::committed_fold_collision_l2_sq`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
@@ -169,7 +169,6 @@ pub fn optimal_m_r_split(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sis::{num_digits_fold, FoldWitnessLinfCapConfig, FoldWitnessNorms};
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 

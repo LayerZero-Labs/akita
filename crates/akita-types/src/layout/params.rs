@@ -296,7 +296,6 @@ impl LevelParams {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
     /// binding preset without a certified acceptance floor.
-    #[must_use]
     pub fn with_fold_linf_cap_config(
         mut self,
         field_bits: u32,
