@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
 | Status      | proposed, draft for iteration |
-| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (`quang/s3-s5-sis-estimator-spec`) |
+| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables), [#195](https://github.com/LayerZero-Labs/akita/pull/195) (certificate geometry + D64 op-norm cutover) |
 
 ## Summary
 
@@ -181,8 +181,15 @@ preset and a certified acceptance floor exist for that `(family, d)` pair.
       descriptor binding are implemented. Production D=64 ships `(31, 11)` with
       `T = 18`; the planner enables rejection sampling only on fold levels where
       Γ pricing strictly lowers audited A-rank vs ω pricing.
+- [x] *(#195, geometry)* `fold_l2_certificate` exposes realization selection,
+      grouped-digit layout, no-wrap gate, and carry cell budgets; `B_l2_pub` is
+      computed by [`fold_witness_l2_pub_bound_sq`] from public level inputs only
+      (not from realized `Z_SQUARED`). Geometry uses the **raw** bound; MSIS ladder
+      rounding is deferred to S11 schedule materialization (see **Realized-certificate
+      tier**). Prover/verifier certificate replay remains open (S8–S10).
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
-      128 bits, not just a Monte Carlo estimate.
+      128 bits, not just a Monte Carlo estimate. *(#195 ships rational floor
+      `117/500` at `T = 18`; vendored checked cert in CI remains open.)*
 - [ ] The prover derives the grouped `z_hat` limbs from the actual
       `DecomposeFoldWitness.centered_coeffs` used for ring-switch witness
       construction, and its reconstructed `Z_SQUARED` matches a direct integer
@@ -231,9 +238,12 @@ preset and a certified acceptance floor exist for that `(family, d)` pair.
       proof validation account for the certificate payload (`B_l2`, the
       `ell_hat` / `carry_hat` witness growth, the masked `V`, and the carry
       linear-claim layout, pinned by a serialization test).
-- [x] *(#155, S5b)* Runtime DP, `expand_to_level_params`, and shipped generated
-      schedule tables size A-role ranks from `collision_l2_sq`; `num_digits_fold`
-      still uses `β_inf`. Certificate-tier `B_l2` sizing waits for S6.
+- [x] *(#155, S5b; #195 partial S11)* Runtime DP, `expand_to_level_params`, and
+      shipped generated schedule tables size A-role ranks from `collision_l2_sq`;
+      `num_digits_fold` still uses `β_inf`. Until S11 wires realization tiers, **all**
+      fold levels price A-role via Lemma 7 on `β_inf` (conservative on would-be
+      deterministic-fallback levels). `folded_witness_l2_bound_squared` is implemented
+      for S11 fallback pricing only. Certificate `B_l2_pub` on the wire waits for S6.
 - [x] *(#155, S5b)* ZK and non-ZK shipped schedule tables are separate DP optima under
       different proof-byte accounting; drift guards run per feature set (see
       [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) ZK vs non-ZK section).
@@ -640,17 +650,39 @@ transparent and ZK builds.
 witness class before proving. It is **not** chosen from the realized
 `Z_SQUARED` at prove time.
 
+**Public derivability (hard contract).** Every party (prover, verifier, planner)
+must be able to recompute the same scalar from **layout-visible inputs only**:
+`challenge_l2_sq_per_block` (from the bound challenge family), fold block count
+`num_claims · 2^{r_vars}`, and witness-class norms (`FoldWitnessNorms`). The
+prover may abort if honest `Z_SQUARED` exceeds `B_l2_pub`; it must not pick a
+witness-dependent bucket at prove time. On the wire, `B_l2_pub` is either
+recomputed from those public fields or read from bytes pinned at schedule time;
+it is never inferred from witness data.
+
 ```text
-B_l2_pub = ceil_ladder( rho2 · B · ||s||_2^2_block_max )
-         = ceil_ladder( challenge_l2_sq_per_block · num_fold_blocks · witness.l1_norm · witness.infinity_norm )
+B_l2_pub_raw = challenge_l2_sq_per_block · num_fold_blocks · witness.l1_norm · witness.infinity_norm
+             = rho2 · B · ||s||_2^2_block_max
 ```
 
-where `rho2 = ||c||_2^2` on the exact-shell family (e.g. `78` for `(30,12)`),
-`B = num_claims · 2^{r_vars}` fold blocks, and `||s||_2^2_block_max` is the
-witness-class envelope `‖s‖_1 · ‖s‖_∞` per block (`FoldWitnessNorms` in code).
+where `rho2 = ||c||_2^2` on the exact-shell family (e.g. `75` for production
+`(31,11)`), `B = num_claims · 2^{r_vars}` fold blocks, and `||s||_2^2_block_max`
+is the witness-class envelope `‖s‖_1 · ‖s‖_∞` per block (`FoldWitnessNorms` in
+code; implemented as [`fold_witness_l2_pub_bound_sq`]).
+
+**Rounding policy.** The geometry module (`fold_l2_certificate`, no-wrap gate,
+field-fitting eligibility) uses **`B_l2_pub_raw`** as a single exact `u128`.
+Optional MSIS ladder rounding (`ceil_ladder` / [`fold_witness_l2_pub_collision_bucket`])
+is a **schedule-time** decision (S11): if used, the rounded value is materialized
+into `LevelParams` (or the generated schedule entry) when the planner expands a
+level, alongside `collision_l2_sq` and `n_a`. The verifier reads the pinned scalar
+from layout or replays the same public formula; it must **not** call SIS table
+lookup (`ceil_supported_collision`) at verify time. Whatever scalar is pinned
+must be used consistently for the no-wrap gate, public bound digits `T_e`, and
+the certificate equality target (gate and wire must agree).
+
 The prover proves `Z_SQUARED <= B_l2_pub`; the certificate slack uses
-`B_l2_pub − Z_SQUARED`. Lemma-7 A-role rank still uses `8 · Γ · …` on
-`β_inf`, not `Z_SQUARED` or `B_l2_pub`.
+`B_l2_pub − Z_SQUARED`. Lemma-7 A-role rank on **certifying** levels still uses
+`8 · Γ · …` on `β_inf`, not `Z_SQUARED` or `B_l2_pub`.
 
 The deterministic ceiling (no-wrap gate fallback when no certificate is emitted)
 is
@@ -668,10 +700,20 @@ L2_BOUND_SQUARED = coeffs · balanced_digit_max(lb, num_digits_fold)^2
 ```
 
 This bounds **`z`**, never `‖s‖_2` or any per-block `s_l2_max` surrogate.
+Implemented as [`folded_witness_l2_bound_squared`] in `fold_l2_certificate.rs`.
 
-Until this path ships, A-role table lookup uses only Lemma 7 plus
-`collision_l2_sq_for_linf_envelope` on `8 · ω · β_inf · ν` (Layer 1–2 above). No
-`Gamma · B · ‖s‖_2` triangle bound is used for security sizing.
+**A-role pricing by realization tier (S11).**
+
+| Tier | A-role `collision_l2_sq` source |
+|------|--------------------------------|
+| Field-fitting or grouped-carry (certificate emitted) | Lemma 7 on `β_inf` (unchanged; certificate tightens the proved bound, not the rank formula) |
+| Deterministic fallback (no certificate) | `L2_BOUND_SQUARED` converted through the L2 MSIS ladder (replaces Lemma 7 on those levels) |
+
+Until S11 wires `select_l2_certificate_realization` into the planner, **all**
+fold levels use Lemma 7 plus `collision_l2_sq_for_linf_envelope` on
+`8 · mass · β_inf · ν` (Layer 1–2 above). That is conservative on levels that
+would later fall back to `L2_BOUND_SQUARED`. No `Gamma · B · ‖s‖_2` triangle
+bound is used for security sizing.
 
 ### Grouped-Carry L2 Certificate
 
@@ -1646,22 +1688,20 @@ proof shape, prover, verifier, planner/transcript/tests).
 Four slices are independent and can start immediately; the rest serialize behind
 the L2 norm/table API (S4, S5) and the proof-shape change (S6).
 
-Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
-(`crates/akita-types/src/sis/four_square.rs`), and the S4 L2 norm primitives
-(`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
-pure, not-yet-wired building blocks on `main`.
+Status on `main` + PR #155 + PR #195:
 
-Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later slices:
-
-- **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
-  lattice-estimator reliability fixes, vendored LE PR branch submodule, hardened
-  `scripts/gen_sis_table.py`, and Akita golden. *(Done in #155.)*
-- **S5b** (same #155): L2 table regen + stitch (pow2 ladder + derived `d·B²` keys),
-  `collision_l2_sq` rename, wire A/B/D pricing through `collision_l2_sq_for_linf_envelope`.
-  *(Done in #155.)*
-- **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
-  production D=64 shell/threshold; see below).
-- **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
+- **S1, S4, S5a, S5b**: done (#155).
+- **S3** *(#195)*: production D=64 `(31, 11)` / `T = 18`, per-level
+  `op_norm_rejection`, certified acceptance floor `117/500`, sampler + fold_draw +
+  verifier stage-1 replay; shipped `fp128_d64_*` tables regen. S2 vendored cert
+  in CI still open.
+- **S7** *(#195)*: `four_squares_u128` path for slack above `2^64`.
+- **S8 geometry** *(#195, types-only)*: `fold_l2_certificate.rs` (realization
+  selection, no-wrap gate, carry layout); not wired to prover/verifier.
+- **S11 partial** *(#195)*: op-norm rejection in DP/expand + schedule regen;
+  certificate-tier `B_l2_pub` pinning and deterministic-fallback rank pricing
+  wait for S6/S11.
+- **S6, S8 prover, S9, S10, S13**: not started on #195.
 
 ### Decisions To Lock (gating)
 
@@ -1675,8 +1715,10 @@ Each gates specific slices, noted in parentheses.
 - Production D=64 shell and threshold: `(31, 11)`, `T = 18`. (S2, S3).
   Per-level `op_norm_rejection` on `LevelParams` enables the rejection oracle
   only when Γ collision pricing strictly lowers audited A-rank.
-- Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
-  level (not `‖s‖_2` surrogates). (S4, S8)
+- Public `B_l2_pub` from challenge second moment and witness-class envelope (not
+  `‖s‖_2` surrogates or realized `Z_SQUARED`); raw bound for geometry, optional
+  ladder pin at schedule time (S6, S11). Deterministic-fallback A-role pricing
+  from `L2_BOUND_SQUARED` waits for S11. (S4, S8, S11)
 - Certificate placement: whether the limb / carry virtualization claims are
   merged into the stage-2 point or kept adjacent at a separately derived point. (S9)
 - The per-exponent no-wrap gate `D_e + H'_e + (B-1) + B·H'_{e+1} < q` for every
@@ -1698,7 +1740,7 @@ WAVE 0  (independent, start now, parallel)
 WAVE 1
   S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)  DONE
   S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)                         #155
-  S3  threshold + transcript rejection       (S1, S2 for production policy)
+  S3  threshold + transcript rejection       (S1)   DONE #195 (S2 cert in CI open)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
 
 WAVE 2
@@ -1750,7 +1792,7 @@ domain keeps every value an exact `u128` integer (`sqrt(D)` is irrational for
 through `β_inf`. Realized `Z_SQUARED` certificates are implemented in S8, not
 here.
 
-**S7 — Four-square slack helper.** *(independent, DONE; on the default path)*
+**S7 — Four-square slack helper.** *(DONE; #155 + #195 `u128` path)*
 `crates/akita-types/src/sis/four_square.rs`.
 Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`. A
 Rabin–Shallit-style prime hunt is the fast path; a theorem-backed finite
@@ -1758,16 +1800,21 @@ two-squares-residual fallback makes the solver total. Integer-only decision path
 (no floating point).
 The four-square slack is committed as `ell_hat` on every realized level (not just
 ZK), so the certificate proves an equality; small-field levels need a `u128`
-target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
+target path because `B_l2 - Z_SQUARED` can exceed `2^64` *(#195)*.
 
-**S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell after S2)*
-`crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`.
-Add `operator_norm_threshold` to `ExactShell`, reject-and-resample with stable
-XOF consumption (no prover/verifier divergence) calling the S1 predicate, and
-bind shell parameters + threshold into `domain_separator_bytes`.
-Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
-**Do not** change `proof_optimized` D=64 production presets until S2 certifies the
-accepted-support lower bound.
+**S3 — Threshold + transcript-stable rejection sampling.** *(DONE in #195)*
+`crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`,
+`fold_draw.rs`; `LevelParams.op_norm_rejection`; planner
+`choose_op_norm_rejection_for_a_role`; prover `fold_grind` + verifier stage-1 replay.
+Production D=64 ships `(31, 11)` with `T = 18` and rational acceptance floor
+`117/500`. Per-level rejection runs only when Γ pricing strictly lowers audited
+A-rank. Vendored S2 checked certificate in CI remains a follow-up.
+
+**S8a — Certificate geometry (types-only).** *(DONE in #195)*
+`crates/akita-types/src/sis/fold_l2_certificate.rs`.
+Realization selection, grouped-digit layout, structural no-wrap gate, carry cell
+budgets, and `folded_witness_l2_bound_squared`. Uses raw `B_l2_pub` from
+[`fold_witness_l2_pub_bound_sq`]. No prover/verifier consumers yet.
 
 **S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*
 [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).
@@ -1797,7 +1844,7 @@ shape validation, serialization tests, and the proof-size formula. No partial-su
 payload.
 Parameterized on `B_l2`'s type, so it does not wait on S5's values.
 
-**S8 — Prover certificate assembly.** *(S4, S6, S7)*
+**S8 — Prover certificate assembly.** *(S4, S6, S7, S8a)*
 `crates/akita-prover/src/protocol/ring_relation.rs`, `ring_switch/coeffs.rs`.
 From `DecomposeFoldWitness.centered_coeffs`, compute `Z_SQUARED`, the four-square
 slack `ell` (and `ell_hat`), select the realization and the largest group size
@@ -1808,11 +1855,13 @@ deterministic `L2_BOUND_SQUARED` when no `g` passes. Append `ell_hat` /
 `carry_hat` to `w_next` and transcript-bind them and `B_l2` before squeezing
 `alpha` (wire-before-squeeze).
 
-**S11 — Planner + generated tables + drift guards.** *(S4, S5, S6)*
+**S11 — Planner + generated tables + drift guards.** *(S4, S5, S6; partial #195)*
 `crates/akita-planner`, `crates/akita-config`.
 Update the runtime DP, regenerate shipped schedules, update proof-size formulas,
 run the generated-table drift guards, and retarget profile modes if the secure
-family set changes.
+family set changes. *(#195: op-norm rejection in DP/expand + D64 schedule regen;
+certificate `B_l2_pub` pin, realization tier on `LevelParams`, and
+deterministic-fallback rank from `L2_BOUND_SQUARED` wait for S6.)*
 
 **S12 — Transcript instance-descriptor binding.** *(S3, S5, S6)*
 `crates/akita-config` transcript binding.
