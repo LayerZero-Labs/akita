@@ -319,7 +319,7 @@ That is exactly the shape needed to open a single recursive witness at `k > 1` p
 This PR deliberately does not enable it.
 `RingRelationProver::new_recursive_multipoint` keeps an explicit `num_claims != 1` guard, and `RingRelationInstance::new` enforces `CommitmentRouting::check_matches_incidence` (which requires `claim_to_commitment_group == claim_to_point`), so the only routing shape accepted today is the one the current callers produce: a single opening point per recursive level.
 Both recursive call sites build a single-element opening-point set (`flow/recursive.rs`), so no behavior is lost by the guard.
-Enabling true multipoint is a follow-up that requires three things: relaxing `check_matches_incidence` to validate split routing rather than require axis equality (and dropping the `num_claims != 1` guard); a caller that actually produces multiple opening points for one recursive witness, with the matching Fiat-Shamir absorbs and identical verifier replay order; and a soundness argument plus a `specs/optimized_verifier.md` row-eval entry for the `k`-public-row layout.
+Enabling true multipoint is a follow-up that requires three things: relaxing `check_matches_incidence` to validate split routing rather than require axis equality (and dropping the `num_claims != 1` guard); a caller that actually produces multiple opening points for one recursive witness, with the matching Fiat-Shamir absorbs and identical verifier replay order; and a soundness argument plus a `book/src/how/verifying/matrix_evaluation.md` row-eval entry for the `k`-public-row layout.
 Until that analysis exists the contract stays single-point.
 
 **Why `akita-types`, not a dependency flip.**
