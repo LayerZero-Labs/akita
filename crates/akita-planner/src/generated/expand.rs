@@ -66,7 +66,7 @@ impl GeneratedFoldStep {
     pub fn expand_to_level_params(
         &self,
         policy: &PlannerPolicy,
-        stage1: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         current_w_len: usize,
         fold_shape: TensorChallengeShape,
@@ -113,7 +113,7 @@ impl GeneratedFoldStep {
             log_basis,
             ..policy.decomposition
         };
-        let stage1_cfg = stage1(ring_d)?;
+        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
@@ -121,7 +121,7 @@ impl GeneratedFoldStep {
             sis_family,
             ring_d,
             decomp,
-            &stage1_cfg,
+            &ring_challenge_cfg,
             fold_shape,
             is_root,
             policy.onehot_chunk_size,
@@ -229,7 +229,7 @@ impl GeneratedFoldStep {
             block_len,
             m_vars,
             r_vars,
-            stage1_config: stage1_cfg,
+            stage1_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,

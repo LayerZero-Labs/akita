@@ -102,14 +102,17 @@ Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
   It depends only on `akita-field`. At the time of this graph, it is a workspace
   member without downstream `Cargo.toml` edges; cite it from `AGENTS.md` and the
   polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
-- `akita-planner` is the `Cfg`-free schedule owner: shipped generated tables,
-  on-demand compact→`LevelParams` expansion, and the schedule-search DP. It sits
-  **below** `akita-config` and names no `CommitmentConfig` type. It depends only
-  on `akita-types`, `akita-challenges`, and `akita-field`.
+- `akita-planner` is the `Cfg`-free schedule engine: generated table types,
+  on-demand compact→`LevelParams` expansion, catalog identity validation, and
+  the schedule-search DP. It sits **below** `akita-config` and names no
+  `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
+  and `akita-field`.
+- `akita-schedules` owns feature-gated shipped schedule table data. It depends
+  on `akita-planner` for generated table types only.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
   policy trait. It **depends on `akita-planner`**: `CommitmentConfig::runtime_schedule`
-  is a one-line delegation to `akita_planner::get_schedule`, which selects a
-  shipped table on a hit and runs the DP on a miss. There is no opt-in
+  is a one-line delegation to `akita_planner::resolve_schedule`, which validates
+  an opted-in catalog, expands a table hit, and runs the DP on a miss. There is no opt-in
   `test-utils` wrapper; runtime DP fallback is the default for every preset.
 - `akita-verifier` stays prover-free (no polynomial backends, no setup
   expansion) and is directly `<Cfg>`-generic: it depends on `akita-config` and

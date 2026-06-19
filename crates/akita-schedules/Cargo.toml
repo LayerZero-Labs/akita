@@ -1,0 +1,53 @@
+[package]
+name = "akita-schedules"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzerolabs.org>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Feature-gated generated schedule tables for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[features]
+default = []
+zk = ["akita-planner/zk"]
+all-schedules = [
+  "schedules-default",
+  "fp128-d64-onehot-tensor",
+  "fp128-d64-onehot-tiered",
+]
+schedules-default = [
+  "fp128-d64-onehot",
+  "fp128-d64-full",
+  "fp128-d128-onehot",
+  "fp128-d128-full",
+  "fp32-d128-onehot",
+  "fp32-d256-onehot",
+  "fp64-d128",
+  "fp64-d128-onehot",
+  "fp64-d256-onehot",
+]
+fp128-d64-onehot = []
+fp128-d64-full = []
+fp128-d128-onehot = []
+fp128-d128-full = []
+fp128-d64-onehot-tensor = []
+fp128-d64-onehot-tiered = []
+fp32-d128-onehot = []
+fp32-d256-onehot = []
+fp64-d128 = []
+fp64-d128-onehot = []
+fp64-d256-onehot = []
+
+[dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner" }
+
+[lints]
+workspace = true
