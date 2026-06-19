@@ -320,6 +320,11 @@ pub fn rounded_up_collision_norm_s(
 /// the same inner width. When both ranks match, rejection is off (no proof-size
 /// benefit; avoids wasteful rejection sampling).
 ///
+/// Production binding presets exist only at D=64 today (`ExactShell` with
+/// `T < ||c||_1`). D=32 (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep
+/// `operator_norm_cap == ω`, so this function returns `false` for all current
+/// proof-optimized ring challenge configs except D=64 levels where Γ wins.
+///
 /// Lemma-7 `collision_A_inf = 8 · mass · fold_witness_beta · ν` is linear in
 /// `mass`, so ω vs Γ buckets share one `fold_witness_beta` evaluation; only the
 /// outer multiplier differs.

@@ -55,6 +55,22 @@ The primary protocol surfaces are:
 - `akita-config` / `akita-planner`: schedule search, shipped-table selection,
   generated table representation, and proof-size accounting under the L2 MSIS
   model.
+
+### Product scope (operator-norm rejection)
+
+Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
+infrastructure: the planner may enable it only when Γ collision pricing
+strictly lowers audited A-rank vs ω pricing at the same inner width.
+**Production scope today is D=64 only.** The only shipped binding preset is
+`ExactShell { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
+D=32 uses `BoundedL1Norm`; D=128 and D=256 use `Uniform` sparse challenges
+(`proof_optimized_ring_challenge_config`). For those families
+`operator_norm_cap` equals L1 mass, so the flag stays false and the sampler
+skips the rejection oracle. D=128/D=256 flat folds may still use fold-linf
+tail-bound digit tightening; that is orthogonal to operator-norm rejection.
+Extending rejection to other ring dimensions is deferred until a binding Γ
+preset and a certified acceptance floor exist for that `(family, d)` pair.
+
 ### Invariants
 
 - **Single security table, per-role norm derivation.** All SIS binding decisions

@@ -136,8 +136,10 @@ The feature introduces or modifies:
   loop over fold-challenge derivation; the per-attempt distribution is unchanged.
 - **Per-level** operator-norm rejection on fold levels (`LevelParams.op_norm_rejection`):
   enabled only when Γ collision pricing strictly lowers audited A-rank; otherwise ω
-  pricing and no rejection oracle (no proof-size win). Production D=64 ships
-  `(31, 11)` with `T = 18`.
+  pricing and no rejection oracle (no proof-size win). **Potentially enabled only at
+  D=64** under current production presets (`ExactShell (31, 11), T = 18`). D=32
+  (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep the flag false; see
+  [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) § Product scope.
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
   Both continue to size `K` from `β_inf`; their tighter thresholds require a
   separate proof of the accepted-challenge tail bound and descriptor policy.
