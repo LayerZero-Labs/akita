@@ -16,6 +16,9 @@ env:
 
 jobs:
   comment:
+    # `report` uploads the artifact on !cancelled, so forks also get the comment
+    # on partial-failure runs (comment.md already carries the warning banner +
+    # passing cases). Download below tolerates a missing artifact.
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion != 'cancelled'
@@ -37,8 +40,8 @@ jobs:
 
       - name: Download benchmark artifact
         if: steps.pr.outputs.issue-number != ''
-        # A failed bench run that produced no benchmark leaves no artifact; the
-        # upsert step no-ops on a missing file, so don't fail the job.
+        # Only a total build failure leaves no artifact; the upsert step no-ops
+        # on a missing file, so don't fail the job.
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
