@@ -60,7 +60,9 @@ The primary protocol surfaces are:
 
 Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
 infrastructure: the planner may enable it only when Γ collision pricing
-strictly lowers audited A-rank vs ω pricing at the same inner width.
+strictly lowers audited A-rank vs ω pricing **and** the fold-level witness
+scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
+`optimal_m_r_split`) is strictly lower with rejection on at that geometry.
 **Production scope today is D=64 only.** The only shipped binding preset is
 `ExactShell { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
 D=32 uses `BoundedL1Norm`; D=128 and D=256 use `Uniform` sparse challenges

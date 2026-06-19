@@ -9,6 +9,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
+use super::decomposition_digits::{num_digits_fold, num_digits_for_bound};
 use crate::DecompositionParams;
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -313,12 +314,79 @@ pub fn rounded_up_collision_norm_s(
     )
 }
 
+/// Next-level witness scoring cost for one fold geometry, matching
+/// [`crate::layout::digit_math::optimal_m_r_split`]:
+///
+/// ```text
+///   (1 + n_a) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
+/// ```
+///
+/// `m_eff` is the S-block row count implied by `inner_width / δ_commit`.
+#[allow(clippy::too_many_arguments)]
+pub fn fold_level_witness_scoring_cost(
+    n_a: usize,
+    op_norm_rejection: bool,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: usize,
+    decomposition: DecompositionParams,
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    ring_dimension: usize,
+    fold_challenge: FoldChallengeNorms,
+    fold_witness: FoldWitnessNorms,
+) -> Option<u64> {
+    let field_bits = decomposition.field_bits();
+    let log_basis = decomposition.log_basis;
+    let log_commit_bound = decomposition.log_commit_bound;
+    let open_bound = log_commit_bound.max(field_bits);
+    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
+    let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
+    let block_len = inner_width.checked_div(delta_commit as usize)?;
+    if block_len == 0 {
+        return None;
+    }
+    let num_blocks = 1u64.checked_shl(r_vars as u32)?;
+    let m_eff = block_len as u64;
+    let cap_policy = fold_witness_linf_cap_policy(stage1_config, fold_shape, ring_dimension);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+    let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+        cap_policy,
+        stage1_config,
+        fold_shape,
+        ring_dimension,
+        op_norm_rejection,
+        inner_width,
+        grind_target_accept_num,
+        grind_target_accept_den,
+    )
+    .ok()?;
+    let delta_fold = num_digits_fold(
+        r_vars,
+        num_claims,
+        field_bits,
+        log_basis,
+        fold_challenge,
+        fold_witness,
+        cap_config,
+    )
+    .ok()? as u64;
+    let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
+    let opening_cost = per_block_cost.saturating_mul(num_blocks);
+    let folding_cost = delta_commit
+        .saturating_mul(delta_fold)
+        .saturating_mul(m_eff);
+    Some(opening_cost.saturating_add(folding_cost))
+}
+
 /// Choose per-level operator-norm rejection for A-role SIS sizing.
 ///
 /// Rejection is enabled only when pricing with the operator-norm cap `Γ` yields
 /// a strictly smaller audited [`min_secure_rank`] than L1-mass `ω` pricing at
-/// the same inner width. When both ranks match, rejection is off (no proof-size
-/// benefit; avoids wasteful rejection sampling).
+/// the same inner width **and** [`fold_level_witness_scoring_cost`] is strictly
+/// lower with rejection on at that geometry. When both ranks match, rejection is
+/// off (no proof-size benefit; avoids wasteful rejection sampling).
 ///
 /// Production binding presets exist only at D=64 today (`ExactShell` with
 /// `T < ||c||_1`). D=32 (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep
@@ -369,7 +437,38 @@ pub fn choose_op_norm_rejection_for_a_role(
         super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_gamma, inner_width)?;
 
     if rank_gamma < rank_l1 {
-        Some((true, bucket_gamma, rank_gamma))
+        let inner_width_usize = usize::try_from(inner_width).ok()?;
+        let witness_cost_gamma = fold_level_witness_scoring_cost(
+            rank_gamma,
+            true,
+            r_vars,
+            num_claims,
+            inner_width_usize,
+            decomposition,
+            stage1_config,
+            fold_shape,
+            d,
+            challenge,
+            witness,
+        )?;
+        let witness_cost_l1 = fold_level_witness_scoring_cost(
+            rank_l1,
+            false,
+            r_vars,
+            num_claims,
+            inner_width_usize,
+            decomposition,
+            stage1_config,
+            fold_shape,
+            d,
+            challenge,
+            witness,
+        )?;
+        if witness_cost_gamma < witness_cost_l1 {
+            Some((true, bucket_gamma, rank_gamma))
+        } else {
+            Some((false, bucket_l1, rank_l1))
+        }
     } else {
         Some((false, bucket_l1, rank_l1))
     }
@@ -903,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn choose_op_norm_rejection_only_when_gamma_lowers_rank() {
+    fn choose_op_norm_rejection_only_when_gamma_lowers_rank_and_witness_cost() {
         use super::super::ajtai_key::min_secure_rank;
         use crate::DecompositionParams;
         use akita_challenges::{
@@ -921,7 +1020,10 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
+        let challenge = fold_challenge_norms(&shell, TensorChallengeShape::Flat);
+        let witness = FoldWitnessNorms::new(3, 64, 256, true);
         let mut saw_gamma_win = false;
+        let mut saw_rank_win_declined_by_witness_cost = false;
         for r_vars in 1usize..=12 {
             for &inner_width in &[
                 1_000_000u64,
@@ -932,6 +1034,7 @@ mod tests {
                 120_000_000,
                 500_000_000,
             ] {
+                let inner_width_usize = inner_width as usize;
                 let Some((reject, bucket, rank)) = choose_op_norm_rejection_for_a_role(
                     SisModulusFamily::Q128,
                     64,
@@ -979,20 +1082,54 @@ mod tests {
                     min_secure_rank(SisModulusFamily::Q128, 64, bucket_l1, inner_width).unwrap();
                 let rank_gamma =
                     min_secure_rank(SisModulusFamily::Q128, 64, bucket_gamma, inner_width).unwrap();
+                let witness_cost_gamma = fold_level_witness_scoring_cost(
+                    rank_gamma,
+                    true,
+                    r_vars,
+                    1,
+                    inner_width_usize,
+                    decomp,
+                    &shell,
+                    TensorChallengeShape::Flat,
+                    64,
+                    challenge,
+                    witness,
+                )
+                .expect("gamma witness score");
+                let witness_cost_l1 = fold_level_witness_scoring_cost(
+                    rank_l1,
+                    false,
+                    r_vars,
+                    1,
+                    inner_width_usize,
+                    decomp,
+                    &shell,
+                    TensorChallengeShape::Flat,
+                    64,
+                    challenge,
+                    witness,
+                )
+                .expect("l1 witness score");
                 if reject {
                     saw_gamma_win = true;
                     assert_eq!(bucket, bucket_gamma);
                     assert_eq!(rank, rank_gamma);
                     assert!(rank_gamma < rank_l1);
+                    assert!(witness_cost_gamma < witness_cost_l1);
                 } else {
                     assert_eq!(bucket, bucket_l1);
                     assert_eq!(rank, rank_l1);
-                    assert!(rank_gamma >= rank_l1);
+                    if rank_gamma < rank_l1 {
+                        saw_rank_win_declined_by_witness_cost = true;
+                        assert!(witness_cost_gamma >= witness_cost_l1);
+                    } else {
+                        assert!(rank_gamma >= rank_l1);
+                    }
                 }
             }
         }
         assert!(
-            saw_gamma_win,
+            saw_gamma_win || saw_rank_win_declined_by_witness_cost,
             "expected some (r, width) where Gamma=18 lowers n_a vs omega=53"
         );
 

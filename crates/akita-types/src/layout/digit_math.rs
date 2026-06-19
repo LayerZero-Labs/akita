@@ -8,11 +8,10 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
-use std::collections::HashMap;
 
 use crate::sis::{
-    choose_op_norm_rejection_for_a_role, num_digits_fold, num_digits_for_bound, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
+    choose_op_norm_rejection_for_a_role, fold_level_witness_scoring_cost, num_digits_for_bound,
+    FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
 };
 use crate::DecompositionParams;
 
@@ -99,26 +98,16 @@ pub fn optimal_m_r_split(
         return (reduced_vars - r, r, 1);
     }
 
-    let open_bound = log_commit_bound.max(field_bits);
-    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
 
-    let cap_policy =
-        crate::sis::fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, d as usize);
-    let binding = crate::FoldLinfProtocolBinding::CURRENT;
-    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
-
     let mut best: Option<(u64, usize, u32)> = None;
-    let mut fold_digit_cache: HashMap<(usize, usize, usize), u64> = HashMap::new();
 
     for r in (1..reduced_vars).rev() {
-        let num_blocks = 1u64 << r;
         let block_len: u64 = if num_ring > 0 {
             num_ring.div_ceil(1usize << r) as u64
         } else {
             1u64 << (reduced_vars - r)
         };
-        let m_eff = block_len;
 
         let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
@@ -144,46 +133,25 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
-        // from min(β_inf, t*) rather than β_inf alone.
-        let Ok(cap_config) = FoldWitnessLinfCapConfig::for_fold_level_scoring(
-            cap_policy,
+        let Some(total) = fold_level_witness_scoring_cost(
+            n_a,
+            op_norm_rejection,
+            r,
+            num_claims,
+            inner_width,
+            DecompositionParams {
+                log_basis,
+                log_commit_bound,
+                log_open_bound: None,
+            },
             stage1_config,
             fold_challenge_shape,
             d as usize,
-            op_norm_rejection,
-            inner_width,
-            grind_target_accept_num,
-            grind_target_accept_den,
+            fold_challenge,
+            fold_witness,
         ) else {
             continue;
         };
-        let delta_fold = match fold_digit_cache.get(&(r, inner_width, num_claims)) {
-            Some(cached) => *cached,
-            None => {
-                let Ok(delta_fold) = num_digits_fold(
-                    r,
-                    num_claims,
-                    field_bits,
-                    log_basis,
-                    fold_challenge,
-                    fold_witness,
-                    cap_config,
-                ) else {
-                    continue;
-                };
-                let delta_fold = delta_fold as u64;
-                fold_digit_cache.insert((r, inner_width, num_claims), delta_fold);
-                delta_fold
-            }
-        };
-
-        let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
-        let opening_cost = per_block_cost.saturating_mul(num_blocks);
-        let folding_cost = delta_commit
-            .saturating_mul(delta_fold)
-            .saturating_mul(m_eff);
-        let total = opening_cost.saturating_add(folding_cost);
 
         if best.is_none_or(|(c, _, _)| total < c) {
             best = Some((total, r, n_a_u32));
@@ -202,7 +170,7 @@ pub fn optimal_m_r_split(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sis::FoldWitnessNorms;
+    use crate::sis::{num_digits_fold, FoldWitnessLinfCapConfig, FoldWitnessNorms};
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
     #[test]
