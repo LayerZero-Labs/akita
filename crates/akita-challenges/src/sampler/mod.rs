@@ -152,22 +152,21 @@ pub fn sparse_challenge_absorb_buf<const D: usize>(
 fn op_norm_rejection_oracle<const D: usize>(
     cfg: &SparseChallengeConfig,
 ) -> Result<Option<(OpNormTable, u64)>, AkitaError> {
-    match cfg {
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-            operator_norm_threshold,
-        } => {
-            let l1 = (count_mag1 + 2 * count_mag2) as u64;
-            let t = u64::from(*operator_norm_threshold);
-            if t >= l1 {
-                return Ok(None);
-            }
-            let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
-            Ok(Some((table, t)))
-        }
-        _ => Ok(None),
+    if !cfg.operator_norm_rejection_binds() {
+        return Ok(None);
     }
+    let SparseChallengeConfig::ExactShell {
+        count_mag1,
+        count_mag2,
+        operator_norm_threshold,
+    } = cfg
+    else {
+        return Ok(None);
+    };
+    let l1 = (count_mag1 + 2 * count_mag2) as u64;
+    let t = u64::from(*operator_norm_threshold);
+    let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
+    Ok(Some((table, t)))
 }
 
 /// Draw candidates from `cursor` until one passes the certified operator-norm
