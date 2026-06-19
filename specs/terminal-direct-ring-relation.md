@@ -136,7 +136,8 @@ The current folded terminal prover path:
 Public terminal `y` is not serialized in that payload.
 Since #154 (`specs/y-ring-trace-internalization.md`), on-wire `y_ring` / `y_rings` was dropped at every fold level, including the terminal.
 The verifier recomputes the public-output row targets from the committed terminal witness (and opening incidence) when checking the relation.
-Proof-size accounting matches this split: `level_proof_bytes(..., MRowLayout::WithoutDBlock)` prices only the terminal stage-2 body, and `direct_witness_bytes` prices `final_witness` on the terminal schedule step.
+Proof-size accounting matches this split: `level_proof_bytes(..., MRowLayout::WithoutDBlock)` prices the terminal `fold_grind_nonce` wire field plus the terminal stage-2 body, and `direct_witness_bytes` prices `final_witness` on the terminal schedule step.
+Direct mode still runs fold grinding before the witness is built, so its level-byte total keeps the same `fold_grind_nonce` term and drops only the terminal stage-2 sumcheck bytes.
 
 The `r` segment exists only because the terminal relation is still proved through the same quotient-to-sumcheck machinery as intermediate folds.
 It is not part of the terminal statement once the verifier checks rows directly.
@@ -432,7 +433,7 @@ In `RingSwitchSumcheck` mode:
 In `DirectRingRelations` mode:
 
 1. do not call `compute_relation_quotient`,
-2. build `SegmentTyped(z, e, t)` with zero `r_field_elems`,
+2. build `SegmentTyped(z, e, t)` with zero `r_field_elems` (tiered layouts still emit the hidden `û_concat` digit planes from `build_w_coeffs`; witness sizing follows `w_ring_element_count_with_counts_for_layout_bits`, which adds `u_concat_count` when `tier_split > 1`),
 3. absorb the same terminal `e` bytes and remainder bytes,
 4. do not call `ring_switch_finalize_terminal`,
 5. do not sample terminal `alpha` or terminal `tau1`,
@@ -515,18 +516,23 @@ The direct terminal level byte formula becomes:
 
 ```text
 optional_extension_opening_reduction_bytes
+  + fold_grind_nonce_bytes
   + direct_witness_bytes(SegmentTyped(z, e, t))
 ```
+
+`fold_grind_nonce_bytes` is the fixed 4-byte wire field priced by `FOLD_GRIND_NONCE_BYTES` / `level_proof_bytes(..., MRowLayout::WithoutDBlock)` on every fold level, including the terminal.
+Direct mode removes the terminal stage-2 sumcheck from that helper, not the grind nonce.
 
 The sumcheck terminal formula stays:
 
 ```text
 optional_extension_opening_reduction_bytes
+  + fold_grind_nonce_bytes
   + terminal_stage2_sumcheck_bytes
   + direct_witness_bytes(SegmentTyped(z, e, t, r))
 ```
 
-Here `terminal_stage2_sumcheck_bytes` is what `level_proof_bytes(..., MRowLayout::WithoutDBlock)` already prices.
+Here `terminal_stage2_sumcheck_bytes` is the stage-2 portion of `level_proof_bytes(..., MRowLayout::WithoutDBlock)` (everything after the grind nonce).
 `direct_witness_bytes` is the terminal schedule step's witness accounting, matching `segment_typed_witness_upper_bound_bytes` for the bound shape.
 
 Planner and schedule materialization must derive the same terminal witness shape as the prover.
