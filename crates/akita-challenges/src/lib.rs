@@ -30,7 +30,11 @@ mod tensor;
 
 pub use akita_transcript::FoldChallengeSeedPreview;
 pub use challenge::{IntegerChallenge, SparseChallenge};
-pub use config::{SparseChallengeConfig, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
+pub use config::{
+    SparseChallengeConfig, D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN, D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+    D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD, MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+};
 pub use fold_draw::{preview_folding_challenges, sample_folding_challenges};
 pub use grind_probe::grind_probe_permutation;
 pub use sampler::{

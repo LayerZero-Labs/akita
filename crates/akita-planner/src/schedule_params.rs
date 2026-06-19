@@ -16,7 +16,7 @@ use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig,
     FoldWitnessNorms,
 };
 use akita_types::{
@@ -685,11 +685,10 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let fold_challenge = FoldChallengeNorms {
-            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&ring_challenge_cfg)
-                as u128,
-            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&ring_challenge_cfg) as u128,
-        };
+        let fold_challenge = akita_types::sis::fold_challenge_norms(
+            &ring_challenge_cfg,
+            TensorChallengeShape::Flat,
+        );
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;

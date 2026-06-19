@@ -295,10 +295,7 @@ impl LevelParams {
             self.ring_dimension,
             self.inner_width(),
         );
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        let challenge = crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         let witness = self.fold_witness_norms();
         self.num_digits_fold_one = crate::sis::num_digits_fold(
             self.r_vars,
@@ -356,10 +353,7 @@ impl LevelParams {
         let witness = self.fold_witness_norms();
         let witness_linf = witness.infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        let challenge = crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
         crate::sis::fold_witness_linf_cap(
             beta,
@@ -455,10 +449,7 @@ impl LevelParams {
         {
             return Ok(self.cached_num_digits_fold_value);
         }
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        let challenge = crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         crate::sis::num_digits_fold(
             self.r_vars,
             num_claims,

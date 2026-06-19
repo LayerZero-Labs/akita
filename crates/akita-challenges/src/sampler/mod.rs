@@ -161,6 +161,7 @@ fn op_norm_rejection_oracle<const D: usize>(
         operator_norm_threshold,
     } = cfg
     else {
+        debug_assert!(false, "operator_norm_rejection_binds implies ExactShell");
         return Ok(None);
     };
     let l1 = (count_mag1 + 2 * count_mag2) as u64;

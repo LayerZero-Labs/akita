@@ -127,6 +127,7 @@ pub fn optimal_m_r_split(
         let Some(a_collision) = committed_fold_collision_l2_sq(
             sis_family,
             d,
+            fold_challenge_shape.effective_operator_norm_cap(stage1_config) as u128,
             fold_challenge,
             fold_witness,
             r,

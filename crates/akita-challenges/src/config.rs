@@ -500,6 +500,26 @@ mod entropy_tests {
     }
 
     #[test]
+    fn operator_norm_acceptance_prob_rejects_unknown_binding_shells() {
+        let production = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(production
+            .operator_norm_acceptance_prob(32)
+            .is_err());
+
+        let binding_other = SparseChallengeConfig::ExactShell {
+            count_mag1: 31,
+            count_mag2: 11,
+            operator_norm_threshold: 16,
+        };
+        assert!(binding_other.operator_norm_rejection_binds());
+        assert!(binding_other.operator_norm_acceptance_prob(64).is_err());
+    }
+
+    #[test]
     fn bounded_l1_preset_clears_128_bits() {
         let preset = SparseChallengeConfig::BoundedL1Norm;
         assert!(preset.validate_min_entropy::<32>(128).is_ok());
