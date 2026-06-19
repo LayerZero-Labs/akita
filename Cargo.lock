@@ -64,6 +64,7 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-planner",
+ "akita-schedules",
  "akita-transcript",
  "akita-types",
  "tracing",
@@ -162,6 +163,13 @@ version = "0.1.0"
 dependencies = [
  "akita-field",
  "tracing",
+]
+
+[[package]]
+name = "akita-schedules"
+version = "0.1.0"
+dependencies = [
+ "akita-planner",
 ]
 
 [[package]]

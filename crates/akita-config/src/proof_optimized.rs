@@ -639,21 +639,58 @@ macro_rules! impl_proof_optimized_preset {
     (@tiered) => {
         false
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr $(, $tiered:expr)?)?) => {
+    (@schedule_catalog none) => {};
+    (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
+        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            #[cfg(feature = $feat)]
+            {
+                Some(akita_schedules::$table())
+            }
+            #[cfg(not(feature = $feat))]
+            {
+                None
+            }
+        }
+    };
+    (@schedule_catalog tiered ($feat:literal, $family:literal, $table:ident)) => {
+        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            #[cfg(all(feature = $feat, not(feature = "zk")))]
+            {
+                Some(akita_schedules::$table())
+            }
+            #[cfg(not(all(feature = $feat, not(feature = "zk"))))]
+            {
+                None
+            }
+        }
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
+    };
+    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $claim_field;
             const D: usize = $d;
 
-            // Defaults to `false`; the tiered preset(s) pass `true` as the
-            // optional trailing arg.
-            const TIERED_COMMITMENT: bool =
-                impl_proof_optimized_preset!(@tiered $($($tiered)?)?);
+            const TIERED_COMMITMENT: bool = $tiered;
 
             fn decomposition() -> akita_types::DecompositionParams {
-                // Proof-optimized presets fold at `log_basis = 3` and set
-                // `log_open_bound = Some(field_bits)` unless the gadget already
-                // saturates the field (`log_commit_bound == field_bits`).
                 akita_types::DecompositionParams {
                     log_basis: 3,
                     log_commit_bound: $log_commit_bound,
@@ -693,8 +730,118 @@ macro_rules! impl_proof_optimized_preset {
             }
 
             fn onehot_chunk_size() -> usize {
-                impl_proof_optimized_preset!(@onehot_chunk_size $($onehot_chunk_size)?)
+                $onehot_chunk
             }
+
+            impl_proof_optimized_preset!(@schedule_catalog tiered ($feat, $family_name, $table));
+        }
+    };
+    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = $field;
+            type ExtField = $claim_field;
+            const D: usize = $d;
+
+            const TIERED_COMMITMENT: bool = $tiered;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                akita_types::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: $log_commit_bound,
+                    log_open_bound: if $log_commit_bound < $field_bits {
+                        Some($field_bits)
+                    } else {
+                        None
+                    },
+                }
+            }
+
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
+            }
+
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                $family
+            }
+
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                )
+            }
+
+            fn basis_range() -> (u32, u32) {
+                (
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
+            }
+
+            fn onehot_chunk_size() -> usize {
+                $onehot_chunk
+            }
+
+            impl_proof_optimized_preset!(@schedule_catalog none);
+        }
+    };
+    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = $field;
+            type ExtField = $claim_field;
+            const D: usize = $d;
+
+            const TIERED_COMMITMENT: bool = $tiered;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                akita_types::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: $log_commit_bound,
+                    log_open_bound: if $log_commit_bound < $field_bits {
+                        Some($field_bits)
+                    } else {
+                        None
+                    },
+                }
+            }
+
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
+            }
+
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                $family
+            }
+
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                )
+            }
+
+            fn basis_range() -> (u32, u32) {
+                (
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
+            }
+
+            fn onehot_chunk_size() -> usize {
+                $onehot_chunk
+            }
+
+            impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));
         }
     };
 }
