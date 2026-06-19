@@ -319,6 +319,10 @@ pub fn rounded_up_collision_norm_s(
 /// a strictly smaller audited [`min_secure_rank`] than L1-mass `ω` pricing at
 /// the same inner width. When both ranks match, rejection is off (no proof-size
 /// benefit; avoids wasteful rejection sampling).
+///
+/// Lemma-7 `collision_A_inf = 8 · mass · fold_witness_beta · ν` is linear in
+/// `mass`, so ω vs Γ buckets share one `fold_witness_beta` evaluation; only the
+/// outer multiplier differs.
 #[allow(clippy::too_many_arguments)]
 pub fn choose_op_norm_rejection_for_a_role(
     sis_family: SisModulusFamily,
@@ -333,25 +337,33 @@ pub fn choose_op_norm_rejection_for_a_role(
     num_claims: usize,
     inner_width: u64,
 ) -> Option<(bool, u128, usize)> {
-    let rank_for = |op_norm_rejection: bool| -> Option<(u128, usize)> {
-        let bucket = rounded_up_collision_norm_s(
-            sis_family,
-            d,
-            decomposition,
-            stage1_config,
-            fold_shape,
-            is_root,
-            onehot_chunk_size,
-            ring_subfield_norm_bound,
-            r_vars,
-            num_claims,
-            op_norm_rejection,
-        )?;
-        let rank = super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket, inner_width)?;
-        Some((bucket, rank))
-    };
-    let (bucket_l1, rank_l1) = rank_for(false)?;
-    let (bucket_gamma, rank_gamma) = rank_for(true)?;
+    let omega = fold_shape.effective_l1_mass(stage1_config) as u128;
+    let gamma = fold_shape.effective_operator_norm_cap(stage1_config) as u128;
+    if omega == 0 {
+        return None;
+    }
+
+    let is_onehot = is_root && decomposition.log_commit_bound == 1;
+    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+    let challenge = fold_challenge_norms(stage1_config, fold_shape);
+    let fold_beta = fold_witness_beta(r_vars, num_claims, challenge, witness).ok()?;
+    let collision_core = 8u128
+        .checked_mul(fold_beta)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?;
+    let linf_l1 = collision_core.checked_mul(omega)?;
+    let bucket_l1 = collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf_l1)?;
+    let rank_l1 =
+        super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_l1, inner_width)?;
+
+    if gamma == omega {
+        return Some((false, bucket_l1, rank_l1));
+    }
+
+    let linf_gamma = collision_core.checked_mul(gamma)?;
+    let bucket_gamma = collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf_gamma)?;
+    let rank_gamma =
+        super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_gamma, inner_width)?;
+
     if rank_gamma < rank_l1 {
         Some((true, bucket_gamma, rank_gamma))
     } else {
