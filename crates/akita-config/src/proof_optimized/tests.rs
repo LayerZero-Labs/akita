@@ -296,8 +296,9 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
         max_num_batched_polys: usize,
     ) -> SetupMatrixEnvelope {
         let mut max_setup_len = 1usize;
+        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
         for num_vars in 1..=max_num_vars {
-            for num_polys in 1..=max_num_batched_polys {
+            for &num_polys in &poly_counts {
                 let opening_batch =
                     worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
                 if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
@@ -917,6 +918,22 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // Ring degrees no preset uses must be rejected, not silently defaulted.
     assert!(proof_optimized_ring_challenge_config(16).is_err());
     assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+#[test]
+#[cfg(feature = "schedules-fp128-d64-onehot")]
+fn d64_shipped_catalog_ring_challenge_digest_matches_runtime_policy() {
+    use akita_planner::ring_challenge_config_digest;
+
+    use crate::proof_optimized::fp128;
+
+    let expected = ring_challenge_config_digest(&[64], fp128::D64OneHot::ring_challenge_config)
+        .expect("d=64 ring challenge digest");
+    let catalog = fp128::D64OneHot::schedule_catalog().expect("D64 one-hot catalog");
+    assert_eq!(
+        catalog.identity.ring_challenge_config_digest, expected,
+        "shipped fp128_d64_onehot digest must track proof_optimized_ring_challenge_config"
+    );
 }
 
 /// Assert one preset delegates its ring challenge to the shared policy.
