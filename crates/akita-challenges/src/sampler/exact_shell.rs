@@ -14,6 +14,65 @@ use crate::SparseChallenge;
 /// Largest exact-shell Hamming weight on any shipping ring (`31 + 11` at `D = 64`).
 const MAX_STACK_SIGN_BYTES: usize = 64;
 
+/// Reusable buffers for exact-shell draws (batch loops and rejection sampling).
+pub(crate) struct ExactShellScratch {
+    positions: Vec<u32>,
+    coeffs: Vec<i8>,
+    total: usize,
+}
+
+impl ExactShellScratch {
+    pub(crate) fn new(count_mag1: usize, count_mag2: usize) -> Self {
+        let total = count_mag1 + count_mag2;
+        Self {
+            positions: vec![0u32; total],
+            coeffs: Vec::with_capacity(total),
+            total,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn positions(&self) -> &[u32] {
+        &self.positions
+    }
+
+    #[inline]
+    pub(crate) fn coeffs(&self) -> &[i8] {
+        &self.coeffs
+    }
+
+    /// Draw one exact-shell candidate into the scratch buffers.
+    #[inline]
+    pub(crate) fn sample(
+        &mut self,
+        cursor: &mut XofCursor,
+        d: usize,
+        count_mag1: usize,
+        count_mag2: usize,
+    ) {
+        debug_assert_eq!(self.total, count_mag1 + count_mag2);
+        sample_distinct_positions_into(cursor, d, &mut self.positions);
+        self.coeffs.resize(self.total, 0);
+        let mut sign_bytes = [0u8; MAX_STACK_SIGN_BYTES];
+        cursor.fill_bytes(&mut sign_bytes[..self.total]);
+        for (i, &b) in sign_bytes[..count_mag1].iter().enumerate() {
+            self.coeffs[i] = if (b & 1) == 0 { 1 } else { -1 };
+        }
+        for (i, &b) in sign_bytes[count_mag1..self.total].iter().enumerate() {
+            self.coeffs[count_mag1 + i] = if (b & 1) == 0 { 2 } else { -2 };
+        }
+    }
+
+    /// Move the accepted draw into an owned [`SparseChallenge`] and reset scratch
+    /// storage for the next slot.
+    pub(crate) fn take_challenge(&mut self) -> SparseChallenge {
+        SparseChallenge {
+            positions: std::mem::replace(&mut self.positions, vec![0u32; self.total]),
+            coeffs: std::mem::replace(&mut self.coeffs, Vec::with_capacity(self.total)),
+        }
+    }
+}
+
 /// Sample one [`crate::SparseChallengeConfig::ExactShell`] challenge.
 pub(crate) fn sample_exact_shell_challenge(
     cursor: &mut XofCursor,
@@ -21,17 +80,7 @@ pub(crate) fn sample_exact_shell_challenge(
     count_mag1: usize,
     count_mag2: usize,
 ) -> SparseChallenge {
-    let total = count_mag1 + count_mag2;
-    let mut positions = vec![0u32; total];
-    sample_distinct_positions_into(cursor, d, &mut positions);
-    let mut coeffs = Vec::with_capacity(total);
-    let mut sign_bytes = [0u8; MAX_STACK_SIGN_BYTES];
-    cursor.fill_bytes(&mut sign_bytes[..total]);
-    for &b in &sign_bytes[..count_mag1] {
-        coeffs.push(if (b & 1) == 0 { 1 } else { -1 });
-    }
-    for &b in &sign_bytes[count_mag1..total] {
-        coeffs.push(if (b & 1) == 0 { 2 } else { -2 });
-    }
-    SparseChallenge { positions, coeffs }
+    let mut scratch = ExactShellScratch::new(count_mag1, count_mag2);
+    scratch.sample(cursor, d, count_mag1, count_mag2);
+    scratch.take_challenge()
 }

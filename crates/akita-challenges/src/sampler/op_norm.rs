@@ -137,7 +137,7 @@ impl OpNormTable {
         challenge: &SparseChallenge,
         t: u64,
     ) -> Result<Decision, AkitaError> {
-        self.decide_with_freqs(challenge, t, self.d / 2)
+        self.decide_parts(&challenge.positions, &challenge.coeffs, t, self.d / 2)
     }
 
     /// `true` iff [`Decision::Accept`]; the production (strict) predicate, which
@@ -154,22 +154,30 @@ impl OpNormTable {
         Ok(self.decide(challenge, t)? == Decision::Accept)
     }
 
-    /// Shared scan over the first `num_freqs` frequencies. Production uses
-    /// `num_freqs = D/2` (conjugate symmetry); tests pass `D` to confirm the
-    /// reduced scan agrees with the full spectrum.
-    fn decide_with_freqs(
+    /// Slice form of [`Self::accept_strict`] for stack-buffered rejection draws.
+    pub(crate) fn accept_strict_parts(
         &self,
-        challenge: &SparseChallenge,
+        positions: &[u32],
+        coeffs: &[i8],
+        t: u64,
+    ) -> Result<bool, AkitaError> {
+        Ok(self.decide_parts(positions, coeffs, t, self.d / 2)? == Decision::Accept)
+    }
+
+    fn decide_parts(
+        &self,
+        positions: &[u32],
+        coeffs: &[i8],
         t: u64,
         num_freqs: usize,
     ) -> Result<Decision, AkitaError> {
-        if challenge.positions.len() != challenge.coeffs.len() {
+        if positions.len() != coeffs.len() {
             return Err(AkitaError::InvalidInput(
                 "operator-norm predicate: positions/coeffs length mismatch".to_string(),
             ));
         }
         let mut l1: i128 = 0;
-        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
             if pos as usize >= self.d {
                 return Err(AkitaError::InvalidInput(format!(
                     "operator-norm predicate: position {pos} out of range for D = {}",
@@ -209,7 +217,7 @@ impl OpNormTable {
             let mult = (2 * k + 1) % two_d;
             let mut acc_re: i128 = 0;
             let mut acc_im: i128 = 0;
-            for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+            for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
                 let idx = (mult * pos as usize) % two_d;
                 let coeff = i128::from(coeff);
                 acc_re += coeff * self.base_cos[idx];
@@ -235,6 +243,16 @@ impl OpNormTable {
         } else {
             Ok(Decision::Accept)
         }
+    }
+
+    #[cfg(test)]
+    fn decide_with_freqs(
+        &self,
+        challenge: &SparseChallenge,
+        t: u64,
+        num_freqs: usize,
+    ) -> Result<Decision, AkitaError> {
+        self.decide_parts(&challenge.positions, &challenge.coeffs, t, num_freqs)
     }
 }
 
