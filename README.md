@@ -10,8 +10,9 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
-- `akita-planner` is the `Cfg`-free schedule owner: shipped generated tables, on-demand expansion, and the schedule-search DP. It sits *below* `akita-config`.
-- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-planner` (`runtime_schedule` delegates to `akita_planner::get_schedule`).
+- `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, and the schedule-search DP. It sits *below* `akita-config`.
+- `akita-schedules` owns feature-gated shipped schedule table data.
+- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-planner` and optionally `akita-schedules` (`runtime_schedule` delegates to `akita_planner::resolve_schedule`).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches `akita-planner` transitively, so the schedule-search DP is verifier-reachable.
 - `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.

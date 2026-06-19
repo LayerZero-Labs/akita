@@ -2,8 +2,8 @@
 //!
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
-//! the `stage1` / `fold_shape` closures, exactly the shape
-//! `crate::schedule_from_entry` already consumes. This keeps the
+//! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
+//! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
 //! DP a pure function of `(policy, key)` so `akita-config` can call it
 //! directly on a schedule-table miss without a dependency cycle.
 
@@ -30,7 +30,7 @@ use akita_types::{
 use crate::PlannerPolicy;
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
-pub(crate) type Stage1Fn<'a> =
+pub(crate) type RingChallengeConfigFn<'a> =
     &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
 
 /// Stage-1 fold-round challenge-shape closure (`level 0` root shape).
@@ -148,11 +148,11 @@ fn multi_tiered_keys(
 /// don't do that here.
 fn derive_candidate_level_params(
     policy: &PlannerPolicy,
-    stage1: Stage1Fn<'_>,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     current_witness_len: usize,
     log_basis: u32,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
-    let Ok(stage1_config) = stage1(policy.ring_dimension) else {
+    let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
         return Ok(None);
     };
     if !current_witness_len.is_multiple_of(policy.ring_dimension) {
@@ -190,7 +190,7 @@ fn derive_candidate_level_params(
             family,
             d,
             decomp,
-            &stage1_config,
+            &ring_challenge_cfg,
             TensorChallengeShape::Flat,
             false,
             policy.onehot_chunk_size,
@@ -247,7 +247,7 @@ fn derive_candidate_level_params(
             block_len,
             m_vars: reduced_vars - r,
             r_vars: r,
-            stage1_config: stage1_config.clone(),
+            stage1_config: ring_challenge_cfg.clone(),
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -438,13 +438,13 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
-/// `policy`, `stage1`, and `num_vars` are constant across the whole
+/// `policy`, `ring_challenge_config`, and `num_vars` are constant across the whole
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
 struct SuffixCtx<'a> {
     policy: &'a PlannerPolicy,
-    stage1: Stage1Fn<'a>,
+    ring_challenge_config: RingChallengeConfigFn<'a>,
     num_vars: usize,
     key: AkitaScheduleLookupKey,
 }
@@ -472,7 +472,7 @@ fn derive_optimal_suffix_schedule(
 ) -> Result<SuffixResult, AkitaError> {
     let SuffixCtx {
         policy,
-        stage1,
+        ring_challenge_config,
         num_vars,
         key,
     } = *ctx;
@@ -490,7 +490,7 @@ fn derive_optimal_suffix_schedule(
 
     let best_direct = if derive_candidate_level_params(
         policy,
-        stage1,
+        ring_challenge_config,
         current_witness_len,
         current_lb,
     )?
@@ -519,7 +519,7 @@ fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, stage1, current_witness_len, lb)?
+            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
         else {
             continue;
         };
@@ -656,13 +656,13 @@ fn derive_optimal_suffix_schedule(
 /// `Result::ok()` fallback.
 fn compute_root_direct_level_params(
     policy: &PlannerPolicy,
-    stage1: Stage1Fn<'_>,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     num_vars: usize,
     log_basis: u32,
     fold_challenge_shape: TensorChallengeShape,
     num_claims: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
-    let stage1_config = stage1(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
     let sis_family = policy.sis_family;
     let decomp = policy.decomposition;
@@ -686,9 +686,9 @@ fn compute_root_direct_level_params(
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
         let fold_challenge = FoldChallengeNorms {
-            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&stage1_config)
+            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&ring_challenge_cfg)
                 as u128,
-            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&stage1_config) as u128,
+            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&ring_challenge_cfg) as u128,
         };
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
@@ -701,7 +701,7 @@ fn compute_root_direct_level_params(
             policy.ring_subfield_norm_bound,
             fold_challenge,
             fold_witness,
-            &stage1_config,
+            &ring_challenge_cfg,
             TensorChallengeShape::Flat,
             decomp.log_commit_bound,
             log_basis,
@@ -729,7 +729,7 @@ fn compute_root_direct_level_params(
         sis_family,
         d,
         level_decomp,
-        &stage1_config,
+        &ring_challenge_cfg,
         fold_challenge_shape,
         true,
         policy.onehot_chunk_size,
@@ -795,7 +795,7 @@ fn compute_root_direct_level_params(
         block_len,
         m_vars,
         r_vars,
-        stage1_config,
+        stage1_config: ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -815,8 +815,8 @@ fn compute_root_direct_level_params(
 /// Find the optimal schedule for a root schedule lookup key under `policy`.
 ///
 /// Runs an exhaustive DP that minimizes proof size. The result is a pure,
-/// deterministic function of `(policy, key)` (plus the `stage1` /
-/// `fold_shape` closures, which presets derive from the same hooks the
+/// deterministic function of `(policy, key)` (plus the `ring_challenge_config` /
+/// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
 /// generated tables were emitted from), so the prover and verifier
 /// regenerate identical schedules on a table miss.
 ///
@@ -828,23 +828,28 @@ fn compute_root_direct_level_params(
 pub fn find_schedule(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
-    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule_inner(key, policy, stage1, fold_shape)
+    find_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
 }
 
 fn find_schedule_inner(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
-    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    let stage1: Stage1Fn<'_> = &stage1;
-    let fold_shape: FoldShapeFn<'_> = &fold_shape;
+    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
     let suffix_ctx = SuffixCtx {
         policy,
-        stage1,
+        ring_challenge_config,
         num_vars: key.num_vars,
         key,
     };
@@ -883,7 +888,7 @@ fn find_schedule_inner(
     // pass. `Ok(None)` is the uncommittable (large-`num_vars`) edge.
     let root_direct_commit_params = compute_root_direct_level_params(
         policy,
-        stage1,
+        ring_challenge_config,
         key.num_vars,
         policy.decomposition.log_basis,
         fold_challenge_shape,
@@ -897,7 +902,7 @@ fn find_schedule_inner(
     })];
     let mut memo = ScheduleMemo::new();
 
-    let stage1_config = stage1(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.num_vars.saturating_sub(alpha);
 
@@ -938,7 +943,7 @@ fn find_schedule_inner(
                 family,
                 d,
                 level_decomp,
-                &stage1_config,
+                &ring_challenge_cfg,
                 fold_challenge_shape,
                 true,
                 policy.onehot_chunk_size,
@@ -1008,7 +1013,7 @@ fn find_schedule_inner(
                 block_len,
                 m_vars,
                 r_vars,
-                stage1_config: stage1_config.clone(),
+                stage1_config: ring_challenge_cfg.clone(),
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
