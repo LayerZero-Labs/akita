@@ -27,6 +27,7 @@
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)
   - [Recursion and proof shape](./how/recursion.md)
   - [Verification](./how/verification.md)
+    - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
   - [Security model](./how/security.md)
   - [Optimizations](./how/optimizations.md)
 

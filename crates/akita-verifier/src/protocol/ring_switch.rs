@@ -14,10 +14,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FlatRingVec, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout, SetupContributionPlanInputs,
-    TerminalWitnessTranscriptParts,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
+    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+    RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -132,9 +131,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
-    pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
     pub(crate) num_polys_per_commitment_group: Vec<usize>,
-    pub(crate) gamma: Vec<F>,
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
 
@@ -522,12 +519,6 @@ where
         }
     };
 
-    let claim_to_commitment_group_poly: Vec<(usize, usize)> = claim_to_commitment_group
-        .iter()
-        .zip(claim_poly_in_commitment_group.iter())
-        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
-        .collect();
-
     Ok(RingSwitchDeferredRowEval {
         c_alphas,
         eq_tau1,
@@ -553,9 +544,7 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
-        claim_to_commitment_group_poly,
         num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
-        gamma: gamma.to_vec(),
         witness_segment_layout,
     })
 }
@@ -688,76 +677,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 block_offset_low,
                 self.num_blocks,
             )?;
-        let mut challenge_block_summaries_by_t_vector =
-            vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        // Per-commitment-group t-vector starting indices. Under the current
-        // relation-routing contract these match opening-point groups.
-        let t_vector_offsets: Vec<usize> = self
-            .num_polys_per_commitment_group
-            .iter()
-            .scan(0usize, |acc, &count| {
-                let offset = *acc;
-                *acc += count;
-                Some(offset)
-            })
-            .collect();
-        for (claim_idx, &(group_idx, poly_idx)) in
-            self.claim_to_commitment_group_poly.iter().enumerate()
-        {
-            let t_vector_idx = t_vector_offsets[group_idx] + poly_idx;
-            let [carry0, carry1] = challenge_block_summaries[claim_idx];
-            challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
-            challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
-        }
 
         // ----- E-hat ---------------------------------------------------------
         let e_structured_contribution = {
             let _span = tracing::info_span!("e_structured").entered();
-            let uses_ring_multipliers = ring_multiplier_point.as_base().is_none();
-            let row_coefficient_rings = if uses_ring_multipliers {
-                Some(
-                    self.gamma
-                        .iter()
-                        .copied()
-                        .map(|coefficient| {
-                            embed_ring_subfield_scalar::<F, E, D>(
-                                coefficient,
-                                AkitaError::InvalidProof,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            } else {
-                None
-            };
-            let public_block_summaries: Vec<[E; 2]> = (0..self.num_claims)
-                .map(|claim_idx| {
-                    let coefficient_ring = row_coefficient_rings
-                        .as_ref()
-                        .map(|rings| &rings[claim_idx]);
-                    summarize_pow2_multiplier_block_carries(
-                        &eq_low,
-                        block_offset_low,
-                        ring_multiplier_point.b_len(),
-                        |idx| {
-                            ring_multiplier_point.eval_b_with_coefficient(
-                                idx,
-                                self.gamma[claim_idx],
-                                coefficient_ring,
-                                &alpha_pows,
-                            )
-                        },
-                    )
-                })
-                .collect::<Result<_, _>>()?;
-            let public_row_weights_by_claim: Vec<E> = vec![E::zero(); self.num_claims];
             EStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: layout.offset_e >> offset_low_bits,
                 gadget_vector: &g1_open,
-                public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
-                public_row_weights_by_claim: &public_row_weights_by_claim,
                 challenge_weight: self.eq_tau1[0],
             }
             .evaluate()
@@ -784,7 +712,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 high_challenges,
                 offset_high: layout.offset_t >> offset_low_bits,
                 gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries_by_t_vector,
+                challenge_block_summaries: &challenge_block_summaries,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
             }
             .evaluate()
