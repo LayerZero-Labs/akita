@@ -472,6 +472,7 @@ fn arctan_inv(x: i128) -> (i128, i128) {
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
+    use crate::SparseChallenge;
     use std::f64::consts::PI;
 
     const Q: u32 = 48;
@@ -729,10 +730,10 @@ mod tests {
 #[cfg(all(test, not(feature = "zk")))]
 mod perf {
     use super::{Decision, OpNormTable};
-    use akita_field::AkitaError;
     use crate::sampler::exact_shell::sample_exact_shell_challenge;
     use crate::sampler::xof::XofCursor;
     use crate::{SparseChallenge, SparseChallengeConfig};
+    use akita_field::AkitaError;
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
     use akita_transcript::{AkitaTranscript, Transcript};
