@@ -258,12 +258,10 @@ impl LevelParams {
     /// Operator-norm acceptance probability `p_opnorm` as a rational `p_num / p_den`.
     #[inline]
     pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
-        if !self.op_norm_rejection {
-            return (1, 1);
-        }
-        self.stage1_config
-            .operator_norm_acceptance_prob(self.ring_dimension)
-            .unwrap_or((1, 1))
+        (
+            self.fold_linf_cap_config.op_norm_accept_p_num,
+            self.fold_linf_cap_config.op_norm_accept_p_den,
+        )
     }
 
     /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
@@ -293,8 +291,17 @@ impl LevelParams {
     }
 
     /// Attach the level-static fold-linf cap config derived from this layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
     #[must_use]
-    pub fn with_fold_linf_cap_config(mut self, field_bits: u32, root_num_claims: usize) -> Self {
+    pub fn with_fold_linf_cap_config(
+        mut self,
+        field_bits: u32,
+        root_num_claims: usize,
+    ) -> Result<Self, AkitaError> {
         self.field_bits_hint = field_bits;
         self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &self.stage1_config,
@@ -302,7 +309,7 @@ impl LevelParams {
             self.ring_dimension,
             self.op_norm_rejection,
             self.inner_width(),
-        );
+        )?;
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         let witness = self.fold_witness_norms();
@@ -332,7 +339,7 @@ impl LevelParams {
             self.cached_num_digits_fold_claims = 0;
             self.cached_num_digits_fold_value = self.num_digits_fold_one;
         }
-        self
+        Ok(self)
     }
 
     /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
@@ -825,7 +832,7 @@ impl LevelParams {
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
         };
         let field_bits = self.field_bits_for_cache();
-        Ok(rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims))
+        rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
@@ -842,7 +849,7 @@ impl LevelParams {
     /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
     /// or threaded through [`Self::with_decomp`], and would let the SIS
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
-    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Self {
+    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
@@ -970,7 +977,7 @@ mod tests {
         let params = sample_params_only();
         let layout_lp = sample_layout_lp();
 
-        let lp = params.with_layout(&layout_lp, 128);
+        let lp = params.with_layout(&layout_lp, 128).unwrap();
 
         assert_eq!(lp.ring_dimension, 64);
         assert_eq!(lp.log_basis, layout_lp.log_basis);
@@ -986,7 +993,9 @@ mod tests {
 
     #[test]
     fn derived_widths_match_ajtai_col_len() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
 
         assert_eq!(lp.inner_width(), lp.a_key.col_len());
         assert_eq!(lp.outer_width(), lp.b_key.col_len());
@@ -996,7 +1005,7 @@ mod tests {
     #[test]
     fn derived_log_values() {
         let layout_lp = sample_layout_lp();
-        let lp = sample_params_only().with_layout(&layout_lp, 128);
+        let lp = sample_params_only().with_layout(&layout_lp, 128).unwrap();
 
         assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
         assert_eq!(lp.log_block_len(), layout_lp.m_vars);
@@ -1005,7 +1014,9 @@ mod tests {
 
     #[test]
     fn m_row_count_values() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
 
         assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
@@ -1018,7 +1029,9 @@ mod tests {
 
     #[test]
     fn canonical_row_offsets_match_open_coded_non_tiered() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
         let n_d = lp.d_key.row_len();

@@ -352,8 +352,7 @@ pub fn choose_op_norm_rejection_for_a_role(
         .checked_mul(u128::from(ring_subfield_norm_bound))?;
     let linf_l1 = collision_core.checked_mul(omega)?;
     let bucket_l1 = collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf_l1)?;
-    let rank_l1 =
-        super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_l1, inner_width)?;
+    let rank_l1 = super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_l1, inner_width)?;
 
     if gamma == omega {
         return Some((false, bucket_l1, rank_l1));
@@ -638,6 +637,23 @@ pub struct FoldWitnessLinfCapConfig {
     pub grind_union_ln: u128,
 }
 
+fn op_norm_acceptance_for_cap(
+    stage1_config: &SparseChallengeConfig,
+    ring_dimension: usize,
+    op_norm_rejection: bool,
+) -> Result<(u128, u128), AkitaError> {
+    if !op_norm_rejection {
+        return Ok((1, 1));
+    }
+    stage1_config
+        .operator_norm_acceptance_prob(ring_dimension)
+        .map_err(|reason| {
+            AkitaError::InvalidSetup(format!(
+                "FoldWitnessLinfCapConfig: unsupported operator-norm acceptance preset ({reason})"
+            ))
+        })
+}
+
 impl FoldWitnessLinfCapConfig {
     /// Worst-case `β_inf` sizing only (no tail certificate).
     #[inline]
@@ -659,6 +675,11 @@ impl FoldWitnessLinfCapConfig {
     ///
     /// The grind acceptance target is read from [`crate::FoldLinfProtocolBinding::CURRENT`]
     /// so planner digit sizing, prover rerolls, and the transcript descriptor agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
     #[inline]
     pub fn for_fold_level(
         stage1_config: &SparseChallengeConfig,
@@ -666,7 +687,7 @@ impl FoldWitnessLinfCapConfig {
         ring_dimension: usize,
         op_norm_rejection: bool,
         inner_width: usize,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         let binding = crate::FoldLinfProtocolBinding::CURRENT;
         let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
         let policy =
@@ -681,14 +702,9 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
-        let (op_norm_accept_p_num, op_norm_accept_p_den) = if op_norm_rejection {
-            stage1_config
-                .operator_norm_acceptance_prob(ring_dimension)
-                .unwrap_or((1, 1))
-        } else {
-            (1, 1)
-        };
-        Self {
+        let (op_norm_accept_p_num, op_norm_accept_p_den) =
+            op_norm_acceptance_for_cap(stage1_config, ring_dimension, op_norm_rejection)?;
+        Ok(Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs,
@@ -697,11 +713,16 @@ impl FoldWitnessLinfCapConfig {
             op_norm_accept_p_num,
             op_norm_accept_p_den,
             grind_union_ln,
-        }
+        })
     }
 
     /// Build a tail-aware config for [`crate::layout::digit_math::optimal_m_r_split`] scoring with a known
     /// inner width without re-reading the protocol binding each iteration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
     #[inline]
     pub fn for_fold_level_scoring(
         policy: FoldWitnessLinfCapPolicy,
@@ -712,7 +733,7 @@ impl FoldWitnessLinfCapConfig {
         inner_width: usize,
         grind_target_accept_num: u128,
         grind_target_accept_den: u128,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
         let grind_union_ln = match policy {
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
@@ -723,14 +744,9 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
-        let (op_norm_accept_p_num, op_norm_accept_p_den) = if op_norm_rejection {
-            stage1_config
-                .operator_norm_acceptance_prob(ring_dimension)
-                .unwrap_or((1, 1))
-        } else {
-            (1, 1)
-        };
-        Self {
+        let (op_norm_accept_p_num, op_norm_accept_p_den) =
+            op_norm_acceptance_for_cap(stage1_config, ring_dimension, op_norm_rejection)?;
+        Ok(Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs,
@@ -739,7 +755,7 @@ impl FoldWitnessLinfCapConfig {
             op_norm_accept_p_num,
             op_norm_accept_p_den,
             grind_union_ln,
-        }
+        })
     }
 }
 
@@ -1167,5 +1183,27 @@ mod tests {
                 .unwrap();
         let raw = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
         assert!(bucket >= raw);
+    }
+
+    #[test]
+    fn for_fold_level_rejects_binding_op_norm_without_certified_floor() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(FoldWitnessLinfCapConfig::for_fold_level(
+            &shell,
+            TensorChallengeShape::Flat,
+            32,
+            true,
+            64,
+        )
+        .is_err());
     }
 }

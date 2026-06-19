@@ -234,7 +234,7 @@ fn derive_candidate_level_params(
             (1, b_key, None)
         };
 
-        let candidate_params = LevelParams {
+        let Ok(candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
             a_key,
@@ -259,7 +259,9 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         }
-        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1);
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
+            continue;
+        };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
@@ -803,7 +805,7 @@ fn compute_root_direct_level_params(
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
     }
-    .with_fold_linf_cap_config(decomp.field_bits(), num_claims);
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
 }
 
@@ -996,7 +998,7 @@ fn find_schedule_inner(
             } else {
                 (1, b_key, None)
             };
-            let candidate_params = LevelParams {
+            let Ok(candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
                 a_key,
@@ -1020,7 +1022,9 @@ fn find_schedule_inner(
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
             }
-            .with_fold_linf_cap_config(field_bits, key.num_t_vectors);
+            .with_fold_linf_cap_config(field_bits, key.num_t_vectors) else {
+                continue;
+            };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(

@@ -134,8 +134,10 @@ The feature introduces or modifies:
   documented second-moment assumption (see Alternatives).
 - **Not** a change to the challenge *sampler* distribution. The reroll is an outer
   loop over fold-challenge derivation; the per-attempt distribution is unchanged.
-- **No** D=64 production preset change (the shell stays `(30, 12)`, `p = 1`); this
-  spec only changes how `K` is sized given the existing shell.
+- **Per-level** operator-norm rejection on fold levels (`LevelParams.op_norm_rejection`):
+  enabled only when Γ collision pricing strictly lowers audited A-rank; otherwise ω
+  pricing and no rejection oracle (no proof-size win). Production D=64 ships
+  `(31, 11)` with `T = 18`.
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
   Both continue to size `K` from `β_inf`; their tighter thresholds require a
   separate proof of the accepted-challenge tail bound and descriptor policy.
@@ -379,7 +381,8 @@ Pr[‖z‖_inf > t]  ≤  2·num_fold_coeffs·exp(-t²/2V).                    (
 
 Let `p = Pr_c[Γ(c) <= Γ]` be the operator-norm acceptance probability of the
 already-applied witness-independent rejection (`p = 1` when the cap does not bind;
-production `(30,12)` ships with `T = 54 >= ‖c‖_1`, so `p = 1`). Conditioning on
+production `(31,11)` uses `T = 18 < ω`, so `p < 1` on levels with
+`op_norm_rejection` enabled). Conditioning on
 accepted blocks gives
 
 ```text

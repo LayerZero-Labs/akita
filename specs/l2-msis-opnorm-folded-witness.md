@@ -161,9 +161,10 @@ The primary protocol surfaces are:
       `collision_l2_sq_for_linf_envelope`), and pow2-ladder fallback; `collision_inf` is
       removed from production call sites (`collision_l2_sq` on `AjtaiKeyParams`).
 - [x] *(#155, S3 infra)* Exact-shell operator-norm rejection sampling,
-      `operator_norm_cap`, and descriptor binding are implemented. Production
-      D=64 keeps `(30, 12)` with `T = 54` (no rejection) until S2 certifies
-      `(31, 11), T = 16`.
+      `operator_norm_cap`, per-level `op_norm_rejection` on `LevelParams`, and
+      descriptor binding are implemented. Production D=64 ships `(31, 11)` with
+      `T = 18`; the planner enables rejection sampling only on fold levels where
+      Γ pricing strictly lowers audited A-rank vs ω pricing.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
 - [ ] The prover derives the grouped `z_hat` limbs from the actual
@@ -314,11 +315,11 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Fold width: `B = num_claims * num_blocks` (typically `num_claims = 1` at
   root).
 - Per-coordinate RMS: `z_rms = ||z||_2 / sqrt(coeffs)`.
-- Current production D=64 exact shell is `(30, 12)`, so
-  `rho2 = 30 + 4 * 12 = 78`.
-  Proposed cutover shell `(31, 11)` would give `rho2 = 75`.
-- Formula comparisons use candidate `Gamma = 16`.
-  The profile sampler does **not** yet enforce operator-norm rejection.
+- Current production D=64 exact shell is `(31, 11)`, so
+  `rho2 = 31 + 4 * 11 = 75`.
+  Operator-norm rejection is enabled per fold level only when Γ pricing lowers
+  audited A-rank; the sampler enforces `gamma(c) <= 18` on those levels.
+- Formula comparisons in historical calibration notes use candidate `Gamma = 16`.
 - Backsolved source second moment (calibration only):
   `mu2_implied = z_rms^2 / (rho2 * B)`.
   This is not a direct measurement of `sum_i ||s_i||_2^2`.
@@ -1384,8 +1385,8 @@ threshold `t < β_inf`. A level then commits the smallest `K` with
 The D=64 exact shell `(count_mag1, count_mag2)` places `count_mag1` coordinates of
 magnitude 1 and `count_mag2` of magnitude 2 on a uniform support, each nonzero
 coordinate carrying an *independent uniform sign* (`sample_exact_shell_challenge`,
-`XofCursor::next_sign`). For production `(30, 12)`, `ω = ‖c‖_1 = 54` and the
-energy `rho2 = ‖c‖_2^2 = 30 + 4·12 = 78` are fixed (every member meets
+`XofCursor::next_sign`). For production `(31, 11)`, `ω = ‖c‖_1 = 53` and the
+energy `rho2 = ‖c‖_2^2 = 31 + 4·11 = 75` are fixed (every member meets
 `rho2 <= ‖c‖_inf · ‖c‖_1 = 108`).
 
 Fix an output coordinate `r` of `z = sum_{(l,i)} c_{l,i} * s_{l,i}` (the fold of
@@ -1415,8 +1416,8 @@ Pr[‖z‖_inf > t] <= 2·N·exp(−t^2 / 2V).        (T)
 ```
 
 Let `p = Pr[gamma(c) <= Gamma]` be the operator-norm acceptance probability
-(`p = 1` when the cap does not bind; the production `(30, 12)` ships with no
-threshold, so `p = 1`). For challenges from the accepted distribution, Bayes
+(`p = 1` when the cap does not bind; production `(31, 11)` with `T = 18` enables
+per-level rejection only where Γ pricing lowers A-rank). For challenges from the accepted distribution, Bayes
 against (T) on the unconditioned event gives
 
 ```text
@@ -1655,10 +1656,9 @@ Each gates specific slices, noted in parentheses.
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
 - D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
-- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3).
-  **Frozen on `main` until S2 certifies:** keep `ExactShell { count_mag1: 30, count_mag2: 12 }`
-  with no `operator_norm_threshold` field. Do not land `(31, 11), T = 16` in
-  `proof_optimized` presets until the S2 accepted-support lower bound is a checked artifact.
+- Production D=64 shell and threshold: `(31, 11)`, `T = 18`. (S2, S3).
+  Per-level `op_norm_rejection` on `LevelParams` enables the rejection oracle
+  only when Γ collision pricing strictly lowers audited A-rank.
 - Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
   level (not `‖s‖_2` surrogates). (S4, S8)
 - Certificate placement: whether the limb / carry virtualization claims are

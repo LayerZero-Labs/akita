@@ -11,13 +11,11 @@ use crate::sampler::uniform::sample_distinct_positions_into;
 use crate::sampler::xof::XofCursor;
 use crate::SparseChallenge;
 
-/// Largest exact-shell Hamming weight on any shipping ring (`31 + 11` at `D = 64`).
-const MAX_STACK_SIGN_BYTES: usize = 64;
-
 /// Reusable buffers for exact-shell draws (batch loops and rejection sampling).
 pub(crate) struct ExactShellScratch {
     positions: Vec<u32>,
     coeffs: Vec<i8>,
+    sign_bytes: Vec<u8>,
     total: usize,
 }
 
@@ -27,6 +25,7 @@ impl ExactShellScratch {
         Self {
             positions: vec![0u32; total],
             coeffs: Vec::with_capacity(total),
+            sign_bytes: Vec::with_capacity(total),
             total,
         }
     }
@@ -53,12 +52,12 @@ impl ExactShellScratch {
         debug_assert_eq!(self.total, count_mag1 + count_mag2);
         sample_distinct_positions_into(cursor, d, &mut self.positions);
         self.coeffs.resize(self.total, 0);
-        let mut sign_bytes = [0u8; MAX_STACK_SIGN_BYTES];
-        cursor.fill_bytes(&mut sign_bytes[..self.total]);
-        for (i, &b) in sign_bytes[..count_mag1].iter().enumerate() {
+        self.sign_bytes.resize(self.total, 0);
+        cursor.fill_bytes(&mut self.sign_bytes);
+        for (i, &b) in self.sign_bytes[..count_mag1].iter().enumerate() {
             self.coeffs[i] = if (b & 1) == 0 { 1 } else { -1 };
         }
-        for (i, &b) in sign_bytes[count_mag1..self.total].iter().enumerate() {
+        for (i, &b) in self.sign_bytes[count_mag1..self.total].iter().enumerate() {
             self.coeffs[count_mag1 + i] = if (b & 1) == 0 { 2 } else { -2 };
         }
     }

@@ -146,7 +146,7 @@ pub fn optimal_m_r_split(
 
         // δ_fold grows with r and num_claims; tail-bound-with-grind presets may size K
         // from min(β_inf, t*) rather than β_inf alone.
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+        let Ok(cap_config) = FoldWitnessLinfCapConfig::for_fold_level_scoring(
             cap_policy,
             stage1_config,
             fold_challenge_shape,
@@ -155,7 +155,9 @@ pub fn optimal_m_r_split(
             inner_width,
             grind_target_accept_num,
             grind_target_accept_den,
-        );
+        ) else {
+            continue;
+        };
         let delta_fold = match fold_digit_cache.get(&(r, inner_width, num_claims)) {
             Some(cached) => *cached,
             None => {
@@ -234,7 +236,8 @@ mod tests {
             crate::FoldLinfProtocolBinding::CURRENT
                 .grind_target_accept_prob()
                 .1,
-        );
+        )
+        .unwrap();
         let singleton_fold_digits =
             num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("singleton fold digits");
