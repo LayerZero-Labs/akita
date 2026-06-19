@@ -371,6 +371,33 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
     );
 }
 
+#[test]
+fn exact_shell_sampling_handles_weight_above_sign_stack_chunk() {
+    const DR: usize = 128;
+    let cfg = SparseChallengeConfig::ExactShell {
+        count_mag1: 65,
+        count_mag2: 0,
+        operator_norm_threshold: 65,
+    };
+    cfg.validate::<DR>().unwrap();
+
+    let sample = || {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0x516E));
+        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"large-shell", 3, &cfg, 0, false)
+            .unwrap()
+    };
+
+    let first = sample();
+    let second = sample();
+    assert_eq!(first, second);
+    for c in &first {
+        assert_eq!(hamming_weight(c), 65);
+        assert_eq!(l1_norm(c), 65);
+        assert!(c.coeffs.iter().all(|&v| v == 1 || v == -1));
+    }
+}
+
 /// f64 reference for the negacyclic operator norm `gamma_D(c) = max_k |c(zeta_k)|`,
 /// used only to confirm the certified integer predicate actually bounds the
 /// accepted challenges in the end-to-end sampling path.

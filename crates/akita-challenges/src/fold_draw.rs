@@ -54,6 +54,10 @@ where
 
 /// Preview folding challenges for grind probing without advancing the transcript.
 ///
+/// `op_norm_rejection` is the per-level layout decision. When false, exact-shell
+/// factors are sampled from the full shell even if their configured threshold is
+/// binding; downstream sizing must then use the L1 mass, not the Gamma cap.
+///
 /// # Errors
 ///
 /// Returns an error if count arithmetic overflows, tensor splitting is invalid,
@@ -131,6 +135,10 @@ pub fn preview_folding_challenges<const D: usize>(
 }
 
 /// Sample folding challenges using the configured shape (live transcript advance).
+///
+/// `op_norm_rejection` is the per-level layout decision. It must match the
+/// pricing used by the level parameters so prover and verifier sample the same
+/// challenge support that the SIS bounds assume.
 ///
 /// # Errors
 ///

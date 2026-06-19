@@ -56,21 +56,20 @@ pub enum SparseChallengeConfig {
         nonzero_coeffs: Vec<i8>,
     },
 
-    /// Exact-shell sparse challenge over the full ring, with operator-norm
-    /// rejection.
+    /// Exact-shell sparse challenge over the full ring, optionally paired with
+    /// operator-norm rejection by the sampler caller.
     ///
     /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
     /// `0..D`, assigns `count_mag1` of them a random sign with magnitude 1, and
     /// assigns the remaining `count_mag2` a random sign with magnitude 2.
     ///
-    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. A sampled candidate
-    /// is retained only if its negacyclic operator norm satisfies
-    /// `gamma_D(c) <= operator_norm_threshold` (the crate-internal certified
-    /// `OpNormTable` predicate); otherwise it is rejected and the next
-    /// candidate is drawn from the same transcript-derived stream. This is the
-    /// family used for L2 / operator-norm fold pricing, where the accepted cap
-    /// `Gamma` (not `||c||_1`) governs the folded-witness and weak-binding
-    /// bounds.
+    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. When a caller enables
+    /// operator-norm rejection, a sampled candidate is retained only if its
+    /// negacyclic operator norm satisfies `gamma_D(c) <= operator_norm_threshold`
+    /// (the crate-internal certified `OpNormTable` predicate); otherwise it is
+    /// rejected and the next candidate is drawn from the same transcript-derived
+    /// stream. When rejection is disabled, the sampler draws from the full shell
+    /// and only the deterministic `||c||_1` cap is guaranteed.
     ExactShell {
         /// Number of coefficients with magnitude 1.
         count_mag1: usize,

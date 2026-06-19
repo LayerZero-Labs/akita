@@ -260,6 +260,10 @@ where
 /// via SHAKE256 XOF into all per-challenge randomness in one streaming
 /// pass.
 ///
+/// Set `op_norm_rejection` only for levels whose layout is priced with the
+/// operator-norm cap. When it is `false`, even a binding exact-shell threshold
+/// samples from the full shell and only the deterministic L1 cap is guaranteed.
+///
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
