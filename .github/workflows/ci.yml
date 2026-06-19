@@ -143,6 +143,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  test-all-schedules-drift:
+    name: Schedule table drift (all-schedules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: ci-test-all-schedules-drift
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Drift guard (all-schedules)
+        run: |
+          cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
+          cargo test -p akita-config --features zk,all-schedules generated_schedule_tables_match_find_schedule
+      - name: Schedule catalog wiring
+        run: |
+          cargo test -p akita-config --no-default-features --test schedule_catalog_feature_off
+          cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
+
   test-all-features:
     name: Test (all-features ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
