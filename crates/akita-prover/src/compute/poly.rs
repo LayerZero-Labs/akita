@@ -1,4 +1,16 @@
-use akita_field::{AkitaError, FieldCore};
+#[cfg(feature = "zk")]
+use super::backend::DigitRowsComputeBackend;
+use super::backend::{CommitmentComputeBackend, ComputeBackendSetup, RingSwitchComputeBackend};
+use super::kernels::{
+    OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
+};
+#[cfg(feature = "zk")]
+use crate::DensePoly;
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::RandomSampling;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
 
 /// Shape metadata every root polynomial exposes.
@@ -29,6 +41,13 @@ where
             "total field elements must be a power of 2"
         );
         total.trailing_zeros() as usize
+    }
+
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
     }
 }
 
@@ -105,29 +124,305 @@ where
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
 }
 
-/// Umbrella marker for a fully capable Akita root polynomial.
+/// One opening-point polynomial bundle passed to commit entry points.
 ///
-/// Acceptable only as a convenience bundle on top-level APIs whose behavior can
-/// reach every root capability through config-selected schedules. Lower-level
-/// helpers should bound the smallest capability they actually use.
-pub trait AkitaRootPoly<F, const D: usize>:
-    RootPolyShape<F, D>
-    + RootCommitSource<F, D>
-    + RootOpeningSource<F, D>
-    + RootTensorSource<F, D>
-    + DirectRootWitnessSource<F, D>
+/// The wrapper pins the polynomial type `P` for inference through generic
+/// [`crate::api::commitment::commit`] and [`crate::api::CommitmentProver::commit`]. Scheme-level
+/// [`crate::api::CommitmentProver::commit`] takes this bundle before `backend` so `P` is known when the
+/// compiler checks [`RootCommitBackend`].
+#[derive(Clone, Copy, Debug)]
+pub struct RootCommitPolys<'a, P> {
+    polys: &'a [P],
+}
+
+impl<'a, P> RootCommitPolys<'a, P> {
+    /// Borrow a slice of root polynomials.
+    #[must_use]
+    pub fn new(polys: &'a [P]) -> Self {
+        Self { polys }
+    }
+
+    /// Borrow a singleton polynomial bundle.
+    #[must_use]
+    pub fn from_ref(poly: &'a P) -> Self {
+        Self {
+            polys: std::slice::from_ref(poly),
+        }
+    }
+
+    /// Borrowed polynomial slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &'a [P] {
+        self.polys
+    }
+}
+
+/// Marker bundle for scheme-level commit entry points that may tensor-project.
+///
+/// Algorithms live on [`RootCommitKernel`] / [`TensorProjectionKernel`], not here.
+/// Lower-level helpers such as [`crate::api::commitment::commit_with_params`]
+/// should bound only [`RootCommitSource`].
+pub trait RootCommitPoly<F, const D: usize>:
+    RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
 where
     F: FieldCore,
 {
 }
 
-impl<F, const D: usize, P> AkitaRootPoly<F, D> for P
+impl<F, const D: usize, P> RootCommitPoly<F, D> for P
 where
     F: FieldCore,
-    P: RootPolyShape<F, D>
-        + RootCommitSource<F, D>
-        + RootOpeningSource<F, D>
-        + RootTensorSource<F, D>
-        + DirectRootWitnessSource<F, D>,
+    P: RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>,
 {
+}
+
+/// Kernel bounds on [`RootTensorProjectionPoly`] commit views (extension-reduction path).
+pub trait RootTensorProjectionCommitKernels<F, const D: usize>:
+    CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    Self: for<'a> RootCommitKernel<
+        <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+        F,
+        D,
+    >,
+{
+}
+
+/// Kernel bounds on [`RootTensorProjectionPoly`] opening/tensor views (extension-reduction path).
+pub trait RootTensorProjectionProveKernels<F, ChallengeE, const D: usize>:
+    CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ChallengeE: ExtField<F>,
+    Self: for<'a> OpeningFoldKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
+            F,
+            D,
+        > + for<'a> OpeningBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            D,
+        > + for<'a> TensorProjectionKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
+/// Backend capability bundle for scheme-level commit with optional tensor transform.
+///
+/// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
+/// Do **not** write `CpuBackend: RootCommitBackend<F, P, E, D>` while `P` is still a type
+/// parameter; that fails for the same reason as a bare HRTB on a fixed backend.
+///
+/// `F: 'static` is required for the same GAT + `for<'a>` view-kernel reason documented on
+/// [`RootProveBackend`]. `E` (tensor extension field) is not bounded `'static` here.
+pub trait RootCommitBackend<F, P, E, const D: usize>: CommitmentComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootCommitPoly<F, D>,
+    Self: RootTensorProjectionCommitKernels<F, D>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+{
+}
+
+/// Marker bundle for scheme-level prove entry points.
+///
+/// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
+pub trait RootProvePoly<F, const D: usize>:
+    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, const D: usize, P> RootProvePoly<F, D> for P
+where
+    F: FieldCore,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
+{
+}
+
+/// Backend capability bundle for scheme-level prove.
+///
+/// Use as **`B: RootProveBackend<F, P, ClaimE, ChallengeE, D>`** on generic prove
+/// entry points. `ClaimE` covers extension-opening prepare batch partials at the
+/// claim field; `ChallengeE` covers post-transform tensor projection and opening
+/// fold paths at the challenge field.
+///
+/// ## Why `F: 'static`?
+///
+/// The bundle closes over higher-ranked bounds on borrowed polynomial views, e.g.
+/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
+/// Those GATs carry `where Self: 'a` (see [`RootOpeningSource::OpeningView`]). For the
+/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F, D>` must be
+/// `'static`, which requires `F: 'static`. This is a rustc lifetime solver artifact, not
+/// a protocol requirement that base-field types outlive the process.
+///
+/// `ClaimE` and `ChallengeE` do **not** need `'static`; preset extension fields satisfy
+/// it vacuously, but the trait does not require it.
+pub trait RootProveBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    Self: RootTensorProjectionProveKernels<F, ChallengeE, D>
+        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<
+            <P as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ClaimE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
+/// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
+///
+/// With `zk` enabled, requires `RootCommitKernel` on [`DensePoly`]. Without `zk`, this is a
+/// vacuous marker implemented for every [`ComputeBackendSetup`].
+#[cfg(feature = "zk")]
+pub trait ZkHidingCommitBackend<F, const D: usize>: DigitRowsComputeBackend<F>
+where
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
+    Self:
+        for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+#[cfg(feature = "zk")]
+impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
+where
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
+    B: DigitRowsComputeBackend<F>
+        + for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+#[cfg(not(feature = "zk"))]
+pub trait ZkHidingCommitBackend<F, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+}
+
+/// Scheme-level prove entry bundle: root prove kernels plus ring-switch,
+/// commitment rows, and ZK hiding witness commitment.
+///
+/// Replaces the historical `ProverComputeBackend + RootProveBackend +
+/// ZkHidingCommitBackend` bound triad on prove-facing APIs.
+pub trait RootProveFlowBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    RootProveBackend<F, P, ClaimE, ChallengeE, D>
+    + RingSwitchComputeBackend<F>
+    + CommitmentComputeBackend<F>
+    + ZkHidingCommitBackend<F, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+{
+}
+
+impl<F, P, ClaimE, ChallengeE, const D: usize, B> RootProveFlowBackend<F, P, ClaimE, ChallengeE, D>
+    for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveBackend<F, P, ClaimE, ChallengeE, D>
+        + RingSwitchComputeBackend<F>
+        + CommitmentComputeBackend<F>
+        + ZkHidingCommitBackend<F, D>,
+{
+}
+
+impl<F, const D: usize, P> RootPolyShape<F, D> for &P
+where
+    F: FieldCore,
+    P: RootPolyShape<F, D>,
+{
+    fn num_ring_elems(&self) -> usize {
+        RootPolyShape::num_ring_elems(*self)
+    }
+}
+
+impl<F, const D: usize, P> RootCommitSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootCommitSource<F, D>,
+{
+    type CommitView<'a>
+        = P::CommitView<'a>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        (*self).commit_view()
+    }
+}
+
+impl<F, const D: usize, P> RootTensorSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootTensorSource<F, D>,
+{
+    type TensorView<'a>
+        = P::TensorView<'a>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = P::TensorBatchView<'a>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        (*self).tensor_view()
+    }
+
+    fn tensor_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "tensor_batch through a polynomial reference is not supported; pass by value"
+                .to_string(),
+        ))
+    }
 }

@@ -15,7 +15,7 @@
 //! | Sibling module | Role |
 //! | --- | --- |
 //! | `plans` | Legacy row/commit plan structs and `FlatBlockTable` |
-//! | `backend` | Fixed trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); removed at PO4 |
+//! | `backend` | Internal trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); not re-exported at crate root |
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
@@ -24,6 +24,7 @@
 
 mod backend;
 mod cpu;
+mod dispatch;
 mod kernels;
 mod operation_plans;
 mod plans;
@@ -35,13 +36,13 @@ pub use backend::{
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
+pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
     RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, DecomposeFoldTensorBatchPlan,
-    OpeningFoldBasePlan, OpeningFoldOutput, OpeningFoldPlan, OpeningFoldRingPlan,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub use plans::{
@@ -49,8 +50,10 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+pub use poly::ZkHidingCommitBackend;
 pub use poly::{
-    AkitaRootPoly, DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource,
+    DirectRootWitnessSource, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
+    RootTensorProjectionCommitKernels, RootTensorProjectionProveKernels, RootTensorSource,
 };
-pub use stack::{OperationCtx, ProverComputeStack};
+pub use stack::{OperationCtx, ProverComputeStack, UniformProverStack};

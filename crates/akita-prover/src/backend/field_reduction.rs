@@ -1,13 +1,29 @@
 //! Tensor extension-opening packing helpers.
 
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt};
+use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::pack_tensor_base_lift_i8_digits;
+use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FlatDigitBlocks, FpExtEncoding};
 use std::sync::Arc;
 
-use crate::compute::CommitmentComputeBackend;
-use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
+use super::dense::{
+    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView, DenseTensorView,
+};
+use super::sparse_ring::{
+    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView,
+    SparseRingTensorBatchView, SparseRingTensorView,
+};
+use crate::compute::{
+    CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+};
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
+use crate::{
+    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat,
+    SparseRingPoly,
+};
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
 /// an extension-valued table.
@@ -39,6 +55,424 @@ impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
 {
     fn from(poly: Arc<SparseRingPoly<F, D>>) -> Self {
         Self::Sparse(poly)
+    }
+}
+
+// ===========================================================================
+// PO-CUTOVER (Phase A, additive): source-typed views + CpuBackend kernels for
+// `RootTensorProjectionPoly`, dispatching to the inner dense/sparse kernels.
+// ===========================================================================
+
+/// Borrowed view over a committed tensor-projected root polynomial.
+#[derive(Debug, Clone, Copy)]
+pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
+    poly: &'a RootTensorProjectionPoly<F, D>,
+}
+
+/// Same-point batch view over several tensor-projected root polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct RootTensorProjectionBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a RootTensorProjectionPoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
+            Self::Sparse(poly) => RootPolyShape::num_ring_elems(poly.as_ref()),
+        }
+    }
+
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyShape::num_vars(poly),
+            Self::Sparse(poly) => RootPolyShape::num_vars(poly.as_ref()),
+        }
+    }
+}
+
+impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore,
+{
+    type CommitView<'a>
+        = RootTensorProjectionView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        Ok(RootTensorProjectionView { poly: self })
+    }
+}
+
+impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore,
+{
+    type OpeningView<'a>
+        = RootTensorProjectionView<'a, F, D>
+    where
+        Self: 'a;
+
+    type OpeningBatchView<'a>
+        = RootTensorProjectionBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+        Ok(RootTensorProjectionView { poly: self })
+    }
+
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        Ok(RootTensorProjectionBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore,
+{
+    type TensorView<'a>
+        = RootTensorProjectionView<'a, F, D>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = RootTensorProjectionBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        Ok(RootTensorProjectionView { poly: self })
+    }
+
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Ok(RootTensorProjectionBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        match self {
+            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
+            Self::Sparse(poly) => DirectRootWitnessSource::direct_root_witness(poly.as_ref()),
+        }
+    }
+}
+
+impl<F, const D: usize> RootCommitKernel<RootTensorProjectionView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: RootTensorProjectionView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner(
+                    self,
+                    prepared,
+                    poly.commit_view()?,
+                    plan,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner(
+                    self,
+                    prepared,
+                    poly.as_ref().commit_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+
+    fn commit_inner_witness(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: RootTensorProjectionView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner_witness(
+                    self,
+                    prepared,
+                    poly.commit_view()?,
+                    plan,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner_witness(
+                    self,
+                    prepared,
+                    poly.as_ref().commit_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+}
+
+impl<F, const D: usize> OpeningFoldKernel<RootTensorProjectionView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    fn evaluate_and_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                OpeningFoldKernel::<SparseRingOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    poly.as_ref().opening_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+
+    fn decompose_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionView<'_, F, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::decompose_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                OpeningFoldKernel::<SparseRingOpeningView<'_, F, D>, F, D>::decompose_fold(
+                    self,
+                    prepared,
+                    poly.as_ref().opening_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+}
+
+impl<F, const D: usize> OpeningBatchKernel<RootTensorProjectionBatchView<'_, F, D>, F, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    fn decompose_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionBatchView<'_, F, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let Some(first) = source.polys.first() else {
+            return Ok(None);
+        };
+        match *first {
+            RootTensorProjectionPoly::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(source.polys.len());
+                for poly in source.polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
+                        RootTensorProjectionPoly::Sparse(_) => return Ok(None),
+                    }
+                }
+                let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
+                OpeningBatchKernel::<DenseOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+                    self, prepared, dense_view, plan,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(_) => {
+                let mut sparse_polys = Vec::with_capacity(source.polys.len());
+                for poly in source.polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Sparse(inner) => sparse_polys.push(inner.as_ref()),
+                        RootTensorProjectionPoly::Dense(_) => return Ok(None),
+                    }
+                }
+                let sparse_view = SparseRingPoly::<F, D>::opening_batch(&sparse_polys)?;
+                OpeningBatchKernel::<SparseRingOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+                    self, prepared, sparse_view, plan,
+                )
+            }
+        }
+    }
+}
+
+impl<F, E, const D: usize> TensorProjectionKernel<RootTensorProjectionView<'_, F, D>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+    fn column_partials(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
+                    self,
+                    prepared,
+                    poly.tensor_view()?,
+                    logical_point,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::column_partials(
+                    self,
+                    prepared,
+                    poly.as_ref().tensor_view()?,
+                    logical_point,
+                )
+            }
+        }
+    }
+
+    fn packed_witness(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionView<'_, F, D>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
+                    self,
+                    prepared,
+                    poly.tensor_view()?,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::packed_witness(
+                    self,
+                    prepared,
+                    poly.as_ref().tensor_view()?,
+                )
+            }
+        }
+    }
+
+    fn root_projection(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionView<'_, F, D>,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        E: FpExtEncoding<F>,
+    {
+        match source.poly {
+            RootTensorProjectionPoly::Dense(poly) => {
+                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
+                    self,
+                    prepared,
+                    poly.tensor_view()?,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(poly) => {
+                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::root_projection(
+                    self,
+                    prepared,
+                    poly.as_ref().tensor_view()?,
+                )
+            }
+        }
+    }
+}
+
+impl<F, E, const D: usize>
+    TensorProjectionBatchKernel<RootTensorProjectionBatchView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+    fn column_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionBatchView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                TensorProjectionKernel::<RootTensorProjectionView<'_, F, D>, F, E, D>::column_partials(
+                    self,
+                    prepared,
+                    poly.tensor_view()?,
+                    logical_point,
+                )
+            })
+            .collect()
+    }
+
+    fn sparse_linear_combination(
+        &self,
+        prepared: Option<&Self::PreparedSetup<D>>,
+        source: RootTensorProjectionBatchView<'_, F, D>,
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+        if source.polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: source.polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(source.polys.len());
+        for poly in source.polys {
+            let witness = match TensorProjectionKernel::<
+                RootTensorProjectionView<'_, F, D>,
+                F,
+                E,
+                D,
+            >::packed_witness(self, prepared, poly.tensor_view()?)?
+            {
+                TensorPackedWitness::Sparse(witness) => witness,
+                TensorPackedWitness::Dense(_) => return Ok(None),
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(witnesses.iter()),
+        )?))
     }
 }
 
@@ -83,11 +517,19 @@ where
     P: AkitaPolyOps<F, D>,
 {
     fn num_ring_elems(&self) -> usize {
-        dispatch_fold_input!(self, poly => poly.num_ring_elems())
+        match self {
+            FoldInputPoly::Original(poly) => AkitaPolyOps::num_ring_elems(*poly),
+            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::num_ring_elems(poly),
+            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::num_ring_elems(poly.as_ref()),
+        }
     }
 
     fn num_vars(&self) -> usize {
-        dispatch_fold_input!(self, poly => poly.num_vars())
+        match self {
+            FoldInputPoly::Original(poly) => AkitaPolyOps::num_vars(*poly),
+            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::num_vars(poly),
+            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::num_vars(poly.as_ref()),
+        }
     }
 
     fn onehot_chunk_size(&self) -> Option<usize> {
@@ -321,7 +763,11 @@ where
     }
 
     fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
-        dispatch_fold_input!(self, poly => poly.direct_root_witness())
+        match self {
+            FoldInputPoly::Original(poly) => AkitaPolyOps::direct_root_witness(*poly),
+            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::direct_root_witness(poly),
+            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::direct_root_witness(poly.as_ref()),
+        }
     }
 }
 

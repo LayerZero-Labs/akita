@@ -29,8 +29,8 @@ pub use api::{
 pub use backend::FoldInputPoly;
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, SingleChunkEntry,
-    SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
+    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
 };
 pub use compute::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,

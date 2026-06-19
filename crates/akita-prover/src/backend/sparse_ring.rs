@@ -18,6 +18,13 @@ use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitR
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
+mod ops;
+
+pub(crate) use ops::{
+    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView,
+    SparseRingTensorBatchView, SparseRingTensorView,
+};
+
 mod tensor_fold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

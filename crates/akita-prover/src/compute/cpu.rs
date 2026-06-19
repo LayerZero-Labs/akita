@@ -577,6 +577,110 @@ where
     }
 }
 
+impl<F, const D: usize> crate::compute::RootTensorProjectionCommitKernels<F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    Self: for<'a> crate::compute::RootCommitKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootCommitSource<F, D>>::CommitView<
+                'a,
+            >,
+            F,
+            D,
+        >,
+{
+}
+
+impl<F, ChallengeE, const D: usize>
+    crate::compute::RootTensorProjectionProveKernels<F, ChallengeE, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    ChallengeE: akita_field::ExtField<F>,
+    Self: for<'a> crate::compute::OpeningFoldKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningView<
+                'a,
+            >,
+            F,
+            D,
+        > + for<'a> crate::compute::OpeningBatchKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootOpeningSource<F, D>>::OpeningBatchView<
+                'a,
+            >,
+            F,
+            D,
+        > + for<'a> crate::compute::TensorProjectionKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorView<
+                'a,
+            >,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> crate::compute::TensorProjectionBatchKernel<
+            <crate::RootTensorProjectionPoly<F, D> as crate::compute::RootTensorSource<F, D>>::TensorBatchView<
+                'a,
+            >,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
+impl<F, P, E, const D: usize> crate::compute::RootCommitBackend<F, P, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    E: akita_field::ExtField<F>,
+    P: crate::compute::RootCommitPoly<F, D>,
+    Self: for<'a> crate::compute::RootCommitKernel<
+            <P as crate::compute::RootCommitSource<F, D>>::CommitView<'a>,
+            F,
+            D,
+        > + for<'a> crate::compute::TensorProjectionKernel<
+            <P as crate::compute::RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            E,
+            D,
+        >,
+{
+}
+
+impl<F, P, ClaimE, ChallengeE, const D: usize>
+    crate::compute::RootProveBackend<F, P, ClaimE, ChallengeE, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    ClaimE: akita_field::ExtField<F>,
+    ChallengeE: akita_field::ExtField<F>,
+    P: crate::compute::RootProvePoly<F, D>,
+    Self: for<'a> crate::compute::OpeningFoldKernel<
+            <P as crate::compute::RootOpeningSource<F, D>>::OpeningView<'a>,
+            F,
+            D,
+        > + for<'a> crate::compute::OpeningBatchKernel<
+            <P as crate::compute::RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            D,
+        > + for<'a> crate::compute::TensorProjectionKernel<
+            <P as crate::compute::RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> crate::compute::TensorProjectionBatchKernel<
+            <P as crate::compute::RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ClaimE,
+            D,
+        > + for<'a> crate::compute::TensorProjectionBatchKernel<
+            <P as crate::compute::RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,7 +728,7 @@ mod tests {
 
     fn prepared() -> CpuPreparedSetup<F, D> {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
     }
 
@@ -662,9 +766,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -681,9 +785,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -760,6 +864,7 @@ mod tests {
         let row_width = 3;
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
             8,
+            1,
             1,
             setup_envelope_with_zk(32, row_len * row_width, row_len * row_width),
         )

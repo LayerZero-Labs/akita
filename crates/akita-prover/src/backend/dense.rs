@@ -625,6 +625,342 @@ fn accumulate_cached_digit_planes<const D: usize>(
         .collect()
 }
 
+// ===========================================================================
+// PO-CUTOVER (Phase A, additive): source-typed views + CpuBackend kernels.
+//
+// Kernels delegate to the existing `AkitaPolyOps` methods so behavior and proof
+// bytes are identical; relocation of that logic out of `AkitaPolyOps` happens in
+// a later phase. Nothing in production wiring calls these yet.
+// ===========================================================================
+
+use crate::backend::RootTensorProjectionPoly;
+use crate::compute::{
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
+    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
+};
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
+use akita_field::FromPrimitiveInt;
+use akita_types::FpExtEncoding;
+
+/// Borrowed commit view over dense ring storage.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseCommitView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Borrowed opening view for fold and decompose-fold kernels.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseOpeningView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Same-point batch opening view over several dense polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseOpeningBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a DensePoly<F, D>],
+}
+
+/// Borrowed tensor projection view over dense ring storage.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseTensorView<'a, F: FieldCore, const D: usize> {
+    poly: &'a DensePoly<F, D>,
+}
+
+/// Same-point batch tensor view over several dense polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseTensorBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a DensePoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyShape<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+}
+
+impl<F, const D: usize> RootCommitSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type CommitView<'a>
+        = DenseCommitView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        Ok(DenseCommitView { poly: self })
+    }
+}
+
+impl<F, const D: usize> RootOpeningSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type OpeningView<'a>
+        = DenseOpeningView<'a, F, D>
+    where
+        Self: 'a;
+
+    type OpeningBatchView<'a>
+        = DenseOpeningBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+        Ok(DenseOpeningView { poly: self })
+    }
+
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        Ok(DenseOpeningBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> RootTensorSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    type TensorView<'a>
+        = DenseTensorView<'a, F, D>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = DenseTensorBatchView<'a, F, D>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        Ok(DenseTensorView { poly: self })
+    }
+
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Ok(DenseTensorBatchView { polys })
+    }
+}
+
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(self)
+    }
+}
+
+impl<F, const D: usize> RootCommitKernel<DenseCommitView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: DenseCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        Ok(self
+            .commit_inner_witness(prepared, source, plan)?
+            .decomposed_inner_rows)
+    }
+
+    fn commit_inner_witness(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: DenseCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::commit_inner(
+            source.poly,
+            self,
+            prepared,
+            plan.n_a,
+            plan.block_len,
+            0,
+            plan.num_digits_commit,
+            plan.num_digits_open,
+            plan.log_basis,
+        )
+    }
+}
+
+impl<F, const D: usize> OpeningFoldKernel<DenseOpeningView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let (eval, folded) = match plan {
+            OpeningFoldPlan::Base {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => <DensePoly<F, D> as AkitaPolyOps<F, D>>::evaluate_and_fold(
+                source.poly,
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            ),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => <DensePoly<F, D> as AkitaPolyOps<F, D>>::evaluate_and_fold_ring(
+                source.poly,
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            ),
+        };
+        Ok(OpeningFoldOutput { eval, folded })
+    }
+
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningView<'_, F, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        Ok(<DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
+            source.poly,
+            plan.challenges,
+            plan.block_len,
+            plan.num_digits,
+            plan.log_basis,
+        ))
+    }
+}
+
+impl<F, const D: usize> OpeningBatchKernel<DenseOpeningBatchView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn decompose_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseOpeningBatchView<'_, F, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        match plan {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges,
+                block_len,
+                num_digits,
+                log_basis,
+            } => Ok(
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+                    source.polys,
+                    challenges,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                ),
+            ),
+            DecomposeFoldBatchPlan::Tensor {
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            } => <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                source.polys,
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            ),
+        }
+    }
+}
+
+impl<F, E, const D: usize> TensorProjectionKernel<DenseTensorView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F>,
+{
+    fn column_partials(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials(
+            source.poly,
+            logical_point,
+        )
+    }
+
+    fn packed_witness(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        Ok(TensorPackedWitness::Dense(
+            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_evals(source.poly)?,
+        ))
+    }
+
+    fn root_projection(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorView<'_, F, D>,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        E: FpExtEncoding<F>,
+    {
+        Ok(RootTensorProjectionPoly::Dense(
+            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(source.poly)?,
+        ))
+    }
+}
+
+impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseTensorBatchView<'_, F, D>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    fn column_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorBatchView<'_, F, D>,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch(
+            source.polys,
+            logical_point,
+        )
+    }
+
+    fn sparse_linear_combination(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: DenseTensorBatchView<'_, F, D>,
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination(
+            source.polys,
+            coeffs,
+        )
+    }
+}
+
 /// Test-only helpers for [`DensePoly`].
 ///
 /// These live outside the production `AkitaPolyOps` trait because they are

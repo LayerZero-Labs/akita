@@ -125,6 +125,9 @@ where
     }
 }
 
+/// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
+pub type UniformProverStack<'a, F, B, const D: usize> = ProverComputeStack<'a, F, D, B, B, B, B>;
+
 impl<'a, F, B, const D: usize> ProverComputeStack<'a, F, D, B, B, B, B>
 where
     F: FieldCore + CanonicalField,
@@ -149,5 +152,53 @@ where
             (backend, prepared),
             expanded,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AkitaProverSetup;
+    use crate::CpuBackend;
+    use akita_field::Fp64;
+    use akita_types::SetupMatrixEnvelope;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 32;
+
+    fn test_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
+        SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+        }
+    }
+
+    #[test]
+    fn operation_ctx_rejects_mismatched_expanded_setup() {
+        let setup_a =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
+                .expect("setup a");
+        let setup_b =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(8192))
+                .expect("setup b");
+        assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
+
+        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
+        assert!(matches!(
+            OperationCtx::new(&CpuBackend, &prepared_a, setup_b.expanded.as_ref()),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn operation_ctx_accepts_matching_expanded_setup() {
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("matching expanded metadata should validate");
     }
 }
