@@ -12,18 +12,18 @@ use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
-use akita_types::ClaimIncidenceSummary;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::OpeningBatch;
+use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field,
 };
-use akita_types::{scheduled_fold_execution, scheduled_next_level_params, LevelParams};
+use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
-use akita_types::{AkitaScheduleInputs, Step};
 use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -46,7 +46,7 @@ type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
-mod fp32_ring_subfield;
+mod fp32_ext4;
 mod layout;
 mod onehot;
 mod single;
@@ -63,14 +63,49 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
     w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
 }
 
+/// Terminal stage-2 sumcheck round degrees can depend on Fiat-Shamir challenges
+/// (e.g. structurally zero leading cubic on the first round). Copy them from
+/// the proved shape so deserialization uses the on-wire widths.
+fn sync_terminal_stage2_sumcheck_from_proof(
+    expected: &mut AkitaBatchedProofShape,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+) {
+    let actual = proof.shape();
+    match (expected, actual) {
+        (
+            AkitaBatchedProofShape::Fold { step_shapes, .. },
+            AkitaBatchedProofShape::Fold {
+                step_shapes: actual_steps,
+                ..
+            },
+        ) => {
+            let Some(AkitaProofStepShape::Terminal(terminal)) = step_shapes.last_mut() else {
+                return;
+            };
+            let Some(AkitaProofStepShape::Terminal(actual_terminal)) = actual_steps.last() else {
+                return;
+            };
+            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+        }
+        (
+            AkitaBatchedProofShape::Terminal(terminal),
+            AkitaBatchedProofShape::Terminal(actual_terminal),
+        ) => {
+            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+        }
+        _ => {}
+    }
+}
+
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
-    let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
-        .expect("incidence");
-    let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("batched root runtime plan");
+    let opening_batch =
+        akita_types::OpeningBatch::same_point(max_num_vars, num_claims).expect("opening_batch");
+    let schedule =
+        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
@@ -80,24 +115,25 @@ fn expected_same_point_batched_shape(
     // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
     // shape with no recursive-suffix steps.
     if num_fold_levels == 1 {
-        // The terminal fold's `next` parameters live at `schedule.steps[1]`,
-        // which is a `Direct` step encoding the final packed-digit basis.
-        let terminal_next_params =
-            scheduled_next_level_params(&schedule, 1).expect("terminal next params");
-        return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
-            y_rings_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
+        let mut stage2_sumcheck = vec![3; root_rounds];
+        let fold_basis = 1usize << root_step.params.log_basis;
+        let ring_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if root_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
+            stage2_sumcheck[0] = 2;
+        }
+        let mut shape = AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
-            stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-                root_step.next_w_len,
-                terminal_next_params.log_basis,
-            )),
+            stage2_sumcheck,
+            final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+                .expect("1-fold schedule should end in a direct step")
+                .clone(),
         });
+        sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
+        return shape;
     }
 
     let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
     let root_shape = LevelProofShape {
-        y_ring_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
         extension_opening_reduction: None,
         v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << root_step.params.log_basis),
@@ -105,30 +141,26 @@ fn expected_same_point_batched_shape(
         stage3_sumcheck: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
-    let first_level_params = next_level_params.clone();
-
     // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
     // total: `num_fold_levels - 2` intermediate steps followed by exactly one
     // terminal step. (We've already consumed the root.)
     let num_intermediate_after_root = num_fold_levels.saturating_sub(2);
     let mut step_shapes = Vec::with_capacity(num_fold_levels - 1);
     let mut current_w_len = root_step.next_w_len;
-    let mut current_log_basis = first_level_params.log_basis;
     let mut current_level = 1usize;
     for _ in 0..num_intermediate_after_root {
-        let inputs = AkitaScheduleInputs {
-            num_vars: max_num_vars,
-            level: current_level,
-            current_w_len,
-        };
-        let (level_params, next_level_params) =
-            scheduled_fold_execution(&schedule, current_level, inputs, current_log_basis)
-                .expect("scheduled recursive fold");
+        let scheduled = schedule
+            .get_execution_schedule(current_level)
+            .expect("scheduled recursive fold");
+        scheduled
+            .validate_current_w_len(current_w_len)
+            .expect("scheduled recursive fold current witness length");
+        let level_params = scheduled.params;
+        let next_level_params = scheduled.next_params;
         let next_w_len =
             w_ring_element_count::<OneHotF>(&level_params).unwrap() * level_params.ring_dimension;
         let rounds = batched_shape_rounds(level_params.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
-            y_ring_coeffs: level_params.ring_dimension,
             extension_opening_reduction: None,
             v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << level_params.log_basis),
@@ -138,21 +170,19 @@ fn expected_same_point_batched_shape(
                 * next_level_params.ring_dimension,
         }));
         current_w_len = next_w_len;
-        current_log_basis = next_level_params.log_basis;
         current_level += 1;
     }
 
     // Terminal fold step (always present in the multi-fold case): its params
     // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
-    // immediately following Direct step encodes the final packed-digit basis.
-    let terminal_inputs = AkitaScheduleInputs {
-        num_vars: max_num_vars,
-        level: current_level,
-        current_w_len,
-    };
-    let (terminal_params, terminal_next_params) =
-        scheduled_fold_execution(&schedule, current_level, terminal_inputs, current_log_basis)
-            .expect("scheduled terminal fold");
+    // immediately following Direct step encodes the terminal witness shape.
+    let terminal_scheduled = schedule
+        .get_execution_schedule(current_level)
+        .expect("scheduled terminal fold");
+    terminal_scheduled
+        .validate_current_w_len(current_w_len)
+        .expect("scheduled terminal fold current witness length");
+    let terminal_params = terminal_scheduled.params;
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
@@ -168,26 +198,26 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_params.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
-    // Every stage-2 round polynomial is the degree-3 fused norm/relation
-    // shape. The first-round degree-2 compression (leading cubic coefficient
-    // structurally zero) only fires on the prover's stage-2 two-round-prefix
-    // path, which requires a small fold basis (`b in {4, 8}`); the terminal
-    // fold here folds at a larger basis, so it keeps degree-3 in every round.
-    let terminal_stage2 = vec![3; terminal_rounds];
+    let mut terminal_stage2 = vec![3; terminal_rounds];
+    let fold_basis = 1usize << terminal_params.log_basis;
+    let ring_bits = terminal_params.ring_dimension.trailing_zeros() as usize;
+    if terminal_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
+        terminal_stage2[0] = 2;
+    }
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
-        y_rings_coeffs: terminal_params.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: terminal_stage2,
-        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-            terminal_next_w_len,
-            terminal_next_params.log_basis,
-        )),
+        final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
+            .expect("terminal direct witness shape")
+            .clone(),
     }));
 
-    AkitaBatchedProofShape::Fold {
+    let mut shape = AkitaBatchedProofShape::Fold {
         root_shape,
         step_shapes,
-    }
+    };
+    sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
+    shape
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
@@ -198,8 +228,8 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let incidence = ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
-    C::get_params_for_batched_commitment(&incidence).expect("singleton commitment layout")
+    let opening_batch = OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+    C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 
 type VerifyFixture = (
@@ -217,7 +247,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
@@ -245,14 +275,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -302,7 +332,7 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
     OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
 }
 
-fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
+fn opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
     poly: &P,
     point: &[OneHotF],
     layout: &LevelParams,
@@ -319,15 +349,15 @@ fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
         BasisMode::Lagrange,
         BlockOrder::RowMajor,
     )
-    .expect("debug opening point");
+    .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
+    let (folded_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v =
+    let packed_inner =
         reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(inner_point, BasisMode::Lagrange)
-            .expect("debug inner opening point");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+            .expect("inner opening point should match ring dimension");
+    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }

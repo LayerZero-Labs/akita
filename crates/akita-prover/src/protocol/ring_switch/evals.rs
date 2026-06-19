@@ -43,11 +43,8 @@ pub fn build_w_evals_compact(
 
 /// Unified M-table evaluation for the batched CWSS protocol.
 ///
-/// `opening_points` holds the distinct ring-level opening points used by the
-/// batch, `claim_to_point` maps each flattened claim index to its opening-point
-/// index, and `gamma` provides the per-claim random linear-combination
-/// coefficients. The matrix carries one public y-row per distinct opening
-/// point (`num_public_rows = opening_points.len()`).
+/// All claims share one ring-level opening point. Commitment-group routing may
+/// address multiple committed bundles.
 ///
 /// # Errors
 ///
@@ -57,9 +54,8 @@ pub fn build_w_evals_compact(
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
 pub fn compute_m_evals_x<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
-    opening_points: &[RingOpeningPoint<F>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
+    opening_point: &RingOpeningPoint<F>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
     challenges: &Challenges,
     alpha: E,
     alpha_pows: &[E],
@@ -74,7 +70,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -82,12 +78,14 @@ where
             actual: alpha_pows.len(),
         });
     }
-    let num_claims = claim_to_point.len();
-    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
-    if ring_multiplier_points.len() != opening_points.len()
-        || ring_multiplier_points
-            .iter()
-            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
+    let num_claims = claim_to_commitment_group.len();
+    if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
+        return Err(AkitaError::InvalidInput(
+            "batched prover opening-point layout mismatch".to_string(),
+        ));
+    }
+    if ring_multiplier_point.a_len() < lp.block_len
+        || ring_multiplier_point.b_len() != lp.num_blocks
     {
         return Err(AkitaError::InvalidInput(
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
@@ -100,10 +98,10 @@ where
             "batched prover commitment routing lengths do not match".to_string(),
         ));
     }
-    let num_points = num_polys_per_commitment_group.len();
+    let num_commitment_groups = num_polys_per_commitment_group.len();
     for claim_idx in 0..num_claims {
         let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_points
+        if group_idx >= num_commitment_groups
             || claim_poly_in_commitment_group[claim_idx]
                 >= num_polys_per_commitment_group[group_idx]
         {
@@ -181,23 +179,19 @@ where
     let b_blinding_digit_planes_per_point =
         akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_points
+    let b_blinding_segment_len = num_commitment_groups
         .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
-    let z_base_len = opening_points
-        .len()
-        .checked_mul(inner_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
+    let z_base_len = inner_width;
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(num_commitment_groups, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
     // Tiered `û_concat` segment column count (flat, after `t̂`); `0` single-tier.
     let u_seg_len = if lp.f_key.is_some() {
-        opening_points
-            .len()
+        num_commitment_groups
             .checked_mul(lp.tier_split)
             .and_then(|w| w.checked_mul(n_b))
             .and_then(|w| w.checked_mul(depth_open))
@@ -324,16 +318,14 @@ where
     let public_weights = &eq_tau1[1..(1 + num_public_rows)];
     let d_start = 1 + num_public_rows;
     let f_start = d_start + n_d_active;
-    let b_inner_start = f_start + commit_rows_pg * num_points;
-    let a_start = b_inner_start + b_inner_rows_pg * num_points;
+    let b_inner_start = f_start + commit_rows_pg * num_commitment_groups;
+    let a_start = b_inner_start + b_inner_rows_pg * num_commitment_groups;
     // Non-tiered alias used by the single-tier B-block scan below.
     let b_start = f_start;
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
 
-    let uses_ring_multipliers = ring_multiplier_points
-        .iter()
-        .any(|point| point.as_base().is_none());
+    let uses_ring_multipliers = ring_multiplier_point.as_base().is_none();
     let row_coefficient_rings = if uses_ring_multipliers {
         Some(
             gamma
@@ -355,14 +347,12 @@ where
     };
     let public_b_evals = (0..num_claims)
         .map(|claim_idx| {
-            let point_idx = claim_to_point[claim_idx];
-            let opening_point = &ring_multiplier_points[point_idx];
             let coefficient_ring = row_coefficient_rings
                 .as_ref()
                 .map(|rings| &rings[claim_idx]);
             (0..num_blocks)
                 .map(|block_idx| {
-                    opening_point.eval_b_with_coefficient(
+                    ring_multiplier_point.eval_b_with_coefficient(
                         block_idx,
                         gamma[claim_idx],
                         coefficient_ring,
@@ -380,10 +370,13 @@ where
             let claim_idx = blk / num_blocks;
             let block_idx = blk % num_blocks;
             let d_phys_col = blk * depth_open + dig;
-            let point_idx = claim_to_point[claim_idx];
             let b_eval = public_b_evals[claim_idx][block_idx];
-            let mut acc = (public_weights[point_idx] * b_eval + consistency_weight * c_alphas[blk])
-                * g1_open[dig];
+            let public_contrib = if num_public_rows == 0 {
+                E::zero()
+            } else {
+                public_weights[0] * b_eval
+            };
+            let mut acc = (public_contrib + consistency_weight * c_alphas[blk]) * g1_open[dig];
             // Terminal layout: `n_d_active == 0`, so this loop is empty and
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
@@ -470,7 +463,7 @@ where
     // second-tier `F` commit-block image plus the `B_inner` `-recompose(û)`
     // term, per `û` column. Empty for single-tier.
     let u_segment: Vec<E> = if tiered {
-        let u_seg_len = num_points * width_f;
+        let u_seg_len = num_commitment_groups * width_f;
         cfg_into_iter!(0..u_seg_len)
             .map(|c| {
                 let group = c / width_f;
@@ -528,12 +521,10 @@ where
 
     let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
-            let point_idx = k / inner_width;
-            let local_k = k % inner_width;
+            let local_k = k;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let opening_point = &ring_multiplier_points[point_idx];
-            let a_eval = opening_point.eval_a_at::<E>(block_idx, alpha_pows)?;
+            let a_eval = ring_multiplier_point.eval_a_at::<E>(block_idx, alpha_pows)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -544,17 +535,15 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
 
-    let num_points = opening_points.len();
-    let z_total_blocks = num_points * block_len;
+    let z_total_blocks = block_len;
     let z_segment: Vec<E> = cfg_into_iter!(0..z_len)
         .map(|x| {
             let compound_dig = x / z_total_blocks;
             let global_blk = x % z_total_blocks;
             let dc = compound_dig / depth_fold;
             let df = compound_dig % depth_fold;
-            let point_idx = global_blk / block_len;
             let blk = global_blk % block_len;
-            let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+            let phys_k = blk * depth_commit + dc;
             -(z_base[phys_k] * fold_gadget[df])
         })
         .collect();

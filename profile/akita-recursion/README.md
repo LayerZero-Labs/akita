@@ -147,7 +147,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    preprocess/prove/verify (or just the trace under `--trace-only`),
    and forwards per-marker cycle counts through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob and invokes `akita_verifier::verify_batched` directly —
+   blob and invokes `akita_verifier::batched_verify` directly —
    bypassing `akita-scheme::batched_verify`, which would otherwise
    call `Instant::now()` (the Jolt runtime doesn't implement
    `clock_gettime`, and the guest aborts there). Three

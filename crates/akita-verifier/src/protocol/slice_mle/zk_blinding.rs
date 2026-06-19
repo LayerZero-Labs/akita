@@ -27,7 +27,7 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
+    let b_start = 1 + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group. The
@@ -41,10 +41,8 @@ where
     let b_zk_stride = b_zk_view.num_cols();
     let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
         .map(|idx| {
-            let point_idx = idx / group_stride;
             let local = idx % group_stride;
-            let commitment_weights = &prepared.eq_tau1
-                [(b_start + point_idx * prepared.n_b)..(b_start + (point_idx + 1) * prepared.n_b)];
+            let commitment_weights = &prepared.eq_tau1[b_start..(b_start + prepared.n_b)];
             let mut acc = E::zero();
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -82,7 +80,7 @@ where
 
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let d_start = 1 + prepared.num_public_rows;
+    let d_start = 1;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let d_zk_view = setup
@@ -169,22 +167,22 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let num_polys_per_point = vec![2usize, 1usize];
-        let num_public_rows = 2usize;
-        let num_points = num_polys_per_point.len();
+        let num_polys_per_commitment_group = vec![3usize];
+        let num_public_rows = 0usize;
+        let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         let w_len = depth_open * total_blocks;
         let b_blinding_digit_planes_per_point =
             zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
-        let b_blinding_segment_len = num_points * b_blinding_digit_planes_per_point;
+        let b_blinding_segment_len = b_blinding_digit_planes_per_point;
         let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
         let lp = fixture_lp();
         let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
             &lp,
             MRowLayout::WithDBlock,
-            &num_polys_per_point,
+            num_claims,
         )
         .expect("witness segment layout");
         let total_len = witness_segment_layout.offset_r;
@@ -193,7 +191,7 @@ mod tests {
         let max_zk_d_len = n_d * d_blinding_segment_len;
 
         let t_cols_per_claim = num_blocks * n_a * depth_open;
-        let max_b_local_col = num_polys_per_point
+        let max_b_local_col = num_polys_per_commitment_group
             .iter()
             .map(|&count| count * t_cols_per_claim)
             .max()
@@ -227,8 +225,7 @@ mod tests {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: num_polys_per_point.iter().sum(),
-                max_num_points: num_points,
+                max_num_batched_polys: num_polys_per_commitment_group.iter().sum(),
                 gen_ring_dim: D,
                 max_setup_len,
                 max_zk_b_len,
@@ -248,7 +245,7 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
-            num_t_vectors: num_polys_per_point.iter().sum(),
+            num_t_vectors: num_polys_per_commitment_group.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -266,13 +263,10 @@ mod tests {
             n_b,
             tier_split: 1,
             n_f: 0,
-            num_points,
             rows,
-            claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
-            num_polys_per_commitment_group: num_polys_per_point,
-            num_public_rows,
+            claim_to_commitment_group_poly: vec![(0, 0), (0, 1), (0, 2)],
+            num_polys_per_commitment_group,
             gamma: vec![F::one(); num_claims],
-            claim_to_point: vec![1, 0, 1],
             witness_segment_layout,
         };
         ZkFixture {
@@ -291,7 +285,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let b_start = 1 + p.num_public_rows + p.n_d;
+        let b_start = 1 + p.n_d;
         let b_offset = p.segment_layout().unwrap().b_blinding_offset;
         let b_zk_view = fx
             .setup
@@ -305,11 +299,10 @@ mod tests {
                 .unwrap();
         let mut expected = F::zero();
         for idx in 0..p.b_blinding_segment_len {
-            let point_idx = idx / p.b_blinding_digit_planes_per_point;
             let local = idx % p.b_blinding_digit_planes_per_point;
             let mut entry = F::zero();
             for (row_idx, row) in b_zk_rows.iter().enumerate().take(p.n_b) {
-                let weight = p.eq_tau1[b_start + point_idx * p.n_b + row_idx];
+                let weight = p.eq_tau1[b_start + row_idx];
                 entry += weight * eval_ring_at_pows(&row[local], &alpha_pows);
             }
             expected += entry * eq[b_offset + idx];
@@ -325,7 +318,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let d_start = 1 + p.num_public_rows;
+        let d_start = 1;
         let d_offset = p.segment_layout().unwrap().d_blinding_offset;
         let d_zk_view = fx
             .setup

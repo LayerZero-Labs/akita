@@ -1,10 +1,7 @@
 use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
-use akita_field::{
-    CanonicalField, FieldCore, Fp32, FpExt2, FpExt2Config, Invertible, PseudoMersenneField,
-    TowerBasisFpExt4Config,
-};
+use akita_field::{CanonicalField, FieldCore, Fp32, FpExt2Config, Invertible, PseudoMersenneField};
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;
@@ -82,12 +79,5 @@ pub(super) struct NR;
 impl FpExt2Config<Fp32<251>> for NR {
     fn non_residue() -> Fp32<251> {
         -Fp32::<251>::one()
-    }
-}
-
-pub(super) struct NR4;
-impl TowerBasisFpExt4Config<Fp32<251>, NR> for NR4 {
-    fn non_residue() -> FpExt2<Fp32<251>, NR> {
-        FpExt2::new(Fp32::<251>::zero(), Fp32::<251>::one())
     }
 }

@@ -16,7 +16,6 @@
 //! If
 //!
 //! `y_alpha = [0,`
-//! `           y_ring(alpha),`
 //! `           v_0(alpha), ..., v_{N_D-1}(alpha),`
 //! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
 //! `           0, ..., 0],`
@@ -26,6 +25,19 @@
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
 //! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
 //!
+//! There is no public-output `y_ring` row: the §3.1 fold-opening trace check is
+//! internalized as the fused `gamma^2` term below rather than carried as an `M`
+//! row, so `y_alpha` runs `consistency | D(v) | B(u) | A`.
+//!
+//! The fused trace term binds the committed fold witness to the public opening
+//! through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only on the
+//! `e_hat` digit segment). Its input contribution is `gamma^2 * trace_target`,
+//! where `trace_target` is the incoming opening claim (or the EOR final claim on
+//! extension-opening-reduction paths). It reuses the stage-2 batching challenge
+//! `gamma` (relation = `gamma^0`, range = `gamma^1`, trace = `gamma^2`), which
+//! is sampled after the next-level witness is bound, so it adds no new
+//! Fiat-Shamir challenge.
+//!
 //! Stage 1 supplies the carried virtual claim
 //!
 //! `s_claim = w(stage1_point) * (w(stage1_point) + 1)`
@@ -34,18 +46,20 @@
 //! for the same multilinear witness table. With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
-//! `gamma * s_claim + relation_claim =`
+//! `gamma * s_claim + relation_claim + gamma^2 * trace_target =`
 //! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
-//! `           + w(x, y) * a(y) * m_tau1(x) ]`.
+//! `           + w(x, y) * a(y) * m_tau1(x)`
+//! `           + gamma^2 * w(x, y) * TraceWeight(x, y) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`,
+//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`
+//! `  + gamma^2 * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
-//! both halves around the same local `w0` / `dw` scan so the witness-side work
-//! is shared between the virtual and relation terms.
+//! the virtual, relation, and trace terms around the same local `w0` / `dw`
+//! scan so the witness-side work is shared between all three.
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
@@ -61,6 +75,7 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
+use akita_types::TraceTable;
 use std::mem;
 use std::time::Instant;
 
@@ -199,10 +214,11 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 
     alpha_compact: Vec<E>,
     m_compact: Vec<E>,
+    trace_table: Option<TraceTable<E>>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
-    relation_claim: E,
+    relation_trace_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
     prefix_r_stage1: Option<Vec<E>>,
@@ -220,6 +236,61 @@ mod round2_prefix;
 mod round_flow;
 mod x_prefix;
 mod y_prefix;
+
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+    // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
+    // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
+    // (column-major: `col * y_len + ring_slot`). Y-round kernels pass `2*j` and
+    // `2*j+1`; x-prefix fusion passes column-relative indices directly.
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn accumulate_fused_relation_trace(
+        &self,
+        rel: &mut [E; 3],
+        w0: E,
+        dw: E,
+        witness_idx0: usize,
+        witness_idx1: usize,
+        p0: E,
+        p1: E,
+    ) {
+        accumulate_relation_coeffs(rel, w0, dw, p0, p1);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
+            accumulate_relation_coeffs(rel, w0, dw, t0, t1);
+        }
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn accumulate_fused_relation_trace_signed(
+        &self,
+        rel: &mut [E::MulU64Accum; 6],
+        w0: i64,
+        dw: i64,
+        witness_idx0: usize,
+        witness_idx1: usize,
+        p0: E,
+        p1: E,
+    ) {
+        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
+        if let Some(trace) = &self.trace_table {
+            let y_len = self.alpha_compact.len();
+            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
+            accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
+        }
+    }
+
+    #[inline]
+    pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
+        if let Some(trace) = self.trace_table.as_mut() {
+            let y_len = self.alpha_compact.len();
+            trace.fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
+        }
+    }
+}
 
 #[cfg(all(test, not(feature = "zk")))]
 mod tests;

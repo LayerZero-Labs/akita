@@ -28,7 +28,7 @@ use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid as _};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, SetupContributionMode,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -49,7 +49,7 @@ fn setup_sumcheck_levels<FF: CanonicalField, L: FieldCore>(
     let suffix_fold = proof
         .steps
         .iter()
-        .filter(|step| matches!(step, AkitaProofStep::Intermediate(_)))
+        .filter(|step| matches!(step, AkitaLevelProof::Intermediate { .. }))
         .count();
     root_fold + suffix_fold
 }
@@ -91,7 +91,7 @@ fn prove_onehot_with_setup_mode(
     setup_mode: SetupContributionMode,
 ) -> OnehotProof {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
@@ -107,11 +107,11 @@ fn prove_onehot_with_setup_mode(
         SetupContributionMode::Direct => <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::setup_prover(nv, 1, 1),
+        >>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::setup_prover_recursion(nv, 1, 1),
+        >>::setup_prover_recursion(nv, 1),
     }
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();

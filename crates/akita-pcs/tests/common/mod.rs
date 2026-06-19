@@ -19,7 +19,7 @@ use std::sync::Once;
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-// Bare presets: test-only multipoint / non-singleton batched incidences
+// Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::D64OneHot;
@@ -66,14 +66,14 @@ pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
+    (
         point,
-        CommittedPolynomials {
+        vec![CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        },
-    )]
+        }],
+    )
 }
 
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
@@ -81,58 +81,13 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
+    (
         point,
-        CommittedOpenings {
+        vec![CommittedOpenings {
             openings,
             commitment,
-        },
-    )]
-}
-
-pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
-    points: &[&'a [FF]],
-    polynomials_by_point: &[&'a [P]],
-    commitments: &'a [C],
-    hints: Vec<H>,
-) -> ProverClaims<'a, FF, P, C, H> {
-    points
-        .iter()
-        .zip(polynomials_by_point.iter())
-        .zip(commitments.iter())
-        .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
-            (
-                *point,
-                CommittedPolynomials {
-                    polynomials,
-                    commitment,
-                    hint,
-                },
-            )
-        })
-        .collect()
-}
-
-pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
-    points: &[&'a [FF]],
-    openings_by_point: &[&'a [FF]],
-    commitments: &'a [C],
-) -> VerifierClaims<'a, FF, C> {
-    points
-        .iter()
-        .zip(openings_by_point.iter())
-        .zip(commitments.iter())
-        .map(|((point, openings), commitment)| {
-            (
-                *point,
-                CommittedOpenings {
-                    openings,
-                    commitment,
-                },
-            )
-        })
-        .collect()
+        }],
+    )
 }
 
 pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
@@ -150,10 +105,18 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     basis_mode: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    assert!(
+        point.len() <= target_num_vars,
+        "opening point length {} exceeds target root arity {}",
+        point.len(),
+        target_num_vars
+    );
+    let mut padded_point = point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
 
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
         layout.r_vars,
@@ -163,14 +126,14 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     )
     .expect("opening point shape should match layout");
 
-    let (y_ring, _) = poly.evaluate_and_fold(
+    let (folded_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
+    let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {

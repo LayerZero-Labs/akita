@@ -1,7 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{ClaimIncidenceSummary, CleartextWitnessShape, LevelParams, RingOpeningPoint};
+use crate::{CleartextWitnessShape, LevelParams, OpeningBatch, RingOpeningPoint};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -15,6 +15,60 @@ pub struct AkitaScheduleInputs {
     pub current_w_len: usize,
 }
 
+/// Schedule facts for one fold level.
+#[derive(Debug, Clone)]
+pub struct ExecutionSchedule {
+    /// Fold level, where `0` is the root.
+    pub level: usize,
+    /// Witness length expected before this fold runs.
+    pub current_w_len: usize,
+    /// Active level parameters for this fold.
+    pub params: LevelParams,
+    /// Successor parameters for the next committed level, or a log-basis stub
+    /// for the terminal direct witness.
+    pub next_params: LevelParams,
+    /// Witness length expected after this fold's ring-switch relation builds
+    /// the next `w`.
+    pub next_w_len: usize,
+    /// Whether this fold hands off to the terminal direct witness.
+    pub is_terminal: bool,
+}
+
+impl ExecutionSchedule {
+    /// Validate the witness length entering this fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime witness length does not match the
+    /// planner schedule.
+    pub fn validate_current_w_len(&self, actual_current_w_len: usize) -> Result<(), AkitaError> {
+        if actual_current_w_len != self.current_w_len {
+            return Err(AkitaError::InvalidSetup(format!(
+                "scheduled fold level {} did not match runtime state: \
+                 expected_w_len={}, actual_w_len={}",
+                self.level, self.current_w_len, actual_current_w_len
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate the next witness length produced by this fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the post-ring-switch witness length does not match
+    /// the planner schedule.
+    pub fn validate_next_w_len(&self, actual_next_w_len: usize) -> Result<(), AkitaError> {
+        if actual_next_w_len != self.next_w_len {
+            return Err(AkitaError::InvalidSetup(format!(
+                "scheduled fold level {} produced unexpected next-w length: expected={}, actual={actual_next_w_len}",
+                self.level, self.next_w_len
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Validate ring-switch opening-point routing against a level layout.
 ///
 /// # Errors
@@ -24,34 +78,34 @@ pub struct AkitaScheduleInputs {
 /// point index is out of range.
 pub fn validate_opening_points_for_claims<F: FieldCore>(
     opening_points: &[RingOpeningPoint<F>],
-    claim_to_point: &[usize],
+    claim_to_commitment_group: &[usize],
     lp: &LevelParams,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
     if opening_points.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "multipoint ring switch requires at least one opening point".to_string(),
+            "ring switch requires at least one opening point".to_string(),
         ));
     }
-    if claim_to_point.len() != num_claims {
+    if claim_to_commitment_group.len() != num_claims {
         return Err(AkitaError::InvalidSize {
             expected: num_claims,
-            actual: claim_to_point.len(),
+            actual: claim_to_commitment_group.len(),
         });
     }
     for opening_point in opening_points {
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
-                "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
+                "ring switch m-eval opening-point layout mismatch".to_string(),
             ));
         }
     }
-    if claim_to_point
+    if claim_to_commitment_group
         .iter()
         .any(|&point_idx| point_idx >= opening_points.len())
     {
         return Err(AkitaError::InvalidInput(
-            "multipoint ring switch claim-to-point index out of range".to_string(),
+            "ring switch claim-to-point index out of range".to_string(),
         ));
     }
     Ok(())
@@ -59,22 +113,16 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 
 /// Public runtime key that selects a concrete root schedule context.
 ///
-/// This is intentionally narrower than a full schedule table entry: it records
-/// only the public inputs that pick a root plan, not the resulting plan data.
+/// Intentionally narrower than a full schedule table entry: only the public
+/// inputs that pick a root plan, not the resulting plan data.
 ///
-/// Under the one-commitment-per-opening-point invariant, the number of
-/// distinct point commitments equals the number of distinct opening points,
-/// so the planner-facing projection records `num_points`. The generated
-/// schedule table key still calls this field `num_commitment_groups` for ABI
-/// stability; the translation happens in
-/// `akita_planner::generated_schedule_lookup_key`.
+/// Opening batches use one shared evaluation point. The folded production path
+/// currently assumes one commitment group (one `CommittedOpenings` / one
+/// `CommittedPolynomials` entry bundling `N` polynomials).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
     pub num_vars: usize,
-    /// Number of distinct opening points (and therefore, distinct point
-    /// commitments).
-    pub num_points: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
     /// Number of root relation `w` protocol vectors.
@@ -88,7 +136,6 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
-            num_points: 1,
             num_t_vectors: 1,
             num_w_vectors: 1,
             num_z_vectors: 1,
@@ -102,61 +149,33 @@ impl AkitaScheduleLookupKey {
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
-        Self::new_with_points(
-            num_vars,
-            num_z_vectors,
-            num_t_vectors,
-            num_w_vectors,
-            num_z_vectors,
-        )
-    }
-
-    /// General root-opening context with an explicit opening-point count.
-    pub const fn new_with_points(
-        num_vars: usize,
-        num_points: usize,
-        num_t_vectors: usize,
-        num_w_vectors: usize,
-        num_z_vectors: usize,
-    ) -> Self {
         Self {
             num_vars,
-            num_points,
             num_t_vectors,
             num_w_vectors,
             num_z_vectors,
         }
     }
 
-    /// Build a schedule lookup key from normalized opening incidence.
+    /// Build a schedule lookup key from a validated [`OpeningBatch`].
     ///
-    /// Each opening point cites exactly one commitment, so the planner-facing
-    /// projection carries only the per-point arities.
+    /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
+    /// `num_claims`. Assumes the batch was already validated at the claims
+    /// boundary (`OpeningBatchInput::validate` or an infallible constructor).
+    ///
+    /// Folded schedule lookup currently treats every batch as one commitment
+    /// group; see `akita_planner::generated_schedule_lookup_key`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the incidence routing tables are malformed.
-    pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
-        let num_t_vectors = incidence.num_polynomials();
-        if incidence.claim_to_point().len() != incidence.num_claims() {
-            return Err(AkitaError::InvalidInput(
-                "claim incidence summary lengths do not match aggregate counts".to_string(),
-            ));
-        }
-        for &point_idx in incidence.claim_to_point() {
-            if point_idx >= incidence.num_points() {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains out-of-range routing".to_string(),
-                ));
-            }
-        }
-
-        Ok(Self::new_with_points(
-            incidence.num_vars(),
-            incidence.num_points(),
+    /// Returns an error if a projected count does not fit the lookup key.
+    pub fn new_from_opening_batch(opening_batch: &OpeningBatch) -> Result<Self, AkitaError> {
+        let num_t_vectors = opening_batch.num_polynomials();
+        Ok(Self::new(
+            opening_batch.num_vars(),
             num_t_vectors,
-            incidence.num_claims(),
-            incidence.num_public_rows(),
+            opening_batch.num_claims(),
+            1,
         ))
     }
 }
@@ -185,14 +204,14 @@ pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts_for_layout::<F>(
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -206,7 +225,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -217,7 +236,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -230,7 +249,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
 pub fn w_ring_element_count_with_counts_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -238,7 +257,7 @@ pub fn w_ring_element_count_with_counts_bits(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_points,
+        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -252,7 +271,7 @@ pub fn w_ring_element_count_with_counts_bits(
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_points: usize,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -269,7 +288,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
     // Tiered levels carry the hidden decomposed concatenated slice images
     // `û_concat` (one per commitment group); `0` for single-tier levels.
-    let u_concat_count = num_points
+    let u_concat_count = num_commitment_groups
         .checked_mul(lp.u_concat_ring_len_per_group())
         .ok_or_else(|| AkitaError::InvalidSetup("witness u-concat width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
@@ -277,8 +296,8 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
+    // Public-output M rows bind via the fused trace term; omit from r width.
+    let r_rows = lp.m_row_count_for(num_commitment_groups, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -299,7 +318,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             ),
             crate::layout::MRowLayout::WithoutDBlock => 0,
         };
-        let b_blinding_count = num_points
+        let b_blinding_count = num_commitment_groups
             .checked_mul(crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -378,9 +397,10 @@ pub struct DirectStep {
 impl DirectStep {
     /// Active terminal log-basis for packed direct witnesses.
     pub fn log_basis(&self, field_bits: u32) -> u32 {
-        match self.witness_shape {
-            CleartextWitnessShape::PackedDigits((_, bits)) => bits,
+        match &self.witness_shape {
+            CleartextWitnessShape::PackedDigits((_, bits)) => *bits,
             CleartextWitnessShape::FieldElements(_) => field_bits,
+            CleartextWitnessShape::SegmentTyped(shape) => shape.layout.log_basis,
         }
     }
 }
@@ -415,6 +435,30 @@ impl Schedule {
     /// Number of fold levels before the terminal direct step.
     pub fn num_fold_levels(&self) -> usize {
         self.fold_steps().count()
+    }
+
+    /// Resolve one fold's execution schedule from the static schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `level` is not a fold step or if the scheduled
+    /// successor step cannot provide next-level params.
+    pub fn get_execution_schedule(&self, level: usize) -> Result<ExecutionSchedule, AkitaError> {
+        let Some(Step::Fold(step)) = self.steps.get(level) else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule is missing fold step at level {level}"
+            )));
+        };
+        let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
+        let next_level_params = scheduled_next_level_params(self, level + 1)?;
+        Ok(ExecutionSchedule {
+            level,
+            current_w_len: step.current_w_len,
+            params: step.params.clone(),
+            next_params: next_level_params,
+            next_w_len: step.next_w_len,
+            is_terminal,
+        })
     }
 
     /// Witness length (field elements) entering the first step, or `None`
@@ -478,6 +522,10 @@ fn append_direct_witness_shape_descriptor_bytes(
         CleartextWitnessShape::FieldElements(coeff_len) => {
             bytes.push(1);
             push_usize(bytes, *coeff_len);
+        }
+        CleartextWitnessShape::SegmentTyped(shape) => {
+            bytes.push(2);
+            shape.append_descriptor_bytes(bytes);
         }
     }
 }
@@ -580,9 +628,12 @@ pub fn scheduled_next_level_params(
 ) -> Result<LevelParams, AkitaError> {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => match step.witness_shape {
+        Some(Step::Direct(step)) => match &step.witness_shape {
             CleartextWitnessShape::PackedDigits((_, log_basis)) => {
-                Ok(LevelParams::log_basis_stub(log_basis))
+                Ok(LevelParams::log_basis_stub(*log_basis))
+            }
+            CleartextWitnessShape::SegmentTyped(shape) => {
+                Ok(LevelParams::log_basis_stub(shape.layout.log_basis))
             }
             CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
@@ -594,51 +645,20 @@ pub fn scheduled_next_level_params(
     }
 }
 
-/// Resolve the current fold params and successor params for a scheduled fold.
-///
-/// This validates that the runtime witness length and log-basis agree with the
-/// selected planner schedule before deriving the next level params.
-///
-/// # Errors
-///
-/// Returns an error if `level` is not a fold step or if the runtime state does
-/// not match the scheduled fold.
-pub fn scheduled_fold_execution(
-    schedule: &Schedule,
-    level: usize,
-    inputs: AkitaScheduleInputs,
-    current_log_basis: u32,
-) -> Result<(LevelParams, LevelParams), AkitaError> {
-    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(AkitaError::InvalidSetup(format!(
-            "schedule is missing fold step at level {level}"
-        )));
-    };
-    if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(AkitaError::InvalidSetup(format!(
-            "scheduled recursive level {level} did not match runtime state: \
-             expected_w_len={}, actual_w_len={}, expected_log_basis={}, actual_log_basis={}",
-            step.current_w_len, inputs.current_w_len, step.params.log_basis, current_log_basis
-        )));
-    }
-    let next_level_params = scheduled_next_level_params(schedule, level + 1)?;
-    Ok((step.params.clone(), next_level_params))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-        root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
-        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
+        AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
         MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{AkitaError, FieldCore, Prime128OffsetA7F7};
+    use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     #[cfg(not(feature = "zk"))]
@@ -759,7 +779,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,
@@ -781,12 +801,12 @@ mod tests {
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = AkitaLevelProof {
-            y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
+        let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof {
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
@@ -796,7 +816,7 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
-            },
+            }),
             stage3_sumcheck_proof: None,
         };
         Ok(proof.serialized_size(Compress::No))
@@ -873,13 +893,13 @@ mod tests {
             ));
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
-                vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 None,
                 #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
                 dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
+                0,
             );
 
             // The planner accounts for the final witness separately
@@ -949,33 +969,19 @@ mod tests {
                 next_lp.b_key.row_len()
             ])
             .into_compact();
-            let num_points = 5;
-            let root_proof = AkitaBatchedRootProof::new(AkitaLevelProof {
-                y_ring: FlatRingVec::from_ring_elems(&vec![
-                    CyclotomicRing::<F, D>::zero();
-                    num_points
-                ])
-                .into_compact(),
-                extension_opening_reduction: None,
-                v: FlatRingVec::from_ring_elems(&vec![
-                    CyclotomicRing::<F, D>::zero();
-                    lp.d_key.row_len()
-                ])
-                .into_compact(),
-                stage1: dummy_stage1_proof(rounds, b),
-                stage2: AkitaStage2Proof {
+            let level_proof =
+                AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+                    None,
+                    vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+                    dummy_stage1_proof(rounds, b),
                     #[cfg(not(feature = "zk"))]
-                    sumcheck_proof: dummy_sumcheck(rounds, 3),
+                    dummy_sumcheck(rounds, 3),
                     #[cfg(feature = "zk")]
-                    sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
-                    next_w_commitment: next_commitment,
-                    #[cfg(not(feature = "zk"))]
-                    next_w_eval: F::zero(),
-                    #[cfg(feature = "zk")]
-                    next_w_eval_masked: F::zero(),
-                },
-                stage3_sumcheck_proof: None,
-            });
+                    dummy_sumcheck_proof_masked(rounds, 3),
+                    next_commitment,
+                    F::zero(),
+                );
+            let root_proof = AkitaBatchedRootProof::new(level_proof);
 
             assert_eq!(
                 level_proof_bytes(
@@ -984,7 +990,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    num_points,
+                    1,
                     MRowLayout::WithDBlock,
                 ),
                 root_proof.serialized_size(Compress::No),
@@ -995,10 +1001,10 @@ mod tests {
 
     #[test]
     fn planned_root_extension_reduction_bytes_match_payload() {
-        let extension_width = 4;
-        let num_claims = 3;
-        let opening_vars = 12;
-        let partials = root_extension_opening_partials(extension_width, num_claims);
+        let extension_width = 4usize;
+        let num_claims = 3usize;
+        let opening_vars = 12usize;
+        let partials = extension_width.saturating_mul(num_claims);
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![F::zero(); partials],
             #[cfg(not(feature = "zk"))]

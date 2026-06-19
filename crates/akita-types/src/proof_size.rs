@@ -10,6 +10,9 @@
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
 
+/// Fixed wire size of `fold_grind_nonce` on every fold level proof.
+pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
+
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
     degree * elem_bytes
 }
@@ -75,16 +78,15 @@ pub fn level_proof_bytes(
     lp: &LevelParams,
     next_lp: Option<&LevelParams>,
     next_w_len: usize,
-    num_claims: usize,
+    _num_claims: usize,
     layout: MRowLayout,
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        MRowLayout::WithoutDBlock => y_bytes + sumcheck,
+        MRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
         MRowLayout::WithDBlock => {
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
@@ -100,7 +102,12 @@ pub fn level_proof_bytes(
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-            y_bytes + v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes
+            v_bytes
+                + FOLD_GRIND_NONCE_BYTES
+                + stage1_bytes
+                + sumcheck
+                + next_commit_bytes
+                + next_eval_bytes
         }
     }
 }
@@ -144,10 +151,9 @@ mod tests {
 
     use super::*;
 
-    use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
-    use akita_field::{FieldCore, Prime128OffsetA7F7};
+    use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
     #[cfg(not(feature = "zk"))]
@@ -156,9 +162,10 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     use crate::{
-        direct_witness_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, FlatRingVec, PackedDigits,
-        SetupSumcheckProof, SisModulusFamily, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
+        direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
+        AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
+        FlatRingVec, PackedDigits, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
+        SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -266,7 +273,7 @@ mod tests {
         }
     }
 
-    fn exact_level_proof_bytes<F: FieldCore + AkitaSerialize>(
+    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,
@@ -289,12 +296,12 @@ mod tests {
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = AkitaLevelProof {
-            y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
+        let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof {
+            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
@@ -304,7 +311,7 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
-            },
+            }),
             stage3_sumcheck_proof: stage3_setup_ring_len
                 .map(|setup_ring_len| dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len)),
         };
@@ -416,7 +423,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock
+                    MRowLayout::WithDBlock,
                 ),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
@@ -461,13 +468,13 @@ mod tests {
             ));
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
-                vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 None,
                 #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
                 #[cfg(feature = "zk")]
                 dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
+                0,
             );
 
             let serialized_without_witness =

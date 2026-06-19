@@ -106,7 +106,7 @@ Verifier surface tightening:
 - [x] `crates/akita-verifier/src/lib.rs` declares `proof`, `protocol`, `stages` as `mod` (not `pub mod`).
 - [x] The lib-root `pub use` list exposes exactly: `CommitmentVerifier`, `CommittedOpenings`, `VerifierClaims` (re-exports from `akita-types`); `verify_batched_with_policy`; `direct_witness_opening_matches`; plus `prepare_m_eval`, `PreparedMEval`, `AkitaStage1Verifier` documented as test-only carve-outs.
 - [x] The 18 internal-only items previously exposed as `pub use` (per the audit table in this PR's commit message for `e858d79`) are demoted to `pub(crate)` declarations on their definitions.
-- [x] Intra-crate imports use explicit submodule paths (`crate::protocol::levels::Foo` etc.) rather than re-exports through the crate root.
+- [x] Intra-crate imports use explicit submodule paths (`crate::protocol::core::Foo` etc.) rather than re-exports through the crate root.
 - [x] Workspace-wide `cargo clippy --all -- -D warnings` is green; the `unreachable_pub` lint catches accidental backsliding.
 
 Compatibility and CI:
@@ -195,7 +195,7 @@ The cleanup:
 1. `pub mod` → `mod` for the three submodules in `lib.rs`.
 2. The lib-root `pub use` list keeps the 5 + 3 items above, with the test-only carve-outs documented.
 3. The 18 internal-only items are demoted to `pub(crate)` on their declarations, satisfying the workspace's `unreachable_pub = "warn"` lint and reflecting actual visibility in rustdoc.
-4. Intra-crate imports use explicit module paths (`crate::protocol::levels::Foo` instead of `crate::Foo`), since the lib-root re-exports the items go through are gone.
+4. Intra-crate imports use explicit module paths (`crate::protocol::core::Foo` instead of `crate::Foo`), since the lib-root re-exports the items go through are gone.
 
 Behavior-preserving. All 572 workspace tests pass. The `unreachable_pub` lint catches future accidental over-exposure.
 

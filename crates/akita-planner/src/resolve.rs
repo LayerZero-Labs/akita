@@ -20,34 +20,49 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+use akita_types::LevelParams;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_bits,
+    terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
 };
 
 use crate::find_schedule;
+// @generated schedule table cfg imports begin
 #[cfg(not(feature = "zk"))]
 use crate::generated::fp128_d64_onehot_tiered_table;
+// @generated schedule table cfg imports end
 use crate::generated::{
-    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
-    fp128_d64_onehot_tensor_table, fp32_d128_onehot_table, fp32_d256_onehot_table,
-    fp64_d128_onehot_table, fp64_d128_table, fp64_d256_onehot_table, table_entry,
-    GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    // @generated schedule table imports begin
+    fp128_d128_full_table,
+    fp128_d128_onehot_table,
+    fp128_d64_full_table,
+    fp128_d64_onehot_table,
+    fp128_d64_onehot_tensor_table,
+    fp32_d128_onehot_table,
+    fp32_d256_onehot_table,
+    fp64_d128_onehot_table,
+    fp64_d128_table,
+    fp64_d256_onehot_table,
+    // @generated schedule table imports end
+    table_entry,
+    GeneratedScheduleKey,
+    GeneratedScheduleTable,
+    GeneratedScheduleTableEntry,
+    GeneratedStep,
     SisModulusFamily,
 };
 use crate::PlannerPolicy;
 
 /// Convert the public runtime lookup key into a generated-table lookup key.
 ///
-/// The generated-table key preserves the legacy `num_commitment_groups`
-/// field name as part of its ABI; `num_points` is the runtime-facing alias
-/// under the one-commitment-per-point invariant.
+/// Generated tables retain the `num_commitment_groups` field in their on-disk
+/// key shape, but runtime opening batches always use one commitment group.
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
-        num_commitment_groups: key.num_points,
+        num_commitment_groups: 1,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
@@ -71,10 +86,9 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 /// optimum and the shipped production dimension for every field; the small
 /// primes ship one-hot only (full-field small primes exceed the small-modulus
 /// SIS floor at realistic `num_vars`). `(family, ring_degree, onehot)`
-/// combinations with no shipped table (full-field small primes, the retired
-/// `D<=64` small-prime / full-field-`fp128` presets, or any recursive-w
-/// derived policy whose `log_commit_bound` is its `log_basis`) return `None`,
-/// so the caller regenerates from scratch.
+/// combinations with no shipped table (full-field small primes, or any
+/// recursive-w derived policy whose `log_commit_bound` is its `log_basis`)
+/// return `None`, so the caller regenerates from scratch.
 pub fn shipped_table(
     policy: &PlannerPolicy,
     root_fold_is_tensor: bool,
@@ -105,9 +119,7 @@ pub fn shipped_table(
                 fp128_d64_onehot_table()
             }
         }
-        // Full-field fp128 D=64 was retired in favour of D=128; let it
-        // regenerate from scratch.
-        (SisModulusFamily::Q128, 64, false) => return None,
+        (SisModulusFamily::Q128, 64, false) => fp128_d64_full_table(),
         (SisModulusFamily::Q32, 128, true) => fp32_d128_onehot_table(),
         // Full-field fp32 is unsecurable at any audited D (small-modulus SIS
         // floor), so there is no shipped table.
@@ -185,7 +197,7 @@ fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            root_extension_opening_partials(extension_opening_width, key.num_w_vectors),
+            extension_opening_width.saturating_mul(key.num_w_vectors),
             key.num_vars,
         )
     } else {
@@ -233,8 +245,11 @@ pub fn schedule_from_entry(
     let mut total = 0usize;
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
+    #[cfg(feature = "zk")]
     let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
+    #[cfg(not(feature = "zk"))]
+    let mut last_fold_lp: Option<LevelParams> = None;
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
@@ -266,12 +281,7 @@ pub fn schedule_from_entry(
                     level_num_claims,
                 )?;
                 let (np, nt, nw, nz) = if fold_level == 0 {
-                    (
-                        key.num_points,
-                        key.num_t_vectors,
-                        key.num_w_vectors,
-                        key.num_z_vectors,
-                    )
+                    (1, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
                 } else {
                     (1, 1, 1, 1)
                 };
@@ -342,6 +352,10 @@ pub fn schedule_from_entry(
                 total = total.checked_add(level_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
+                #[cfg(not(feature = "zk"))]
+                {
+                    last_fold_lp = Some(lp.clone());
+                }
                 steps.push(Step::Fold(FoldStep {
                     params: lp,
                     current_w_len,
@@ -350,10 +364,13 @@ pub fn schedule_from_entry(
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
-                current_log_basis = match next {
-                    GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(_) => level.log_basis,
-                };
+                #[cfg(feature = "zk")]
+                {
+                    current_log_basis = match next {
+                        GeneratedStep::Fold(next_level) => next_level.log_basis,
+                        GeneratedStep::Direct(_) => level.log_basis,
+                    };
+                }
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
@@ -391,11 +408,31 @@ pub fn schedule_from_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    (
-                        CleartextWitnessShape::PackedDigits((len, current_log_basis)),
+                    let terminal_fold_level = fold_level.saturating_sub(1);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    #[cfg(feature = "zk")]
+                    let terminal_lp_stub = LevelParams::log_basis_stub(current_log_basis);
+                    #[cfg(not(feature = "zk"))]
+                    let terminal_log_basis = terminal_lp.log_basis;
+                    #[cfg(feature = "zk")]
+                    let terminal_log_basis = current_log_basis;
+                    let witness_shape = terminal_direct_witness_shape_for_key(
+                        #[cfg(not(feature = "zk"))]
+                        terminal_lp,
+                        #[cfg(feature = "zk")]
+                        &terminal_lp_stub,
+                        field_bits,
+                        key,
+                        terminal_fold_level,
                         len,
-                        None,
-                    )
+                        terminal_log_basis,
+                    )?;
+                    (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
                 total = total.checked_add(direct_bytes).ok_or_else(|| {
@@ -439,14 +476,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_schedule_key_preserves_commitment_group_count() {
-        let one_group = AkitaScheduleLookupKey::new_with_points(16, 1, 4, 4, 1);
-        let four_groups = AkitaScheduleLookupKey::new_with_points(16, 4, 4, 4, 1);
-
-        assert_ne!(
-            generated_schedule_lookup_key(one_group),
-            generated_schedule_lookup_key(four_groups),
-            "generated schedule lookup must not alias differently grouped commitment shapes"
-        );
+    fn generated_schedule_key_uses_single_commitment_group() {
+        let key = AkitaScheduleLookupKey::new(16, 4, 4, 1);
+        assert_eq!(generated_schedule_lookup_key(key).num_commitment_groups, 1);
     }
 }

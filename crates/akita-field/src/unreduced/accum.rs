@@ -77,7 +77,7 @@ impl Neg for Fp32ProductAccum {
     }
 }
 
-/// Accumulator for `RingSubfieldFpExt4<Fp32>` products with delayed reduction.
+/// Accumulator for `FpExt4<Fp32>` products with delayed reduction.
 ///
 /// Each slot holds the unreduced u128 sum for one of the 4 ring-subfield
 /// coefficients. The fused polynomial-multiply + φ(X)-reduction is already
@@ -88,14 +88,14 @@ impl Neg for Fp32ProductAccum {
 /// slot (slot 0 is the worst case). The u128 capacity of 2^128 allows up
 /// to 2^63 accumulations before overflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingSubfieldFpExt4Fp32ProductAccum(pub [u128; 4]);
+pub struct FpExt4Fp32ProductAccum(pub [u128; 4]);
 
-impl RingSubfieldFpExt4Fp32ProductAccum {
+impl FpExt4Fp32ProductAccum {
     /// Additive identity accumulator.
     pub const ZERO: Self = Self([0; 4]);
 
     /// Reduce accumulated unreduced coefficients to a canonical
-    /// `RingSubfieldFpExt4<Fp32<P>>`.
+    /// `FpExt4<Fp32<P>>`.
     #[inline]
     pub fn reduce<const P: u32>(self) -> [Fp32<P>; 4] {
         [
@@ -107,7 +107,7 @@ impl RingSubfieldFpExt4Fp32ProductAccum {
     }
 }
 
-impl Add for RingSubfieldFpExt4Fp32ProductAccum {
+impl Add for FpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
@@ -119,7 +119,7 @@ impl Add for RingSubfieldFpExt4Fp32ProductAccum {
         ])
     }
 }
-impl AddAssign for RingSubfieldFpExt4Fp32ProductAccum {
+impl AddAssign for FpExt4Fp32ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
@@ -128,7 +128,7 @@ impl AddAssign for RingSubfieldFpExt4Fp32ProductAccum {
         self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
     }
 }
-impl Sub for RingSubfieldFpExt4Fp32ProductAccum {
+impl Sub for FpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
@@ -140,7 +140,7 @@ impl Sub for RingSubfieldFpExt4Fp32ProductAccum {
         ])
     }
 }
-impl SubAssign for RingSubfieldFpExt4Fp32ProductAccum {
+impl SubAssign for FpExt4Fp32ProductAccum {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
@@ -149,7 +149,7 @@ impl SubAssign for RingSubfieldFpExt4Fp32ProductAccum {
         self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
     }
 }
-impl Neg for RingSubfieldFpExt4Fp32ProductAccum {
+impl Neg for FpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {

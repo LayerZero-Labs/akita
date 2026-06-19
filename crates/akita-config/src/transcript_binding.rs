@@ -1,6 +1,6 @@
 //! Canonical transcript descriptor binding shared by prover and verifier.
 //!
-//! Both `akita_prover::batched_prove` and `akita_verifier::verify_batched`
+//! Both `akita_prover::batched_prove` and `akita_verifier::batched_verify`
 //! bind the same canonical [`AkitaInstanceDescriptor`] bytes into the
 //! Fiat-Shamir transcript before protocol replay. The function lives here
 //! (rather than in `akita-prover` or `akita-verifier`) so both sides reach
@@ -12,12 +12,12 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection,
+    FpExtEncoding, OpeningBatch, PlanSection, Schedule, SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
 ///
-/// Both `batched_prove` (prover) and `verify_batched` (verifier) call this
+/// Both `batched_prove` (prover) and `batched_verify` (verifier) call this
 /// helper after schedule selection and before protocol replay. The function
 /// is `Cfg`-driven (algebra section, decomposition, SIS family), so both
 /// sides produce byte-identical descriptor bytes for the same inputs and the
@@ -34,7 +34,7 @@ use akita_types::{
 /// - canonical descriptor serialization fails.
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     setup: &AkitaExpandedSetup<F>,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     schedule: &Schedule,
     basis: BasisMode,
     transcript: &mut T,
@@ -43,11 +43,11 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>,
+    Cfg::ExtField: FpExtEncoding<F>,
+    Cfg::ExtField: FpExtEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
@@ -55,7 +55,7 @@ where
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(schedule),
-        CallSection::from_incidence(incidence, basis)?,
+        CallSection::from_opening_batch(opening_batch, basis)?,
     );
     let descriptor_bytes = descriptor
         .canonical_bytes()

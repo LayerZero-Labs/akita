@@ -1,14 +1,286 @@
-use akita_field::FieldCore;
-use akita_prover::PreparedCrtNttProfile;
+use akita_field::{CanonicalField, FieldCore};
+use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
-    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
+    layout::proof_size::field_bytes,
+    schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
+    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
+    LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
+
+const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+/// Structured tail witness report for profile bench / CI (`scripts/profile_bench_report.py`).
+pub(crate) fn emit_proof_tail_report<FF, L>(
+    label: &str,
+    proof: &AkitaBatchedProof<FF, L>,
+    schedule: &Schedule,
+    field_bits: u32,
+) where
+    FF: FieldCore + CanonicalField + AkitaSerialize,
+    L: FieldCore,
+{
+    if proof.is_root_direct() {
+        tracing::info!(
+            label,
+            tail_bytes = 0u32,
+            final_w_encoding = "none",
+            final_w_policy = "root_direct",
+            "proof tail summary"
+        );
+        eprintln!("[{label}]   final_w: none (root-direct zero-fold; no cleartext tail witness)");
+        return;
+    }
+
+    let final_w = proof.final_witness();
+    let tail_bytes = final_w.serialized_size(Compress::No);
+    let num_elems = final_w.num_elems();
+
+    if let Some(packed) = final_w.as_packed_digits() {
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_encoding = "packed_digits",
+            final_w_policy = "zk_fallback",
+            final_w_bits_per_elem = packed.bits_per_elem,
+            "proof tail summary"
+        );
+        eprintln!(
+            "[{label}]   final_w: encoding=packed_digits (zk fallback), total={tail_bytes} bytes, \
+             elems={num_elems}, bits/elem={}",
+            packed.bits_per_elem,
+        );
+        return;
+    }
+
+    if let Some(segment) = final_w.as_segment_typed() {
+        let field_sz = field_bytes(FF::modulus_bits());
+        let ring_dim = segment.layout.ring_dimension;
+        let z_golomb_bytes = segment.z_payload.len();
+        let z_field_elems = segment.layout.z_coords;
+        let z_ring_elems = z_field_elems / ring_dim.max(1);
+        let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
+        let e_field_elems = segment.e_fields.coeff_len();
+        let t_field_elems = segment.t_fields.coeff_len();
+        let r_field_elems = segment.r_fields.coeff_len();
+        let e_ring_elems = e_field_elems / ring_dim.max(1);
+        let t_ring_elems = t_field_elems / ring_dim.max(1);
+        let r_ring_elems = r_field_elems / ring_dim.max(1);
+        let e_bytes = e_field_elems.saturating_mul(field_sz);
+        let t_bytes = t_field_elems.saturating_mul(field_sz);
+        let r_bytes = r_field_elems.saturating_mul(field_sz);
+        let z_budget_bytes = schedule_terminal_direct_witness_shape(schedule)
+            .ok()
+            .and_then(|shape| match shape {
+                CleartextWitnessShape::SegmentTyped(scheduled) => Some(scheduled.z_payload_bytes),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
+        let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
+        let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
+        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_public).unwrap_or(0);
+        let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
+        let z_bits_per_coord_golomb = z_stats
+            .as_ref()
+            .map(|s| s.bits_per_coord_k_public)
+            .unwrap_or(0.0);
+        let z_bits_per_coord_packed = z_stats
+            .as_ref()
+            .map(|s| s.bits_per_coord_packed_digits)
+            .unwrap_or(0.0);
+        let z_packed_hypothetical_bytes = z_stats
+            .as_ref()
+            .map(|s| s.total_bits_packed_digits.div_ceil(8))
+            .unwrap_or(0);
+        let z_golomb_savings_bytes = z_packed_hypothetical_bytes.saturating_sub(z_golomb_bytes);
+
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_encoding = "segment_typed",
+            final_w_policy = "non_zk_default",
+            tail_log_basis = segment.layout.log_basis,
+            tail_z_first = segment.layout.z_first as u8,
+            tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
+            tail_z_golomb_bytes = z_golomb_bytes,
+            tail_z_bytes = z_wire_bytes,
+            tail_z_field_elems = z_field_elems,
+            tail_z_ring_elems = z_ring_elems,
+            tail_z_budget_bytes = z_budget_bytes,
+            tail_z_slack_bytes = z_slack_bytes,
+            tail_e_field_elems = e_field_elems,
+            tail_e_ring_elems = e_ring_elems,
+            tail_t_field_elems = t_field_elems,
+            tail_t_ring_elems = t_ring_elems,
+            tail_r_field_elems = r_field_elems,
+            tail_r_ring_elems = r_ring_elems,
+            tail_e_bytes = e_bytes,
+            tail_t_bytes = t_bytes,
+            tail_r_bytes = r_bytes,
+            z_witness_linf_cap,
+            z_rice_k,
+            z_coords = z_stats_coords,
+            z_bits_per_coord_golomb,
+            z_bits_per_coord_packed,
+            z_packed_hypothetical_bytes,
+            z_golomb_savings_bytes,
+            "proof tail summary"
+        );
+
+        let golomb_line = z_stats
+            .map(|stats| {
+                format!(
+                    " Golomb z: witness_linf_cap={} k_public={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@k_public vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
+                     (hypothetical packed z={} B, savings={} B); \
+                     planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
+                     dist max={} median={} p90={} p99={}",
+                    stats.witness_linf_cap,
+                    stats.rice_k_public,
+                    stats.rice_k_empirical,
+                    stats.coord_count,
+                    stats.bits_per_coord_k_public,
+                    stats.bits_per_coord_k_empirical,
+                    stats.bits_per_coord_packed_digits,
+                    stats.total_bits_packed_digits.div_ceil(8),
+                    stats
+                        .total_bits_packed_digits
+                        .div_ceil(8)
+                        .saturating_sub(z_golomb_bytes),
+                    stats.observed_max_abs,
+                    stats.median_abs,
+                    stats.p90_abs,
+                    stats.p99_abs,
+                )
+            })
+            .unwrap_or_default();
+
+        eprintln!(
+            "[{label}]   final_w: encoding=segment_typed (non-zk default), total={tail_bytes} bytes, \
+             logical_elems={num_elems}, log_basis={}, z_first={}{}",
+            segment.layout.log_basis,
+            segment.layout.z_first,
+            golomb_line,
+        );
+        eprintln!(
+            "[{label}]     z: {z_wire_bytes} B (len_prefix={TAIL_Z_LENGTH_PREFIX_BYTES} + golomb={z_golomb_bytes}), \
+             field_coeffs={z_field_elems}, ring_elems={z_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     e: {e_bytes} B, field_coeffs={e_field_elems}, ring_elems={e_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
+        );
+        eprintln!(
+            "[{label}]     r: {r_bytes} B, field_coeffs={r_field_elems}, ring_elems={r_ring_elems}",
+        );
+        if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
+            emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
+        }
+        return;
+    }
+
+    tracing::info!(
+        label,
+        tail_bytes,
+        final_w_num_elems = num_elems,
+        final_w_encoding = "field_elements",
+        final_w_policy = "root_direct_witness",
+        "proof tail summary"
+    );
+    eprintln!(
+        "[{label}]   final_w: encoding=field_elements (root-direct witness), \
+         total={tail_bytes} bytes, field_elems={num_elems}",
+    );
+}
+
+fn segment_typed_z_fold_stats<FF: FieldCore>(
+    witness: &akita_types::SegmentTypedWitness<FF>,
+    schedule: &Schedule,
+    field_bits: u32,
+) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return Err(akita_field::AkitaError::InvalidSetup(
+            "tail segment multiplicities".to_string(),
+        ));
+    };
+    z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
+}
+
+fn emit_z_golomb_k_sweep<FF: FieldCore>(
+    label: &str,
+    witness: &akita_types::SegmentTypedWitness<FF>,
+    schedule: &Schedule,
+    field_bits: u32,
+    actual_z_payload_bytes: usize,
+) {
+    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
+    let Ok(terminal_scheduled) = schedule.get_execution_schedule(terminal_fold_level) else {
+        return;
+    };
+    let lp = &terminal_scheduled.params;
+    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+    else {
+        return;
+    };
+    let Ok(z_values) = z_fold_decoded_from_segment(witness, lp, num_t_vectors) else {
+        return;
+    };
+    let Ok(stats) = z_fold_encoding_stats_from_segment(witness, lp, num_t_vectors, field_bits)
+    else {
+        return;
+    };
+    let k_hi = stats
+        .rice_k_public
+        .saturating_add(4)
+        .max(stats.rice_k_empirical);
+    let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
+        return;
+    };
+    let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
+    eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
+    for &(k, bytes) in &sweep {
+        let marker = if k == stats.rice_k_public {
+            "  <-- public k (sound)"
+        } else if k == stats.rice_k_empirical {
+            "  <-- empirical min on this witness"
+        } else if k == k_observed {
+            "  <-- k from observed max only (NOT sound)"
+        } else {
+            ""
+        };
+        let delta = bytes as i64 - actual_z_payload_bytes as i64;
+        eprintln!(
+            "[{label}]     k={k:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
+            (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
+        );
+    }
+    if let Some((k, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
+        let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
+        eprintln!(
+            "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
+             (vs actual {actual_z_payload_bytes} B at k_public={}, delta {save_vs_beta} B; \
+             sound tightening needs public k <= k_public)",
+            stats.rice_k_public,
+        );
+    }
 }
 
 /// Surface the prepared-setup memory footprint: the plain shared setup vector
@@ -157,7 +429,7 @@ fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
 /// stage-3 proof and contribute zero.
 pub(crate) fn observed_stage3_setup_product_bytes<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_bytes = proof.root.as_fold().map_or(0, |fold| {
@@ -167,45 +439,128 @@ where
         .steps
         .iter()
         .map(|step| match step {
-            AkitaProofStep::Intermediate(lp) => {
-                stage3_sumcheck_size(lp.stage3_sumcheck_proof.as_ref())
+            AkitaLevelProof::Intermediate { .. } => {
+                stage3_sumcheck_size(step.stage3_sumcheck_proof())
             }
-            AkitaProofStep::Terminal(_) => 0,
+            AkitaLevelProof::Terminal { .. } => 0,
         })
         .sum();
     root_bytes + step_bytes
+}
+
+fn fold_grind_nonce_wire_bytes() -> usize {
+    0u32.serialized_size(Compress::No)
+}
+
+fn take_fold_grind_observation<'a>(
+    grind_observations: &'a [FoldGrindObservation],
+    obs_idx: &mut usize,
+    grind_nonce: u32,
+) -> &'a FoldGrindObservation {
+    let obs = grind_observations.get(*obs_idx).unwrap_or_else(|| {
+        panic!(
+            "missing fold grind observation for level obs_idx={obs_idx} grind_nonce={grind_nonce}"
+        )
+    });
+    assert_eq!(
+        obs.grind_nonce, grind_nonce,
+        "fold grind observation nonce mismatch at obs_idx={obs_idx}"
+    );
+    *obs_idx += 1;
+    obs
+}
+
+fn collect_fold_grind_nonces<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> Vec<u32>
+where
+    FF: FieldCore,
+    L: FieldCore,
+{
+    if proof.is_root_direct() {
+        return Vec::new();
+    }
+
+    let mut nonces = Vec::with_capacity(1 + proof.steps.len());
+    if let Ok(root_nonce) = proof.root.fold_grind_nonce() {
+        nonces.push(root_nonce);
+    }
+    for step in &proof.steps {
+        nonces.push(step.fold_grind_nonce());
+    }
+    nonces
+}
+
+fn emit_fold_grind_summary(label: &str, grind_observations: &[FoldGrindObservation]) {
+    if grind_observations.is_empty() {
+        tracing::info!(label, grind_levels = 0u32, "fold grind summary");
+        eprintln!("[{label}] fold grind: no tail-bound fold levels");
+        return;
+    }
+
+    let max_nonce = grind_observations
+        .iter()
+        .map(|obs| obs.grind_nonce)
+        .max()
+        .expect("non-empty observation list");
+    let attempts_sum: u64 = grind_observations
+        .iter()
+        .map(|obs| u64::from(obs.grind_probe_count))
+        .sum();
+    let nonces_csv = grind_observations
+        .iter()
+        .map(|obs| obs.grind_nonce.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let probe_counts_csv = grind_observations
+        .iter()
+        .map(|obs| obs.grind_probe_count.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    tracing::info!(
+        label,
+        grind_levels = grind_observations.len(),
+        grind_nonce_max = max_nonce,
+        grind_attempts_sum = attempts_sum,
+        grind_nonces = nonces_csv.as_str(),
+        grind_probe_counts = probe_counts_csv.as_str(),
+        "fold grind summary"
+    );
+    eprintln!(
+        "[{label}] fold grind: levels={}, attempts_sum={}, max_nonce={}, nonces=[{nonces_csv}], probe_counts=[{probe_counts_csv}]",
+        grind_observations.len(),
+        attempts_sum,
+        max_nonce,
+    );
 }
 
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
     level: &AkitaLevelProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let y_rings_size = level.y_ring.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
+        extension_opening_reduction_sizes(level.extension_opening_reduction());
+    let v_size = level.v().serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
+    let stage2_intermediate = level
+        .stage2()
+        .as_intermediate()
+        .expect("Akita level proof must carry intermediate stage-2 proof");
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(level.y_ring.coeff_len(), D),
-        D,
-    );
-    eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), D),
+        ring_elem_count(level.v().coeff_len(), D),
         D,
     );
-    let stage1 = &level.stage1;
-    let stage2 = &level.stage2;
+    let stage1 = level.stage1();
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -228,21 +583,36 @@ where
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof
+        .serialized_size(Compress::No);
     #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
-    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof_masked
+        .serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof());
+    let next_w_commitment_size = stage2_intermediate
+        .next_w_commitment
+        .serialized_size(Compress::No);
+    let next_w_eval_size = stage2_intermediate
+        .next_w_eval()
+        .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce();
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
+
     tracing::info!(
         label,
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -254,6 +624,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -261,15 +632,15 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2.next_w_commitment.coeff_len(),
+        stage2_intermediate.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
@@ -281,32 +652,94 @@ where
     total
 }
 
-fn print_terminal_level_breakdown<FF, L, const D: usize>(
+trait TerminalProofView<FF: FieldCore, L: FieldCore>: AkitaSerialize {
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>>;
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L>;
+    fn final_witness(&self) -> &CleartextWitnessProof<FF>;
+    fn fold_grind_nonce_value(&self) -> u32;
+}
+
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for TerminalLevelProof<FF, L>
+{
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>> {
+        self.extension_opening_reduction.as_ref()
+    }
+
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L> {
+        &self.stage2
+    }
+
+    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
+        self.final_witness()
+    }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce
+    }
+}
+
+impl<FF: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
+    TerminalProofView<FF, L> for AkitaLevelProof<FF, L>
+{
+    fn extension_opening_reduction(
+        &self,
+    ) -> Option<&akita_types::ExtensionOpeningReductionProof<L>> {
+        self.extension_opening_reduction()
+    }
+
+    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, L> {
+        self.stage2()
+    }
+
+    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
+        self.stage2()
+            .final_witness()
+            .expect("terminal Akita level proof must carry final witness")
+    }
+
+    fn fold_grind_nonce_value(&self) -> u32 {
+        self.fold_grind_nonce()
+    }
+}
+
+fn print_terminal_level_breakdown<FF, L, P, const D: usize>(
     label: &str,
     level_idx: usize,
-    level: &TerminalLevelProof<FF, L>,
+    level: &P,
     root_variant: &'static str,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
+    P: TerminalProofView<FF, L>,
 {
-    let y_rings_size = level.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+        extension_opening_reduction_sizes(level.extension_opening_reduction());
     let stage2_sumcheck_size = {
         #[cfg(not(feature = "zk"))]
         {
-            level.stage2_sumcheck.serialized_size(Compress::No)
+            level.stage2().sumcheck().serialized_size(Compress::No)
         }
         #[cfg(feature = "zk")]
         {
             level
-                .stage2_sumcheck_proof_masked
+                .stage2()
+                .sumcheck_masked()
                 .serialized_size(Compress::No)
         }
     };
-    let final_witness_size = level.final_witness.serialized_size(Compress::No);
+    let final_witness_size = level.final_witness().serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = level.fold_grind_nonce_value();
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -314,7 +747,7 @@ where
     let total = full - final_witness_size;
 
     // Only the fields structurally present in `TerminalLevelProof` are
-    // emitted: `y_rings`, optional extension-opening reduction, the
+    // emitted: optional extension-opening reduction, the
     // stage-2 sumcheck, and `final_witness`. The intermediate-level
     // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
     // terminal and therefore omitted from the tracing payload; downstream
@@ -324,9 +757,11 @@ where
         level = level_idx,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -341,21 +776,16 @@ where
     eprintln!(
         "[{label}]   {header}: total={total} bytes (excl. final_witness={final_witness_size})"
     );
-    eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(level.y_rings.coeff_len(), D),
-        D,
-    );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + fold_grind_nonce_size
             + stage2_sumcheck_size
             + final_witness_size
     );
@@ -365,13 +795,22 @@ where
 fn print_batched_root_breakdown<FF, L, const D: usize>(
     label: &str,
     root: &AkitaBatchedRootProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
+    obs_idx: &mut usize,
 ) -> usize
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
-        return print_terminal_level_breakdown::<FF, L, D>(label, 0, terminal, "terminal");
+        return print_terminal_level_breakdown::<FF, L, _, D>(
+            label,
+            0,
+            terminal,
+            "terminal",
+            grind_observations,
+            obs_idx,
+        );
     }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -390,13 +829,15 @@ where
         );
         return total;
     };
-    let y_rings_size = fold.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(fold.extension_opening_reduction.as_ref());
     let v_size = fold.v.serialized_size(Compress::No);
     let total = fold.serialized_size(Compress::No);
     let stage1 = &fold.stage1;
-    let stage2 = &fold.stage2;
+    let stage2_intermediate = fold
+        .stage2
+        .as_intermediate()
+        .expect("fold root proof must carry intermediate stage-2 proof");
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -419,22 +860,36 @@ where
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof
+        .serialized_size(Compress::No);
     #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage2_sumcheck_size = stage2_intermediate
+        .sumcheck_proof_masked
+        .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
+    let next_w_commitment_size = stage2_intermediate
+        .next_w_commitment
+        .serialized_size(Compress::No);
+    let next_w_eval_size = stage2_intermediate
+        .next_w_eval()
+        .serialized_size(Compress::No);
+    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let grind_nonce = fold.fold_grind_nonce;
+    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
+    let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
         label,
         level = 0usize,
         d = D,
         total_bytes = total,
-        y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
+        fold_grind_nonce_bytes = fold_grind_nonce_size,
+        grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -447,12 +902,6 @@ where
     );
     eprintln!("[{label}]   batched_root: total={total} bytes");
     eprintln!(
-        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
-        y_rings_size,
-        ring_elem_count(fold.y_rings.coeff_len(), D),
-        D,
-    );
-    eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
         ring_elem_count(fold.v.coeff_len(), D),
@@ -460,6 +909,7 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -467,15 +917,15 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2.next_w_commitment.coeff_len(),
+        stage2_intermediate.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_rings_size
-            + extension_opening_partials_size
+        extension_opening_partials_size
             + extension_opening_sumcheck_size
             + v_size
+            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
@@ -490,8 +940,9 @@ where
 pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, L>,
+    grind_observations: &[FoldGrindObservation],
 ) where
-    FF: FieldCore + AkitaSerialize,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
@@ -552,54 +1003,49 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    print_batched_root_breakdown::<FF, L, D>(label, &proof.root);
+    let mut obs_idx = 0usize;
+    print_batched_root_breakdown::<FF, L, D>(label, &proof.root, grind_observations, &mut obs_idx);
     for (i, step) in proof.steps.iter().enumerate() {
         let level_idx = i + 1;
         match step {
-            AkitaProofStep::Intermediate(lp) => {
-                print_akita_level_breakdown::<FF, L, D>(label, level_idx, lp);
+            AkitaLevelProof::Intermediate { .. } => {
+                print_akita_level_breakdown::<FF, L, D>(
+                    label,
+                    level_idx,
+                    step,
+                    grind_observations,
+                    &mut obs_idx,
+                );
             }
-            AkitaProofStep::Terminal(lp) => {
-                print_terminal_level_breakdown::<FF, L, D>(label, level_idx, lp, "fold");
+            AkitaLevelProof::Terminal { .. } => {
+                print_terminal_level_breakdown::<FF, L, _, D>(
+                    label,
+                    level_idx,
+                    step,
+                    "fold",
+                    grind_observations,
+                    &mut obs_idx,
+                );
             }
         }
     }
     if !proof.is_root_direct() {
-        emit_observed_tail_summary(label, proof.final_witness());
-    }
-}
-
-fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
-    label: &str,
-    final_w: &CleartextWitnessProof<FF>,
-) {
-    let tail_bytes = final_w.serialized_size(Compress::No);
-    let num_elems = final_w.num_elems();
-    if let Some(packed) = final_w.as_packed_digits() {
-        tracing::info!(
-            label,
-            tail_bytes,
-            final_w_num_elems = num_elems,
-            final_w_bits_per_elem = packed.bits_per_elem,
-            final_w_encoding = "packed_digits",
-            "proof tail summary"
+        assert_eq!(
+            obs_idx,
+            grind_observations.len(),
+            "[{label}] fold grind observation count must match folded proof levels"
         );
-        eprintln!(
-            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem={}",
-            packed.bits_per_elem,
-        );
-    } else {
-        tracing::info!(
-            label,
-            tail_bytes,
-            final_w_num_elems = num_elems,
-            final_w_encoding = "field_elements",
-            "proof tail summary"
-        );
-        eprintln!(
-            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem=field"
+        let proof_nonces = collect_fold_grind_nonces(proof);
+        assert_eq!(
+            proof_nonces,
+            grind_observations
+                .iter()
+                .map(|obs| obs.grind_nonce)
+                .collect::<Vec<_>>(),
+            "[{label}] fold grind observation nonces must match proof wire nonces"
         );
     }
+    emit_fold_grind_summary(label, grind_observations);
 }
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {

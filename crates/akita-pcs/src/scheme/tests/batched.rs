@@ -11,7 +11,7 @@ fn batched_commit_matches_individual_commits() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
@@ -67,7 +67,7 @@ fn batched_root_direct_fast_path_round_trip() {
         .collect();
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -104,14 +104,14 @@ fn batched_root_direct_fast_path_round_trip() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -145,13 +145,13 @@ fn batched_root_direct_fast_path_round_trip() {
         &round_trip,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -175,7 +175,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         .collect();
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -194,14 +194,14 @@ fn batched_root_direct_rejects_wrong_opening() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -216,13 +216,13 @@ fn batched_root_direct_rejects_wrong_opening() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -239,7 +239,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
@@ -262,14 +262,14 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &setup,
         &CpuBackend,
         &prepared,
-        vec![(
+        (
             &opening_point[..],
-            CommittedPolynomials {
+            vec![CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            },
-        )],
+            }],
+        ),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -287,13 +287,13 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -307,13 +307,13 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: wrong_opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -327,10 +327,10 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         let fold = oversized_proof
             .root
             .as_fold_mut()
-            .expect("oversized-y-rings test expects a fold-rooted batched proof");
-        let mut oversized_y_coeffs = fold.y_rings.coeffs().to_vec();
-        oversized_y_coeffs.extend(vec![F::zero(); D]);
-        fold.y_rings = FlatRingVec::from_coeffs(oversized_y_coeffs);
+            .expect("oversized-v test expects a fold-rooted batched proof");
+        let mut oversized_v_coeffs = fold.v.coeffs().to_vec();
+        oversized_v_coeffs.extend(vec![F::zero(); D]);
+        fold.v = FlatRingVec::from_coeffs(oversized_v_coeffs);
     }
 
     let mut oversized_openings = openings.to_vec();
@@ -342,13 +342,13 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &oversized_proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
+        (
             &opening_point[..],
-            CommittedOpenings {
+            vec![CommittedOpenings {
                 openings: oversized_opening_groups[0],
                 commitment: &commitments[0],
-            },
-        )],
+            }],
+        ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );

@@ -270,7 +270,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// w.r.t. `Mul`, and otherwise falling back to the per-term
     /// [`Self::eval_state_at_suffix`].
     ///
-    /// On the exact path (e.g. the fp32 `RingSubfieldFpExt4<Fp32>` campaign field)
+    /// On the exact path (e.g. the fp32 `FpExt4<Fp32>` campaign field)
     /// each product is widened into `E::ProductAccum` and the
     /// `state.len() == E::EXT_DEGREE` terms are summed before a single
     /// `reduce_product_accum`. The per-coefficient reduction is additive over

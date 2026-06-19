@@ -9,19 +9,20 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-use akita_types::FlatDigitBlocks;
+use akita_field::ExtField;
+use akita_types::{tensor_packed_witness_evals, FlatDigitBlocks, FpExtEncoding};
 use std::marker::PhantomData;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, FoldInputPoly};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -100,7 +101,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
 
     #[inline]
     fn num_blocks_for_block_len(&self, block_len: usize) -> usize {
-        self.padded_ring_elems.div_ceil(block_len)
+        self.coeffs.len().div_ceil(block_len).max(1)
     }
 }
 
@@ -110,6 +111,38 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         self.padded_ring_elems
+    }
+
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidInput("recursive base evals length overflow".to_string())
+        })?;
+        let mut base_evals = Vec::with_capacity(expected_len);
+        for coeffs in self.coeffs {
+            base_evals.extend(coeffs.iter().copied().map(F::from_i8));
+        }
+        base_evals.resize(expected_len, F::zero());
+        Ok(base_evals)
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let base_evals = self.base_evals()?;
+        tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
+    }
+
+    fn tensor_packed_extension_fold_input<E>(
+        &self,
+    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
+    where
+        Self: Sized,
+        F: CanonicalField + FromPrimitiveInt,
+        E: FpExtEncoding<F>,
+    {
+        Ok(FoldInputPoly::Original(self))
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
@@ -161,7 +194,7 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let num_blocks = eval_outer_scalars.len();
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         let folded = cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
@@ -193,7 +226,7 @@ where
         fold_scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let num_blocks = eval_outer_scalars.len();
+        let num_blocks = self.num_blocks_for_block_len(block_len);
         let folded = cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
@@ -241,6 +274,26 @@ where
             inner_width,
         );
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
+    }
+
+    fn decompose_fold_batched(
+        _polys: &[&Self],
+        _challenges: &[SparseChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        None
+    }
+
+    fn decompose_fold_tensor_batched(
+        _polys: &[&Self],
+        _tensor: &TensorChallenges,
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -345,6 +398,53 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn fused_evaluation_uses_layout_block_stride() {
+        const D: usize = 4;
+        let digits = (0..24).map(|idx| idx as i8 - 12).collect();
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let block_len = 3;
+        let eval_outer_scalars = vec![F::from_u64(2), F::from_u64(5)];
+        let fold_scalars = vec![F::from_u64(7), F::from_u64(11), F::from_u64(13)];
+
+        let expected_folded = view.fold_blocks(&fold_scalars, block_len);
+        let expected_eval = expected_folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
+        let (eval, folded) = view.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+
+        assert_eq!(folded, expected_folded);
+        assert_eq!(eval, expected_eval);
+    }
+
+    #[test]
+    fn fused_ring_evaluation_uses_layout_block_stride() {
+        const D: usize = 4;
+        let digits = (0..24).map(|idx| idx as i8 - 12).collect();
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let block_len = 3;
+        let eval_outer_scalars = vec![ring::<D>(2), ring::<D>(5)];
+        let fold_scalars = vec![ring::<D>(7), ring::<D>(11), ring::<D>(13)];
+
+        let expected_folded = view.fold_blocks_ring(&fold_scalars, block_len);
+        let expected_eval = expected_folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
+            });
+        let (eval, folded) =
+            view.evaluate_and_fold_ring(&eval_outer_scalars, &fold_scalars, block_len);
+
+        assert_eq!(folded, expected_folded);
+        assert_eq!(eval, expected_eval);
     }
 
     #[test]

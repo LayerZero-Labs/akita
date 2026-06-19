@@ -37,6 +37,7 @@ rand = "0.8"
 
 [features]
 default = []
+logging-transcript = ["akita-transcript/logging-transcript"]
 parallel = [
   "dep:rayon",
   "akita-challenges/parallel",

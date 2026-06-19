@@ -17,10 +17,10 @@
 //! you need to reach into them, that's a signal to either move the consumer
 //! into this crate or expose a narrower entry point.
 //!
-//! Three items are kept public solely so a small number of integration tests
+//! These items are kept public solely so a small number of integration tests
 //! in `akita-pcs` can exercise specific replay primitives in isolation:
 //! [`prepare_ring_switch_row_eval`], [`RingSwitchDeferredRowEval`],
-//! [`SetupEvaluator`], and [`AkitaStage1Verifier`]. They are not part of the
+//! [`RingSwitchReplay`], and [`AkitaStage1Verifier`]. They are not part of the
 //! verifier's intended downstream API.
 
 mod proof;
@@ -30,7 +30,6 @@ mod stages;
 pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
-    prepare_ring_switch_row_eval, verify_batched, verify_root_direct_commitments_with_params,
-    RingSwitchDeferredRowEval, RingSwitchReplay, RootDirectBlindingPayload, SetupEvaluator,
+    batched_verify, prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay,
 };
-pub use stages::AkitaStage1Verifier;
+pub use stages::stage1::AkitaStage1Verifier;

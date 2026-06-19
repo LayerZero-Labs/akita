@@ -6,9 +6,12 @@
 use super::CommitmentConfig;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
-use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFpExt4};
-use akita_types::ClaimIncidenceSummary;
+use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_types::OpeningBatch;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 /// Minimum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
@@ -94,49 +97,65 @@ fn validate_proof_optimized_fold_entropy(
 ///
 /// Planned role footprints are not monotone across shapes, so scan all
 /// supported sub-shapes and keep the largest packed setup length.
+type SetupMatrixEnvelopeCache =
+    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>>;
+
+static SETUP_MATRIX_ENVELOPE_CACHE: SetupMatrixEnvelopeCache =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
+) -> Result<SetupMatrixEnvelope, AkitaError> {
+    let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
+    if let Some(cached) = SETUP_MATRIX_ENVELOPE_CACHE
+        .lock()
+        .expect("setup matrix envelope cache poisoned")
+        .get(&cache_key)
+        .copied()
+    {
+        return Ok(cached);
+    }
+
+    let envelope =
+        proof_optimized_max_setup_matrix_size_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
+
+    SETUP_MATRIX_ENVELOPE_CACHE
+        .lock()
+        .expect("setup matrix envelope cache poisoned")
+        .insert(cache_key, envelope);
+
+    Ok(envelope)
+}
+
+fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    if max_num_points == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_points must be at least 1".to_string(),
-        ));
-    }
-    if max_num_points > max_num_batched_polys {
-        return Err(AkitaError::InvalidSetup(format!(
-            "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
-        )));
-    }
-
     let mut max_setup_len: usize = 1;
     #[cfg(feature = "zk")]
     let mut max_zk_b_len: usize = 1;
     #[cfg(feature = "zk")]
     let mut max_zk_d_len: usize = 1;
     let mut saw_supported_shape = false;
+    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
     for num_vars in 1..=max_num_vars {
-        for num_polys in 1..=max_num_batched_polys {
-            let upper_pts = num_polys.min(max_num_points);
-            for num_points in 1..=upper_pts {
-                let incidence =
-                    worst_case_grouped_incidence_for_shape(num_vars, num_polys, num_points)?;
-                let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)? else {
-                    continue;
-                };
-                saw_supported_shape = true;
-                max_setup_len = max_setup_len.max(envelope.max_setup_len);
-                #[cfg(feature = "zk")]
-                {
-                    max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
-                    max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
-                }
+        for &num_polys in &poly_counts {
+            let opening_batch = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
+            let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)? else {
+                continue;
+            };
+            saw_supported_shape = true;
+            max_setup_len = max_setup_len.max(envelope.max_setup_len);
+            #[cfg(feature = "zk")]
+            {
+                max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
+                max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
             }
         }
     }
@@ -156,34 +175,43 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     })
 }
 
-/// Worst-case grouped incidence for a `(num_vars, num_claims, num_points)`
-/// shape: all excess claims are skewed into a single point group so
-/// `max_group_poly_count` (and therefore the packed B setup width) is
-/// maximized. Setup-matrix sizing must use this shape, not an even split,
-/// so the shared matrix is large enough for any runtime incidence with the
-/// same counts.
-pub fn worst_case_grouped_incidence_for_shape(
+/// Batched polynomial counts scanned by [`proof_optimized_max_setup_matrix_size`].
+///
+/// Generated schedule tables (and the offline `gen_schedule_tables` emitter)
+/// materialize only singleton (`num_polys = 1`) and 4-batched roots. Scanning
+/// every intermediate count in `1..=max` forces table misses on `2` and `3` even
+/// though setup-matrix footprints are determined by the endpoint batch sizes.
+/// Role footprints can be non-monotone in `num_vars`, but not in these skipped
+/// intermediate batch counts for the shipped table key shapes under non-zk builds.
+/// With `zk`, blinding column sizing can peak at intermediate batch counts, so
+/// scan the full `1..=max` range there.
+pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<usize> {
+    if max_num_batched_polys <= 1 {
+        vec![1]
+    } else {
+        #[cfg(feature = "zk")]
+        {
+            (1..=max_num_batched_polys).collect()
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            vec![1, max_num_batched_polys]
+        }
+    }
+}
+
+/// Worst-case opening batch for a `(num_vars, num_claims)` shape.
+pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,
     num_claims: usize,
-    num_points: usize,
-) -> Result<ClaimIncidenceSummary, AkitaError> {
-    if num_points == 0 || num_claims == 0 || num_points > num_claims {
-        return ClaimIncidenceSummary::from_counts(num_vars, num_claims, num_points);
-    }
-    let mut num_polys_per_point = vec![1usize; num_points];
-    num_polys_per_point[0] = num_claims
-        .checked_sub(num_points)
-        .and_then(|n| n.checked_add(1))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("batched incidence group width overflow".to_string())
-        })?;
-    ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
+) -> Result<OpeningBatch, AkitaError> {
+    OpeningBatch::same_point(num_vars, num_claims)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+    let cached_key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
 
     // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
     // serves the shipped table on a hit and regenerates via the planner DP on
@@ -191,14 +219,15 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     // too large for this preset's SIS floor) can never be committed, so it
     // needs no setup capacity. Skip it (returning `Ok(None)`) and let the
     // caller's `saw_supported_shape` guard error only if *no* shape is
-    // feasible. Genuine bugs in incidence-key or envelope construction still
+    // feasible. Genuine bugs in opening_batch-key or envelope construction still
     // propagate via `?`.
     let Ok(schedule) = Cfg::runtime_schedule(cached_key) else {
         return Ok(None);
     };
 
     Ok(Some(matrix_envelope_for_schedule::<Cfg>(
-        &schedule, incidence,
+        &schedule,
+        opening_batch,
     )?))
 }
 
@@ -236,26 +265,26 @@ where
 }
 
 /// Packed setup envelope spanning every level in `schedule` (including the
-/// root-direct / fold-root incidence widening) and, with the `zk` feature,
+/// root-direct / fold-root opening_batch widening) and, with the `zk` feature,
 /// the ZK blinding + hiding accumulators.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
 ) -> Result<SetupMatrixEnvelope, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
     let setup_levels: Vec<LevelParams> = setup_level_params_from_runtime_schedule(&schedule.steps);
     let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
-    accumulate_root_matrix_envelope_for_incidence(
+    accumulate_root_matrix_envelope_for_opening_batch(
         schedule,
-        incidence,
+        opening_batch,
         &mut envelope.max_setup_len,
     )?;
     #[cfg(feature = "zk")]
     {
-        accumulate_zk_blinding_envelope::<Cfg>(schedule, incidence, &mut envelope)?;
-        accumulate_zk_hiding_envelope::<Cfg>(schedule, incidence, &mut envelope)?;
+        accumulate_zk_blinding_envelope::<Cfg>(schedule, opening_batch, &mut envelope)?;
+        accumulate_zk_hiding_envelope::<Cfg>(schedule, opening_batch, &mut envelope)?;
         Ok(envelope)
     }
     #[cfg(not(feature = "zk"))]
@@ -295,30 +324,30 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
     Ok(())
 }
 
-fn accumulate_root_matrix_envelope_for_incidence(
+fn accumulate_root_matrix_envelope_for_opening_batch(
     schedule: &Schedule,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
         return Ok(());
     };
-    let root_len = root_runtime_matrix_len_for_incidence(&root_params, incidence)?;
+    let root_len = root_runtime_matrix_len_for_opening_batch(&root_params, opening_batch)?;
     *max_setup_len = (*max_setup_len).max(root_len);
     Ok(())
 }
 
-fn root_runtime_matrix_len_for_incidence(
+fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
 ) -> Result<usize, AkitaError> {
-    let num_claims = incidence.num_claims();
-    let max_group_poly_count = incidence
-        .num_polys_per_point()
+    let num_claims = opening_batch.num_claims();
+    let max_group_poly_count = opening_batch
+        .num_polys_per_commitment_group()
         .iter()
         .copied()
         .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty claim incidence".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
     let d_width = lp
         .num_blocks
         .checked_mul(num_claims)
@@ -356,7 +385,7 @@ fn root_runtime_matrix_len_for_incidence(
 #[cfg(feature = "zk")]
 fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    _incidence: &ClaimIncidenceSummary,
+    _opening_batch: &OpeningBatch,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     for lp in setup_level_params_from_runtime_schedule(&schedule.steps) {
@@ -387,13 +416,13 @@ fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
 #[cfg(feature = "zk")]
 fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     let Some(root_commit_params) = root_commit_params_from_schedule(schedule)? else {
         return Ok(());
     };
-    let hiding_len = zk_hiding_witness_len::<Cfg>(schedule, incidence)?;
+    let hiding_len = zk_hiding_witness_len::<Cfg>(schedule, opening_batch)?;
     let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
     let hiding_params = root_commit_params.with_decomp(
         num_ring.trailing_zeros() as usize,
@@ -435,7 +464,7 @@ fn root_commit_params_from_schedule(
 #[cfg(feature = "zk")]
 fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatch,
 ) -> Result<usize, AkitaError> {
     let fold_steps = schedule
         .steps
@@ -447,15 +476,15 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
         .collect::<Vec<_>>();
     let mut len = 0usize;
 
-    if root_tensor_projection_enabled_for_cfg::<Cfg>(incidence.num_vars()) {
-        let split_bits = Cfg::CHAL_EXT_DEGREE.trailing_zeros() as usize;
-        let rounds = incidence
+    if root_tensor_projection_enabled_for_cfg::<Cfg>(opening_batch.num_vars()) {
+        let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
+        let rounds = opening_batch
             .num_vars()
             .checked_sub(split_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("ZK projection round underflow".to_string()))?;
-        let partials = incidence
+        let partials = opening_batch
             .num_claims()
-            .checked_mul(Cfg::CHAL_EXT_DEGREE)
+            .checked_mul(Cfg::EXT_DEGREE)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("ZK projection partial overflow".to_string())
             })?;
@@ -463,12 +492,7 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     }
 
     len = len
-        .checked_add(
-            incidence
-                .num_points()
-                .checked_mul(Cfg::D)
-                .ok_or_else(|| AkitaError::InvalidSetup("ZK root mask overflow".to_string()))?,
-        )
+        .checked_add(Cfg::D)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding witness overflow".to_string()))?;
 
     if let Some(root_step) = fold_steps.first() {
@@ -485,8 +509,8 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
         let mut current_opening_vars =
             akita_types::sumcheck_rounds(root_step.params.ring_dimension, root_step.next_w_len);
         for (step_idx, step) in fold_steps.iter().enumerate().skip(1) {
-            if Cfg::CHAL_EXT_DEGREE > 1 {
-                let split_bits = Cfg::CHAL_EXT_DEGREE.trailing_zeros() as usize;
+            if Cfg::EXT_DEGREE > 1 {
+                let split_bits = Cfg::EXT_DEGREE.trailing_zeros() as usize;
                 let rounds = current_opening_vars
                     .checked_sub(split_bits)
                     .ok_or_else(|| {
@@ -494,7 +518,7 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
                             "ZK recursive projection round underflow".to_string(),
                         )
                     })?;
-                add_zk_extension_reduction_slots::<Cfg>(&mut len, Cfg::CHAL_EXT_DEGREE, rounds)?;
+                add_zk_extension_reduction_slots::<Cfg>(&mut len, Cfg::EXT_DEGREE, rounds)?;
             }
             len = len.checked_add(Cfg::D).ok_or_else(|| {
                 AkitaError::InvalidSetup("ZK recursive mask overflow".to_string())
@@ -514,12 +538,12 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "zk")]
 fn root_tensor_projection_enabled_for_cfg<Cfg: CommitmentConfig>(num_vars: usize) -> bool {
-    let width = Cfg::CHAL_EXT_DEGREE;
+    let width = Cfg::EXT_DEGREE;
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
     width > 1
-        && width == Cfg::CLAIM_EXT_DEGREE
+        && width == Cfg::EXT_DEGREE
         && width.is_power_of_two()
         && Cfg::D.is_power_of_two()
         && Cfg::D >= double_width
@@ -581,7 +605,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
     scalars: usize,
 ) -> Result<(), AkitaError> {
     let slots = scalars
-        .checked_mul(Cfg::CHAL_EXT_DEGREE)
+        .checked_mul(Cfg::EXT_DEGREE)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK scalar pad overflow".to_string()))?;
     *len = len
         .checked_add(slots)
@@ -597,7 +621,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 ///
 /// One macro covers every proof-optimized preset (fp128 and the small-field
 /// fp32/fp64 families): the fp128 presets are the special case where the
-/// claim/challenge field is the base field, `field_bits == 128`, and the SIS
+/// extension field is the base field, `field_bits == 128`, and the SIS
 /// family is `Q128`. All proof-optimized presets share `log_basis = 3`, the
 /// shared ring-challenge policy, the shared setup-matrix sizer, and the
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
@@ -618,8 +642,7 @@ macro_rules! impl_proof_optimized_preset {
     ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr $(, $tiered:expr)?)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ClaimField = $claim_field;
-            type ChallengeField = $claim_field;
+            type ExtField = $claim_field;
             const D: usize = $d;
 
             // Defaults to `false`; the tiered preset(s) pass `true` as the
@@ -655,12 +678,10 @@ macro_rules! impl_proof_optimized_preset {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-                max_num_points: usize,
             ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
-                    max_num_points,
                 )
             }
 
