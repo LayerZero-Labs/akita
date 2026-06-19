@@ -40,18 +40,32 @@ for line in match.group(1).splitlines():
     profile_ci.add(line.strip('"'))
 
 wf = workflow.read_text(encoding="utf-8")
-cases_anchor = re.search(r"AKITA_BENCH_CASES:\s*\|\s*\n", wf)
-if not cases_anchor:
-    print("AKITA_BENCH_CASES block not found", file=sys.stderr)
-    raise SystemExit(1)
+case_line = re.compile(r"^([^:]+:\d+:\d+)\s*$")
+
+def cases_after_pipe(start: int) -> list[str]:
+    cases: list[str] = []
+    for line in wf[start:].splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith(" "):
+            break
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        m = case_line.match(stripped)
+        if m:
+            cases.append(m.group(1))
+        else:
+            break
+    return cases
 
 bench_cases: list[str] = []
-for line in wf[cases_anchor.end() :].splitlines():
-    if not line.startswith("    "):
-        break
-    case_spec = line.strip()
-    if case_spec and not case_spec.startswith("#"):
-        bench_cases.append(case_spec)
+for anchor in re.finditer(r"^\s+cases:\s*\|\s*\n", wf, flags=re.MULTILINE):
+    bench_cases.extend(cases_after_pipe(anchor.end()))
+
+if not bench_cases:
+    print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
+    raise SystemExit(1)
 failed = False
 for case_spec in bench_cases:
     mode, num_vars, num_polys_s = case_spec.split(":")
