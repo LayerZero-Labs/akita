@@ -18,6 +18,7 @@
       "code": [
         "crates/akita-planner/**",
         "crates/akita-config/**",
+        "crates/akita-schedules/**",
         "crates/akita-types/src/schedule*",
         "crates/akita-types/src/**/schedule*",
         "crates/akita-types/src/proof_size.rs",
