@@ -33,9 +33,10 @@ re-derives rather than trusts.
 
 ## The planner and proof size
 
-The `Cfg`-free planner: shipped table lookup, on-demand compact→`LevelParams`
+The `Cfg`-free planner: catalog validation, on-demand compact→`LevelParams`
 expansion, and the schedule-search DP fallback (verifier-reachable, so it must
-reject malformed input, never panic). The verifier-reachable proof-size formula.
+reject malformed input, never panic). The feature-gated `akita-schedules` crate
+owns shipped table data. The verifier-reachable proof-size formula.
 
 **Sources to fold in**
 
@@ -43,5 +44,5 @@ reject malformed input, never panic). The verifier-reachable proof-size formula.
 - `crates/akita-planner/src/` (`resolve.rs`, `find_schedule`, `generated/`).
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
-- `crates/akita-config/src/generated_families.rs`, `crates/akita-planner/src/resolve.rs` (`shipped_table`).
+- `crates/akita-config/src/generated_families.rs`, `crates/akita-schedules/src/generated/`, `crates/akita-planner/src/resolve.rs` (`resolve_schedule`).
 - `AGENTS.md` (Profiling), `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.
