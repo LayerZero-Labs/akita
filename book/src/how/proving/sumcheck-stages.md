@@ -12,4 +12,4 @@ they batch and schedule together.
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage1/`, `akita_stage1_tree.rs`, `akita_stage2/`, `two_round_prefix/`.
 - `crates/akita-verifier/src/stages/`.
 - Paper §3.5 (`fig:akita-sumcheck`), §3.5.1 `sec:akita-range-check` (optimized digit range check), `sec:akita-l2-norm` (folded-witness L2 norm check), §4.3 `sec:claim-reduction` (setup product sumcheck), App B.4 `sec:akita-norm-sumcheck`.
-- `specs/packed-sumcheck.md`, `specs/setup-product-sumcheck.md`, `specs/optimized_verifier.md`.
+- `specs/packed-sumcheck.md`, `specs/setup-product-sumcheck.md`.

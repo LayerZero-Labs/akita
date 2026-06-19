@@ -12,7 +12,8 @@ use akita_field::{AkitaError, FieldCore, Zero};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
 /// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
-/// before ê/t̂; otherwise ê/t̂ precede ẑ (see `specs/optimized_verifier.md`).
+/// before ê/t̂; otherwise ê/t̂ precede ẑ (see
+/// `book/src/how/verifying/matrix_evaluation.md`).
 #[inline]
 pub fn ring_column_z_first(lp: &LevelParams) -> bool {
     lp.m_vars >= lp.r_vars

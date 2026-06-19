@@ -189,7 +189,7 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
 ## References
 
 - `STACK.md` rows 03B (`setup-product-sumcheck`) and 04 (`setup-claim-offloading`).
-- `specs/setup-layout-repack.md`, `specs/optimized_verifier.md`.
+- `specs/setup-layout-repack.md`, `book/src/how/verifying/matrix_evaluation.md`.
 - `crates/akita-verifier/src/stages/stage3.rs`,
   `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`.
 - Profiling: `profile/akita-recursion/README.md`.
