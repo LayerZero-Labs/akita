@@ -205,15 +205,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  # `if: !cancelled()` so a failed case keeps its bench leg (and the PR check)
-  # red but still posts a comment for the passing cases. Concatenates per-group
-  # summaries, renders against merge-base and previous-run baselines, upserts the
-  # PR comment, and uploads the canonical `profile-bench-data` artifact (used by
-  # the fork comment workflow and future runs' previous-run lookup).
+  # `always() && !cancelled()` — `needs: bench` skips dependents on failure unless
+  # `always()` is present; `!cancelled()` keeps a manual cancel from running report.
+  # A failed bench leg still uploads (see upload step), so report can post a partial
+  # comment, upload `profile-bench-data`, then fail the check in the final step.
   report:
     name: Report
     needs: bench
-    if: ${{ !cancelled() }}
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
