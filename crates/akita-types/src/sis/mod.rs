@@ -40,7 +40,7 @@ pub use decomposition_digits::{
 pub use fold_l2_certificate::{
     carry_cell_count_for_budget, carry_cell_layout, field_fitting_certificate_fits,
     folded_witness_l2_bound_squared, grouped_carry_no_wrap_gate_holds, grouped_fold_limb_bound,
-    l2_collision_bucket_for_z_squared, realizable_carry_budget, select_l2_certificate_realization,
+    ceil_l2_msis_collision_bucket, realizable_carry_budget, select_l2_certificate_realization,
     CarryCellLayout, FoldNormGrouping, L2CertificateRealization,
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};

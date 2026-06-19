@@ -604,14 +604,17 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
+        let (op_norm_accept_p_num, op_norm_accept_p_den) = stage1_config
+            .operator_norm_acceptance_prob(ring_dimension)
+            .unwrap_or((1, 1));
         Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs,
             grind_target_accept_num,
             grind_target_accept_den,
-            op_norm_accept_p_num: 1,
-            op_norm_accept_p_den: 1,
+            op_norm_accept_p_num,
+            op_norm_accept_p_den,
             grind_union_ln,
         }
     }
@@ -638,14 +641,17 @@ impl FoldWitnessLinfCapConfig {
             )
             .unwrap_or(u128::MAX),
         };
+        let (op_norm_accept_p_num, op_norm_accept_p_den) = stage1_config
+            .operator_norm_acceptance_prob(ring_dimension)
+            .unwrap_or((1, 1));
         Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs,
             grind_target_accept_num,
             grind_target_accept_den,
-            op_norm_accept_p_num: 1,
-            op_norm_accept_p_den: 1,
+            op_norm_accept_p_num,
+            op_norm_accept_p_den,
             grind_union_ln,
         }
     }
@@ -917,5 +923,29 @@ mod tests {
         );
         // Digit sizing will use `min(tight_beta, t*)`; here `t*` exceeds the tight bound.
         assert_eq!(t.min(tight_beta), tight_beta);
+    }
+
+    #[test]
+    fn fold_witness_l2_pub_bound_sq_matches_rho2_times_blocks_times_witness() {
+        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let bound = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        assert_eq!(bound, 78 * 4 * witness.l2_sq_per_block_max());
+    }
+
+    #[test]
+    fn fold_witness_l2_pub_collision_bucket_rounds_up() {
+        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let bucket = fold_witness_l2_pub_collision_bucket(
+            SisModulusFamily::Q32,
+            64,
+            2,
+            1,
+            78,
+            witness,
+        )
+        .unwrap()
+        .unwrap();
+        let raw = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        assert!(bucket >= raw);
     }
 }

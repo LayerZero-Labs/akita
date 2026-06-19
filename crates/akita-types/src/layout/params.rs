@@ -249,14 +249,12 @@ impl LevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
-    /// Operator-norm acceptance probability `p` as a rational `p_num / p_den`.
-    ///
-    /// Shipping tail-bound-with-grind presets bind `p = 1` because
-    /// `effective_operator_norm_cap >= challenge_l1_mass`. Empirical `p < 1`
-    /// sizing is deferred until a binding cap is shipped.
+    /// Operator-norm acceptance probability `p_opnorm` as a rational `p_num / p_den`.
     #[inline]
     pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
-        (1, 1)
+        self.stage1_config
+            .operator_norm_acceptance_prob(self.ring_dimension)
+            .unwrap_or((1, 1))
     }
 
     /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
