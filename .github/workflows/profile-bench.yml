@@ -318,11 +318,6 @@ jobs:
           } > "$AKITA_BENCH_COMMENT.marked"
           mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -f "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" ]; then
-            mkdir -p "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline"
-            cp "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" \
-               "$AKITA_BENCH_ARTIFACT_DIR/same-runner-baseline/summary.json"
-          fi
 
       - name: Upsert benchmark PR comment
         if: >-
