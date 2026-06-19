@@ -12,7 +12,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
-use akita_types::{FlatDigitBlocks, RingSubfieldEncoding};
+use akita_types::{FlatDigitBlocks, FpExtEncoding};
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///
@@ -161,7 +161,7 @@ where
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         F: FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>;
+        E: FpExtEncoding<F>;
 }
 
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
