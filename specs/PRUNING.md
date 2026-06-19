@@ -141,7 +141,6 @@ for a stacked follow-up.
 | Spec | Book chapter |
 |------|--------------|
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
-| `optimized_verifier.md` | `how/verification.md` |
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
 | `tensor-structured-folding-challenges.md`, `bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |

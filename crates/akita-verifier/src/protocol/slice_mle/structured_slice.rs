@@ -20,7 +20,7 @@ pub(super) const CARRY0: usize = 0;
 pub(super) const CARRY1: usize = 1;
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
-/// `specs/optimized_verifier.md` for the full derivation.
+/// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
 pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
@@ -107,7 +107,7 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     }
 }
 
-/// E-hat segment slice evaluator. See `specs/optimized_verifier.md`.
+/// E-hat segment slice evaluator.
 pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
@@ -160,7 +160,7 @@ where
     }
 }
 
-/// T-segment slice evaluator. See `specs/optimized_verifier.md`.
+/// T-segment slice evaluator.
 pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
@@ -215,7 +215,7 @@ where
     }
 }
 
-/// Pow2 Z-segment slice evaluator. See `specs/optimized_verifier.md`.
+/// Pow2 Z-segment slice evaluator.
 pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
