@@ -123,6 +123,109 @@ These numbers are not final proof sizes.
 They are schedule estimates from a scratch model.
 They show that the idea is worth implementing only if the setup preparation cost is also controlled.
 
+### Required Cache-Aware Preview Gate
+
+Before protocol implementation starts, the scratch preview must become cache-aware enough to answer whether the proof-size win survives a prepared setup budget.
+This gate is required because prepared NTT caches can be much larger than the raw setup matrix.
+
+The preview must compare three schedules:
+
+- homogeneous D64 baseline;
+- mixed D with no prepared cache cap;
+- mixed D with the prepared cache cap below.
+
+The first cap is:
+
+```text
+mixed_prepared_cache_bytes <= min(
+    d64_baseline_prepared_cache_bytes * 5 / 4,
+    d64_baseline_prepared_cache_bytes + 256 MiB
+)
+```
+
+This cap is intentionally conservative.
+It should reject schedules that need a full extra early D128 or D256 shared setup cache.
+It should still allow later mixed A dimensions when the active setup prefix is small.
+
+The preview must count unique cache keys across the whole schedule.
+It must not charge the same cache once per fold if the prepared setup would reuse it.
+The cache key for the preview is:
+
+```text
+CacheKey {
+    role,
+    d,
+    natural_ring_len,
+    stores_negacyclic,
+    stores_cyclic,
+}
+```
+
+The preview should initially use exact prefix keys only.
+A larger prepared prefix must not serve a smaller request in the first model.
+That reuse rule can be added later only after the implementation has a tested indexing contract.
+
+The byte model should mirror `NttSlotCache`.
+For a cache with `n` ring elements at dimension `D`, it stores one negacyclic vector if `stores_negacyclic` is true and one cyclic vector if `stores_cyclic` is true.
+The per-element byte size must use the selected CRT profile for the field and `D`.
+If the scratch preview cannot call the exact Rust type size, it must print that the cache bytes are modeled and state the assumed bytes per cached ring element.
+
+### Required Proof-Size Attribution
+
+Every preview run must explain where the proof-size delta comes from.
+It must split the total delta into:
+
+- non-terminal fold proof bytes;
+- terminal tail bytes;
+- recursive setup-product bytes, if that mode is included;
+- any other bytes that do not fit the first three groups.
+
+For each `num_vars`, the report must print:
+
+```text
+baseline_total
+mixed_total
+total_delta
+fold_delta
+tail_delta
+setup_product_delta
+other_delta
+baseline_cache_bytes
+mixed_cache_bytes
+cache_delta
+```
+
+For each fold level, the report must print:
+
+```text
+level
+D_A
+D_BD
+log_basis
+r_vars
+block_len
+n_a
+n_b
+n_d
+n_a_times_D_A
+num_digits_fold
+next_w_len
+fold_proof_bytes
+tail_bytes_if_terminal
+new_cache_bytes
+cache_key_count
+```
+
+The report must make the following identity check explicit:
+
+```text
+total_delta == fold_delta + tail_delta + setup_product_delta + other_delta
+```
+
+If the mixed schedule still wins after the cache cap, the report should state whether the win mostly comes from smaller fold payloads, a smaller tail, or both.
+If the win comes mostly from the tail, the implementation should be treated as lower priority.
+If the win reduces intermediate next witness lengths and compounds over several folds, the implementation is higher priority.
+
 ### Acceptance Criteria
 
 - [ ] A homogeneous schedule with `D_A = D_BD` produces the same rows, proof bytes, and verifier behavior as the current single D path.
@@ -132,6 +235,8 @@ They show that the idea is worth implementing only if the setup preparation cost
 - [ ] Setup generation at `D_gen = max(D_A, D_BD)` can serve every row group view used by the schedule.
 - [ ] Prepared setup memory is measured and bounded. A run that uses both D64 and D128 must not automatically build full shared caches for both dimensions if only a small prefix needs the second dimension.
 - [ ] The planner can reject or penalize candidates whose extra prepared cache footprint exceeds a policy limit.
+- [ ] The cache-aware preview prints fold versus tail proof-size attribution and passes the delta identity check above.
+- [ ] The implementation work starts with D128 only. D256 is enabled only after D128 is correct, measured, and still leaves a reason to test D256.
 - [ ] Proof-size formula tests compare mixed formula output against serialized mixed proofs.
 - [ ] End-to-end prove and verify tests cover at least one D64 only schedule and one mixed schedule.
 - [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, `cargo test`, and `./scripts/check-doc-guardrails.sh` pass before the implementation PR is merged.
@@ -175,10 +280,18 @@ A candidate should be scored with at least these values:
 - setup preparation time, if measured data exists;
 - expected kernel speedup from the larger A dimension, if measured data exists.
 
-The first policy can be conservative.
-It can reject mixed candidates that introduce a full extra cache in fold 0 or fold 1.
-It can allow larger A dimensions in later folds where the active setup prefix is small.
-This matches the expected memory shape: an early fold touches a large setup prefix, while a later fold touches only a small envelope of A rows.
+The first policy is a hard rejection in planner experiments.
+Production code may begin with diagnostics only, but planner experiments must reject candidates that exceed the cap.
+This prevents a proof-size-only model from selecting schedules that are not useful in memory.
+
+The first implementation should not have a hidden fallback that silently ignores the cache cap.
+If a schedule exceeds the cap, the planner report must show the rejected candidate and its cache bytes.
+This makes it clear whether the cap is killing D256, early D128, or all mixed D.
+
+The policy should allow larger A dimensions in later folds where the active setup prefix is small.
+This matches the expected memory shape.
+An early fold touches a large setup prefix.
+A later fold touches only a small envelope of A rows.
 
 ## Design
 
@@ -264,6 +377,10 @@ The implementation should avoid building cyclic and negacyclic views when only o
 If the kernel still needs both views for a fused operation, the cache can store both.
 The API should not force both for every future use.
 
+The first implementation may use one shared role for the public shared matrix if that is what the existing setup storage exposes.
+Even then, the cache key must still include the logical row role at the API boundary.
+This prevents A code from accidentally borrowing a B/D cache with the same dimension but a different active prefix.
+
 Cache policy:
 
 - Build caches lazily where possible.
@@ -271,6 +388,8 @@ Cache policy:
 - Allow a larger prefix cache to serve a smaller prefix only if the indexing contract is clear and tested.
 - Report cache bytes by cache key.
 - Enforce a configurable maximum prepared cache byte budget in profile and benchmark paths.
+- In planner experiments, use the hard cap from the Required Cache-Aware Preview Gate section.
+- In production prover setup, start with diagnostics and explicit byte reporting before adding hard user-facing failures.
 
 This is the most important implementation guardrail.
 Without it, mixed D can increase memory by preparing D64, D128, and D256 full shared caches for the same setup.
@@ -425,17 +544,218 @@ Until then, this spec stays in `specs/`.
 
 ## Execution
 
-### Suggested PR Slices
+### Resolved Implementation Decisions
 
-1. Add mixed parameter types and validation.
-2. Update setup generation and disk cache identity so `D_gen` is physical, not the same as every runtime row dimension.
-3. Add prepared setup cache reporting and prefix-aware cache APIs.
-4. Split ring relation prover APIs into A quotient work and B/D cyclic work.
-5. Add homogeneous tests through the new mixed shape.
-6. Add one mixed D proof path with `D_A = 128`, `D_BD = 64`.
-7. Add planner search over `D_A`.
-8. Add cache-aware planner policy and profile output.
-9. Add D256 only after D128 is correct and measured.
+The following decisions are fixed for the first implementation.
+Agents should not reopen them unless a test or benchmark shows they are wrong.
+
+- Implement D128 before D256.
+- Keep `D_BD = 64`.
+- Keep setup-prefix offload at D64.
+- Use exact prepared cache prefix keys first.
+- Add larger-prefix cache reuse only after exact-prefix caching works and has tests.
+- Use planner DP first.
+- Generate mixed schedule tables only after the protocol shape and cache policy are stable.
+- Treat cache cap failure as a planner rejection in experiments.
+- Treat cache cap failure as a diagnostic in production until profile data justifies a user-facing hard failure.
+- Keep raw setup storage flat and generated at `D_gen = max(runtime dimensions)`.
+- Do not add compatibility shims for old mixed-D experiments.
+
+### Agent Task Packets
+
+Each packet below should be small enough for an independent implementation agent.
+Agents should complete packets in order unless the previous packet has already landed.
+
+Packet 1 gates all protocol work.
+Do not start Packet 2 until Packet 1 says whether D128 survives the cache cap and where the proof-size delta comes from.
+If Packet 1 shows that mixed D only wins in the terminal tail, stop and reassess before changing protocol code.
+If Packet 1 shows no mixed D candidate survives the cache cap, do not implement mixed D.
+
+General rules for every agent:
+
+- Keep each packet in one focused PR.
+- Do not add compatibility aliases or fallback paths for unfinished mixed D shapes.
+- Do not change transcript bytes unless the packet explicitly says to change verifier-visible parameters.
+- Do not widen the supported dimension set beyond the packet.
+- Do not use unchecked indexing, unchecked slicing, `unwrap`, `expect`, or `panic` in verifier-reachable code.
+- Report the exact commands run and the result.
+- If a packet exposes a larger design problem, stop and write the blocker in the PR description instead of patching around it.
+
+#### Packet 1: Cache-Aware Planner Preview
+
+Goal:
+Turn the scratch mixed D preview into a cache-aware report that can decide whether implementation is worth doing.
+
+Files:
+
+- `crates/akita-config/src/bin/mixed_d_preview.rs`, or a checked-in dev tool with a clearer name.
+- No protocol files.
+
+Required output:
+
+- Baseline D64 schedule.
+- Mixed D schedule with no cache cap.
+- Mixed D schedule with the hard cache cap.
+- Fold versus tail proof-size attribution.
+- Unique cache key count and cache bytes.
+- Rejected candidates that exceed the cap.
+
+Acceptance:
+
+- The report prints the delta identity check.
+- The report shows whether proof-size savings come from non-terminal folds or the terminal tail.
+- The report states whether D128 still wins after the cap.
+- The report states whether any D256 candidate survives after the cap.
+- The scratch binary is either committed as a dev tool or removed before the implementation PR.
+
+#### Packet 2: Mixed Parameter Types
+
+Goal:
+Represent mixed row dimensions without changing prover behavior.
+
+Files:
+
+- `crates/akita-types/src/layout/params.rs`
+- `crates/akita-types/src/proof/ring_relation.rs`
+- serialization and validation modules that mention `LevelParams`
+- tests near existing `LevelParams` tests
+
+Required behavior:
+
+- Add `RowRingDimensions { d_a, d_bd }`, or an equivalent type with role-based names.
+- Preserve homogeneous D64 behavior.
+- Validate supported dimensions and divisibility by `D_gen`.
+- Keep B and D tied to D64 for now.
+
+Acceptance:
+
+- Existing schedules still validate.
+- Homogeneous D64 params map to `d_a = d_bd = 64`.
+- Invalid `d_a`, invalid `d_bd`, and invalid `D_gen` return errors.
+
+#### Packet 3: Setup Generation Dimension
+
+Goal:
+Separate physical setup generation dimension from runtime row dimensions.
+
+Files:
+
+- `crates/akita-types/src/proof/setup.rs`
+- `crates/akita-setup/src/lib.rs`
+- `crates/akita-config/src/proof_optimized.rs`
+- disk persistence code under `feature = "disk-persistence"`
+
+Required behavior:
+
+- Treat `AkitaSetupSeed::gen_ring_dim` as physical `D_gen`.
+- Compare setup envelopes only after converting to the same unit.
+- Allow a D256 generated setup to serve D128 and D64 runtime views.
+- Reject a D64 generated setup for D128 runtime rows.
+
+Acceptance:
+
+- Disk cache keys distinguish D64 generated setup from D128 and D256 generated setup.
+- Setup validation has no unchecked arithmetic.
+- Existing D64 setup generation still works.
+
+#### Packet 4: Prefix-Aware Prepared Setup Caches
+
+Goal:
+Stop prepared setup from meaning one full shared cache per `D`.
+
+Files:
+
+- `crates/akita-prover/src/compute/backend.rs`
+- `crates/akita-prover/src/compute/cpu.rs`
+- `crates/akita-prover/src/kernels/crt_ntt.rs`
+- tests under `crates/akita-prover/src/compute/`
+
+Required behavior:
+
+- Add a prepared cache key that includes role, dimension, and natural ring length.
+- Build exact prefix caches lazily.
+- Report cache bytes per key and total cache bytes.
+- Keep the existing homogeneous path working.
+
+Acceptance:
+
+- A small D128 prefix request does not build a full D128 shared cache.
+- Cache byte reporting matches the cache contents.
+- Existing dense, one-hot, sparse, and recursive witness commit tests pass.
+
+#### Packet 5: Split Ring Relation Work by Role
+
+Goal:
+Make the quotient code dimension-safe by construction.
+
+Files:
+
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`
+- `crates/akita-prover/src/compute/plans.rs`
+- `crates/akita-prover/src/compute/backend.rs`
+- `crates/akita-prover/src/compute/cpu.rs`
+- quotient kernel tests
+
+Required behavior:
+
+- Compute A quotient rows through an A dimension API.
+- Compute B and D cyclic rows through the D64 API.
+- Keep row assembly order unchanged.
+- Make the homogeneous D64 case match the old output.
+
+Acceptance:
+
+- Schoolbook quotient tests pass for D64 and D128.
+- Homogeneous D64 relation tests match old behavior.
+- The API no longer lets a caller pass one generic `D` for all row groups in mixed mode.
+
+#### Packet 6: First Mixed D128 Proof
+
+Goal:
+Produce and verify one proof with `D_A = 128` and `D_BD = 64`.
+
+Files:
+
+- prover protocol files touched by commit and ring switch
+- verifier protocol files that validate row dimensions
+- `akita-pcs` end-to-end tests
+- proof-size tests
+
+Required behavior:
+
+- One dense singleton proof verifies.
+- Homogeneous D64 through the mixed path still verifies.
+- Proof-size formula matches serialized proof size.
+
+Acceptance:
+
+- End-to-end D128 A mixed test passes.
+- Bad dimension metadata is rejected.
+- Bad setup generation dimension is rejected.
+
+#### Packet 7: Planner Integration
+
+Goal:
+Move the cache-aware preview logic into the real planner or table-generation path.
+
+Files:
+
+- `crates/akita-planner`
+- `crates/akita-config`
+- generated schedule tooling if needed
+
+Required behavior:
+
+- Search over `D_A` in `{64, 128}` first.
+- Keep `D_BD = 64`.
+- Include cache cap in candidate rejection.
+- Print proof-size attribution and cache attribution in profile or planner diagnostics.
+
+Acceptance:
+
+- D64 schedules remain available.
+- D128 A schedules are selected only when they survive the cache cap.
+- D256 is still disabled unless Packet 1 showed it survives and Packet 6 is stable.
 
 ### Code Surface
 
@@ -475,21 +795,16 @@ Expected crates and modules:
   - end-to-end tests
   - profile example reporting
 
-### Open Questions
+### Remaining Questions
 
-- Should D256 be enabled in the first implementation or only after D128 lands?
-- Should the cache budget be a hard rejection in the planner or a profile-only warning at first?
-- Should prepared setup cache keys use exact prefixes only, or can a larger prepared prefix serve smaller requests?
-- Should setup-prefix offload stay fixed at D64 while A rows use D128 and D256?
-- Should generated schedule tables include mixed D immediately, or should mixed D use planner DP only until measurements settle?
+Only measurement questions remain.
+They should be answered by Packet 1 before protocol work begins.
 
-The conservative answers are:
-
-- land D128 first;
-- use a hard cache budget in planner experiments and a diagnostic warning in production until benchmarks stabilize;
-- use exact prefix cache keys first;
-- keep setup-prefix offload at D64 first;
-- use planner DP first, then generate tables after the protocol and cache policy stop changing.
+- Does D128 still reduce total proof bytes after the cache cap?
+- Is the remaining proof-size win mostly in non-terminal folds or mostly in the terminal tail?
+- Does D256 survive the cache cap for any target shape?
+- Does the homogeneous D128 runtime benchmark show enough kernel speedup to justify testing mixed D128 in the prover?
+- Does the cache-aware planner choose later-fold D128, early-fold D128, or no D128?
 
 ### Risks
 
