@@ -23,9 +23,9 @@ use crate::backend::{
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource,
-    RootExtensionEvalSource, RootOpeningSource, RootPolyShape, RootTensorSource,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -183,22 +183,6 @@ where
         match self {
             Self::Dense(poly) => RootBaseEvalsSource::base_evals(poly),
             Self::OneHot(poly) => RootBaseEvalsSource::base_evals(poly),
-        }
-    }
-}
-
-impl<F, const D: usize, I> RootExtensionEvalSource<F, D> for MultilinearPolynomial<F, D, I>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    I: OneHotIndex,
-{
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        match self {
-            Self::Dense(poly) => RootExtensionEvalSource::evaluate_extension(poly, point),
-            Self::OneHot(poly) => RootExtensionEvalSource::evaluate_extension(poly, point),
         }
     }
 }

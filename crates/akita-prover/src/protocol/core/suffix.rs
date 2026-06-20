@@ -315,7 +315,6 @@ where
     let logical_polys = [&logical_view];
     let fold_polys = [&witness_view];
     let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
-    let expected_openings = needs_extension_reduction.then(|| vec![current_state.opening]);
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
@@ -340,7 +339,6 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_openings,
         opening_point.to_vec(),
         || Ok(()),
         level_params,

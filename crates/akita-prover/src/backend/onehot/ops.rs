@@ -4,9 +4,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource,
-    RootExtensionEvalSource, RootOpeningSource, RootPolyShape, RootTensorSource,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -169,19 +169,6 @@ where
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         self.base_evals()
-    }
-}
-
-impl<F, const D: usize, I> RootExtensionEvalSource<F, D> for OneHotPoly<F, D, I>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    I: OneHotIndex,
-{
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        self.evaluate_extension(point)
     }
 }
 

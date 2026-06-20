@@ -29,8 +29,8 @@ use crate::compute::{
     CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DenseCommitInput, DenseCommitRowsPlan, DirectRootWitnessSource,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootBaseEvalsSource,
-    RootCommitKernel, RootCommitSource, RootExtensionEvalSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
@@ -373,31 +373,6 @@ where
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         self.base_evals()
-    }
-}
-
-impl<F, const D: usize> RootExtensionEvalSource<F, D> for DensePoly<F, D>
-where
-    F: FieldCore + CanonicalField,
-{
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        if point.len() != self.num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: self.num_vars,
-                actual: point.len(),
-            });
-        }
-        let expected_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput("dense extension evaluation table length overflow".to_string())
-        })?;
-        let mut evals = Vec::with_capacity(expected_len);
-        for ring in &self.coeffs {
-            evals.extend(ring.coefficients().iter().copied().map(E::lift_base));
-        }
-        akita_algebra::poly::multilinear_eval(&evals, point)
     }
 }
 

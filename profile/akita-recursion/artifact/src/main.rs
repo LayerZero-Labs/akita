@@ -20,7 +20,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape},
+    compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
     CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotIndex,
     OneHotPoly,
 };

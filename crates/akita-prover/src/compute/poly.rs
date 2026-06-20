@@ -131,23 +131,6 @@ where
     fn base_evals(&self) -> Result<Vec<F>, AkitaError>;
 }
 
-/// Capability: evaluate the root polynomial at an extension-field point.
-///
-/// Used by the prover-only extension-opening reduction cross-check: it compares
-/// the reduction's claimed opening against a direct evaluation at the same
-/// extension point. Sparse representations (one-hot, sparse ring) should
-/// override this with an evaluation that preserves sparsity, rather than
-/// materializing dense base-field evaluations.
-pub trait RootExtensionEvalSource<F, const D: usize>: RootPolyShape<F, D>
-where
-    F: FieldCore,
-{
-    /// Evaluate at an extension-field opening point.
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>;
-}
-
 /// Capability: materialize a direct root witness for zero-fold openings.
 ///
 /// This is an explicit opt-in, not a hidden default on every root polynomial:
@@ -484,19 +467,6 @@ where
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         (*self).base_evals()
-    }
-}
-
-impl<F, const D: usize, P> RootExtensionEvalSource<F, D> for &P
-where
-    F: FieldCore,
-    P: RootExtensionEvalSource<F, D>,
-{
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        (*self).evaluate_extension(point)
     }
 }
 

@@ -10,8 +10,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    OpeningFoldKernel, OpeningFoldPlan, RootCommitBackend, RootCommitPoly, RootExtensionEvalSource,
-    RootPolyShape, RootProveFlowBackend, RootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RootCommitBackend, RootCommitPoly, RootPolyShape,
+    RootProveFlowBackend, RootProvePoly,
 };
 use akita_prover::OwnedSuffixWitness;
 use akita_prover::{
@@ -351,7 +351,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RootCommitPoly<FF, D> + RootProvePoly<FF, D> + RootExtensionEvalSource<FF, D>,
+    P: RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
 >(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,

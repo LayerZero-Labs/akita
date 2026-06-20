@@ -1,9 +1,7 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::backend::OwnedSuffixWitness;
-use crate::compute::{
-    RootCommitBackend, RootCommitPoly, RootExtensionEvalSource, RootProveFlowBackend, RootProvePoly,
-};
+use crate::compute::{RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly};
 use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -131,7 +129,7 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
+        P: RootProvePoly<F, D>,
         B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>
