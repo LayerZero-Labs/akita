@@ -12,7 +12,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
-use akita_types::{FlatDigitBlocks, FpExtEncoding};
+use akita_types::FpExtEncoding;
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///

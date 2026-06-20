@@ -18,8 +18,8 @@ pub use dense::{
     DenseTensorView,
 };
 pub use field_reduction::{
-    tensor_pack_recursive_witness, FoldInputPoly, RootTensorProjectionBatchView,
-    RootTensorProjectionPoly, RootTensorProjectionView,
+    tensor_pack_recursive_witness, RootTensorProjectionBatchView, RootTensorProjectionPoly,
+    RootTensorProjectionView,
 };
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,

@@ -16,13 +16,16 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_field::ExtField;
-use akita_types::{tensor_packed_witness_evals, FlatDigitBlocks, FpExtEncoding};
+use akita_types::{
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
+    FlatDigitBlocks, FpExtEncoding,
+};
 use std::marker::PhantomData;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, FoldInputPoly};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -115,17 +118,22 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitness<'a, F, D> {
     fn num_blocks_for_block_len(&self, block_len: usize) -> usize {
         self.coeffs.len().div_ceil(block_len).max(1)
     }
+
+    #[inline]
+    pub(crate) fn num_vars(&self) -> usize {
+        let total = self
+            .padded_ring_elems
+            .checked_mul(D)
+            .expect("recursive witness ring elems * D overflow");
+        total.trailing_zeros() as usize
+    }
 }
 
-impl<F, const D: usize> AkitaPolyOps<F, D> for SuffixWitness<'_, F, D>
+impl<'a, F, const D: usize> SuffixWitness<'a, F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.padded_ring_elems
-    }
-
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+    pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidInput("recursive base evals length overflow".to_string())
         })?;
@@ -137,27 +145,96 @@ where
         Ok(base_evals)
     }
 
-    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
         E: ExtField<F>,
     {
-        let num_vars = AkitaPolyOps::num_vars(self);
-        let base_evals = AkitaPolyOps::base_evals(self)?;
+        let num_vars = self.num_vars();
+        let base_evals = self.base_evals()?;
         tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
     }
 
-    fn tensor_packed_extension_fold_input<E>(
+    pub(crate) fn tensor_extension_column_partials<E>(
         &self,
-    ) -> Result<FoldInputPoly<'_, F, Self, D>, AkitaError>
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
-        Self: Sized,
-        F: CanonicalField + FromPrimitiveInt,
-        E: FpExtEncoding<F>,
+        E: akita_field::MulBaseUnreduced<F>,
     {
-        Ok(FoldInputPoly::Original(self))
+        let num_vars = self.num_vars();
+        if logical_point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let base_evals = self.base_evals()?;
+        tensor_column_partials_from_base_evals::<F, E>(num_vars, &base_evals, logical_point)
     }
 
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: akita_field::MulBaseUnreduced<F>,
+    {
+        polys
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials(logical_point))
+            .collect()
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        AkitaError,
+    >
+    where
+        E: ExtField<F>,
+    {
+        if polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(polys.len());
+        for poly in polys {
+            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
+                return Ok(None);
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(
+            crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness::linear_combination(
+                coeffs.iter().copied().zip(witnesses.iter()),
+            )?,
+        ))
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<
+        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
+        AkitaError,
+    >
+    where
+        E: ExtField<F>,
+    {
+        Ok(None)
+    }
+
+    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "root-direct witness is not supported for this polynomial type".to_string(),
+        ))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let num_blocks = self.num_blocks_for_block_len(block_len);
         cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
@@ -177,7 +254,8 @@ where
             .collect()
     }
 
-    fn fold_blocks_ring(
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
@@ -200,7 +278,7 @@ where
             .collect()
     }
 
-    fn evaluate_and_fold(
+    pub(crate) fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
         fold_scalars: &[F],
@@ -232,7 +310,7 @@ where
         (eval, folded)
     }
 
-    fn evaluate_and_fold_ring(
+    pub(crate) fn evaluate_and_fold_ring(
         &self,
         eval_outer_scalars: &[CyclotomicRing<F, D>],
         fold_scalars: &[CyclotomicRing<F, D>],
@@ -264,7 +342,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SuffixWitness::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -288,7 +366,7 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 
-    fn decompose_fold_batched(
+    pub(crate) fn decompose_fold_batched(
         _polys: &[&Self],
         _challenges: &[SparseChallenge],
         _block_len: usize,
@@ -298,7 +376,7 @@ where
         None
     }
 
-    fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _tensor: &TensorChallenges,
         _block_len: usize,
@@ -310,44 +388,44 @@ where
 
     #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
-    fn commit_inner<B>(
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_rows: usize,
-        block_len: usize,
-        num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
+        let num_blocks = self.num_blocks_for_block_len(plan.block_len);
         let t = backend.recursive_witness_commit_rows(
             prepared,
             RecursiveWitnessCommitRowsPlan {
                 coeffs: self.coeffs,
-                n_rows,
-                block_len,
+                n_rows: plan.n_a,
+                block_len: plan.block_len,
                 num_blocks,
-                num_digits_commit,
-                log_basis,
+                num_digits_commit: plan.num_digits_commit,
+                log_basis: plan.log_basis,
             },
         )?;
 
-        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+        let block_sizes: Vec<usize> = t
+            .iter()
+            .map(|t_i| t_i.len() * plan.num_digits_open)
+            .collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
         let dst_blocks = t_hat.split_blocks_mut();
         #[cfg(feature = "parallel")]
         cfg_into_iter!(dst_blocks)
             .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+            .for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis)
+            });
         #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+            decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis)
+        });
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows: t_hat,
@@ -356,8 +434,7 @@ where
 }
 
 // ===========================================================================
-// PO-CUTOVER (Slice 2): source-typed views + CpuBackend prove kernels for the
-// recursive `SuffixWitness`, delegating to the existing `AkitaPolyOps` methods.
+// Source-typed views + CpuBackend prove kernels for the recursive `SuffixWitness`.
 // ===========================================================================
 
 use crate::backend::RootTensorProjectionPoly;
@@ -369,7 +446,6 @@ use crate::compute::{
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
-use akita_types::CleartextWitnessProof;
 
 /// Owned, lifetime-free recursive witness used as the prove-path polynomial.
 ///
@@ -504,7 +580,7 @@ where
     F: FieldCore + CanonicalField,
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::base_evals(&self.rebuild()?)
+        self.rebuild()?.base_evals()
     }
 }
 
@@ -513,7 +589,7 @@ where
     F: FieldCore + CanonicalField,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::direct_root_witness(&self.rebuild()?)
+        self.rebuild()?.direct_root_witness()
     }
 }
 
@@ -533,19 +609,12 @@ where
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => {
-                AkitaPolyOps::evaluate_and_fold(&poly, eval_outer_scalars, fold_scalars, block_len)
-            }
+            } => poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => AkitaPolyOps::evaluate_and_fold_ring(
-                &poly,
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            ),
+            } => poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -557,8 +626,7 @@ where
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
-        Ok(AkitaPolyOps::decompose_fold(
-            &poly,
+        Ok(poly.decompose_fold(
             plan.challenges,
             plan.block_len,
             plan.num_digits,
@@ -589,17 +657,15 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => Ok(
-                <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
-                    &refs, challenges, block_len, num_digits, log_basis,
-                ),
-            ),
+            } => Ok(SuffixWitness::decompose_fold_batched(
+                &refs, challenges, block_len, num_digits, log_basis,
+            )),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            } => <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            } => SuffixWitness::decompose_fold_tensor_batched(
                 &refs, tensor, block_len, num_digits, log_basis,
             ),
         }
@@ -622,10 +688,7 @@ where
         E: MulBaseUnreduced<F>,
     {
         let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
-        <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials(
-            &poly,
-            logical_point,
-        )
+        poly.tensor_extension_column_partials(logical_point)
     }
 
     fn packed_witness(
@@ -635,7 +698,7 @@ where
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
         Ok(TensorPackedWitness::Dense(
-            <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_evals(&poly)?,
+            poly.tensor_packed_extension_evals()?,
         ))
     }
 
@@ -647,9 +710,9 @@ where
     where
         E: FpExtEncoding<F>,
     {
-        // Recursive witnesses fold directly over their ring blocks (legacy
-        // `FoldInputPoly::Original`), never tensor-packed like root reps. The
-        // `Recursive` variant dispatches folds back to the suffix witness kernels.
+        // Recursive witnesses fold directly over their ring blocks, never
+        // tensor-packed like root reps. The `Recursive` variant dispatches folds
+        // back to the suffix witness kernels.
         let witness = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
         Ok(RootTensorProjectionPoly::Recursive(
             OwnedSuffixWitness::from_suffix(&witness),
@@ -678,10 +741,7 @@ where
             .map(|d| SuffixWitness::<F, D>::from_i8_digits(d))
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
-        <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch(
-            &refs,
-            logical_point,
-        )
+        SuffixWitness::tensor_extension_column_partials_batch(&refs, logical_point)
     }
 
     fn sparse_linear_combination(
@@ -696,10 +756,7 @@ where
             .map(|d| SuffixWitness::<F, D>::from_i8_digits(d))
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
-        <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination(
-            &refs,
-            coeffs,
-        )
+        SuffixWitness::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
     }
 }
 
@@ -808,13 +865,11 @@ mod tests {
     }
 
     #[test]
-    fn akita_poly_ops_delegates_to_recursive_witness_layout() {
+    fn suffix_witness_decompose_fold_is_deterministic() {
         const D: usize = 16;
         let digits = (0..48).map(|idx| (idx % 7) as i8 - 3).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w.view::<F, D>().expect("view");
-        let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
-        let fold_scalars = vec![F::from_u64(7), F::from_u64(11)];
         let challenges = vec![
             SparseChallenge {
                 positions: vec![0, 2],
@@ -826,24 +881,8 @@ mod tests {
             },
         ];
 
-        assert_eq!(
-            <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::evaluate_and_fold(
-                &view,
-                &eval_outer_scalars,
-                &fold_scalars,
-                2,
-            ),
-            view.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, 2)
-        );
-        assert_eq!(
-            <SuffixWitness<'_, F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                &view,
-                &challenges,
-                2,
-                1,
-                0,
-            ),
-            view.decompose_fold(&challenges, 2, 1, 0)
-        );
+        let once = view.decompose_fold(&challenges, 2, 1, 0);
+        let twice = view.decompose_fold(&challenges, 2, 1, 0);
+        assert_eq!(once, twice);
     }
 }

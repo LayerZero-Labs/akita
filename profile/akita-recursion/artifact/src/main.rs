@@ -20,8 +20,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
-    OneHotPoly,
+    CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotPoly,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
@@ -87,8 +86,8 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn opening_from_poly<P: AkitaPolyOps<F, D>>(
-    poly: &P,
+fn opening_from_poly(
+    poly: &OneHotPoly<F, D>,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,

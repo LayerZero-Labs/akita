@@ -3,9 +3,7 @@
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{
-    pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FlatDigitBlocks, FpExtEncoding,
-};
+use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FpExtEncoding};
 use std::sync::Arc;
 
 use super::dense::{DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorView};
@@ -17,16 +15,15 @@ use super::sparse_ring::{
     SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView, SparseRingTensorView,
 };
 use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat,
-    SparseRingPoly,
+    CommitInnerWitness, DecomposeFoldWitness, DensePoly, RecursiveWitnessFlat, SparseRingPoly,
 };
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
@@ -44,7 +41,7 @@ pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
     ///
     /// Unlike root representations, recursive witnesses are not tensor-projected;
     /// the fold delegates to the suffix witness's own kernels (matching the legacy
-    /// `FoldInputPoly::Original` behavior). Never committed via this enum.
+    /// dense original-root behavior). Never committed via this enum.
     Recursive(OwnedSuffixWitness<F, D>),
 }
 
@@ -531,307 +528,6 @@ where
         Ok(Some(SparseExtensionOpeningWitness::linear_combination(
             coeffs.iter().copied().zip(witnesses.iter()),
         )?))
-    }
-}
-
-/// Fold-facing polynomial wrapper for original roots and tensor-projected roots.
-///
-/// Non-EOR paths borrow the caller's original polynomial. EOR paths own the
-/// materialized tensor projection, preserving dense and sparse projected storage.
-#[derive(Debug, Clone)]
-pub enum FoldInputPoly<'a, F: FieldCore, P, const D: usize> {
-    /// Original, non-projected polynomial.
-    Original(&'a P),
-    /// Dense tensor-projected root polynomial.
-    ProjectedDense(DensePoly<F, D>),
-    /// Sparse signed-ring tensor-projected root polynomial.
-    ProjectedSparse(Arc<SparseRingPoly<F, D>>),
-}
-
-impl<'a, F: FieldCore, P, const D: usize> FoldInputPoly<'a, F, P, D> {
-    pub fn projected_dense(poly: DensePoly<F, D>) -> Self {
-        Self::ProjectedDense(poly)
-    }
-
-    pub fn projected_sparse(poly: SparseRingPoly<F, D>) -> Self {
-        Self::ProjectedSparse(Arc::new(poly))
-    }
-}
-
-macro_rules! dispatch_fold_input {
-    ($self:expr, $poly:ident => $body:expr) => {
-        match $self {
-            FoldInputPoly::Original($poly) => $body,
-            FoldInputPoly::ProjectedDense($poly) => $body,
-            FoldInputPoly::ProjectedSparse($poly) => $body,
-        }
-    };
-}
-
-impl<F, P, const D: usize> AkitaPolyOps<F, D> for FoldInputPoly<'_, F, P, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-    P: AkitaPolyOps<F, D>,
-{
-    fn num_ring_elems(&self) -> usize {
-        match self {
-            FoldInputPoly::Original(poly) => AkitaPolyOps::num_ring_elems(*poly),
-            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::num_ring_elems(poly),
-            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::num_ring_elems(poly.as_ref()),
-        }
-    }
-
-    fn num_vars(&self) -> usize {
-        match self {
-            FoldInputPoly::Original(poly) => AkitaPolyOps::num_vars(*poly),
-            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::num_vars(poly),
-            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::num_vars(poly.as_ref()),
-        }
-    }
-
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        match self {
-            Self::Original(poly) => poly.onehot_chunk_size(),
-            Self::ProjectedDense(_) | Self::ProjectedSparse(_) => None,
-        }
-    }
-
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        match self {
-            FoldInputPoly::Original(poly) => AkitaPolyOps::base_evals(*poly),
-            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::base_evals(poly),
-            FoldInputPoly::ProjectedSparse(poly) => AkitaPolyOps::base_evals(poly.as_ref()),
-        }
-    }
-
-    fn fold_blocks(
-        &self,
-        scalars: &[F],
-        block_len: usize,
-    ) -> Vec<akita_algebra::CyclotomicRing<F, D>> {
-        dispatch_fold_input!(self, poly => poly.fold_blocks(scalars, block_len))
-    }
-
-    fn fold_blocks_ring(
-        &self,
-        scalars: &[akita_algebra::CyclotomicRing<F, D>],
-        block_len: usize,
-    ) -> Vec<akita_algebra::CyclotomicRing<F, D>> {
-        dispatch_fold_input!(self, poly => poly.fold_blocks_ring(scalars, block_len))
-    }
-
-    fn evaluate_and_fold(
-        &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
-        block_len: usize,
-    ) -> (
-        akita_algebra::CyclotomicRing<F, D>,
-        Vec<akita_algebra::CyclotomicRing<F, D>>,
-    ) {
-        dispatch_fold_input!(self, poly => {
-            poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
-        })
-    }
-
-    fn evaluate_and_fold_ring(
-        &self,
-        eval_outer_scalars: &[akita_algebra::CyclotomicRing<F, D>],
-        fold_scalars: &[akita_algebra::CyclotomicRing<F, D>],
-        block_len: usize,
-    ) -> (
-        akita_algebra::CyclotomicRing<F, D>,
-        Vec<akita_algebra::CyclotomicRing<F, D>>,
-    ) {
-        dispatch_fold_input!(self, poly => {
-            poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
-        })
-    }
-
-    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
-    where
-        E: akita_field::MulBaseUnreduced<F>,
-    {
-        dispatch_fold_input!(self, poly => poly.tensor_extension_column_partials(logical_point))
-    }
-
-    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        dispatch_fold_input!(self, poly => poly.tensor_packed_extension_evals::<E>())
-    }
-
-    fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
-    where
-        F: CanonicalField + FromPrimitiveInt,
-        E: akita_types::FpExtEncoding<F>,
-    {
-        dispatch_fold_input!(self, poly => poly.tensor_packed_extension_poly::<E>())
-    }
-
-    fn decompose_fold(
-        &self,
-        challenges: &[akita_challenges::SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> crate::DecomposeFoldWitness<F, D> {
-        dispatch_fold_input!(self, poly => {
-            poly.decompose_fold(challenges, block_len, num_digits, log_basis)
-        })
-    }
-
-    fn decompose_fold_batched(
-        polys: &[&Self],
-        challenges: &[akita_challenges::SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Option<crate::DecomposeFoldWitness<F, D>> {
-        let first = *polys.first()?;
-        match first {
-            Self::Original(_) => {
-                let mut originals = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::Original(inner) => originals.push(*inner),
-                        Self::ProjectedDense(_) | Self::ProjectedSparse(_) => return None,
-                    }
-                }
-                P::decompose_fold_batched(&originals, challenges, block_len, num_digits, log_basis)
-            }
-            Self::ProjectedDense(_) => {
-                let mut dense_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::ProjectedDense(inner) => dense_polys.push(inner),
-                        Self::Original(_) | Self::ProjectedSparse(_) => return None,
-                    }
-                }
-                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
-                    &dense_polys,
-                    challenges,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-            Self::ProjectedSparse(_) => {
-                let mut sparse_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::ProjectedSparse(inner) => sparse_polys.push(inner.as_ref()),
-                        Self::Original(_) | Self::ProjectedDense(_) => return None,
-                    }
-                }
-                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
-                    &sparse_polys,
-                    challenges,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-        }
-    }
-
-    fn decompose_fold_tensor_batched(
-        polys: &[&Self],
-        tensor: &akita_challenges::TensorChallenges,
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<crate::DecomposeFoldWitness<F, D>>, AkitaError> {
-        let Some(first) = polys.first() else {
-            return Ok(None);
-        };
-        match *first {
-            Self::Original(_) => {
-                let mut originals = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::Original(inner) => originals.push(*inner),
-                        Self::ProjectedDense(_) | Self::ProjectedSparse(_) => return Ok(None),
-                    }
-                }
-                P::decompose_fold_tensor_batched(
-                    &originals, tensor, block_len, num_digits, log_basis,
-                )
-            }
-            Self::ProjectedDense(_) => {
-                let mut dense_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::ProjectedDense(inner) => dense_polys.push(inner),
-                        Self::Original(_) | Self::ProjectedSparse(_) => return Ok(None),
-                    }
-                }
-                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
-                    &dense_polys,
-                    tensor,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-            Self::ProjectedSparse(_) => {
-                let mut sparse_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match *poly {
-                        Self::ProjectedSparse(inner) => sparse_polys.push(inner.as_ref()),
-                        Self::Original(_) | Self::ProjectedDense(_) => return Ok(None),
-                    }
-                }
-                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
-                    &sparse_polys,
-                    tensor,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-        }
-    }
-
-    fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-    ) -> Result<crate::CommitInnerWitness<F, D>, AkitaError>
-    where
-        F: CanonicalField,
-        B: CommitmentComputeBackend<F>,
-    {
-        dispatch_fold_input!(self, poly => {
-            poly.commit_inner(
-                backend,
-                prepared,
-                n_a,
-                block_len,
-                num_blocks,
-                num_digits_commit,
-                num_digits_open,
-                log_basis,
-            )
-        })
-    }
-
-    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            FoldInputPoly::Original(poly) => AkitaPolyOps::direct_root_witness(*poly),
-            FoldInputPoly::ProjectedDense(poly) => AkitaPolyOps::direct_root_witness(poly),
-            FoldInputPoly::ProjectedSparse(poly) => {
-                AkitaPolyOps::direct_root_witness(poly.as_ref())
-            }
-        }
     }
 }
 

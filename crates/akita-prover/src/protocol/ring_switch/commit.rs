@@ -1,5 +1,5 @@
 use super::*;
-use crate::AkitaPolyOps;
+use crate::compute::CommitInnerPlan;
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -66,16 +66,8 @@ where
     );
 
     let w_view = w.view::<F, D>()?;
-    let inner = w_view.commit_inner(
-        backend,
-        prepared,
-        commit_layout.a_key.row_len(),
-        commit_layout.block_len,
-        commit_layout.num_blocks,
-        commit_layout.num_digits_commit,
-        commit_layout.num_digits_open,
-        commit_layout.log_basis,
-    )?;
+    let plan = CommitInnerPlan::from_level(commit_layout);
+    let inner = w_view.commit_inner(backend, prepared, plan)?;
     validate_commit_inner_shape(
         &inner,
         commit_layout.num_blocks,

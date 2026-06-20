@@ -1,15 +1,11 @@
 //! Source-typed views and `CpuBackend` kernels for [`super::SparseRingPoly`].
-//!
-//! PO-CUTOVER (Phase A, additive): kernels delegate to the existing
-//! `AkitaPolyOps` methods so behavior and proof bytes are identical. The
-//! relocation of that logic out of `AkitaPolyOps` happens in a later phase.
 
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     MulBaseUnreduced,
 };
-use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, FpExtEncoding};
+use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding};
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
@@ -21,7 +17,7 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 /// Borrowed commit view over sparse signed ring coefficients.
 #[derive(Debug, Clone, Copy)]
@@ -152,11 +148,14 @@ where
 
 impl<F, const D: usize> RootBaseEvalsSource<F, D> for SparseRingPoly<F, D>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: FieldCore + FromPrimitiveInt,
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::base_evals(self)
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
+        })?;
+        Ok(field_elems.coeffs().to_vec())
     }
 }
 
@@ -171,17 +170,7 @@ where
         source: SparseRingCommitView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::commit_inner(
-            source.poly,
-            self,
-            prepared,
-            plan.n_a,
-            plan.block_len,
-            0,
-            plan.num_digits_commit,
-            plan.num_digits_open,
-            plan.log_basis,
-        )
+        source.poly.commit_inner(self, prepared, plan)
     }
 }
 
@@ -201,22 +190,16 @@ where
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::evaluate_and_fold(
-                source.poly,
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::evaluate_and_fold_ring(
-                source.poly,
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -227,15 +210,12 @@ where
         source: SparseRingOpeningView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        Ok(
-            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                source.poly,
-                plan.challenges,
-                plan.block_len,
-                plan.num_digits,
-                plan.log_basis,
-            ),
-        )
+        Ok(source.poly.decompose_fold(
+            plan.challenges,
+            plan.block_len,
+            plan.num_digits,
+            plan.log_basis,
+        ))
     }
 }
 
@@ -258,7 +238,7 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            } => SparseRingPoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
@@ -285,10 +265,7 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials(
-            source.poly,
-            logical_point,
-        )
+        source.poly.tensor_extension_column_partials(logical_point)
     }
 
     fn packed_witness(
@@ -296,18 +273,10 @@ where
         _prepared: Option<&Self::PreparedSetup<D>>,
         source: SparseRingTensorView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Ok(
-            match <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_evals(
-                source.poly,
-            )? {
-                Some(witness) => TensorPackedWitness::Sparse(witness),
-                None => TensorPackedWitness::Dense(
-                    <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_evals(
-                        source.poly,
-                    )?,
-                ),
-            },
-        )
+        Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
+            Some(witness) => TensorPackedWitness::Sparse(witness),
+            None => TensorPackedWitness::Dense(source.poly.tensor_packed_extension_evals()?),
+        })
     }
 
     fn root_projection(
@@ -319,9 +288,7 @@ where
         E: FpExtEncoding<F>,
     {
         Ok(RootTensorProjectionPoly::Dense(
-            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(
-                source.poly,
-            )?,
+            source.poly.tensor_packed_extension_poly::<E>()?,
         ))
     }
 }
@@ -342,10 +309,11 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch(
-            source.polys,
-            logical_point,
-        )
+        source
+            .polys
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials(logical_point))
+            .collect()
     }
 
     fn sparse_linear_combination(
@@ -354,9 +322,21 @@ where
         source: SparseRingTensorBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination(
-            source.polys,
-            coeffs,
-        )
+        if source.polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: source.polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(source.polys.len());
+        for poly in source.polys {
+            let Some(witness) = poly.tensor_packed_extension_sparse_evals()? else {
+                return Ok(None);
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(witnesses.iter()),
+        )?))
     }
 }

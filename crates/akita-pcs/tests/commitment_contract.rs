@@ -21,7 +21,7 @@ use akita_prover::compute::{
     RootCommitKernel, RootCommitSource, RootPolyShape, SparseRingCommitRowsPlan,
 };
 use akita_prover::{commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly};
-use akita_types::{FlatDigitBlocks, OpeningBatch};
+use akita_types::OpeningBatch;
 
 type Cfg = fp64::D32Full;
 type F = <Cfg as CommitmentConfig>::Field;

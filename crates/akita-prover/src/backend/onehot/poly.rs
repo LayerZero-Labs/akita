@@ -150,7 +150,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(blocks)
     }
 
-    /// Sparse fast path for [`AkitaPolyOps::tensor_extension_column_partials_batch`]
+    /// Sparse fast path for `tensor_extension_column_partials_batch`.
     /// (the `split_bits <= low_vars`, power-of-two `onehot_k`, shared-shape
     /// case). Byte-identical to the dense column partials but exploits the
     /// one-hot structure to replace the per-chunk extension *multiply* of the
