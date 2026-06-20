@@ -15,17 +15,20 @@ use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, Tenso
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
-    DecomposeParams,
+    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
+    try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
+use std::mem::size_of;
 use std::sync::OnceLock;
 
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 mod tensor_fold;
+
+const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DenseDigitCache<const D: usize> {
@@ -156,6 +159,15 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         if let Some(cache) = self.digit_cache.get() {
             return (cache.num_digits == num_digits && cache.log_basis == log_basis)
                 .then_some(cache.planes.as_slice());
+        }
+
+        let cache_bytes = self
+            .coeffs
+            .len()
+            .checked_mul(num_digits)?
+            .checked_mul(size_of::<[i8; D]>())?;
+        if cache_bytes > MAX_DENSE_DIGIT_CACHE_BYTES {
+            return None;
         }
 
         let q = (-F::one()).to_canonical_u128() + 1;
@@ -356,7 +368,12 @@ where
         if let Some(digit_planes) = self.digit_planes_for(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                accumulate_cached_digit_planes::<D>(digit_planes, challenges, block_len, num_digits)
+                cached_digit_decompose_fold_partitioned::<D>(
+                    digit_planes,
+                    challenges,
+                    block_len,
+                    num_digits,
+                )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;
             return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
@@ -596,31 +613,6 @@ fn digit_block_slices<const D: usize>(
             let digit_start = ring_start * num_digits;
             let digit_end = ring_end * num_digits;
             &digit_planes[digit_start..digit_end]
-        })
-        .collect()
-}
-
-fn accumulate_cached_digit_planes<const D: usize>(
-    digit_planes: &[[i8; D]],
-    challenges: &[SparseChallenge],
-    block_len: usize,
-    num_digits: usize,
-) -> Vec<[i32; D]> {
-    let inner_width = block_len * num_digits;
-    cfg_into_iter!(0..inner_width)
-        .map(|inner_idx| {
-            let elem_idx = inner_idx / num_digits;
-            let digit_idx = inner_idx % num_digits;
-            let mut acc = [0i32; D];
-            for (block_idx, challenge) in challenges.iter().enumerate() {
-                let ring_idx = block_idx * block_len + elem_idx;
-                let plane_idx = ring_idx * num_digits + digit_idx;
-                let Some(digit_plane) = digit_planes.get(plane_idx) else {
-                    continue;
-                };
-                sparse_mul_acc::<D>(digit_plane, challenge, &mut acc);
-            }
-            acc
         })
         .collect()
 }

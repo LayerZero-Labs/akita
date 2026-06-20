@@ -564,6 +564,38 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     }
 }
 
+fn accumulate_predecomposed_full_challenge<const D: usize>(
+    digit_plane: &[i8; D],
+    rotated: &[[i16; D]],
+    acc: &mut [i32; D],
+) {
+    let bulk_end = D - (D % 3);
+
+    for base in (0..bulk_end).step_by(3) {
+        let d0 = i32::from(digit_plane[base]);
+        let d1 = i32::from(digit_plane[base + 1]);
+        let d2 = i32::from(digit_plane[base + 2]);
+        let rot0 = &rotated[base];
+        let rot1 = &rotated[base + 1];
+        let rot2 = &rotated[base + 2];
+
+        match (d0 != 0, d1 != 0, d2 != 0) {
+            (false, false, false) => {}
+            (true, false, false) => add_scaled_rotated_row(acc, rot0, d0),
+            (false, true, false) => add_scaled_rotated_row(acc, rot1, d1),
+            (false, false, true) => add_scaled_rotated_row(acc, rot2, d2),
+            _ => add_scaled_rotated_rows_triplet(acc, [rot0, rot1, rot2], [d0, d1, d2]),
+        }
+    }
+
+    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
+        let digit = i32::from(digit_plane[idx]);
+        if digit != 0 {
+            add_scaled_rotated_row(acc, rot, digit);
+        }
+    }
+}
+
 pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
@@ -640,6 +672,148 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
         .collect();
 
     chunks.into_iter().flatten().collect()
+}
+
+/// Element-partitioned accumulation for predecomposed dense digit caches.
+///
+/// Dense root witnesses reuse their balanced digit cache across commit and
+/// prove. For high-weight D64 challenges, use the same dense rotated-challenge
+/// formulation as the non-cached path instead of replaying sparse rotate-adds
+/// for every cached digit plane.
+pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
+    digit_planes: &[[i8; D]],
+    challenges: &[SparseChallenge],
+    block_len: usize,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    let inner_width = block_len
+        .checked_mul(num_digits)
+        .expect("cached digit fold inner width overflow");
+    if inner_width == 0 || num_digits == 0 {
+        return Vec::new();
+    }
+
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let num_rings = digit_planes.len() / num_digits;
+    let actual_threads = num_threads.min(block_len.max(1)).max(1);
+    let elem_chunk = block_len.div_ceil(actual_threads);
+    let rotated_tables = challenges
+        .iter()
+        .map(|challenge| {
+            should_use_rotated_challenge::<D>(challenge).then(|| {
+                let mut rotated = [[0i16; D]; D];
+                fill_rotated_challenge::<D>(&mut rotated, challenge);
+                rotated
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut out = vec![[0i32; D]; inner_width];
+
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(elem_chunk * num_digits)
+        .enumerate()
+        .for_each(|(tid, acc)| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return;
+            }
+            let elems_in_chunk = acc.len() / num_digits;
+            let elem_end = elem_start + elems_in_chunk;
+
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let block_start = block_idx * block_len;
+                if block_start >= num_rings {
+                    break;
+                }
+                let ring_start = block_start + elem_start;
+                if ring_start >= num_rings {
+                    continue;
+                }
+                let ring_end = (block_start + elem_end).min(num_rings);
+
+                if let Some(rotated) = &rotated_tables[block_idx] {
+                    for local_elem_idx in 0..(ring_end - ring_start) {
+                        let src_base = (ring_start + local_elem_idx) * num_digits;
+                        let dst_base = local_elem_idx * num_digits;
+                        for digit_idx in 0..num_digits {
+                            accumulate_predecomposed_full_challenge::<D>(
+                                &digit_planes[src_base + digit_idx],
+                                rotated,
+                                &mut acc[dst_base + digit_idx],
+                            );
+                        }
+                    }
+                } else {
+                    for local_elem_idx in 0..(ring_end - ring_start) {
+                        let src_base = (ring_start + local_elem_idx) * num_digits;
+                        let dst_base = local_elem_idx * num_digits;
+                        for digit_idx in 0..num_digits {
+                            sparse_mul_acc::<D>(
+                                &digit_planes[src_base + digit_idx],
+                                challenge,
+                                &mut acc[dst_base + digit_idx],
+                            );
+                        }
+                    }
+                }
+            }
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    out.chunks_mut(elem_chunk * num_digits)
+        .enumerate()
+        .for_each(|(tid, acc)| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return;
+            }
+            let elems_in_chunk = acc.len() / num_digits;
+            let elem_end = elem_start + elems_in_chunk;
+
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let block_start = block_idx * block_len;
+                if block_start >= num_rings {
+                    break;
+                }
+                let ring_start = block_start + elem_start;
+                if ring_start >= num_rings {
+                    continue;
+                }
+                let ring_end = (block_start + elem_end).min(num_rings);
+
+                if let Some(rotated) = &rotated_tables[block_idx] {
+                    for local_elem_idx in 0..(ring_end - ring_start) {
+                        let src_base = (ring_start + local_elem_idx) * num_digits;
+                        let dst_base = local_elem_idx * num_digits;
+                        for digit_idx in 0..num_digits {
+                            accumulate_predecomposed_full_challenge::<D>(
+                                &digit_planes[src_base + digit_idx],
+                                rotated,
+                                &mut acc[dst_base + digit_idx],
+                            );
+                        }
+                    }
+                } else {
+                    for local_elem_idx in 0..(ring_end - ring_start) {
+                        let src_base = (ring_start + local_elem_idx) * num_digits;
+                        let dst_base = local_elem_idx * num_digits;
+                        for digit_idx in 0..num_digits {
+                            sparse_mul_acc::<D>(
+                                &digit_planes[src_base + digit_idx],
+                                challenge,
+                                &mut acc[dst_base + digit_idx],
+                            );
+                        }
+                    }
+                }
+            }
+        });
+
+    out
 }
 
 /// Element-partitioned accumulation for multi-digit dense witnesses.
