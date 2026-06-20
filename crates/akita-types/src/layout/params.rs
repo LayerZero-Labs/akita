@@ -210,7 +210,7 @@ impl LevelParams {
             .effective_l1_mass(&self.stage1_config)
     }
 
-    /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded
+    /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
     /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
     #[inline]
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {

@@ -4,6 +4,7 @@ pub mod core;
 pub mod extension_opening_reduction;
 pub mod fold_grind;
 pub mod fold_grind_observer;
+pub mod l2_pub_bound_observer;
 #[cfg(feature = "zk")]
 pub(crate) mod masking;
 pub mod prg;
@@ -22,6 +23,7 @@ pub use core::{
 };
 pub use fold_grind::ProverTranscriptGrind;
 pub use fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
+pub use l2_pub_bound_observer::{L2PubBoundObservation, L2PubBoundObserverGuard};
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{commit_next_w, RingSwitchOutput};

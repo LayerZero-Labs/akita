@@ -106,6 +106,9 @@ where
             build_point_decompose_fold_witness::<F, P, D>(&challenges, polys, &point_indices, lp)?;
         if accepts_witness(&contract, witness.centered_inf_norm) {
             super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
+            super::l2_pub_bound_observer::record_l2_pub_bound_diag::<F, D>(
+                lp, num_claims, &witness,
+            );
             let challenges = sample_folding_challenges::<F, T, D>(
                 transcript,
                 lp.num_blocks,

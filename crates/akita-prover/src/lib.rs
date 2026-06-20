@@ -42,6 +42,7 @@ pub use compute::{
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
+pub use protocol::l2_pub_bound_observer::{L2PubBoundObservation, L2PubBoundObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
     batched_prove, commit_next_w, prepare_batched_prove_inputs, prove, prove_root,

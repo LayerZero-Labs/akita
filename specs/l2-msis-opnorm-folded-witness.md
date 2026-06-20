@@ -655,21 +655,28 @@ witness class before proving. It is **not** chosen from the realized
 **Public derivability (hard contract).** Every party (prover, verifier, planner)
 must be able to recompute the same scalar from **layout-visible inputs only**:
 `challenge_l2_sq_per_block` (from the bound challenge family), fold block count
-`num_claims · 2^{r_vars}`, and witness-class norms (`FoldWitnessNorms`). The
-prover may abort if honest `Z_SQUARED` exceeds `B_l2_pub`; it must not pick a
-witness-dependent bucket at prove time. On the wire, `B_l2_pub` is either
-recomputed from those public fields or read from bytes pinned at schedule time;
-it is never inferred from witness data.
+`num_claims · 2^{r_vars}`, folded row count
+`inner_width = block_len · δ_commit`, and witness-class norms
+(`FoldWitnessNorms`).
+The prover may abort if honest `Z_SQUARED` exceeds `B_l2_pub`; it must not pick a
+witness-dependent bucket at prove time.
+On the wire, `B_l2_pub` is either recomputed from those public fields or read
+from bytes pinned at schedule time; it is never inferred from witness data.
 
 ```text
-B_l2_pub_raw = challenge_l2_sq_per_block · num_fold_blocks · witness.l1_norm · witness.infinity_norm
-             = rho2 · B · ||s||_2^2_block_max
+B_l2_pub_raw = challenge_l2_sq_per_block · num_fold_blocks · inner_width
+               · witness.l1_norm · witness.infinity_norm
+             = rho2 · B · W · ||s||_2^2_row_max
 ```
 
 where `rho2 = ||c||_2^2` on the exact-shell family (e.g. `75` for production
-`(31,11)`), `B = num_claims · 2^{r_vars}` fold blocks, and `||s||_2^2_block_max`
-is the witness-class envelope `‖s‖_1 · ‖s‖_∞` per block (`FoldWitnessNorms` in
-code; implemented as [`fold_witness_l2_pub_bound_sq`]).
+`(31,11)`), `B = num_claims · 2^{r_vars}` fold blocks,
+`W = inner_width = block_len · δ_commit` folded response rows, and
+`||s||_2^2_row_max` is the witness-class envelope `‖s‖_1 · ‖s‖_∞` for one
+ring row (`FoldWitnessNorms` in code; implemented as
+[`fold_witness_l2_pub_bound_sq`]).
+Do not multiply by `N_z = W · d` here: `FoldWitnessNorms` already bounds the
+full `d`-coefficient ring-row norm.
 
 **Rounding policy.** The geometry module (`fold_l2_certificate`, no-wrap gate,
 field-fitting eligibility) uses **`B_l2_pub_raw`** as a single exact `u128`.

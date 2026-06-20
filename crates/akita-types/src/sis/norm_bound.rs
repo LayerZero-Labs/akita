@@ -97,7 +97,7 @@ pub fn fold_challenge_norms(
     }
 }
 
-/// Per-block committed-witness `(||s||_inf, ||s||_1)` for one fold level.
+/// Per-row committed-witness `(||s||_inf, ||s||_1)` for one fold level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldWitnessNorms {
     /// Witness L∞ norm `||s||_inf` (1 for one-hot, `b/2` for dense digits).
@@ -151,22 +151,25 @@ impl FoldWitnessNorms {
         }
     }
 
-    /// Conservative per-block `||s||_2^2` from the digit envelope:
+    /// Conservative per-row `||s||_2^2` from the digit envelope:
     /// `||s||_1 · ||s||_inf` (exact for one-hot; `D · (b/2)^2` for dense).
     #[inline]
     #[must_use]
-    pub fn l2_sq_per_block_max(&self) -> u128 {
+    pub fn l2_sq_per_row_max(&self) -> u128 {
         self.l1_norm().saturating_mul(self.infinity_norm())
     }
 }
 
 /// Public second-moment ceiling on the fold response squared norm.
 ///
-/// Under independent challenge signs on a fixed-energy shell,
-/// `E[||z||_2^2] = rho2 · num_fold_blocks · ||s||_2^2` with
+/// Under independent challenge signs on a fixed-energy shell, each folded row
+/// has second moment bounded by
+/// `rho2 · num_fold_blocks · ||s||_2^2`, with
 /// `rho2 = challenge_l2_sq_per_block` and `||s||_2^2` bounded by
-/// [`FoldWitnessNorms::l2_sq_per_block_max`]. This is the planner-facing
-/// `B_l2_pub` before MSIS ladder rounding (not witness `Z_SQUARED`).
+/// [`FoldWitnessNorms::l2_sq_per_row_max`]. The public response norm sums
+/// this over all folded rows (`inner_width = block_len · δ_commit`). This is
+/// the planner-facing `B_l2_pub` before MSIS ladder rounding (not witness
+/// `Z_SQUARED`).
 ///
 /// # Errors
 ///
@@ -174,6 +177,7 @@ impl FoldWitnessNorms {
 pub fn fold_witness_l2_pub_bound_sq(
     r_vars: usize,
     num_claims: usize,
+    folded_row_count: usize,
     challenge_l2_sq_per_block: u128,
     witness: FoldWitnessNorms,
 ) -> Result<u128, AkitaError> {
@@ -182,8 +186,20 @@ pub fn fold_witness_l2_pub_bound_sq(
             "fold_witness_l2_pub_bound_sq: challenge_l2_sq_per_block must be positive".to_string(),
         ));
     }
+    if folded_row_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_witness_l2_pub_bound_sq: folded_row_count must be positive".to_string(),
+        ));
+    }
+    let block_count = if r_vars < u128::BITS as usize {
+        1u128 << r_vars
+    } else {
+        return Err(AkitaError::InvalidSetup(
+            "fold_witness_l2_pub_bound_sq: 2^r_vars overflows u128".to_string(),
+        ));
+    };
     let num_fold_blocks = (num_claims as u128)
-        .checked_mul(1u128 << r_vars)
+        .checked_mul(block_count)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "fold_witness_l2_pub_bound_sq: num_fold_blocks overflows u128".to_string(),
@@ -194,15 +210,17 @@ pub fn fold_witness_l2_pub_bound_sq(
             "fold_witness_l2_pub_bound_sq: num_fold_blocks must be positive".to_string(),
         ));
     }
-    let s2_block = witness.l2_sq_per_block_max();
-    if s2_block == 0 {
+    let folded_rows = folded_row_count as u128;
+    let s2_row = witness.l2_sq_per_row_max();
+    if s2_row == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_l2_pub_bound_sq: witness L2 block bound is zero".to_string(),
+            "fold_witness_l2_pub_bound_sq: witness L2 row bound is zero".to_string(),
         ));
     }
     challenge_l2_sq_per_block
         .checked_mul(num_fold_blocks)
-        .and_then(|t| t.checked_mul(s2_block))
+        .and_then(|t| t.checked_mul(folded_rows))
+        .and_then(|t| t.checked_mul(s2_row))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "fold_witness_l2_pub_bound_sq: product overflows u128".to_string(),
@@ -216,11 +234,17 @@ pub fn fold_witness_l2_pub_collision_bucket(
     ring_dimension: u32,
     r_vars: usize,
     num_claims: usize,
+    folded_row_count: usize,
     challenge_l2_sq_per_block: u128,
     witness: FoldWitnessNorms,
 ) -> Result<Option<u128>, AkitaError> {
-    let bound_sq =
-        fold_witness_l2_pub_bound_sq(r_vars, num_claims, challenge_l2_sq_per_block, witness)?;
+    let bound_sq = fold_witness_l2_pub_bound_sq(
+        r_vars,
+        num_claims,
+        folded_row_count,
+        challenge_l2_sq_per_block,
+        witness,
+    )?;
     Ok(super::ajtai_key::ceil_supported_collision(
         sis_family,
         ring_dimension,
@@ -1311,20 +1335,28 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_l2_pub_bound_sq_matches_rho2_times_blocks_times_witness() {
+    fn fold_witness_l2_pub_bound_sq_matches_rho2_times_blocks_times_rows_times_witness() {
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
-        let bound = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
-        assert_eq!(bound, 78 * 4 * witness.l2_sq_per_block_max());
+        let bound = fold_witness_l2_pub_bound_sq(2, 1, 8, 78, witness).unwrap();
+        assert_eq!(bound, 78 * 4 * 8 * witness.l2_sq_per_row_max());
+    }
+
+    #[test]
+    fn fold_witness_l2_pub_bound_sq_covers_fp128_d64_root_geometry() {
+        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let bound = fold_witness_l2_pub_bound_sq(10, 1, 65_536, 75, witness).unwrap();
+        assert_eq!(bound, 5_033_164_800);
+        assert!(bound >= 1_271_396_800);
     }
 
     #[test]
     fn fold_witness_l2_pub_collision_bucket_rounds_up() {
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let bucket =
-            fold_witness_l2_pub_collision_bucket(SisModulusFamily::Q32, 64, 2, 1, 78, witness)
+            fold_witness_l2_pub_collision_bucket(SisModulusFamily::Q32, 64, 2, 1, 8, 78, witness)
                 .unwrap()
                 .unwrap();
-        let raw = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        let raw = fold_witness_l2_pub_bound_sq(2, 1, 8, 78, witness).unwrap();
         assert!(bucket >= raw);
     }
 

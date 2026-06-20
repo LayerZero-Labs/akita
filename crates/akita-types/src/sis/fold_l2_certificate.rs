@@ -465,12 +465,18 @@ pub fn select_l2_certificate_realization_for_level(
     num_digits_fold: usize,
     r_vars: usize,
     num_claims: usize,
+    folded_row_count: usize,
     challenge_l2_sq_per_block: u128,
     witness: FoldWitnessNorms,
     field_characteristic: u128,
 ) -> Result<L2CertificateRealization, AkitaError> {
-    let b_l2_pub =
-        fold_witness_l2_pub_bound_sq(r_vars, num_claims, challenge_l2_sq_per_block, witness)?;
+    let b_l2_pub = fold_witness_l2_pub_bound_sq(
+        r_vars,
+        num_claims,
+        folded_row_count,
+        challenge_l2_sq_per_block,
+        witness,
+    )?;
     select_l2_certificate_realization(
         num_fold_coeffs,
         log_basis,
@@ -507,13 +513,24 @@ mod tests {
     #[test]
     fn fp128_large_root_uses_field_fitting() {
         let n = 67_108_864usize;
+        let folded_rows = n / 64;
         let k = 9usize;
         let witness = FoldWitnessNorms::new(2, 64, 64, true);
-        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, folded_rows, 78, witness).unwrap();
         assert!(field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP128).unwrap());
         assert_eq!(
-            select_l2_certificate_realization_for_level(n, 2, k, 2, 1, 78, witness, Q_FP128)
-                .unwrap(),
+            select_l2_certificate_realization_for_level(
+                n,
+                2,
+                k,
+                2,
+                1,
+                folded_rows,
+                78,
+                witness,
+                Q_FP128,
+            )
+            .unwrap(),
             L2CertificateRealization::FieldFitting,
         );
     }
@@ -521,13 +538,23 @@ mod tests {
     #[test]
     fn fp32_large_root_grouped_carry_when_k_grows() {
         let n = 67_108_864usize;
+        let folded_rows = n / 64;
         let k = 5usize;
         let witness = FoldWitnessNorms::new(2, 64, 64, true);
-        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, folded_rows, 78, witness).unwrap();
         assert!(!field_fitting_certificate_fits(n, 2, k, b_l2_pub, Q_FP32).unwrap());
-        let realization =
-            select_l2_certificate_realization_for_level(n, 2, k, 2, 1, 78, witness, Q_FP32)
-                .unwrap();
+        let realization = select_l2_certificate_realization_for_level(
+            n,
+            2,
+            k,
+            2,
+            1,
+            folded_rows,
+            78,
+            witness,
+            Q_FP32,
+        )
+        .unwrap();
         assert!(matches!(
             realization,
             L2CertificateRealization::GroupedCarry { .. }
@@ -537,9 +564,10 @@ mod tests {
     #[test]
     fn fp32_total_fallback_when_n_and_k_both_large() {
         let n = 67_108_864usize;
+        let folded_rows = n / 64;
         let k = 9usize;
         let witness = FoldWitnessNorms::new(2, 64, 64, true);
-        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, 78, witness).unwrap();
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(2, 1, folded_rows, 78, witness).unwrap();
         assert_eq!(
             select_l2_certificate_realization(n, 2, k, b_l2_pub, Q_FP32).unwrap(),
             L2CertificateRealization::DeterministicFallback,
@@ -561,9 +589,10 @@ mod tests {
     #[test]
     fn recursive_dense_level_certifies_on_fp32() {
         let n = 57_344usize;
+        let folded_rows = n / 64;
         let k = 5usize;
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
-        let b_l2_pub = fold_witness_l2_pub_bound_sq(3, 1, 78, witness).unwrap();
+        let b_l2_pub = fold_witness_l2_pub_bound_sq(3, 1, folded_rows, 78, witness).unwrap();
         let realization = select_l2_certificate_realization(n, 3, k, b_l2_pub, Q_FP32).unwrap();
         assert!(matches!(
             realization,

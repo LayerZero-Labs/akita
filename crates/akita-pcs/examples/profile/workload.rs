@@ -11,7 +11,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
-    FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    FoldGrindObserverGuard, L2PubBoundObserverGuard, OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -397,6 +397,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
+    let _l2_pub_observer = L2PubBoundObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         &CpuBackend,
@@ -415,9 +416,15 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     )
     .unwrap();
     let grind_observations = FoldGrindObserverGuard::take();
+    let l2_pub_observations = L2PubBoundObserverGuard::take();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        &grind_observations,
+        &l2_pub_observations,
+    );
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -807,6 +814,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
+    let _l2_pub_observer = L2PubBoundObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         &CpuBackend,
@@ -825,9 +833,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     )
     .unwrap();
     let grind_observations = FoldGrindObserverGuard::take();
+    let l2_pub_observations = L2PubBoundObserverGuard::take();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        &grind_observations,
+        &l2_pub_observations,
+    );
     let opening_batch = OpeningBatch::same_point(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {

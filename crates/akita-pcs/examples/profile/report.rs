@@ -1,13 +1,15 @@
 use akita_field::{CanonicalField, FieldCore};
-use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
+use akita_prover::{FoldGrindObservation, L2PubBoundObservation, PreparedCrtNttProfile};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
     layout::proof_size::field_bytes,
-    schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
-    LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
+    schedule_terminal_direct_witness_shape,
+    sis::L2CertificateRealization,
+    tail_segment_multiplicities_from_layout, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    CleartextWitnessProof, CleartextWitnessShape, LevelParams, Schedule, SetupSumcheckProof, Step,
+    TerminalLevelProof, ZFoldEncodingStats,
 };
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
@@ -489,6 +491,115 @@ where
     nonces
 }
 
+fn format_slack_bps(bps: u64) -> String {
+    format!("{:.2}x", bps as f64 / 10_000.0)
+}
+
+fn realization_label(realization: L2CertificateRealization) -> String {
+    match realization {
+        L2CertificateRealization::FieldFitting => "field_fitting".to_string(),
+        L2CertificateRealization::GroupedCarry { group_digits } => {
+            format!("grouped_carry(g={group_digits})")
+        }
+        L2CertificateRealization::DeterministicFallback => "deterministic_fallback".to_string(),
+    }
+}
+
+pub(crate) fn emit_l2_pub_bound_summary(label: &str, observations: &[L2PubBoundObservation]) {
+    if observations.is_empty() {
+        tracing::info!(label, l2_pub_levels = 0u32, "l2 pub bound summary");
+        eprintln!("[{label}] l2_pub_bound: no fold observations");
+        return;
+    }
+
+    let mut min_slack_bps = u64::MAX;
+    let mut max_slack_bps = 0u64;
+    let mut max_z_over_b_bps = 0u64;
+    let mut violations = 0usize;
+
+    eprintln!(
+        "[{label}] l2_pub_bound: {} fold level(s) - Z_SQUARED vs B_l2_pub (diagnostic only)",
+        observations.len()
+    );
+    eprintln!(
+        "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
+        "fold", "r_v", "nc", "blocks", "K_f", "N_z", "rej", "Z_SQUARED", "B_l2_pub", "L2_DET", "B/Z", "Z/B", "tier"
+    );
+
+    for obs in observations {
+        min_slack_bps = min_slack_bps.min(obs.slack_bps);
+        max_slack_bps = max_slack_bps.max(obs.slack_bps);
+        max_z_over_b_bps = max_z_over_b_bps.max(obs.z_over_b_l2_bps);
+        if obs.z_squared > obs.b_l2_pub {
+            violations += 1;
+        }
+
+        eprintln!(
+            "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
+            obs.fold_index,
+            obs.r_vars,
+            obs.num_claims,
+            obs.num_blocks,
+            obs.num_digits_fold,
+            obs.num_fold_coeffs,
+            if obs.op_norm_rejection { "Y" } else { "N" },
+            obs.z_squared,
+            obs.b_l2_pub,
+            obs.l2_bound_squared,
+            format_slack_bps(obs.slack_bps),
+            format_slack_bps(obs.z_over_b_l2_bps),
+            realization_label(obs.realization),
+        );
+
+        tracing::info!(
+            label,
+            fold_index = obs.fold_index,
+            r_vars = obs.r_vars,
+            num_claims = obs.num_claims,
+            num_blocks = obs.num_blocks,
+            num_digits_fold = obs.num_digits_fold,
+            num_fold_coeffs = %obs.num_fold_coeffs,
+            op_norm_rejection = obs.op_norm_rejection,
+            centered_inf_norm = obs.centered_inf_norm,
+            z_squared = obs.z_squared,
+            b_l2_pub = obs.b_l2_pub,
+            l2_bound_squared = obs.l2_bound_squared,
+            slack_bps = obs.slack_bps,
+            z_over_b_l2_bps = obs.z_over_b_l2_bps,
+            z_over_det_bps = obs.z_over_det_bps,
+            realization = realization_label(obs.realization).as_str(),
+            "l2 pub bound fold level"
+        );
+    }
+
+    let avg_slack_bps = observations
+        .iter()
+        .map(|obs| obs.slack_bps)
+        .sum::<u64>()
+        .checked_div(observations.len() as u64)
+        .unwrap_or(0);
+
+    tracing::info!(
+        label,
+        l2_pub_levels = observations.len(),
+        min_slack_bps,
+        max_slack_bps,
+        avg_slack_bps,
+        max_z_over_b_bps,
+        violations,
+        "l2 pub bound summary"
+    );
+    eprintln!(
+        "[{label}] l2_pub_bound summary: levels={}, min_B/Z={}, max_B/Z={}, avg_B/Z={}, max_Z/B={}, violations(Z>B)={}",
+        observations.len(),
+        format_slack_bps(min_slack_bps),
+        format_slack_bps(max_slack_bps),
+        format_slack_bps(avg_slack_bps),
+        format_slack_bps(max_z_over_b_bps),
+        violations,
+    );
+}
+
 fn emit_fold_grind_summary(label: &str, grind_observations: &[FoldGrindObservation]) {
     if grind_observations.is_empty() {
         tracing::info!(label, grind_levels = 0u32, "fold grind summary");
@@ -941,6 +1052,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, L>,
     grind_observations: &[FoldGrindObservation],
+    l2_pub_observations: &[L2PubBoundObservation],
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
@@ -1046,6 +1158,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         );
     }
     emit_fold_grind_summary(label, grind_observations);
+    emit_l2_pub_bound_summary(label, l2_pub_observations);
 }
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
