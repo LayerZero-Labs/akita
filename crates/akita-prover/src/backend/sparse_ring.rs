@@ -737,6 +737,8 @@ where
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
                 decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+            } else {
+                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
         });
     #[cfg(not(feature = "parallel"))]
@@ -746,6 +748,8 @@ where
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
                 decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+            } else {
+                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
         });
     Ok(out)

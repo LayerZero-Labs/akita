@@ -44,6 +44,7 @@ pub(crate) fn commit_inner_flat_digit_count(
         })
 }
 
+#[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     inner: &CommitInnerWitness<F, D>,
     num_blocks: usize,
@@ -98,18 +99,44 @@ where
             expected_flat_digits
         )));
     }
+
+    Ok(())
+}
+
+/// Debug-only witness round-trip check for unit tests.
+#[cfg(debug_assertions)]
+fn debug_check_commit_inner_digit_consistency<F: FieldCore + CanonicalField, const D: usize>(
+    inner: &CommitInnerWitness<F, D>,
+    n_a: usize,
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<(), AkitaError> {
+    let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
     for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
         let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+        debug_assert_eq!(block_digits.len(), expected_block_digits);
+        debug_assert_eq!(recomposed_block.len(), n_a);
         for (row_idx, row_digits) in block_digits.chunks(num_digits_open).enumerate() {
-            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
-            if recomposed_block[row_idx] != recomposed {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "backend returned recomposed row {row_idx} for inner commitment block {block_idx} that does not match its decomposed digits"
-                )));
+            let row = &recomposed_block[row_idx];
+            if row.is_zero() {
+                if row_digits
+                    .iter()
+                    .any(|plane| plane.iter().any(|&d| d != 0))
+                {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "nonzero decomposed digits for zero inner commitment row {row_idx} in block {block_idx}"
+                    )));
+                }
+            } else {
+                let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
+                if *row != recomposed {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "recomposed row {row_idx} for inner commitment block {block_idx} does not match decomposed digits"
+                    )));
+                }
             }
         }
     }
-
     Ok(())
 }
 
@@ -786,11 +813,29 @@ mod tests {
         assert!(validate_commit_inner_shape(&inner, 2, 3, 2, 4).is_err());
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn commit_inner_shape_rejects_recomposition_mismatch() {
         let mut inner = inner_witness(1, 1, vec![2]);
         inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
-        assert!(validate_commit_inner_shape(&inner, 1, 1, 2, 4).is_err());
+        assert!(debug_check_commit_inner_digit_consistency(&inner, 1, 2, 4).is_err());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn commit_inner_shape_rejects_nonzero_digits_on_zero_row() {
+        let mut inner = inner_witness(1, 3, vec![6]);
+        inner.decomposed_inner_rows.flat_digits_mut()[2][0] = 1;
+        assert!(debug_check_commit_inner_digit_consistency(&inner, 3, 2, 4).is_err());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn commit_inner_shape_accepts_many_all_zero_blocks() {
+        let num_blocks = 1024;
+        let inner = inner_witness(num_blocks, 3, vec![6; num_blocks]);
+        validate_commit_inner_shape(&inner, num_blocks, 3, 2, 4).expect("all-zero blocks");
+        debug_check_commit_inner_digit_consistency(&inner, 3, 2, 4).expect("digit consistency");
     }
 
     #[test]

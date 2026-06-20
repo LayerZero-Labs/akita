@@ -89,4 +89,35 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         .for_each(|(dst_chunk, row)| {
             row.balanced_decompose_pow2_i8_into_with_params(dst_chunk, &decompose_params)
         });
+
+    #[cfg(debug_assertions)]
+    debug_assert_decomposed_rows_i8_match(rows, out, num_digits, log_basis);
+}
+
+/// Debug-only round-trip check that digit planes recompose to the source rows.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_assert_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    out: &[[i8; D]],
+    num_digits: usize,
+    log_basis: u32,
+) {
+    debug_assert_eq!(out.len(), rows.len() * num_digits);
+    for (row_idx, row) in rows.iter().enumerate() {
+        let row_digits = &out[row_idx * num_digits..(row_idx + 1) * num_digits];
+        if row.is_zero() {
+            debug_assert!(
+                row_digits
+                    .iter()
+                    .all(|plane| plane.iter().all(|&d| d == 0)),
+                "zero row {row_idx} must decompose to zero digits"
+            );
+        } else {
+            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
+            debug_assert_eq!(
+                row, &recomposed,
+                "row {row_idx} must round-trip through i8 digit decomposition"
+            );
+        }
+    }
 }
