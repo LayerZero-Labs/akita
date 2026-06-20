@@ -713,58 +713,7 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
         .collect::<Vec<_>>();
     let mut out = vec![[0i32; D]; inner_width];
 
-    #[cfg(feature = "parallel")]
-    out.par_chunks_mut(elem_chunk * num_digits)
-        .enumerate()
-        .for_each(|(tid, acc)| {
-            let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
-                return;
-            }
-            let elems_in_chunk = acc.len() / num_digits;
-            let elem_end = elem_start + elems_in_chunk;
-
-            for (block_idx, challenge) in challenges.iter().enumerate() {
-                let block_start = block_idx * block_len;
-                if block_start >= num_rings {
-                    break;
-                }
-                let ring_start = block_start + elem_start;
-                if ring_start >= num_rings {
-                    continue;
-                }
-                let ring_end = (block_start + elem_end).min(num_rings);
-
-                if let Some(rotated) = &rotated_tables[block_idx] {
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let src_base = (ring_start + local_elem_idx) * num_digits;
-                        let dst_base = local_elem_idx * num_digits;
-                        for digit_idx in 0..num_digits {
-                            accumulate_predecomposed_full_challenge::<D>(
-                                &digit_planes[src_base + digit_idx],
-                                rotated,
-                                &mut acc[dst_base + digit_idx],
-                            );
-                        }
-                    }
-                } else {
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let src_base = (ring_start + local_elem_idx) * num_digits;
-                        let dst_base = local_elem_idx * num_digits;
-                        for digit_idx in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_planes[src_base + digit_idx],
-                                challenge,
-                                &mut acc[dst_base + digit_idx],
-                            );
-                        }
-                    }
-                }
-            }
-        });
-
-    #[cfg(not(feature = "parallel"))]
-    out.chunks_mut(elem_chunk * num_digits)
+    cfg_chunks_mut!(out, elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
             let elem_start = tid * elem_chunk;
@@ -849,58 +798,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     let has_sparse_challenge = rotated_tables.iter().any(Option::is_none);
     let mut out = vec![[0i32; D]; block_len * num_digits];
 
-    #[cfg(feature = "parallel")]
-    out.par_chunks_mut(elem_chunk * num_digits)
-        .enumerate()
-        .for_each(|(tid, acc)| {
-            let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
-                return;
-            }
-            let elems_in_chunk = acc.len() / num_digits;
-            let elem_end = elem_start + elems_in_chunk;
-            let mut digit_buf = has_sparse_challenge.then(|| vec![[0i8; D]; num_digits]);
-
-            for (block_idx, challenge) in challenges.iter().enumerate() {
-                let block_start = block_idx * block_len;
-                if block_start >= coeffs.len() {
-                    break;
-                }
-                let coeff_start = block_start + elem_start;
-                if coeff_start >= coeffs.len() {
-                    continue;
-                }
-                let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated) = &rotated_tables[block_idx] {
-                    for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
-                    {
-                        let base = local_elem_idx * num_digits;
-                        decompose_ring_full_challenge_accumulate::<F, D>(
-                            ring,
-                            rotated,
-                            &mut acc[base..base + num_digits],
-                            p,
-                        );
-                    }
-                } else if let Some(digit_buf) = digit_buf.as_mut() {
-                    for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
-                    {
-                        decompose_ring_interleaved::<F, D>(ring, digit_buf, num_digits, p);
-                        let base = local_elem_idx * num_digits;
-                        for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[base + digit],
-                            );
-                        }
-                    }
-                }
-            }
-        });
-
-    #[cfg(not(feature = "parallel"))]
-    out.chunks_mut(elem_chunk * num_digits)
+    cfg_chunks_mut!(out, elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
             let elem_start = tid * elem_chunk;
