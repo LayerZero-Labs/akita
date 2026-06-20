@@ -252,9 +252,9 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -273,8 +273,6 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -283,6 +281,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

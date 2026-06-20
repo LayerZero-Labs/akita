@@ -317,7 +317,7 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,
@@ -441,7 +441,7 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,
@@ -603,7 +603,7 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point.clone(),
@@ -750,7 +750,7 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,

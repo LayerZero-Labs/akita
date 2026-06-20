@@ -83,9 +83,9 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"tiered_e2e");
         let proof = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::batched_prove(
             &setup,
+            prove_input(&pt[..], &[&poly], &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], std::slice::from_ref(&poly), &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -170,9 +170,9 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"tiered_e2e");
         let proof = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::batched_prove(
             &setup,
+            prove_input(&pt[..], &poly_refs[..], &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], &poly_refs[..], &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,

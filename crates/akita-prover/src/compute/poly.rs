@@ -112,6 +112,25 @@ where
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
 }
 
+/// Capability: materialize the dense field-element evaluation table.
+///
+/// Required only by the extension-opening reduction's dense-term fallback, which
+/// must produce dense evaluations even for sparse/one-hot representations (where
+/// the tensor kernels would otherwise keep a sparse witness). Kept separate from
+/// [`RootTensorSource`] so it does not widen the commit-path capability bound.
+pub trait RootBaseEvalsSource<F, const D: usize>: RootPolyShape<F, D>
+where
+    F: FieldCore,
+{
+    /// Dense field-element evaluation table for this polynomial.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the representation cannot materialize its dense
+    /// evaluation table.
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError>;
+}
+
 /// Capability: materialize a direct root witness for zero-fold openings.
 ///
 /// This is an explicit opt-in, not a hidden default on every root polynomial:
@@ -243,7 +262,10 @@ where
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
 pub trait RootProvePoly<F, const D: usize>:
-    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
+    RootOpeningSource<F, D>
+    + RootTensorSource<F, D>
+    + RootBaseEvalsSource<F, D>
+    + DirectRootWitnessSource<F, D>
 where
     F: FieldCore,
 {
@@ -252,7 +274,10 @@ where
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
     F: FieldCore,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
+    P: RootOpeningSource<F, D>
+        + RootTensorSource<F, D>
+        + RootBaseEvalsSource<F, D>
+        + DirectRootWitnessSource<F, D>,
 {
 }
 
@@ -383,6 +408,14 @@ where
     fn num_ring_elems(&self) -> usize {
         RootPolyShape::num_ring_elems(*self)
     }
+
+    fn num_vars(&self) -> usize {
+        RootPolyShape::num_vars(*self)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        RootPolyShape::onehot_chunk_size(*self)
+    }
 }
 
 impl<F, const D: usize, P> RootCommitSource<F, D> for &P
@@ -424,5 +457,52 @@ where
             "tensor_batch through a polynomial reference is not supported; pass by value"
                 .to_string(),
         ))
+    }
+}
+
+impl<F, const D: usize, P> RootBaseEvalsSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootBaseEvalsSource<F, D>,
+{
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        (*self).base_evals()
+    }
+}
+
+impl<F, const D: usize, P> RootOpeningSource<F, D> for &P
+where
+    F: FieldCore,
+    P: RootOpeningSource<F, D>,
+{
+    type OpeningView<'a>
+        = P::OpeningView<'a>
+    where
+        Self: 'a;
+
+    type OpeningBatchView<'a>
+        = P::OpeningBatchView<'a>
+    where
+        Self: 'a;
+
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+        (*self).opening_view()
+    }
+
+    fn opening_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "opening_batch through a polynomial reference is not supported; pass by value"
+                .to_string(),
+        ))
+    }
+}
+
+impl<F, const D: usize, P> DirectRootWitnessSource<F, D> for &P
+where
+    F: FieldCore,
+    P: DirectRootWitnessSource<F, D>,
+{
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        (*self).direct_root_witness()
     }
 }

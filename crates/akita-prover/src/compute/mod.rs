@@ -52,8 +52,9 @@ pub use plans::{
 };
 pub use poly::ZkHidingCommitBackend;
 pub use poly::{
-    DirectRootWitnessSource, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
-    RootTensorProjectionCommitKernels, RootTensorProjectionProveKernels, RootTensorSource,
+    DirectRootWitnessSource, RootBaseEvalsSource, RootCommitBackend, RootCommitPoly,
+    RootCommitPolys, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
+    RootProveFlowBackend, RootProvePoly, RootTensorProjectionCommitKernels,
+    RootTensorProjectionProveKernels, RootTensorSource,
 };
 pub use stack::{OperationCtx, ProverComputeStack, UniformProverStack};

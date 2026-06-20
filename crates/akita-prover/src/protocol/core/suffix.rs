@@ -1,4 +1,8 @@
 use super::*;
+use crate::backend::OwnedSuffixWitness;
+use crate::compute::RootProveFlowBackend;
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -66,7 +70,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -75,7 +82,37 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    B: RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, D>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            D,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 32>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            32,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 64>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            64,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 128>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            128,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 256>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            256,
+        >,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -238,7 +275,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     L: FpExtEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
@@ -247,7 +287,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: ProverComputeBackend<F>,
+    B: RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, L, L, D>,
 {
     {
         let x: u8 = 0;
@@ -258,7 +298,7 @@ where
         );
     }
 
-    let witness_view = current_state.w.view::<F, D>()?;
+    let witness_view = OwnedSuffixWitness::<F, D>::from_suffix(&current_state.w.view::<F, D>()?);
     let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
     let typed_hint = current_state.hint.to_typed::<D>()?;
     let opening_point = &current_state.sumcheck_challenges;
@@ -271,18 +311,17 @@ where
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
-    let logical_view = logical_w.view::<F, D>()?;
+    let logical_view = OwnedSuffixWitness::<F, D>::from_suffix(&logical_w.view::<F, D>()?);
     let logical_polys = [&logical_view];
     let fold_polys = [&witness_view];
     let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
-    let expected_openings = needs_extension_reduction.then(|| vec![current_state.opening]);
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     let recursive_commitment = RingCommitment {
         u: commitment_u.to_vec(),
     };
-    prepare_fold_inner::<F, L, T, _, _, _, B, D>(
+    prepare_fold_inner::<F, L, T, _, _, B, D>(
         backend,
         prepared,
         needs_extension_reduction,
@@ -300,7 +339,6 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_openings,
         opening_point.to_vec(),
         || Ok(()),
         level_params,

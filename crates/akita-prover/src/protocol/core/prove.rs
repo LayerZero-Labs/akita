@@ -1,6 +1,9 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
-use crate::compute::RootPolyShape;
+use crate::backend::OwnedSuffixWitness;
+use crate::compute::{DirectRootWitnessSource, RootPolyShape, RootProveFlowBackend, RootProvePoly};
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -17,7 +20,7 @@ fn prover_claims_to_opening_batch<'a, F, E, P, const D: usize>(
 where
     F: FieldCore,
     E: FieldCore,
-    P: AkitaPolyOps<F, D>,
+    P: RootPolyShape<F, D>,
 {
     let (point, payloads) = claims;
     let slots = payloads
@@ -77,7 +80,7 @@ pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootPolyShape<F, D>,
 {
     validate_batched_inputs(
         expanded,
@@ -103,7 +106,7 @@ where
         .claim_to_commitment_group()
         .iter()
         .zip(opening_batch.claim_poly_indices().iter())
-        .map(|(&group_idx, &poly_idx)| &prepared_batch.payloads[group_idx].polynomials[poly_idx])
+        .map(|(&group_idx, &poly_idx)| prepared_batch.payloads[group_idx].polynomials[poly_idx])
         .collect();
     let commitment_hints = prepared_batch
         .payloads
@@ -133,7 +136,7 @@ pub fn prove_root_direct<F, L, const D: usize, P>(
 where
     F: FieldCore,
     L: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: DirectRootWitnessSource<F, D>,
 {
     let witnesses = polys
         .iter()
@@ -215,8 +218,41 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D> + RootPolyShape<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    Cfg::Field: FromPrimitiveInt + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    P: RootProvePoly<Cfg::Field, D>,
+    B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
+        + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, D>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            D,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 32>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            32,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 64>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            64,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 128>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            128,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 256>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            256,
+        >,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -327,8 +363,41 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D> + RootPolyShape<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    Cfg::Field: FromPrimitiveInt + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    P: RootProvePoly<Cfg::Field, D>,
+    B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
+        + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, D>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            D,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 32>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            32,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 64>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            64,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 128>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            128,
+        > + RootProveFlowBackend<
+            Cfg::Field,
+            OwnedSuffixWitness<Cfg::Field, 256>,
+            Cfg::ExtField,
+            Cfg::ExtField,
+            256,
+        >,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 

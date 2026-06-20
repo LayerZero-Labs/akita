@@ -150,14 +150,14 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -241,14 +241,14 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -327,14 +327,14 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -428,14 +428,14 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

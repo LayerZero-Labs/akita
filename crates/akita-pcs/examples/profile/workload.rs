@@ -5,11 +5,14 @@ use crate::report::{
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
+    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
+    FromPrimitiveInt, LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::compute::{RootCommitBackend, RootCommitPoly};
+use akita_prover::compute::{
+    RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly,
+};
+use akita_prover::OwnedSuffixWitness;
 use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
     FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
@@ -338,7 +341,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: AkitaPolyOps<FF, D> + RootCommitPoly<FF, D>,
+    P: AkitaPolyOps<FF, D> + RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
 >(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
@@ -373,9 +376,15 @@ fn run_prove<
         + HasWide
         + AkitaSerialize
         + 'static,
-    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF>,
+    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
-    CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>,
+    CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>
+        + RootProveFlowBackend<FF, P, Cfg::ExtField, Cfg::ExtField, D>
+        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, D>, Cfg::ExtField, Cfg::ExtField, D>
+        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 32>, Cfg::ExtField, Cfg::ExtField, 32>
+        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 64>, Cfg::ExtField, Cfg::ExtField, 64>
+        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 128>, Cfg::ExtField, Cfg::ExtField, 128>
+        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 256>, Cfg::ExtField, Cfg::ExtField, 256>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
@@ -406,8 +415,6 @@ fn run_prove<
     let _grind_observer = FoldGrindObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
-        &CpuBackend,
-        prepared,
         (
             pt,
             vec![CommittedPolynomials {
@@ -416,6 +423,8 @@ fn run_prove<
                 hint,
             }],
         ),
+        &CpuBackend,
+        prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -828,8 +837,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let _grind_observer = FoldGrindObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &pt[..],
             vec![CommittedPolynomials {
@@ -838,6 +845,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 hint: hints.into_iter().next().unwrap(),
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

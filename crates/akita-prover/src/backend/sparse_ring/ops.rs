@@ -16,8 +16,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
@@ -146,6 +147,16 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(coeffs),
         ))
+    }
+}
+
+impl<F, const D: usize> RootBaseEvalsSource<F, D> for SparseRingPoly<F, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::base_evals(self)
     }
 }
 

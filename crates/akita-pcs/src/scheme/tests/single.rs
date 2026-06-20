@@ -14,9 +14,9 @@ fn verify_passes_for_consistent_opening() {
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -35,8 +35,6 @@ fn verify_passes_for_consistent_opening() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -45,6 +43,8 @@ fn verify_passes_for_consistent_opening() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -84,9 +84,9 @@ fn verify_rejects_wrong_opening() {
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -103,8 +103,6 @@ fn verify_rejects_wrong_opening() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -113,6 +111,8 @@ fn verify_rejects_wrong_opening() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -303,9 +303,9 @@ fn monomial_basis_prove_verify_round_trip() {
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -325,8 +325,6 @@ fn monomial_basis_prove_verify_round_trip() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -335,6 +333,8 @@ fn monomial_basis_prove_verify_round_trip() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Monomial,
         akita_types::SetupContributionMode::Direct,
@@ -385,9 +385,9 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
     let (commitment, hint) = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -399,8 +399,6 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -409,6 +407,8 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

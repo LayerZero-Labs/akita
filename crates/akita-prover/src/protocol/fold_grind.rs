@@ -1,6 +1,7 @@
 //! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
-use crate::{AkitaPolyOps, DecomposeFoldWitness};
+use crate::compute::{OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource};
+use crate::DecomposeFoldWitness;
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
     stage1_fold_challenge_labels, Challenges,
@@ -72,7 +73,8 @@ fn grind_probe_nonces(
 /// Plain presets probe `nonce = 0, 1, …` (minimum accepting nonce). ZK presets
 /// with tail-bound grind use a transcript-seeded uniform permutation of the same
 /// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
-pub(crate) fn sample_fold_decompose_witness<F, P, T, const D: usize>(
+pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
+    backend: &B,
     transcript: &mut T,
     polys: &[&P],
     lp: &LevelParams,
@@ -80,7 +82,9 @@ pub(crate) fn sample_fold_decompose_witness<F, P, T, const D: usize>(
 ) -> Result<(DecomposeFoldWitness<F, D>, Challenges, u32), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    P: AkitaPolyOps<F, D>,
+    P: RootOpeningSource<F, D>,
+    B: for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     let binding = FoldLinfProtocolBinding::CURRENT;
@@ -101,8 +105,13 @@ where
             labels,
             nonce,
         )?;
-        let witness =
-            build_point_decompose_fold_witness::<F, P, D>(&challenges, polys, &point_indices, lp)?;
+        let witness = build_point_decompose_fold_witness::<F, P, B, D>(
+            backend,
+            &challenges,
+            polys,
+            &point_indices,
+            lp,
+        )?;
         if accepts_witness(&contract, witness.centered_inf_norm) {
             super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
             let challenges = sample_folding_challenges::<F, T, D>(

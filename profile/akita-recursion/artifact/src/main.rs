@@ -323,9 +323,9 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &prover_setup,
+        std::slice::from_ref(&onehot_poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&&onehot_poly),
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
@@ -337,8 +337,6 @@ fn run() -> Result<(), String> {
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
-        &CpuBackend,
-        &prepared,
         (
             &opening_point[..],
             vec![CommittedPolynomials {
@@ -347,6 +345,8 @@ fn run() -> Result<(), String> {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

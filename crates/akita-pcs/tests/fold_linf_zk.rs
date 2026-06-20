@@ -53,9 +53,9 @@ fn zk_tail_bound_with_grind_onehot_roundtrip() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/zk-onehot");
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            prove_input(&point, &[&poly], &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &[&poly], &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

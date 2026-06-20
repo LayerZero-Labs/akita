@@ -132,9 +132,9 @@ fn prove_onehot_with_setup_mode(
     let proof =
         <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            prove_input(&point[..], &poly_refs[..], &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point[..], &poly_refs[..], &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             proof_mode,

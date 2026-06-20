@@ -568,8 +568,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 
 /// Borrowed commit view over one-hot chunk storage.
@@ -714,6 +715,16 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(evals),
         ))
+    }
+}
+
+impl<F, const D: usize, I> RootBaseEvalsSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::base_evals(self)
     }
 }
 

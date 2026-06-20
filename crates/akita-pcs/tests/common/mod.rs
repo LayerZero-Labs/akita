@@ -62,7 +62,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 
 pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     point: &'a [FF],
-    polynomials: &'a [P],
+    polynomials: &'a [&'a P],
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {

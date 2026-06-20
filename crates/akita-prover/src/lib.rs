@@ -29,8 +29,9 @@ pub use api::{
 pub use backend::FoldInputPoly;
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitness,
+    OneHotPoly, OwnedSuffixWitness, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
+    RootTensorProjectionPoly, SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly,
+    SuffixWitness,
 };
 pub use compute::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
@@ -58,7 +59,7 @@ pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
     /// Polynomials addressable by claim `poly_idx` values at this point.
-    pub polynomials: &'a [P],
+    pub polynomials: &'a [&'a P],
     /// Commitment for `polynomials`.
     pub commitment: &'a C,
     /// Prover-side hint for `commitment`.

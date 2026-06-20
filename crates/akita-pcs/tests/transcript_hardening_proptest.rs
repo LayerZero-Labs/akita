@@ -57,9 +57,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
         &setup,
+        prove_input(&opening_point, &polys, &commitment, hint),
         &CpuBackend,
         &prepared,
-        prove_input(&opening_point, &polys, &commitment, hint),
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,

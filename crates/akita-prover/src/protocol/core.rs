@@ -12,9 +12,8 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, FoldInputPoly, ProverClaims, ProverComputeBackend,
-    ProverTranscriptGrind, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
-    RingRelationInstance, RingRelationWitness,
+    CommittedPolynomials, ProverClaims, ProverComputeBackend, ProverTranscriptGrind,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};

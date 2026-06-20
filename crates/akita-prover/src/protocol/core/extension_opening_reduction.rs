@@ -1,7 +1,7 @@
 use super::*;
+use crate::compute::{RootBaseEvalsSource, RootTensorSource, TensorProjectionBatchKernel};
 
 pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldCore> {
-    pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) proof_partials: Vec<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) terms: Vec<ExtensionOpeningReductionTerm<E>>,
@@ -18,11 +18,17 @@ pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldC
 pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
-    pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) protocol_point: Vec<E>,
 }
 
-pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<F, E, P, const D: usize>(
+pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
+    F,
+    E,
+    P,
+    B,
+    const D: usize,
+>(
+    backend: &B,
     polys: &[&P],
     num_vars: usize,
     padded_len: usize,
@@ -31,9 +37,10 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<F, E, P
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
 where
-    F: FieldCore,
-    E: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_reduction_terms", num_terms = polys.len()).entered();
@@ -44,7 +51,8 @@ where
         });
     }
 
-    if let Some(terms) = try_sparse_extension_opening_reduction_terms::<F, E, P, D>(
+    if let Some(terms) = try_sparse_extension_opening_reduction_terms::<F, E, P, B, D>(
+        backend,
         polys,
         row_coefficients,
         tail_point,
@@ -63,21 +71,27 @@ where
     )
 }
 
-fn try_sparse_extension_opening_reduction_terms<F, E, P, const D: usize>(
+fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
+    backend: &B,
     polys: &[&P],
     row_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
 ) -> Result<Option<Vec<ExtensionOpeningReductionTerm<E>>>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootTensorSource<F, D>,
+    B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_sparse_terms", num_terms = polys.len()).entered();
-    let Some(witness_evals) =
-        P::tensor_packed_extension_sparse_linear_combination::<E>(polys, row_coefficients)?
+    let Some(witness_evals) = TensorProjectionBatchKernel::sparse_linear_combination(
+        backend,
+        None,
+        P::tensor_batch(polys)?,
+        row_coefficients,
+    )?
     else {
         return Ok(None);
     };
@@ -119,9 +133,9 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, const D: usize>(
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
 where
-    F: FieldCore,
-    E: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+    P: RootBaseEvalsSource<F, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_dense_witnesses", num_terms = polys.len()).entered();
@@ -151,7 +165,16 @@ where
         .collect()
 }
 
-pub(in crate::protocol::core) fn prepare_extension_opening_reduction<F, E, T, P, const D: usize>(
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
+    F,
+    E,
+    T,
+    P,
+    B,
+    const D: usize,
+>(
+    backend: &B,
     polys: &[&P],
     opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
@@ -164,7 +187,8 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
     T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let num_claims = opening_batch.num_claims();
     let num_vars = opening_batch.num_vars();
@@ -215,8 +239,12 @@ where
                 row_partials_by_claim.push(tensor.row_partials);
             }
         } else {
-            let point_partials =
-                P::tensor_extension_column_partials_batch::<E>(polys, &padded_point)?;
+            let point_partials = TensorProjectionBatchKernel::column_partials_batch(
+                backend,
+                None,
+                P::tensor_batch(polys)?,
+                &padded_point,
+            )?;
             if point_partials.len() != num_claims {
                 return Err(AkitaError::InvalidSize {
                     expected: num_claims,
@@ -325,7 +353,8 @@ where
     debug_assert_eq!(input_claim, true_input_claim);
 
     let tail_point = &padded_point[split_bits..];
-    let terms = build_extension_opening_reduction_terms::<F, E, P, D>(
+    let terms = build_extension_opening_reduction_terms::<F, E, P, B, D>(
+        backend,
         polys,
         num_vars,
         padded_len,
@@ -335,7 +364,6 @@ where
     )?;
 
     Ok(PreparedExtensionOpeningReduction {
-        openings,
         proof_partials,
         row_coefficients,
         terms,
@@ -351,7 +379,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, const D: usize>(
+pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B, const D: usize>(
+    backend: &B,
     polys: &[&P],
     opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
@@ -365,7 +394,8 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span = tracing::info_span!(
         "prove_extension_opening_reduction",
@@ -373,7 +403,8 @@ where
         num_claims = opening_batch.num_claims()
     )
     .entered();
-    let prepared = prepare_extension_opening_reduction::<F, E, T, P, D>(
+    let prepared = prepare_extension_opening_reduction::<F, E, T, P, B, D>(
+        backend,
         polys,
         opening_batch,
         shared_opening_point,
@@ -465,7 +496,6 @@ where
     Ok(ProvedExtensionOpeningReduction {
         reduction,
         row_coefficients: prepared.row_coefficients,
-        openings: prepared.openings,
         protocol_point,
     })
 }

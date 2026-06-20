@@ -11,9 +11,7 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{
-    commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly,
-};
+use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningBatch};
 use criterion::measurement::WallTime;

@@ -1,4 +1,12 @@
 use super::*;
+use crate::compute::{
+    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OpeningBatchKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootProveFlowBackend,
+    RootProvePoly,
+};
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(feature = "zk")]
 use akita_types::terminal_witness_segment_layout;
 use cfg_if::cfg_if;
@@ -115,38 +123,54 @@ fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     Ok((b, a))
 }
 
-fn evaluate_poly_at_multiplier_point<F, P, const D: usize>(
-    poly: &P,
+fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
+    backend: &B,
+    poly: &Q,
     point: &RingMultiplierOpeningPoint<F, D>,
     block_len: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
+    F: FieldCore + CanonicalField,
+    Q: RootOpeningSource<F, D>,
+    B: for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
-    if let Some(base_point) = point.as_base() {
-        return Ok(poly.evaluate_and_fold(&base_point.b, &base_point.a, block_len));
-    }
-
-    let (b, a) = multiplier_ring_weights(point)?;
-    Ok(poly.evaluate_and_fold_ring(b, a, block_len))
+    let plan = if let Some(base_point) = point.as_base() {
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &base_point.b,
+            fold_scalars: &base_point.a,
+            block_len,
+        }
+    } else {
+        let (b, a) = multiplier_ring_weights(point)?;
+        OpeningFoldPlan::Ring {
+            eval_outer_scalars: b,
+            fold_scalars: a,
+            block_len,
+        }
+    };
+    let OpeningFoldOutput { eval, folded } =
+        OpeningFoldKernel::evaluate_and_fold(backend, None, poly.opening_view()?, plan)?;
+    Ok((eval, folded))
 }
 
-pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, P, const D: usize>(
-    polys: &[&P],
+pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, const D: usize>(
+    backend: &B,
+    polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, C, D>,
     block_len: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     C: FieldCore,
-    P: AkitaPolyOps<F, D>,
+    Q: RootOpeningSource<F, D>,
+    B: for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
     let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
     let mut folded_rings = Vec::with_capacity(polys.len());
     let mut folded_blocks = Vec::with_capacity(polys.len());
     for poly in polys {
         let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
+            backend,
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
@@ -233,22 +257,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_fold_inner<
-    'a,
-    F,
-    E,
-    T,
-    EorP,
-    FoldP,
-    V,
-    B,
-    const D: usize,
->(
+pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     needs_extension_reduction: bool,
-    eor_polys: &[&EorP],
-    fold_polys: &[&'a FoldP],
+    eor_polys: &[&P],
+    fold_polys: &[&P],
     opening_batch: &OpeningBatch,
     relation_opening_batch: OpeningBatch,
     trace_opening_batch: &OpeningBatch,
@@ -258,7 +272,6 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     pad_base_evals: bool,
     transcript: &mut T,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
-    expected_openings: Option<Vec<E>>,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &LevelParams,
@@ -280,13 +293,15 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    EorP: AkitaPolyOps<F, D>,
-    FoldP: AkitaPolyOps<F, D>,
+    F: RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    P: RootProvePoly<F, D>,
     V: FnOnce() -> Result<(), AkitaError>,
-    B: ProverComputeBackend<F>,
+    B: RootProveFlowBackend<F, P, E, E, D>,
 {
-    let (fold_inputs, protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
+    let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
+        let proved = prove_extension_opening_reduction::<F, E, T, P, B, D>(
+            backend,
             eor_polys,
             opening_batch,
             opening_point,
@@ -298,50 +313,174 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
-        if let Some(expected_openings) = expected_openings.as_ref() {
-            if proved.openings != *expected_openings {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        let fold_inputs = {
-            let _span =
-                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                    .entered();
-            cfg_iter!(fold_polys)
-                .map(|poly| {
-                    <FoldP as AkitaPolyOps<F, D>>::tensor_packed_extension_fold_input::<E>(*poly)
-                })
-                .collect::<Result<Vec<FoldInputPoly<'a, F, FoldP, D>>, _>>()?
-        };
         (
-            fold_inputs,
             proved.protocol_point,
             Some(proved.row_coefficients),
             Some(proved.reduction),
         )
     } else {
         validate_non_eor()?;
-        let fold_inputs = fold_polys
-            .iter()
-            .map(|poly| FoldInputPoly::Original(*poly))
-            .collect::<Vec<_>>();
         let row_coefficients = if pad_base_evals {
             Some(vec![E::one()])
         } else {
             None
         };
-        (fold_inputs, non_eor_protocol_point, row_coefficients, None)
+        (non_eor_protocol_point, row_coefficients, None)
     };
+
+    if needs_extension_reduction {
+        let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
+            let _span =
+                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
+                    .entered();
+            cfg_iter!(fold_polys)
+                .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), *poly))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let fold_refs = transformed.iter().collect::<Vec<_>>();
+        finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, B, D>(FinishFoldArgs {
+            backend,
+            prepared,
+            fold_refs: &fold_refs,
+            protocol_point: &protocol_point,
+            reduction,
+            row_coefficients,
+            trace_opening_batch,
+            relation_opening_batch,
+            level_params,
+            alpha_bits,
+            basis,
+            block_order,
+            #[cfg(feature = "zk")]
+            no_eor_trace_eval_target_public,
+            pad_base_evals,
+            transcript,
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            commitment_hints,
+            commitments,
+            m_row_layout,
+            commitment,
+        })
+    } else {
+        let fold_refs = fold_polys.to_vec();
+        finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
+            backend,
+            prepared,
+            fold_refs: &fold_refs,
+            protocol_point: &protocol_point,
+            reduction,
+            row_coefficients,
+            trace_opening_batch,
+            relation_opening_batch,
+            level_params,
+            alpha_bits,
+            basis,
+            block_order,
+            #[cfg(feature = "zk")]
+            no_eor_trace_eval_target_public,
+            pad_base_evals,
+            transcript,
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            commitment_hints,
+            commitments,
+            m_row_layout,
+            commitment,
+        })
+    }
+}
+
+/// Borrowed/owned argument bundle for [`finish_prepared_fold`].
+struct FinishFoldArgs<'a, 'p, F, E, T, Q, B, const D: usize>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore,
+    B: ComputeBackendSetup<F>,
+{
+    backend: &'a B,
+    prepared: &'a B::PreparedSetup<D>,
+    fold_refs: &'a [&'a Q],
+    protocol_point: &'a [E],
+    reduction: Option<ExtensionOpeningReduction<E>>,
+    row_coefficients: Option<Vec<E>>,
+    trace_opening_batch: &'a OpeningBatch,
+    relation_opening_batch: OpeningBatch,
+    level_params: &'a LevelParams,
+    alpha_bits: usize,
+    basis: BasisMode,
+    block_order: BlockOrder,
+    #[cfg(feature = "zk")]
+    no_eor_trace_eval_target_public: Option<E>,
+    pad_base_evals: bool,
+    transcript: &'p mut T,
+    #[cfg(feature = "zk")]
+    zk_hiding: ZkHidingProverState<F>,
+    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitments: &'a [RingCommitment<F, D>],
+    m_row_layout: MRowLayout,
+    commitment: FlatRingVec<F>,
+}
+
+/// Evaluate folded claims, derive the trace target, and build the ring-relation
+/// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
+#[allow(clippy::needless_lifetimes)]
+fn finish_prepared_fold<'a, 'p, F, E, T, Q, B, const D: usize>(
+    args: FinishFoldArgs<'a, 'p, F, E, T, Q, B, D>,
+) -> Result<PreparedFold<F, E, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + MulBaseUnreduced<F>
+        + AkitaSerialize,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+    Q: RootOpeningSource<F, D>,
+    B: DigitRowsComputeBackend<F>
+        + for<'b> OpeningBatchKernel<Q::OpeningBatchView<'b>, F, D>
+        + for<'b> OpeningFoldKernel<Q::OpeningView<'b>, F, D>,
+{
+    let FinishFoldArgs {
+        backend,
+        prepared,
+        fold_refs,
+        protocol_point,
+        reduction,
+        row_coefficients,
+        trace_opening_batch,
+        relation_opening_batch,
+        level_params,
+        alpha_bits,
+        basis,
+        block_order,
+        #[cfg(feature = "zk")]
+        no_eor_trace_eval_target_public,
+        pad_base_evals,
+        transcript,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        commitment_hints,
+        commitments,
+        m_row_layout,
+        commitment,
+    } = args;
     let prepared_point = prepare_opening_point::<F, E, D>(
-        &protocol_point,
+        protocol_point,
         basis,
         level_params,
         alpha_bits,
         block_order,
     )?;
-    let fold_refs = fold_inputs.iter().collect::<Vec<_>>();
-    let (folded_rings, e_folded_by_claim) =
-        evaluate_claims_at_prepared_point(&fold_refs, &prepared_point, level_params.block_len)?;
+    let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
+        backend,
+        fold_refs,
+        &prepared_point,
+        level_params.block_len,
+    )?;
     for pt in &prepared_point.padded_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -349,7 +488,7 @@ where
         &reduction,
         &folded_rings,
         &prepared_point,
-        &protocol_point,
+        protocol_point,
         alpha_bits,
         basis,
         trace_opening_batch,
@@ -370,7 +509,7 @@ where
         prepared,
         prepared_point.ring_opening_point.clone(),
         prepared_point.ring_multiplier_point.clone(),
-        &fold_refs,
+        fold_refs,
         e_folded_by_claim,
         relation_opening_batch,
         level_params.clone(),
@@ -380,7 +519,6 @@ where
         row_coefficient_rings,
         m_row_layout,
     )?;
-
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {
         None
@@ -392,7 +530,6 @@ where
     } else {
         trace_target.trace_claim_scales
     };
-
     Ok(PreparedFold {
         commitment,
         instance,

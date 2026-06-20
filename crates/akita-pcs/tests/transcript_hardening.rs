@@ -72,14 +72,14 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -324,14 +324,14 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         let mut proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &CpuBackend,
+            &prepared,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -426,9 +426,9 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            prove_input(&point, &poly_refs, &commitment, hint),
             &CpuBackend,
             &prepared,
-            prove_input(&point, &poly_refs, &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

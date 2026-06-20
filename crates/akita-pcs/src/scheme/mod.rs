@@ -3,14 +3,14 @@
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
+    AdditiveGroup, AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
-use akita_prover::compute::{RootCommitBackend, RootCommitPoly, RootPolyShape};
+use akita_prover::compute::{
+    RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly,
+};
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, ProverClaims, ProverComputeBackend,
-};
+use akita_prover::{AkitaProverSetup, CommitmentProver, OwnedSuffixWitness, ProverClaims};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
@@ -120,17 +120,24 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
+        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D> + RootPolyShape<F, D>,
-        B: ProverComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        P: RootProvePoly<F, D>,
+        B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 64>, Self::ExtField, Self::ExtField, 64>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 128>, Self::ExtField, Self::ExtField, 128>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 256>, Self::ExtField, Self::ExtField, 256>,
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;

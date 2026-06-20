@@ -1,4 +1,7 @@
 use super::*;
+use crate::compute::{RootProveFlowBackend, RootProvePoly};
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
@@ -58,7 +61,14 @@ fn prepare_root<F, E, T, P, B, const D: usize>(
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -67,10 +77,9 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveFlowBackend<F, P, E, E, D>,
 {
-    let num_claims = opening_batch.num_claims();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, E, D>(opening_num_vars);
@@ -82,20 +91,8 @@ where
         });
     }
 
-    let expected_openings = if needs_extension_reduction {
-        Some({
-            let _span = tracing::info_span!("root_extension_check_openings", num_claims).entered();
-            let mut padded_point = shared_opening_point.to_vec();
-            padded_point.resize(opening_num_vars, E::zero());
-            cfg_iter!(polys)
-                .map(|poly| poly.evaluate_extension(&padded_point))
-                .collect::<Result<Vec<_>, _>>()?
-        })
-    } else {
-        None
-    };
     let commitment_rows = flatten_batched_commitment_rows(commitments);
-    prepare_fold_inner::<F, E, T, P, P, _, B, D>(
+    prepare_fold_inner::<F, E, T, P, _, B, D>(
         backend,
         prepared,
         needs_extension_reduction,
@@ -113,7 +110,6 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_openings,
         shared_opening_point.to_vec(),
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
@@ -157,7 +153,15 @@ pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -166,8 +170,8 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveFlowBackend<F, P, E, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let num_claims = opening_batch.num_claims();
@@ -257,7 +261,15 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -266,8 +278,8 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveFlowBackend<F, P, E, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let num_claims = opening_batch.num_claims();

@@ -383,9 +383,9 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .unwrap();
 
@@ -395,8 +395,6 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &point[..],
             vec![CommittedPolynomials {
@@ -405,6 +403,8 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -573,9 +573,9 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        &[poly_a.clone(), poly_b.clone()],
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];
@@ -585,8 +585,6 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &point[..],
             vec![CommittedPolynomials {
@@ -595,6 +593,8 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -705,9 +705,9 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        &[poly_a.clone(), poly_b.clone()],
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];
@@ -717,8 +717,6 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &point[..],
             vec![CommittedPolynomials {
@@ -727,6 +725,8 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -814,9 +814,9 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let poly_refs = [&polys[0], &polys[1]];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         &setup,
+        &polys,
         &CpuBackend,
         &prepared,
-        &poly_refs,
     )
     .unwrap();
     let commitments = [commitment];
@@ -826,8 +826,6 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &point_a[..],
             vec![CommittedPolynomials {
@@ -836,6 +834,8 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
                 hint,
             }],
         ),
+        &CpuBackend,
+        &prepared,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

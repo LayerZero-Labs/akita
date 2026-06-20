@@ -1,11 +1,13 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootPolyShape};
+use crate::backend::OwnedSuffixWitness;
+use crate::compute::{RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly};
+use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
-use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    RandomSampling,
 };
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
@@ -114,15 +116,22 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
+        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D> + RootPolyShape<F, D>,
-        B: ProverComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        P: RootProvePoly<F, D>,
+        B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 64>, Self::ExtField, Self::ExtField, 64>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 128>, Self::ExtField, Self::ExtField, 128>
+            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 256>, Self::ExtField, Self::ExtField, 256>;
 }

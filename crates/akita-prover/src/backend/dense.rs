@@ -637,8 +637,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::FromPrimitiveInt;
@@ -753,6 +754,15 @@ where
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         <DensePoly<F, D> as AkitaPolyOps<F, D>>::direct_root_witness(self)
+    }
+}
+
+impl<F, const D: usize> RootBaseEvalsSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        <DensePoly<F, D> as AkitaPolyOps<F, D>>::base_evals(self)
     }
 }
 

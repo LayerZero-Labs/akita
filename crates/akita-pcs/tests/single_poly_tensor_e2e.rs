@@ -80,9 +80,9 @@ fn run_single_onehot_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -99,9 +99,9 @@ fn run_single_onehot_tensor(nv: usize) {
                 TENSOR_D,
             >>::batched_prove(
                 &setup,
+                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &CpuBackend,
                 &prepared,
-                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -238,9 +238,9 @@ fn run_single_dense_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &CpuBackend,
             &prepared,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -257,9 +257,9 @@ fn run_single_dense_tensor(nv: usize) {
                 TENSOR_D,
             >>::batched_prove(
                 &setup,
+                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &CpuBackend,
                 &prepared,
-                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
