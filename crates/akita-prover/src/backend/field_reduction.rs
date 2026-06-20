@@ -198,35 +198,6 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: RootTensorProjectionView<'_, F, D>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => RootCommitKernel::<
-                DenseCommitView<'_, F, D>,
-                F,
-                D,
-            >::commit_inner_blocks(
-                self, prepared, poly.commit_view()?, plan
-            ),
-            RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner_blocks(
-                    self,
-                    prepared,
-                    poly.as_ref().commit_view()?,
-                    plan,
-                )
-            }
-            RootTensorProjectionPoly::Recursive(_) => Err(AkitaError::InvalidInput(
-                "recursive tensor-projection poly is a fold input and is never committed"
-                    .to_string(),
-            )),
-        }
-    }
-
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,

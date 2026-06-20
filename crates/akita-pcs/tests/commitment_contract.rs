@@ -168,21 +168,6 @@ where
             plan,
         )
     }
-
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: ContractCommitView<'_>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        let dense = DensePoly::<F, D>::from_ring_coeffs(source.poly.coeffs.clone());
-        RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner_blocks(
-            &CpuBackend,
-            prepared,
-            dense.commit_view()?,
-            plan,
-        )
-    }
 }
 
 fn assert_commit_source_only<P>(_poly: &P)

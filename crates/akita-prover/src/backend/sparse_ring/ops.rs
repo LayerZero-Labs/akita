@@ -183,17 +183,6 @@ where
             plan.log_basis,
         )
     }
-
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: SparseRingCommitView<'_, F, D>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        Ok(self
-            .commit_inner(prepared, source, plan)?
-            .decomposed_inner_rows)
-    }
 }
 
 impl<F, const D: usize> OpeningFoldKernel<SparseRingOpeningView<'_, F, D>, F, D> for CpuBackend

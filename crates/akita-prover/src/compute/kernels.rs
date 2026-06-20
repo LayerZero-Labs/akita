@@ -44,14 +44,6 @@ where
         source: S,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
-
-    /// Decomposed inner commitment blocks for `source`.
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: S,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.

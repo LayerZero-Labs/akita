@@ -788,17 +788,6 @@ where
             plan.log_basis,
         )
     }
-
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: OneHotCommitView<'_, F, D, I>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        Ok(self
-            .commit_inner(prepared, source, plan)?
-            .decomposed_inner_rows)
-    }
 }
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotOpeningView<'_, F, D, I>, F, D> for CpuBackend

@@ -235,31 +235,6 @@ where
             ),
         }
     }
-
-    fn commit_inner_blocks(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: MultilinearPolynomialView<'_, F, D, I>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => {
-                RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner_blocks(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            }
-            MultilinearPolynomial::OneHot(poly) => RootCommitKernel::<
-                OneHotCommitView<'_, F, D, I>,
-                F,
-                D,
-            >::commit_inner_blocks(
-                self, prepared, poly.commit_view()?, plan
-            ),
-        }
-    }
 }
 
 impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
