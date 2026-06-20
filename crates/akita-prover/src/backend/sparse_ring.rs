@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
-use crate::kernels::linear::decompose_rows_i8_into;
+use crate::kernels::linear::decompose_commit_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 mod tensor_fold;
@@ -736,7 +736,7 @@ where
         .zip(cfg_iter!(rows))
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
             } else {
                 debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
@@ -747,7 +747,7 @@ where
         .zip(rows.iter())
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
             } else {
                 debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }

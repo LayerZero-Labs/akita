@@ -89,17 +89,26 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         .for_each(|(dst_chunk, row)| {
             row.balanced_decompose_pow2_i8_into_with_params(dst_chunk, &decompose_params)
         });
+}
 
+/// Like [`decompose_rows_i8_into`] for inner-commitment digit staging only.
+///
+/// Debug builds round-trip check digits against `rows`; other callers should use
+/// [`decompose_rows_i8_into`] directly.
+pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    out: &mut [[i8; D]],
+    num_digits: usize,
+    log_basis: u32,
+) {
+    decompose_rows_i8_into(rows, out, num_digits, log_basis);
     #[cfg(debug_assertions)]
     debug_assert_decomposed_rows_i8_match(rows, out, num_digits, log_basis);
 }
 
 /// Debug-only round-trip check that digit planes recompose to the source rows.
 #[cfg(debug_assertions)]
-pub(crate) fn debug_assert_decomposed_rows_i8_match<
-    F: FieldCore + CanonicalField,
-    const D: usize,
->(
+fn debug_assert_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     out: &[[i8; D]],
     num_digits: usize,

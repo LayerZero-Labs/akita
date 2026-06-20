@@ -19,7 +19,7 @@ use crate::backend::poly_helpers::{
     try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
-use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
+use crate::kernels::linear::{decompose_commit_rows_i8_into, try_centered_i8};
 use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::mem::size_of;
 use std::sync::OnceLock;
@@ -589,12 +589,12 @@ where
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(rows))
-        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        .for_each(|(dst, t_i)| decompose_commit_rows_i8_into(t_i, dst, num_digits_open, log_basis));
     #[cfg(not(feature = "parallel"))]
     dst_blocks
         .into_iter()
         .zip(rows.iter())
-        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        .for_each(|(dst, t_i)| decompose_commit_rows_i8_into(t_i, dst, num_digits_open, log_basis));
 
     Ok(t_hat)
 }
