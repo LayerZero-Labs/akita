@@ -832,7 +832,7 @@ fn run_zk_dense_batched_shape_cases() {
         let same_point = random_point(NV, 0xaaaa_8000);
         let same_point_openings: Vec<F> = same_point_polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &same_point, &same_point_layout))
+            .map(|poly| opening_from_poly::<D, _>(poly, &same_point, &same_point_layout))
             .collect();
         let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, SAME_POINT_POLYS)
             .expect("setup_prover");

@@ -845,15 +845,5 @@ mod tests {
             ),
             view.decompose_fold(&challenges, 2, 1, 0)
         );
-
-        let wrapped = crate::MultilinearPolynomial::<F, D>::recursive(view);
-        assert_eq!(
-            wrapped.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, 2),
-            view.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, 2)
-        );
-        assert_eq!(
-            wrapped.decompose_fold(&challenges, 2, 1, 0),
-            view.decompose_fold(&challenges, 2, 1, 0)
-        );
     }
 }

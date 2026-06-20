@@ -392,12 +392,8 @@ where
         .zip(cfg_iter_mut!(recomposed_inner_rows))
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
-                let inner = RootCommitKernel::commit_inner_witness(
-                    backend,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )?;
+                let inner =
+                    RootCommitKernel::commit_inner(backend, prepared, poly.commit_view()?, plan)?;
                 validate_commit_inner_shape(
                     &inner,
                     params.num_blocks,

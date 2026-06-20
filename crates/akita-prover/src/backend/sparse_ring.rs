@@ -20,8 +20,9 @@ use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
 
-pub(crate) use ops::{
-    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView, SparseRingTensorView,
+pub use ops::{
+    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView,
+    SparseRingTensorBatchView, SparseRingTensorView,
 };
 
 mod tensor_fold;

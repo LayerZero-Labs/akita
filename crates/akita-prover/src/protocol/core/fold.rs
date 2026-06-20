@@ -272,6 +272,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, B, const D: u
     pad_base_evals: bool,
     transcript: &mut T,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    expected_openings: Option<Vec<E>>,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &LevelParams,
@@ -313,6 +314,11 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
+        if let Some(expected_openings) = expected_openings.as_ref() {
+            if proved.openings != *expected_openings {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
         (
             proved.protocol_point,
             Some(proved.row_coefficients),

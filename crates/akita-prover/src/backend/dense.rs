@@ -637,9 +637,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource,
+    RootExtensionEvalSource, RootOpeningSource, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::FromPrimitiveInt;
@@ -766,22 +766,36 @@ where
     }
 }
 
+impl<F, const D: usize> RootExtensionEvalSource<F, D> for DensePoly<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if point.len() != self.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: self.num_vars,
+                actual: point.len(),
+            });
+        }
+        let expected_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("dense extension evaluation table length overflow".to_string())
+        })?;
+        let mut evals = Vec::with_capacity(expected_len);
+        for ring in &self.coeffs {
+            evals.extend(ring.coefficients().iter().copied().map(E::lift_base));
+        }
+        akita_algebra::poly::multilinear_eval(&evals, point)
+    }
+}
+
 impl<F, const D: usize> RootCommitKernel<DenseCommitView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn commit_inner(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: DenseCommitView<'_, F, D>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        Ok(self
-            .commit_inner_witness(prepared, source, plan)?
-            .decomposed_inner_rows)
-    }
-
-    fn commit_inner_witness(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: DenseCommitView<'_, F, D>,
@@ -798,6 +812,17 @@ where
             plan.num_digits_open,
             plan.log_basis,
         )
+    }
+
+    fn commit_inner_blocks(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: DenseCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        Ok(self
+            .commit_inner(prepared, source, plan)?
+            .decomposed_inner_rows)
     }
 }
 

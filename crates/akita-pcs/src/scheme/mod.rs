@@ -7,7 +7,7 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly,
+    RootCommitBackend, RootCommitPoly, RootExtensionEvalSource, RootProveFlowBackend, RootProvePoly,
 };
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitmentProver, OwnedSuffixWitness, ProverClaims};
@@ -131,7 +131,7 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RootProvePoly<F, D>,
+        P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
         B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>

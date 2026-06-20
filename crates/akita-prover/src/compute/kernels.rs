@@ -37,21 +37,21 @@ pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
-    /// Decomposed inner commitment blocks for `source`.
+    /// Inner commitment that preserves the recomposed inner rows.
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: S,
         plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
 
-    /// Inner commitment that also preserves the recomposed inner rows.
-    fn commit_inner_witness(
+    /// Decomposed inner commitment blocks for `source`.
+    fn commit_inner_blocks(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: S,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.

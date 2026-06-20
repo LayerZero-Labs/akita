@@ -170,17 +170,6 @@ where
         prepared: &Self::PreparedSetup<D>,
         source: SparseRingCommitView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        Ok(self
-            .commit_inner_witness(prepared, source, plan)?
-            .decomposed_inner_rows)
-    }
-
-    fn commit_inner_witness(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: SparseRingCommitView<'_, F, D>,
-        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::commit_inner(
             source.poly,
@@ -193,6 +182,17 @@ where
             plan.num_digits_open,
             plan.log_basis,
         )
+    }
+
+    fn commit_inner_blocks(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: SparseRingCommitView<'_, F, D>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        Ok(self
+            .commit_inner(prepared, source, plan)?
+            .decomposed_inner_rows)
     }
 }
 

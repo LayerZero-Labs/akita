@@ -1,7 +1,10 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::backend::OwnedSuffixWitness;
-use crate::compute::{DirectRootWitnessSource, RootPolyShape, RootProveFlowBackend, RootProvePoly};
+use crate::compute::{
+    DirectRootWitnessSource, RootExtensionEvalSource, RootPolyShape, RootProveFlowBackend,
+    RootProvePoly,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -220,7 +223,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D>,
+    P: RootProvePoly<Cfg::Field, D> + RootExtensionEvalSource<Cfg::Field, D>,
     B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
         + RootProveFlowBackend<
             Cfg::Field,
@@ -365,7 +368,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D>,
+    P: RootProvePoly<Cfg::Field, D> + RootExtensionEvalSource<Cfg::Field, D>,
     B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
         + RootProveFlowBackend<
             Cfg::Field,

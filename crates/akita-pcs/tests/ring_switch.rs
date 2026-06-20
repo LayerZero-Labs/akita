@@ -93,12 +93,12 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
+    use akita_prover::backend::DenseOpeningView;
+    use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
-    use akita_prover::{
-        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
-    };
+    use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver};
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
@@ -300,15 +300,22 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (_, e_folded) = poly.evaluate_and_fold_ring(
-            ring_multiplier_point
-                .b_rings()
-                .expect("nonconstant test point has ring b weights"),
-            ring_multiplier_point
-                .a_rings()
-                .expect("nonconstant test point has ring a weights"),
-            lp.block_len,
-        );
+        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars: ring_multiplier_point
+                    .b_rings()
+                    .expect("nonconstant test point has ring b weights"),
+                fold_scalars: ring_multiplier_point
+                    .a_rings()
+                    .expect("nonconstant test point has ring a weights"),
+                block_len: lp.block_len,
+            },
+        )
+        .expect("evaluate_and_fold_ring");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-ring-multiplier-regression");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -431,8 +438,18 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (_, e_folded) =
-            poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
+        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: lp.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -590,11 +607,18 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (_, e_folded) = poly.evaluate_and_fold(
-            &ring_opening_point.b,
-            &ring_opening_point.a,
-            level_params.block_len,
-        );
+        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: level_params.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"prepared-m-eval-test");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -737,11 +761,18 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (_, e_folded) = poly.evaluate_and_fold(
-            &ring_opening_point.b,
-            &ring_opening_point.a,
-            level_params.block_len,
-        );
+        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: level_params.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"segment-typed-expand-test");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);

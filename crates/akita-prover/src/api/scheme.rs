@@ -1,7 +1,9 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::backend::OwnedSuffixWitness;
-use crate::compute::{RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly};
+use crate::compute::{
+    RootCommitBackend, RootCommitPoly, RootExtensionEvalSource, RootProveFlowBackend, RootProvePoly,
+};
 use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -15,7 +17,9 @@ use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over base field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
+/// Caller-provided root polynomials are source-typed and must satisfy the
+/// prover-facing root polynomial traits (`RootProvePoly` and related capability
+/// traits).
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>
@@ -127,7 +131,7 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RootProvePoly<F, D>,
+        P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
         B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
             + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>

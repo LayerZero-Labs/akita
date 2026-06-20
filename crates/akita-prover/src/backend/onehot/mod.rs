@@ -79,4 +79,8 @@ pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
+pub use ops::{
+    OneHotCommitView, OneHotOpeningBatchView, OneHotOpeningView, OneHotTensorBatchView,
+    OneHotTensorView,
+};
 pub use poly::OneHotPoly;

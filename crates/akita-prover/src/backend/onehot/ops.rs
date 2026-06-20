@@ -146,7 +146,7 @@ where
                     E::one()
                 };
             }
-            partials.push(self.evaluate_extension::<E>(&point)?);
+            partials.push(AkitaPolyOps::evaluate_extension(self, &point)?);
         }
         Ok(partials)
     }
@@ -568,9 +568,9 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource,
+    RootExtensionEvalSource, RootOpeningSource, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 
 /// Borrowed commit view over one-hot chunk storage.
@@ -728,23 +728,49 @@ where
     }
 }
 
+impl<F, const D: usize, I> RootExtensionEvalSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if point.len() != self.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: self.num_vars,
+                actual: point.len(),
+            });
+        }
+        let low_vars = self.onehot_k.trailing_zeros() as usize;
+        if low_vars > point.len() {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: low_vars,
+                actual: point.len(),
+            });
+        }
+        let low_weights =
+            akita_types::basis_weights(&point[..low_vars], akita_types::BasisMode::Lagrange)?;
+        let high_weights =
+            akita_types::basis_weights(&point[low_vars..], akita_types::BasisMode::Lagrange)?;
+        Ok(self
+            .indices
+            .iter()
+            .enumerate()
+            .filter_map(|(chunk_idx, hot_idx)| {
+                hot_idx.map(|hot_idx| high_weights[chunk_idx] * low_weights[hot_idx.as_usize()])
+            })
+            .fold(E::zero(), |acc, weight| acc + weight))
+    }
+}
+
 impl<F, const D: usize, I> RootCommitKernel<OneHotCommitView<'_, F, D, I>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
     fn commit_inner(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: OneHotCommitView<'_, F, D, I>,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        Ok(self
-            .commit_inner_witness(prepared, source, plan)?
-            .decomposed_inner_rows)
-    }
-
-    fn commit_inner_witness(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: OneHotCommitView<'_, F, D, I>,
@@ -761,6 +787,17 @@ where
             plan.num_digits_open,
             plan.log_basis,
         )
+    }
+
+    fn commit_inner_blocks(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: OneHotCommitView<'_, F, D, I>,
+        plan: CommitInnerPlan,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        Ok(self
+            .commit_inner(prepared, source, plan)?
+            .decomposed_inner_rows)
     }
 }
 

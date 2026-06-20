@@ -2,6 +2,7 @@ use super::*;
 use crate::compute::{RootBaseEvalsSource, RootTensorSource, TensorProjectionBatchKernel};
 
 pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldCore> {
+    pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) proof_partials: Vec<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) terms: Vec<ExtensionOpeningReductionTerm<E>>,
@@ -18,6 +19,7 @@ pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldC
 pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
+    pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) protocol_point: Vec<E>,
 }
 
@@ -364,6 +366,7 @@ where
     )?;
 
     Ok(PreparedExtensionOpeningReduction {
+        openings,
         proof_partials,
         row_coefficients,
         terms,
@@ -496,6 +499,7 @@ where
     Ok(ProvedExtensionOpeningReduction {
         reduction,
         row_coefficients: prepared.row_coefficients,
+        openings: prepared.openings,
         protocol_point,
     })
 }

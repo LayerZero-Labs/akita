@@ -198,7 +198,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner(
+    fn commit_inner_blocks(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: RootTensorProjectionView<'_, F, D>,
@@ -209,11 +209,11 @@ where
                 DenseCommitView<'_, F, D>,
                 F,
                 D,
-            >::commit_inner(
+            >::commit_inner_blocks(
                 self, prepared, poly.commit_view()?, plan
             ),
             RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner(
+                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner_blocks(
                     self,
                     prepared,
                     poly.as_ref().commit_view()?,
@@ -227,7 +227,7 @@ where
         }
     }
 
-    fn commit_inner_witness(
+    fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: RootTensorProjectionView<'_, F, D>,
@@ -238,11 +238,11 @@ where
                 DenseCommitView<'_, F, D>,
                 F,
                 D,
-            >::commit_inner_witness(
+            >::commit_inner(
                 self, prepared, poly.commit_view()?, plan
             ),
             RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner_witness(
+                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner(
                     self,
                     prepared,
                     poly.as_ref().commit_view()?,

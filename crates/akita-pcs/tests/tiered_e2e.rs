@@ -149,7 +149,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let pt = random_point(nv, 0x7115_0000 + nv as u64);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .map(|poly| opening_from_poly::<TIERED_D, _>(poly, &pt, &layout))
             .collect();
 
         let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, num_polys).unwrap();

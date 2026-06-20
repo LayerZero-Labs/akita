@@ -10,12 +10,13 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RootCommitBackend, RootCommitPoly, RootExtensionEvalSource,
+    RootPolyShape, RootProveFlowBackend, RootProvePoly,
 };
 use akita_prover::OwnedSuffixWitness;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
-    FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, FoldGrindObserverGuard,
+    OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -296,14 +297,16 @@ where
         .fold(E::zero(), |acc, weight| acc + weight)
 }
 
-fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
-    poly: &P,
+fn opening_from_poly<'a, FF, const D: usize, P>(
+    poly: &'a P,
     point: &[FF],
     layout: &LevelParams,
     basis: BasisMode,
 ) -> FF
 where
     FF: CanonicalField,
+    P: RootProvePoly<FF, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
@@ -327,11 +330,18 @@ where
     )
     .expect("opening point shape should match layout");
 
-    let (folded_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::<P::OpeningView<'a>, FF, D>::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let folded_ring = opening.eval;
     let packed_inner = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
@@ -341,7 +351,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: AkitaPolyOps<FF, D> + RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
+    P: RootCommitPoly<FF, D> + RootProvePoly<FF, D> + RootExtensionEvalSource<FF, D>,
 >(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
@@ -578,11 +588,13 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover(poly.num_vars(), 1),
-        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            FF,
-            D,
-        >>::setup_prover_recursion(poly.num_vars(), 1),
+        >>::setup_prover(RootPolyShape::num_vars(&poly), 1),
+        SetupContributionMode::Recursive => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(
+                RootPolyShape::num_vars(&poly),
+                1,
+            )
+        }
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();

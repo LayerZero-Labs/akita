@@ -571,7 +571,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &point, &layout))
+            .map(|poly| opening_from_poly::<D, _>(poly, &point, &layout))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -1273,7 +1273,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .map(|poly| opening_from_poly::<D, _>(poly, &pt, &layout))
             .collect();
 
         #[cfg(feature = "disk-persistence")]

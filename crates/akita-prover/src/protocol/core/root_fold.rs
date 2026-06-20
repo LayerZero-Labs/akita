@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{RootProveFlowBackend, RootProvePoly};
+use crate::compute::{RootExtensionEvalSource, RootProveFlowBackend, RootProvePoly};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -77,9 +77,10 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
     B: RootProveFlowBackend<F, P, E, E, D>,
 {
+    let num_claims = opening_batch.num_claims();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, E, D>(opening_num_vars);
@@ -91,6 +92,18 @@ where
         });
     }
 
+    let expected_openings = if needs_extension_reduction {
+        Some({
+            let _span = tracing::info_span!("root_extension_check_openings", num_claims).entered();
+            let mut padded_point = shared_opening_point.to_vec();
+            padded_point.resize(opening_num_vars, E::zero());
+            cfg_iter!(polys)
+                .map(|poly| poly.evaluate_extension(&padded_point))
+                .collect::<Result<Vec<_>, _>>()?
+        })
+    } else {
+        None
+    };
     let commitment_rows = flatten_batched_commitment_rows(commitments);
     prepare_fold_inner::<F, E, T, P, _, B, D>(
         backend,
@@ -110,6 +123,7 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
+        expected_openings,
         shared_opening_point.to_vec(),
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
@@ -170,7 +184,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
     B: RootProveFlowBackend<F, P, E, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
@@ -278,7 +292,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootExtensionEvalSource<F, D>,
     B: RootProveFlowBackend<F, P, E, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
