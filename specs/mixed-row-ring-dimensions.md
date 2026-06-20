@@ -19,8 +19,8 @@ The goal is to get the security and kernel benefits of larger A side challenge r
 The design is not a tower lowering of every row to one smaller ring.
 Each row group keeps its own relation over its own quotient ring.
 The shared object is a canonical flat coefficient witness.
-A rows interpret the relevant flat coefficients as elements of `R_DA = F[X] / (X^DA + 1)`.
-B and D rows interpret their coefficients as elements of `R_DBD = F[X] / (X^DBD + 1)`.
+A rows interpret the relevant flat coefficients as elements of `R_da = F[X] / (X^d_a + 1)`.
+B and D rows interpret their coefficients as elements of `R_dbd = F[X] / (X^d_bd + 1)`.
 The prover computes one quotient per row group using that row group's denominator.
 
 The main risk is no longer algebraic soundness.
@@ -34,7 +34,10 @@ The implementation must therefore make setup preparation aware of row groups, ac
 
 ### Goal
 
-Support a mixed row dimension fold where A rows may use `D_A` in `{64, 128, 256}` while B and D rows remain at `D_BD = 64`, with a planner that chooses `D_A` only when proof size, security, runtime, and prepared setup memory all improve or stay within policy.
+Support a mixed row dimension fold where A rows may use a larger ring dimension than B and D rows within the same fold level.
+B and D rows stay at the profile floor dimension `D_floor`.
+A rows may lift to `d_a` in the profile allowed A-lift set.
+The planner chooses `d_a` only when proof size, security, runtime, and prepared setup memory all improve or stay within policy for that profile.
 
 Key surfaces:
 
@@ -42,7 +45,7 @@ Key surfaces:
 - The ring relation becomes a row-group relation with one quotient denominator per group.
 - Setup generation uses a maximum generation dimension `D_gen` that every runtime row dimension divides.
 - Prover setup preparation materializes NTT caches by dimension and active prefix, not only by dimension.
-- Planner scoring accounts for A side SIS sizing, folded witness digit counts, proof bytes, setup prefix length, and prepared cache bytes.
+- Planner scoring is profile-relative: it uses `PlannerPolicy` / `Cfg::D` as `D_floor`, the profile SIS family, and `ring_challenge_config(d)` at each runtime dimension.
 - Verifier code validates mixed row dimensions at schedule and proof boundaries without panics.
 
 ### Algebraic Model
@@ -85,31 +88,36 @@ The statement remains one statement because the transcript binds:
 - **Every runtime dimension divides the generation dimension.** If setup data is generated at `D_gen`, then each row dimension must divide `D_gen`. A D64 view of a D256 generated setup is valid. A D128 view of a D64 generated setup is invalid.
 - **Row groups own their quotient denominator.** An A row at D128 uses `X^128 + 1`. A B row at D64 uses `X^64 + 1`. The prover must never compute a D128 quotient and reinterpret it as D64 quotient data.
 - **Row order remains canonical.** The public row layout stays in the current order unless this spec explicitly changes it. The mixed dimension metadata must attach to row groups, not to ad hoc call sites.
-- **SIS sizing is group-specific.** A rows use `D_A` and the A challenge shape when deriving `n_a`. B and D rows use `D_BD` and their challenge shape when deriving `n_b` and `n_d`.
-- **Fold digit counts are priced with the selected A dimension.** Larger A dimensions can change the folded `z` infinity bound and `num_digits_fold`. The planner must include that effect.
+- **SIS sizing is group-specific.** A rows use `d_a` and `ring_challenge_config(d_a)` when deriving `n_a`. B and D rows use `d_bd = D_floor` and `ring_challenge_config(d_bd)` when deriving `n_b` and `n_d`.
+- **Fold digit counts are priced with the selected A dimension.** Larger `d_a` can change the folded `z` infinity bound and `num_digits_fold`. The planner must include that effect using the profile challenge family at `d_a`.
 - **Proof-size estimates must match serialized proofs.** Any mixed proof byte formula must be backed by serialization tests after implementation.
 - **Setup preparation is bounded.** The prover must not prepare full shared setup NTT caches for every supported dimension by default.
 - **Verifier code stays inside the no-panic boundary.** Bad mixed parameters, bad setup shape, bad proof row counts, and mismatched dimensions return `AkitaError` or serialization errors.
-- **No backward compatibility shim is required.** This is a new protocol shape. Old homogeneous schedules do not need aliases or migration layers beyond staying valid as the special case `D_A = D_BD`.
+- **No backward compatibility shim is required.** This is a new protocol shape. Old homogeneous schedules do not need aliases or migration layers beyond staying valid as the special case `d_a = d_bd = D_floor`.
 
 ### Non-Goals
 
-- No arbitrary runtime dimension set. The first supported set is `D_BD = 64` and `D_A` in `{64, 128, 256}`.
+- No arbitrary runtime dimension set. Supported CRT dimensions remain `{32, 64, 128, 256}`.
 - No mixed dimensions for B versus D in the first implementation.
 - No tower-lowered protocol that rewrites every row into the smallest ring.
 - No dynamic per-row dimension inside one row group. Dimensions are per role group.
+- No targeting non-securable homogeneous floors (for example fp32/fp64 D32/D64 under honest SIS pricing) as shipping mixed-D profiles in v1.
+- No blocking D=32 floor support in types or planner APIs. D=32 is a plausible future `D_floor` once mixed A is measured; see the Planner Profile Model section.
 - No GPU or Metal backend work in this spec.
 - No attempt to make recursive setup offload, setup-prefix commitments, and mixed D all land in one PR unless the implementation shows this is smaller than separating them.
 
 ## Evaluation
 
-### Planner Preview
+### Planner Preview (fp128 D64 example)
 
 A scratch dynamic programming preview was run on the branch `quang/mixed-row-ring-dimensions`.
-The preview fixed `D_BD = 64`, allowed `D_A` in `{64, 128, 256}`, and let the planner rechoose `log_basis` and the `(m, r)` split at every fold.
-It also priced A side SIS ranks with the selected `D_A` and included the effect on `num_digits_fold` and the next witness length.
+The preview fixed `d_bd = D_floor = 64` for an fp128 `D64Full` profile, allowed `d_a` in `{64, 128, 256}`, and let the planner rechoose `log_basis` and the `(m, r)` split at every fold.
+It also priced A side SIS ranks with the selected `d_a` and included the effect on `num_digits_fold` and the next witness length.
 
-The preview found consistent proof-size reductions for fp128 dense singleton shapes:
+This table is one profile-specific data point, not the general mixed-D definition.
+Packet 1 must rerun the preview across the profile matrix in the Planner Profile Model section.
+
+The fp128 D64 preview found consistent proof-size reductions for dense singleton shapes:
 
 | num_vars | D64 baseline bytes | mixed D preview bytes | delta bytes | selected A dimensions |
 |----------|--------------------|-----------------------|-------------|-----------------------|
@@ -128,23 +136,25 @@ They show that the idea is worth implementing only if the setup preparation cost
 Before protocol implementation starts, the scratch preview must become cache-aware enough to answer whether the proof-size win survives a prepared setup budget.
 This gate is required because prepared NTT caches can be much larger than the raw setup matrix.
 
-The preview must compare three schedules:
+The preview must compare three schedules per profile:
 
-- homogeneous D64 baseline;
+- homogeneous baseline at `D_floor`;
 - mixed D with no prepared cache cap;
 - mixed D with the prepared cache cap below.
 
-The first cap is:
+The first cap is profile-relative:
 
 ```text
-mixed_prepared_cache_bytes <= min(
-    d64_baseline_prepared_cache_bytes * 5 / 4,
-    d64_baseline_prepared_cache_bytes + 256 MiB
+mixed_prepared_cache_bytes(profile) <= min(
+    baseline_prepared_cache_bytes(profile) * 5 / 4,
+    baseline_prepared_cache_bytes(profile) + 256 MiB
 )
 ```
 
+where `baseline_prepared_cache_bytes(profile)` is the homogeneous schedule at that profile's `D_floor`.
+
 This cap is intentionally conservative.
-It should reject schedules that need a full extra early D128 or D256 shared setup cache.
+It should reject schedules that need a full extra early lift shared setup cache at a dimension well above `D_floor`.
 It should still allow later mixed A dimensions when the active setup prefix is small.
 
 The preview must count unique cache keys across the whole schedule.
@@ -199,15 +209,15 @@ For each fold level, the report must print:
 
 ```text
 level
-D_A
-D_BD
+d_a
+d_bd
 log_basis
 r_vars
 block_len
 n_a
 n_b
 n_d
-n_a_times_D_A
+n_a_times_d_a
 num_digits_fold
 next_w_len
 fold_proof_bytes
@@ -228,17 +238,18 @@ If the win reduces intermediate next witness lengths and compounds over several 
 
 ### Acceptance Criteria
 
-- [ ] A homogeneous schedule with `D_A = D_BD` produces the same rows, proof bytes, and verifier behavior as the current single D path.
-- [ ] A mixed schedule can set `D_A = 128` or `D_A = 256` while keeping B and D rows at D64.
-- [ ] The prover computes A quotients with `X^D_A + 1` and B/D quotients with `X^64 + 1`.
+- [ ] A homogeneous schedule with `d_a = d_bd = D_floor` produces the same rows, proof bytes, and verifier behavior as the current single D path for that profile.
+- [ ] A mixed schedule can lift `d_a` above `D_floor` while keeping B and D rows at `d_bd = D_floor`.
+- [ ] The prover computes A quotients with `X^d_a + 1` and B/D quotients with `X^d_bd + 1`.
 - [ ] The verifier binds mixed row dimensions in the instance descriptor and rejects proofs whose dimensions do not match the schedule.
-- [ ] Setup generation at `D_gen = max(D_A, D_BD)` can serve every row group view used by the schedule.
-- [ ] Prepared setup memory is measured and bounded. A run that uses both D64 and D128 must not automatically build full shared caches for both dimensions if only a small prefix needs the second dimension.
+- [ ] Setup generation at `D_gen = max(runtime dimensions used by the schedule)` can serve every row group view used by that profile.
+- [ ] Prepared setup memory is measured and bounded. A run that uses both `D_floor` and a larger `d_a` must not automatically build full shared caches for both dimensions if only a small prefix needs the larger dimension.
 - [ ] The planner can reject or penalize candidates whose extra prepared cache footprint exceeds a policy limit.
 - [ ] The cache-aware preview prints fold versus tail proof-size attribution and passes the delta identity check above.
-- [ ] The implementation work starts with D128 only. D256 is enabled only after D128 is correct, measured, and still leaves a reason to test D256.
+- [ ] The implementation work starts with one reference profile before generalizing. The first protocol slice may land on fp128 `D64Full`, but types and planner APIs must be profile-parameterized from the start.
+- [ ] Larger `d_a` values above the first lift step are enabled only after the first lift is correct, measured, and still leaves a reason to test the next dimension.
 - [ ] Proof-size formula tests compare mixed formula output against serialized mixed proofs.
-- [ ] End-to-end prove and verify tests cover at least one D64 only schedule and one mixed schedule.
+- [ ] End-to-end prove and verify tests cover at least one homogeneous schedule at `D_floor` and one mixed schedule with `d_a > D_floor`.
 - [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, `cargo test`, and `./scripts/check-doc-guardrails.sh` pass before the implementation PR is merged.
 
 ### Testing Strategy
@@ -248,22 +259,22 @@ Unit tests:
 - `akita-types` tests for mixed level parameter validation.
 - `akita-types` tests for setup generation dimension divisibility.
 - `akita-types` tests that homogeneous mixed params serialize to the same logical schedule as the current shape, or to a clearly documented new shape with equivalent meaning.
-- `akita-planner` tests that `n_a` changes with `D_A` while `n_b` and `n_d` stay tied to D64.
-- `akita-prover` quotient tests that compare row-specific quotient results against direct schoolbook calculations for D64, D128, and D256.
-- `akita-prover` prepared setup tests that request a small D128 prefix and assert that the reported cache bytes match that prefix, not the full setup length.
+- `akita-planner` tests that `n_a` changes with `d_a` while `n_b` and `n_d` stay tied to `d_bd = D_floor`.
+- `akita-prover` quotient tests that compare row-specific quotient results against direct schoolbook calculations at `D_floor` and at least one lifted `d_a`.
+- `akita-prover` prepared setup tests that request a small lifted-dimension prefix and assert that reported cache bytes match that prefix, not the full setup length.
 
 End-to-end tests:
 
 - Dense singleton mixed proof at a small variable count.
 - One-hot mixed proof at a small variable count if the A side path shares the same mixed quotient logic.
-- Homogeneous D64 proof through the mixed parameter path.
+- Homogeneous proof at `D_floor` through the mixed parameter path.
 - Bad setup generation dimension rejection.
 - Bad proof dimension metadata rejection.
 
 Benchmarks and diagnostics:
 
-- Profile dense fp128 D64 versus D128 for whole-level homogeneous schedules.
-- Profile mixed A dimensions in the first fold and in a later fold.
+- Profile dense schedules at `D_floor` versus a homogeneous schedule at the next supported dimension.
+- Profile mixed A lifts in the first fold and in a later fold for each target profile.
 - Report proof bytes, prover time, verifier time, prepared cache bytes, and setup preparation time.
 - Add profiler output for every prepared NTT slot: dimension, natural prefix length, padded prefix length if any, and cache bytes.
 
@@ -274,7 +285,7 @@ A candidate should be scored with at least these values:
 
 - estimated proof bytes;
 - estimated next witness length;
-- A side flat output size `n_a * D_A`;
+- A side flat output size `n_a * d_a`;
 - `num_digits_fold`;
 - extra prepared setup cache bytes;
 - setup preparation time, if measured data exists;
@@ -286,7 +297,7 @@ This prevents a proof-size-only model from selecting schedules that are not usef
 
 The first implementation should not have a hidden fallback that silently ignores the cache cap.
 If a schedule exceeds the cap, the planner report must show the rejected candidate and its cache bytes.
-This makes it clear whether the cap is killing D256, early D128, or all mixed D.
+This makes it clear whether the cap is killing higher lifts, early lifts above `D_floor`, or all mixed D for that profile.
 
 The policy should allow larger A dimensions in later folds where the active setup prefix is small.
 This matches the expected memory shape.
@@ -294,6 +305,66 @@ An early fold touches a large setup prefix.
 A later fold touches only a small envelope of A rows.
 
 ## Design
+
+### Planner Profile Model
+
+Mixed D is profile-relative, not fp128 D64 specific.
+
+A planner profile is the plain-value input the DP already uses through `PlannerPolicy` and `policy_of::<Cfg>()`:
+
+- `PlannerPolicy.ring_dimension` is the homogeneous floor dimension `D_floor`
+- `sis_modulus_family` selects the SIS floor table
+- `ring_challenge_config(d)` selects the fold-challenge family at runtime dimension `d`
+- decomposition, onehot chunk size, and tiered flags remain profile-local
+
+At one mixed fold level:
+
+- `d_bd = D_floor` for B and D rows
+- `d_a` is chosen from the profile A-lift set
+- `D_gen` is the maximum runtime dimension used by that profile schedule envelope
+
+Representative shipped profiles:
+
+| Field family | Example preset | `D_floor` | Typical A-lift set |
+|--------------|----------------|-----------|--------------------|
+| fp128 | `D64Full`, `D64OneHot` | 64 | `{64, 128, 256}` |
+| fp128 | `D128Full`, `D128OneHot` | 128 | `{128, 256}` |
+| fp64 | `D128Full`, `D128OneHot` | 128 | `{128, 256}` |
+| fp64 | `D256OneHot` | 256 | `{256}` |
+| fp32 | `D128OneHot` | 128 | `{128, 256}` |
+| fp32 | `D256OneHot` | 256 | `{256}` |
+
+**D=32 floor (not in v1 shipping set, but keep the design open).**
+The repo already has fp128 `D32Full` and `D32OneHot` presets with `D_floor = 32`.
+Homogeneous D=32 does not clearly win today under current planner pricing and SIS tables.
+Mixed A may change that calculus: keeping B and D at `d_bd = 32` while lifting A to `{64, 128, 256}` could recover security and kernel benefits without paying full homogeneous D64/D128 proof-size cost on every row group.
+Packet 1 does not need to block v1 on D=32 results, but types, preview tooling, and planner APIs must not assume `D_floor >= 64`.
+When mixed D is stable, rerun the cache-aware preview on fp128 `D32Full` and decide whether D=32 belongs in the shipping profile matrix.
+
+Supported CRT dimensions remain `{32, 64, 128, 256}` from `proof_optimized_ring_challenge_config`.
+The A-lift set for a profile is:
+
+```text
+A_lift(D_floor) = { d | d in {32,64,128,256}, d >= D_floor }
+```
+
+Non-securable homogeneous floors such as fp32/fp64 D32/D64 under honest SIS pricing are out of scope for shipping mixed D.
+The preview may study them, but implementation should not target them.
+
+Sizing rules:
+
+- `n_a`, fold witness infinity cap, and `num_digits_fold` use `d_a` and `ring_challenge_config(d_a)`
+- `n_b` and `n_d` use `d_bd` and `ring_challenge_config(d_bd)`
+- SIS floor lookup uses `(sis_family, d, norm, width)` separately for each group
+
+Packet 1 must evaluate at least:
+
+- fp128 `D64Full`
+- fp128 `D128Full`
+- fp64 `D128OneHot`
+- fp32 `D128OneHot`
+
+The fp128 D64 table in the Evaluation section is one example output, not the general contract.
 
 ### Level Parameter Shape
 
@@ -307,11 +378,13 @@ RowRingDimensions {
 }
 ```
 
-The homogeneous case is:
+The homogeneous case for a profile is:
 
 ```text
-d_a = d_bd = ring_dimension
+d_a = d_bd = D_floor
 ```
+
+where `D_floor` is that profile's `Cfg::D`.
 
 The first implementation should keep B and D together because their rows are more self-contained and because the current relation code fuses them.
 The field should be named by role, not by implementation detail.
@@ -321,8 +394,8 @@ Validation rules:
 
 - `d_a` and `d_bd` must be supported CRT NTT dimensions.
 - `d_a` and `d_bd` must divide `D_gen`.
-- `d_bd` must be 64 in the first implementation.
-- `d_a` must be 64, 128, or 256 in the first implementation.
+- `d_bd` must equal the profile `D_floor` in the first implementation.
+- `d_a` must lie in `A_lift(D_floor)` for that profile.
 - every ring count and field count multiplication must be checked.
 
 ### Setup Generation
@@ -392,7 +465,7 @@ Cache policy:
 - In production prover setup, start with diagnostics and explicit byte reporting before adding hard user-facing failures.
 
 This is the most important implementation guardrail.
-Without it, mixed D can increase memory by preparing D64, D128, and D256 full shared caches for the same setup.
+Without it, mixed D can increase memory by preparing full shared caches at `D_floor` and at every lifted `d_a` used by the schedule.
 
 ### Ring Relation Prover
 
@@ -401,8 +474,8 @@ Mixed D needs the relation to split work by row group.
 
 For the first implementation:
 
-- keep B and D rows in the D64 relation path;
-- move A quotient rows into an A dimension path;
+- keep B and D rows in the `d_bd = D_floor` relation path;
+- move A quotient rows into the `d_a` dimension path;
 - combine the resulting row values only at the typed proof assembly boundary;
 - keep row order the same as today.
 
@@ -410,12 +483,12 @@ The quotient API should express the row group it computes.
 A sketch:
 
 ```text
-compute_a_quotient_rows<D_A>(...)
-compute_bd_cyclic_rows<D_BD>(...)
+compute_a_quotient_rows<d_a>(...)
+compute_bd_cyclic_rows<d_bd>(...)
 ```
 
 This is clearer than one generic `compute_relation_quotient` that hides mixed dimensions internally.
-The old homogeneous path can become the `D_A = D_BD` specialization once tests show the outputs match.
+The old homogeneous path can become the `d_a = d_bd = D_floor` specialization once tests show the outputs match.
 
 The important point is that A rows and B/D rows no longer share one prepared `NttSlotCache<D>`.
 They request the cache that matches their row dimension and active setup prefix.
@@ -437,9 +510,16 @@ The implementation must audit every use of:
 - `level_proof_bytes`;
 - `stage3_setup_product_bytes`.
 
-Any use that refers to A rows must use `D_A`.
-Any use that refers to B or D rows must use D64.
+Any use that refers to A rows must use `d_a`.
+Any use that refers to B or D rows must use `d_bd`.
 Any use that refers to a flat setup prefix must be explicit about whether the unit is field coefficients, generation-dimension ring slots, or runtime-dimension ring slots.
+
+### Setup-Prefix Offload Dimension
+
+Current setup-prefix offload uses `SETUP_OFFLOAD_D_SETUP = 64`.
+That is correct for fp128 profiles with `D_floor = 64`.
+For profiles with `D_floor = 128` or `256`, setup-prefix offload must eventually follow the profile floor or a dedicated profile hook.
+The first protocol slice may keep the existing D64 offload behavior for fp128 only, but the mixed-D types must not hardcode `64` as the only valid offload dimension.
 
 ### Verifier
 
@@ -447,8 +527,9 @@ The verifier does not need prepared NTT setup caches, but it must validate the s
 Verifier-visible parameters must bind:
 
 - `D_gen`;
-- `D_A`;
-- `D_BD`;
+- `d_a`;
+- `d_bd`;
+- profile identity fields needed to recover `D_floor`, SIS family, and challenge policy;
 - row layout;
 - row counts;
 - challenge shapes;
@@ -459,34 +540,34 @@ It must also reject a setup whose generation dimension cannot serve the schedule
 
 ### Planner
 
-The planner should search over `D_A` and keep `D_BD` fixed at 64 in this phase.
+The planner should search over `d_a in A_lift(D_floor)` and keep `d_bd = D_floor` in this phase.
 For every candidate level it should derive:
 
-- `n_a` using `D_A`;
-- `n_b` using D64;
-- `n_d` using D64;
-- A side challenge norm and fold witness infinity cap using `D_A`;
+- `n_a` using `d_a` and `ring_challenge_config(d_a)`;
+- `n_b` using `d_bd` and `ring_challenge_config(d_bd)`;
+- `n_d` using `d_bd` and `ring_challenge_config(d_bd)`;
+- A side challenge norm and fold witness infinity cap using `d_a`;
 - `num_digits_fold` using the selected fold challenge shape;
 - next witness length using the mixed row dimensions;
 - proof bytes using the mixed row dimensions;
 - prepared setup cache cost for every new cache required by the level.
 
-The heuristic should not simply prefer the largest dimension that does not increase `n_a * D_A`.
+The heuristic should not simply prefer the largest dimension that does not increase `n_a * d_a`.
 That rule is useful as a local tie-breaker, but it misses recursive effects.
 The dynamic program should minimize total cost over the full fold sequence.
 The local tie-breaker can still be:
 
 ```text
-prefer smaller n_a * D_A;
+prefer smaller n_a * d_a;
 then prefer fewer fold digits;
 then prefer smaller next witness length;
-then prefer larger D_A only if cache cost and proof bytes tie.
+then prefer larger d_a only if cache cost and proof bytes tie.
 ```
 
 ### Proof Size
 
 The current proof-size formula assumes one level dimension.
-Mixed proof-size accounting must identify which serialized objects are priced with `D_A`, which are priced with D64, and which are flat field elements.
+Mixed proof-size accounting must identify which serialized objects are priced with `d_a`, which are priced with `d_bd`, and which are flat field elements.
 
 The first implementation should not rely on estimates alone.
 For each supported mixed shape, build a dummy proof body and compare:
@@ -497,8 +578,8 @@ formula bytes == AkitaSerialize::serialized_size()
 
 The stage-3 setup-product proof also needs attention.
 Its round count includes ring-coordinate bits and setup-ring-index bits.
-If setup offload stays fixed at D64, the mixed A dimension does not directly change that stage.
-If later work allows setup-product proofs at `D_A`, the formula must become group-specific.
+If setup offload stays at the current profile-specific constant (today `SETUP_OFFLOAD_D_SETUP = 64` for fp128 D64-floor profiles), the mixed `d_a` dimension does not directly change that stage for those profiles.
+If later work allows setup-product proofs at `d_a` or at `D_floor` for higher-floor profiles, the formula must become group-specific and profile-specific.
 
 ## Alternatives Considered
 
@@ -549,9 +630,9 @@ Until then, this spec stays in `specs/`.
 The following decisions are fixed for the first implementation.
 Agents should not reopen them unless a test or benchmark shows they are wrong.
 
-- Implement D128 before D256.
-- Keep `D_BD = 64`.
-- Keep setup-prefix offload at D64.
+- Implement the first protocol slice on one reference profile, likely fp128 `D64Full`, but keep all APIs profile-parameterized.
+- Keep `d_bd = D_floor` for B and D rows.
+- Keep setup-prefix offload at the current profile-specific constant for the first protocol slice only. Today that is `SETUP_OFFLOAD_D_SETUP = 64` for fp128 D64-floor profiles.
 - Use exact prepared cache prefix keys first.
 - Add larger-prefix cache reuse only after exact-prefix caching works and has tests.
 - Use planner DP first.
@@ -567,9 +648,9 @@ Each packet below should be small enough for an independent implementation agent
 Agents should complete packets in order unless the previous packet has already landed.
 
 Packet 1 gates all protocol work.
-Do not start Packet 2 until Packet 1 says whether D128 survives the cache cap and where the proof-size delta comes from.
+Do not start Packet 2 until Packet 1 says whether the first useful A lift above `D_floor` survives the cache cap for each target profile and where the proof-size delta comes from.
 If Packet 1 shows that mixed D only wins in the terminal tail, stop and reassess before changing protocol code.
-If Packet 1 shows no mixed D candidate survives the cache cap, do not implement mixed D.
+If Packet 1 shows no mixed D candidate survives the cache cap for any target profile, do not implement mixed D.
 
 General rules for every agent:
 
@@ -593,19 +674,19 @@ Files:
 
 Required output:
 
-- Baseline D64 schedule.
-- Mixed D schedule with no cache cap.
-- Mixed D schedule with the hard cache cap.
-- Fold versus tail proof-size attribution.
-- Unique cache key count and cache bytes.
+- Homogeneous baseline at each profile `D_floor`.
+- Mixed D schedule with no cache cap per profile.
+- Mixed D schedule with the hard cache cap per profile.
+- Fold versus tail proof-size attribution per profile.
+- Unique cache key count and cache bytes per profile.
 - Rejected candidates that exceed the cap.
 
 Acceptance:
 
 - The report prints the delta identity check.
 - The report shows whether proof-size savings come from non-terminal folds or the terminal tail.
-- The report states whether D128 still wins after the cap.
-- The report states whether any D256 candidate survives after the cap.
+- The report states whether the first useful A lift above `D_floor` still wins after the cache cap for each target profile.
+- The report states whether any higher lift survives after the cap.
 - The scratch binary is either committed as a dev tool or removed before the implementation PR.
 
 #### Packet 2: Mixed Parameter Types
@@ -623,14 +704,14 @@ Files:
 Required behavior:
 
 - Add `RowRingDimensions { d_a, d_bd }`, or an equivalent type with role-based names.
-- Preserve homogeneous D64 behavior.
+- Preserve homogeneous behavior at `d_a = d_bd = D_floor`.
 - Validate supported dimensions and divisibility by `D_gen`.
-- Keep B and D tied to D64 for now.
+- Keep B and D tied to `d_bd = D_floor` for now.
 
 Acceptance:
 
 - Existing schedules still validate.
-- Homogeneous D64 params map to `d_a = d_bd = 64`.
+- Homogeneous params map to `d_a = d_bd = D_floor`.
 - Invalid `d_a`, invalid `d_bd`, and invalid `D_gen` return errors.
 
 #### Packet 3: Setup Generation Dimension
@@ -649,14 +730,14 @@ Required behavior:
 
 - Treat `AkitaSetupSeed::gen_ring_dim` as physical `D_gen`.
 - Compare setup envelopes only after converting to the same unit.
-- Allow a D256 generated setup to serve D128 and D64 runtime views.
-- Reject a D64 generated setup for D128 runtime rows.
+- Allow a larger `D_gen` generated setup to serve smaller runtime views.
+- Reject a generated setup whose `D_gen` is too small for a lifted runtime row.
 
 Acceptance:
 
-- Disk cache keys distinguish D64 generated setup from D128 and D256 generated setup.
+- Disk cache keys distinguish generated setup by `D_gen`, not only by one runtime dimension.
 - Setup validation has no unchecked arithmetic.
-- Existing D64 setup generation still works.
+- Existing homogeneous setup generation still works for every shipped profile floor.
 
 #### Packet 4: Prefix-Aware Prepared Setup Caches
 
@@ -679,7 +760,7 @@ Required behavior:
 
 Acceptance:
 
-- A small D128 prefix request does not build a full D128 shared cache.
+- A small lifted-dimension prefix request does not build a full shared cache at that dimension.
 - Cache byte reporting matches the cache contents.
 - Existing dense, one-hot, sparse, and recursive witness commit tests pass.
 
@@ -698,21 +779,24 @@ Files:
 
 Required behavior:
 
-- Compute A quotient rows through an A dimension API.
-- Compute B and D cyclic rows through the D64 API.
+- Compute A quotient rows through an A dimension API at `d_a`.
+- Compute B and D cyclic rows through the B/D dimension API at `d_bd = D_floor`.
 - Keep row assembly order unchanged.
-- Make the homogeneous D64 case match the old output.
+- Make the homogeneous case at `d_a = d_bd = D_floor` match the old output.
 
 Acceptance:
 
-- Schoolbook quotient tests pass for D64 and D128.
-- Homogeneous D64 relation tests match old behavior.
+- Schoolbook quotient tests pass at `D_floor` and at least one lifted `d_a`.
+- Homogeneous relation tests match old behavior at each profile floor.
 - The API no longer lets a caller pass one generic `D` for all row groups in mixed mode.
 
-#### Packet 6: First Mixed D128 Proof
+#### Packet 6: First Mixed Proof For Reference Profile
 
 Goal:
-Produce and verify one proof with `D_A = 128` and `D_BD = 64`.
+Produce and verify one mixed proof for a reference profile where `d_a > D_floor` and `d_bd = D_floor`.
+
+The first likely reference is fp128 `D64Full` with `d_a = 128` and `d_bd = 64`.
+The packet must generalize to other profiles without rewriting the protocol shape.
 
 Files:
 
@@ -723,13 +807,13 @@ Files:
 
 Required behavior:
 
-- One dense singleton proof verifies.
-- Homogeneous D64 through the mixed path still verifies.
+- One dense singleton mixed proof verifies for the reference profile.
+- Homogeneous proof through the mixed parameter path still verifies at `D_floor`.
 - Proof-size formula matches serialized proof size.
 
 Acceptance:
 
-- End-to-end D128 A mixed test passes.
+- End-to-end mixed proof test passes for the reference profile.
 - Bad dimension metadata is rejected.
 - Bad setup generation dimension is rejected.
 
@@ -746,16 +830,16 @@ Files:
 
 Required behavior:
 
-- Search over `D_A` in `{64, 128}` first.
-- Keep `D_BD = 64`.
+- Search over `d_a in A_lift(D_floor)`.
+- Keep `d_bd = D_floor`.
 - Include cache cap in candidate rejection.
 - Print proof-size attribution and cache attribution in profile or planner diagnostics.
 
 Acceptance:
 
-- D64 schedules remain available.
-- D128 A schedules are selected only when they survive the cache cap.
-- D256 is still disabled unless Packet 1 showed it survives and Packet 6 is stable.
+- Homogeneous schedules remain available at each profile `D_floor`.
+- Lifted `d_a` schedules are selected only when they survive the cache cap.
+- Higher lifts remain disabled unless earlier packets justify them.
 
 ### Code Surface
 
@@ -800,11 +884,12 @@ Expected crates and modules:
 Only measurement questions remain.
 They should be answered by Packet 1 before protocol work begins.
 
-- Does D128 still reduce total proof bytes after the cache cap?
+- Does the first useful A lift above `D_floor` reduce total proof bytes after the cache cap for each target profile?
 - Is the remaining proof-size win mostly in non-terminal folds or mostly in the terminal tail?
-- Does D256 survive the cache cap for any target shape?
-- Does the homogeneous D128 runtime benchmark show enough kernel speedup to justify testing mixed D128 in the prover?
-- Does the cache-aware planner choose later-fold D128, early-fold D128, or no D128?
+- Do higher lifts survive the cache cap for any target profile?
+- Does a homogeneous schedule at the next supported dimension show enough kernel speedup to justify mixed D for that profile?
+- Does fp128 `D32Full` with mixed A become competitive once the cache-aware preview is rerun after v1 lands?
+- Does the cache-aware planner choose later-fold lifts, early-fold lifts, or no lifts?
 
 ### Risks
 
@@ -812,7 +897,8 @@ They should be answered by Packet 1 before protocol work begins.
 - The relation code can accidentally compute a quotient at the wrong dimension if APIs keep one generic `D`.
 - Setup envelope comparisons can mix field coefficients, generation slots, and runtime slots.
 - Proof-size formulas can undercount if they assume one dimension for every row.
-- D256 can look good in proof bytes while losing to D128 after cache and kernel costs are measured.
+- Early fold mixed D can allocate too much prepared setup memory for profiles whose `D_floor` is already large.
+- Higher lifts can look good in proof bytes for low-floor profiles while losing after cache and kernel costs are measured.
 
 ## References
 
