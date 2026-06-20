@@ -5,17 +5,21 @@
 //! construction used by all three [`AkitaPolyOps`](crate::AkitaPolyOps)
 //! implementations.
 
+mod decompose_fold_partitioned;
+mod rotated_accum;
+
+pub use decompose_fold_partitioned::{
+    balanced_digit_decompose_fold_partitioned, balanced_ring_decompose_fold_partitioned,
+    cached_digit_decompose_fold_partitioned,
+};
+
 use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
-use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::CanonicalField;
 use std::array::from_fn;
-
-const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
-const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
 #[cfg(target_arch = "aarch64")]
 use crate::kernels::neon_decompose_fold as decompose_fold_neon;
@@ -125,33 +129,9 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
         let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
         let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
 
-        let (mut c0, d0) = peel_first_balanced_digit(
-            canonical0,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-        let (mut c1, d1) = peel_first_balanced_digit(
-            canonical1,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-        let (mut c2, d2) = peel_first_balanced_digit(
-            canonical2,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
+        let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
+        let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
+        let (mut c2, d2) = peel_first_balanced_digit_i32(canonical2, p);
 
         first_plane[base] = d0 as i8;
         first_plane[base + 1] = d1 as i8;
@@ -169,15 +149,7 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
 
     for idx in bulk_end..D {
         let canonical = ring.coeffs[idx].to_canonical_u128();
-        let (mut c, d0) = peel_first_balanced_digit(
-            canonical,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
+        let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
         first_plane[idx] = d0 as i8;
         for plane in remaining.iter_mut().take(num_digits - 1) {
             plane[idx] = extract_balanced_digit(&mut c, p) as i8;
@@ -201,7 +173,7 @@ pub fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
 }
 
 #[inline(always)]
-fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
+pub(crate) fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
     if canonical > p.threshold {
         -((p.q - canonical) as i128)
     } else {
@@ -228,11 +200,56 @@ pub fn try_small_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
 }
 
 #[inline(always)]
-fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
-    let d = *c & p.mask;
-    let balanced = if d >= p.half_b { d - p.b_val } else { d };
-    *c = (*c - balanced) >> p.log_basis;
-    balanced as i32
+pub(crate) fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
+    debug_assert!(p.log_basis < 31);
+    if p.log_basis == 2 {
+        let d = (*c as i32) & 3;
+        let balanced = if d >= 2 { d - 4 } else { d };
+        *c = (*c - i128::from(balanced)) >> 2;
+        return balanced;
+    }
+
+    let d = (*c as i32) & (p.mask as i32);
+    let balanced = if d >= p.half_b as i32 {
+        d - p.b_val as i32
+    } else {
+        d
+    };
+    *c = (*c - i128::from(balanced)) >> p.log_basis;
+    balanced
+}
+
+#[inline(always)]
+pub(crate) fn peel_first_balanced_digit_i32(canonical: u128, p: &DecomposeParams) -> (i128, i32) {
+    if canonical <= p.threshold {
+        let mut c = canonical as i128;
+        let d = extract_balanced_digit(&mut c, p);
+        return (c, d);
+    }
+
+    let diff = p.q - canonical;
+    if diff <= i128::MAX as u128 {
+        let mut c = -(diff as i128);
+        let d = extract_balanced_digit(&mut c, p);
+        return (c, d);
+    }
+
+    let mask = p.mask as u128;
+    let half_b = p.half_b as u128;
+    let b_val = p.b_val as u128;
+    let r = canonical.wrapping_sub(p.q) & mask;
+    let balanced = if r >= half_b {
+        r as i32 - b_val as i32
+    } else {
+        r as i32
+    };
+    let diff_adj = if balanced >= 0 {
+        diff + balanced as u128
+    } else {
+        diff - ((-balanced) as u128)
+    };
+    debug_assert!(diff_adj & mask == 0);
+    (-((diff_adj >> p.log_basis) as i128), balanced)
 }
 
 /// Scalar sparse-multiply-accumulate: accumulate `challenge * digit_plane`
@@ -364,238 +381,6 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
     }
 }
 
-#[inline(always)]
-fn should_use_rotated_challenge<const D: usize>(challenge: &SparseChallenge) -> bool {
-    (D == 32 && challenge.positions.len() >= D32_ROTATED_CHALLENGE_MIN_WEIGHT
-        || D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
-        && challenge.positions.len() == challenge.coeffs.len()
-}
-
-#[inline(always)]
-fn add_scaled_rotated_row<const D: usize>(acc: &mut [i32; D], row: &[i16; D], scale: i32) {
-    match scale {
-        1 => {
-            for k in 0..D {
-                acc[k] += row[k] as i32;
-            }
-        }
-        -1 => {
-            for k in 0..D {
-                acc[k] -= row[k] as i32;
-            }
-        }
-        2 => {
-            for k in 0..D {
-                acc[k] += (row[k] as i32) << 1;
-            }
-        }
-        -2 => {
-            for k in 0..D {
-                acc[k] -= (row[k] as i32) << 1;
-            }
-        }
-        _ => {
-            for k in 0..D {
-                acc[k] += scale * row[k] as i32;
-            }
-        }
-    }
-}
-
-#[inline(always)]
-fn add_scaled_rotated_rows_triplet<const D: usize>(
-    acc: &mut [i32; D],
-    rows: [&[i16; D]; 3],
-    scales: [i32; 3],
-) {
-    for (k, acc_coeff) in acc.iter_mut().enumerate() {
-        *acc_coeff += scales[0] * rows[0][k] as i32
-            + scales[1] * rows[1][k] as i32
-            + scales[2] * rows[2][k] as i32;
-    }
-}
-
-fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    if p.overflow_possible {
-        decompose_ring_full_challenge_accumulate_overflow(ring, rotated, acc, p);
-    } else {
-        decompose_ring_full_challenge_accumulate_fast(ring, rotated, acc, p);
-    }
-}
-
-fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let mut c0 = to_signed(ring.coeffs[base].to_canonical_u128(), p);
-        let mut c1 = to_signed(ring.coeffs[base + 1].to_canonical_u128(), p);
-        let mut c2 = to_signed(ring.coeffs[base + 2].to_canonical_u128(), p);
-        let rot0 = &rotated[base];
-        let rot1 = &rotated[base + 1];
-        let rot2 = &rotated[base + 2];
-
-        for plane in acc.iter_mut() {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            match (d0 != 0, d1 != 0, d2 != 0) {
-                (false, false, false) => {}
-                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
-                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
-                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
-                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
-            }
-        }
-    }
-
-    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let mut c = to_signed(ring.coeffs[idx].to_canonical_u128(), p);
-        for plane in acc.iter_mut() {
-            let digit = extract_balanced_digit(&mut c, p);
-            if digit != 0 {
-                add_scaled_rotated_row(plane, rot, digit);
-            }
-        }
-    }
-}
-
-fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    let (first_acc, remaining_acc) = acc
-        .split_first_mut()
-        .expect("decompose_ring_full_challenge_accumulate_overflow requires at least one plane");
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let rot0 = &rotated[base];
-        let rot1 = &rotated[base + 1];
-        let rot2 = &rotated[base + 2];
-
-        let canonical0 = ring.coeffs[base].to_canonical_u128();
-        let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
-        let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
-
-        let (mut c0, d0) = peel_first_balanced_digit(
-            canonical0,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-        let (mut c1, d1) = peel_first_balanced_digit(
-            canonical1,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-        let (mut c2, d2) = peel_first_balanced_digit(
-            canonical2,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-
-        if d0 != 0 {
-            add_scaled_rotated_row(first_acc, rot0, d0 as i32);
-        }
-        if d1 != 0 {
-            add_scaled_rotated_row(first_acc, rot1, d1 as i32);
-        }
-        if d2 != 0 {
-            add_scaled_rotated_row(first_acc, rot2, d2 as i32);
-        }
-
-        for plane in remaining_acc.iter_mut() {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            match (d0 != 0, d1 != 0, d2 != 0) {
-                (false, false, false) => {}
-                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
-                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
-                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
-                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
-            }
-        }
-    }
-
-    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let canonical = ring.coeffs[idx].to_canonical_u128();
-        let (mut c, d0) = peel_first_balanced_digit(
-            canonical,
-            p.q,
-            p.threshold,
-            p.mask,
-            p.half_b,
-            p.b_val,
-            p.log_basis,
-        );
-        if d0 != 0 {
-            add_scaled_rotated_row(first_acc, rot, d0 as i32);
-        }
-        for plane in remaining_acc.iter_mut() {
-            let digit = extract_balanced_digit(&mut c, p);
-            if digit != 0 {
-                add_scaled_rotated_row(plane, rot, digit);
-            }
-        }
-    }
-}
-
-fn accumulate_predecomposed_full_challenge<const D: usize>(
-    digit_plane: &[i8; D],
-    rotated: &[[i16; D]],
-    acc: &mut [i32; D],
-) {
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let d0 = i32::from(digit_plane[base]);
-        let d1 = i32::from(digit_plane[base + 1]);
-        let d2 = i32::from(digit_plane[base + 2]);
-        let rot0 = &rotated[base];
-        let rot1 = &rotated[base + 1];
-        let rot2 = &rotated[base + 2];
-
-        match (d0 != 0, d1 != 0, d2 != 0) {
-            (false, false, false) => {}
-            (true, false, false) => add_scaled_rotated_row(acc, rot0, d0),
-            (false, true, false) => add_scaled_rotated_row(acc, rot1, d1),
-            (false, false, true) => add_scaled_rotated_row(acc, rot2, d2),
-            _ => add_scaled_rotated_rows_triplet(acc, [rot0, rot1, rot2], [d0, d1, d2]),
-        }
-    }
-
-    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let digit = i32::from(digit_plane[idx]);
-        if digit != 0 {
-            add_scaled_rotated_row(acc, rot, digit);
-        }
-    }
-}
-
 pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
@@ -609,245 +394,6 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
         }
     });
     CyclotomicRing::from_coefficients(coeffs)
-}
-
-/// Position-partitioned accumulation for
-/// recursive witness decompose-fold.
-pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
-    coeffs: &[[i8; D]],
-    challenges: &[SparseChallenge],
-    active_blocks: usize,
-    block_len: usize,
-    num_blocks: usize,
-    num_digits: usize,
-    inner_width: usize,
-) -> Vec<[i32; D]> {
-    debug_assert_eq!(
-        num_digits, 1,
-        "multi-digit decomposition is not implemented for partitioned accumulation"
-    );
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let actual_threads = num_threads.min(inner_width).max(1);
-    let pos_chunk = inner_width.div_ceil(actual_threads);
-
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
-        .map(|tid| {
-            let pos_start = tid * pos_chunk;
-            if pos_start >= inner_width {
-                return Vec::new();
-            }
-            let pos_end = (pos_start + pos_chunk).min(inner_width);
-            let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-
-            let elem_start = pos_start / num_digits;
-            let elem_end = pos_end.div_ceil(num_digits);
-
-            let lo = elem_start.min(block_len);
-            let hi = elem_end.min(block_len);
-            for col in lo..hi {
-                let out_pos = col * num_digits;
-                if out_pos < pos_start || out_pos >= pos_end {
-                    continue;
-                }
-
-                let seq_start = col * num_blocks;
-                if seq_start >= coeffs.len() {
-                    break;
-                }
-                let available_blocks = active_blocks.min(coeffs.len() - seq_start);
-                for (challenge, coeff) in challenges[..available_blocks]
-                    .iter()
-                    .zip(coeffs[seq_start..seq_start + available_blocks].iter())
-                {
-                    sparse_mul_acc::<D>(coeff, challenge, &mut acc[out_pos - pos_start]);
-                }
-            }
-            acc
-        })
-        .collect();
-
-    chunks.into_iter().flatten().collect()
-}
-
-/// Element-partitioned accumulation for predecomposed dense digit caches.
-///
-/// Dense root witnesses reuse their balanced digit cache across commit and
-/// prove. For high-weight D64 challenges, use the same dense rotated-challenge
-/// formulation as the non-cached path instead of replaying sparse rotate-adds
-/// for every cached digit plane.
-pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
-    digit_planes: &[[i8; D]],
-    challenges: &[SparseChallenge],
-    block_len: usize,
-    num_digits: usize,
-) -> Vec<[i32; D]> {
-    let inner_width = block_len
-        .checked_mul(num_digits)
-        .expect("cached digit fold inner width overflow");
-    if inner_width == 0 || num_digits == 0 {
-        return Vec::new();
-    }
-
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let num_rings = digit_planes.len() / num_digits;
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
-    let rotated_tables = challenges
-        .iter()
-        .map(|challenge| {
-            should_use_rotated_challenge::<D>(challenge).then(|| {
-                let mut rotated = [[0i16; D]; D];
-                fill_rotated_challenge::<D>(&mut rotated, challenge);
-                rotated
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut out = vec![[0i32; D]; inner_width];
-
-    cfg_chunks_mut!(out, elem_chunk * num_digits)
-        .enumerate()
-        .for_each(|(tid, acc)| {
-            let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
-                return;
-            }
-            let elems_in_chunk = acc.len() / num_digits;
-            let elem_end = elem_start + elems_in_chunk;
-
-            for (block_idx, challenge) in challenges.iter().enumerate() {
-                let block_start = block_idx * block_len;
-                if block_start >= num_rings {
-                    break;
-                }
-                let ring_start = block_start + elem_start;
-                if ring_start >= num_rings {
-                    continue;
-                }
-                let ring_end = (block_start + elem_end).min(num_rings);
-
-                if let Some(rotated) = &rotated_tables[block_idx] {
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let src_base = (ring_start + local_elem_idx) * num_digits;
-                        let dst_base = local_elem_idx * num_digits;
-                        for digit_idx in 0..num_digits {
-                            accumulate_predecomposed_full_challenge::<D>(
-                                &digit_planes[src_base + digit_idx],
-                                rotated,
-                                &mut acc[dst_base + digit_idx],
-                            );
-                        }
-                    }
-                } else {
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let src_base = (ring_start + local_elem_idx) * num_digits;
-                        let dst_base = local_elem_idx * num_digits;
-                        for digit_idx in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_planes[src_base + digit_idx],
-                                challenge,
-                                &mut acc[dst_base + digit_idx],
-                            );
-                        }
-                    }
-                }
-            }
-        });
-
-    out
-}
-
-/// Element-partitioned accumulation for multi-digit dense witnesses.
-///
-/// Each worker owns a disjoint element range within the block and accumulates
-/// all digit planes for that range across every active challenge block. This
-/// avoids the large whole-output reductions in the older block-partitioned
-/// path while still decomposing each owned ring element only once per block.
-pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
-    coeffs: &[CyclotomicRing<F, D>],
-    challenges: &[SparseChallenge],
-    block_len: usize,
-    num_digits: usize,
-    p: &DecomposeParams,
-) -> Vec<[i32; D]> {
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
-    let rotated_tables = challenges
-        .iter()
-        .map(|challenge| {
-            should_use_rotated_challenge::<D>(challenge).then(|| {
-                let mut rotated = [[0i16; D]; D];
-                fill_rotated_challenge::<D>(&mut rotated, challenge);
-                rotated
-            })
-        })
-        .collect::<Vec<_>>();
-    let has_sparse_challenge = rotated_tables.iter().any(Option::is_none);
-    let mut out = vec![[0i32; D]; block_len * num_digits];
-
-    cfg_chunks_mut!(out, elem_chunk * num_digits)
-        .enumerate()
-        .for_each(|(tid, acc)| {
-            let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
-                return;
-            }
-            let elems_in_chunk = acc.len() / num_digits;
-            let elem_end = elem_start + elems_in_chunk;
-            let mut digit_buf = has_sparse_challenge.then(|| vec![[0i8; D]; num_digits]);
-
-            for (block_idx, challenge) in challenges.iter().enumerate() {
-                let block_start = block_idx * block_len;
-                if block_start >= coeffs.len() {
-                    break;
-                }
-                let coeff_start = block_start + elem_start;
-                if coeff_start >= coeffs.len() {
-                    continue;
-                }
-                let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated) = &rotated_tables[block_idx] {
-                    for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
-                    {
-                        let base = local_elem_idx * num_digits;
-                        decompose_ring_full_challenge_accumulate::<F, D>(
-                            ring,
-                            rotated,
-                            &mut acc[base..base + num_digits],
-                            p,
-                        );
-                    }
-                } else if let Some(digit_buf) = digit_buf.as_mut() {
-                    for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
-                    {
-                        decompose_ring_interleaved::<F, D>(ring, digit_buf, num_digits, p);
-                        let base = local_elem_idx * num_digits;
-                        for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[base + digit],
-                            );
-                        }
-                    }
-                }
-            }
-        });
-
-    out
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
@@ -872,10 +418,12 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use super::rotated_accum::{
+        decompose_ring_full_challenge_accumulate, should_use_rotated_challenge,
+    };
     use super::{
-        balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
-        decompose_ring_interleaved, fill_rotated_challenge, should_use_rotated_challenge,
-        sparse_mul_acc, sparse_mul_acc_scalar, DecomposeParams,
+        balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved,
+        fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_scalar, DecomposeParams,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;

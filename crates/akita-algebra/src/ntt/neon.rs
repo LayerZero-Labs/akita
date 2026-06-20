@@ -27,10 +27,10 @@ pub fn use_neon_ntt() -> bool {
 ///
 /// Uses the high-multiply formulation from Becker–Hwang–Kannwischer–Yang
 /// ("Neon NTT"): `vqdmulhq_s32` yields `(2·a·b) >> 32` with a single 4-lane
-/// multiply, so the reduction needs two `vqdmulhq_s32` + two `vmulq_s32`
-/// + one halving subtract, instead of the two 2-lane `vmull_s32` widening
-/// chains. Valid because every NTT prime here is `< 2^30`, so neither the
-/// `2·a·b` nor `2·m·p` doubling saturates an `int32x4_t` after the `>> 32`.
+/// multiply, so the reduction needs two `vqdmulhq_s32`, two `vmulq_s32`, and one
+/// halving subtract instead of two 2-lane `vmull_s32` widening chains.
+/// Every NTT prime here is `< 2^30`, so neither `2·a·b` nor `2·m·p` saturates
+/// an `int32x4_t` after the `>> 32`.
 #[inline(always)]
 unsafe fn mont_mul_4x_i32(
     a: int32x4_t,
