@@ -1,5 +1,7 @@
 //! Prover core state shared by root orchestration during crate extraction.
 
+#[cfg(feature = "zk")]
+use crate::compute::ZkHidingCommitBackend;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -468,10 +470,10 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     _num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
     E: FpExtEncoding<F>,
     L: FpExtEncoding<F> + ExtField<F>,
-    B: ProverComputeBackend<F>,
+    B: ProverComputeBackend<F> + ZkHidingCommitBackend<F, D>,
 {
     let mut rng = OsRng;
     let fold_steps = schedule

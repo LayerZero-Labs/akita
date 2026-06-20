@@ -717,7 +717,7 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::compute::CommitInnerPlan;
+                use akita_prover::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
                 use akita_prover::DensePoly;
                 use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
@@ -741,7 +741,13 @@ mod tests {
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let prepared = CpuBackend.prepare_setup(setup).unwrap();
                     let plan = CommitInnerPlan::from_level(&lp);
-                    let inner = poly.commit_inner(&CpuBackend, &prepared, plan).unwrap();
+                    let inner = RootCommitKernel::commit_inner(
+                        &CpuBackend,
+                        &prepared,
+                        poly.commit_view().unwrap(),
+                        plan,
+                    )
+                    .unwrap();
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
