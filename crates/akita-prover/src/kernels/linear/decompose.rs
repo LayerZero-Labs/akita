@@ -96,7 +96,10 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
 
 /// Debug-only round-trip check that digit planes recompose to the source rows.
 #[cfg(debug_assertions)]
-pub(crate) fn debug_assert_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn debug_assert_decomposed_rows_i8_match<
+    F: FieldCore + CanonicalField,
+    const D: usize,
+>(
     rows: &[CyclotomicRing<F, D>],
     out: &[[i8; D]],
     num_digits: usize,
@@ -107,9 +110,7 @@ pub(crate) fn debug_assert_decomposed_rows_i8_match<F: FieldCore + CanonicalFiel
         let row_digits = &out[row_idx * num_digits..(row_idx + 1) * num_digits];
         if row.is_zero() {
             debug_assert!(
-                row_digits
-                    .iter()
-                    .all(|plane| plane.iter().all(|&d| d == 0)),
+                row_digits.iter().all(|plane| plane.iter().all(|&d| d == 0)),
                 "zero row {row_idx} must decompose to zero digits"
             );
         } else {
