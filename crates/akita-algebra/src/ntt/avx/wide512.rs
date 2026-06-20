@@ -109,7 +109,7 @@ unsafe fn forward_dif_stages<const D: usize>(
         len /= 2;
     }
 
-    if D % 16 == 0 {
+    if D.is_multiple_of(16) {
         // SAFETY: AVX2 proven by this function's safety contract.
         unsafe { forward_dif_tail_i32_avx2::<D>(a_ptr, tw_ptr, p128, pinv128) };
     } else {
@@ -339,7 +339,7 @@ pub(super) unsafe fn forward_ntt_i32<const D: usize>(
     unsafe {
         mont_mul_table(a, prime, &tw.psi_pows);
         forward_dif_stages(a, prime, tw);
-        if D % 16 != 0 {
+        if !D.is_multiple_of(16) {
             reduce_range_all(a, prime);
         }
     }
@@ -377,7 +377,7 @@ pub(super) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     // SAFETY: feature contract forwarded to each helper.
     unsafe {
         forward_dif_stages(a, prime, tw);
-        if D % 16 != 0 {
+        if !D.is_multiple_of(16) {
             reduce_range_all(a, prime);
         }
     }

@@ -90,7 +90,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         len /= 2;
     }
 
-    if D % 16 == 0 {
+    if D.is_multiple_of(16) {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(
@@ -278,7 +278,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if D % 16 == 0 {
+    if D.is_multiple_of(16) {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(

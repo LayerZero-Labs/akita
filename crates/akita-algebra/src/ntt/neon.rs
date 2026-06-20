@@ -190,7 +190,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     // Final two stages (len = 2, 1). The vectorized tail already normalizes its
     // outputs to [0, p), so the closing reduce_range pass is only needed on the
     // scalar fallback (D not a multiple of 16).
-    if D % 16 == 0 {
+    if D.is_multiple_of(16) {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {
@@ -310,7 +310,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if D % 16 == 0 {
+    if D.is_multiple_of(16) {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {
