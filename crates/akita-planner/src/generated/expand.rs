@@ -246,7 +246,7 @@ impl GeneratedFoldStep {
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         };
-        Ok(params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?)
+        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
     }
 }
 
