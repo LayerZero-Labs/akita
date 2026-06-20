@@ -14,10 +14,10 @@ use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, FpExtEnco
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
-    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
@@ -227,17 +227,20 @@ where
         source: SparseRingOpeningView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        Ok(<SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-            source.poly,
-            plan.challenges,
-            plan.block_len,
-            plan.num_digits,
-            plan.log_basis,
-        ))
+        Ok(
+            <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
+                source.poly,
+                plan.challenges,
+                plan.block_len,
+                plan.num_digits,
+                plan.log_basis,
+            ),
+        )
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<SparseRingOpeningBatchView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningBatchKernel<SparseRingOpeningBatchView<'_, F, D>, F, D>
+    for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,

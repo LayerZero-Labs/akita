@@ -71,7 +71,7 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
             F,
             TIERED_D,
         >>::commit(
-            &setup, &CpuBackend, &prepared, std::slice::from_ref(&poly)
+            &setup, std::slice::from_ref(&poly), &CpuBackend, &prepared
         )
         .expect("commit");
         assert_eq!(
@@ -162,7 +162,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(&setup, &CpuBackend, &prepared, &polys)
+        >>::commit(&setup, &polys, &CpuBackend, &prepared)
         .expect("commit");
 
         let poly_refs: Vec<&OneHotPoly<F, TIERED_D, u8>> = polys.iter().collect();

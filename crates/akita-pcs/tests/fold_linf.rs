@@ -55,9 +55,9 @@ fn run_tail_bound_with_grind_onehot_roundtrip(
     let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .expect("commit");
 
@@ -132,9 +132,9 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, _) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 
@@ -200,9 +200,9 @@ fn fold_recursive_handle_tamper_rejected() {
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, _) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 
@@ -241,9 +241,9 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 

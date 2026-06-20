@@ -44,9 +44,9 @@ fn zk_tail_bound_with_grind_onehot_roundtrip() {
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .expect("commit");
 

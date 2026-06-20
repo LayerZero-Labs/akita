@@ -1,15 +1,15 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
+use akita_prover::compute::{RootCommitBackend, RootCommitPoly, RootPolyShape};
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
-    ProverComputeBackend,
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, ProverClaims, ProverComputeBackend,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -80,13 +80,16 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     fn commit<P, B>(
         setup: &Self::ProverSetup,
+        polys: &[P],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
         akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
     }
@@ -95,13 +98,16 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
+        polys_per_commitment_group: &[&[P]],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_commitment_group: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
         akita_prover::batched_commit::<Cfg, D, P, B>(
             polys_per_commitment_group,
@@ -123,7 +129,7 @@ where
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D>,
+        P: AkitaPolyOps<F, D> + RootPolyShape<F, D>,
         B: ProverComputeBackend<F>,
     {
         let t_prove_total = Instant::now();

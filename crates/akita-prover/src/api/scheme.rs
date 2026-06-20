@@ -1,11 +1,14 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
+use crate::compute::{ProverComputeBackend, RootCommitBackend, RootCommitPoly, RootPolyShape};
 use crate::ProverTranscriptGrind;
 use crate::{AkitaPolyOps, ProverClaims};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+};
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, SetupContributionMode};
+use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -65,13 +68,16 @@ where
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P, B>(
         setup: &Self::ProverSetup,
+        polys: &[P],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys: &[P],
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>;
 
     /// Commit the polynomial bundles used by a batched prove.
     ///
@@ -85,13 +91,16 @@ where
     #[allow(clippy::type_complexity)]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
+        polys_per_commitment_group: &[&[P]],
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_commitment_group: &[&[P]],
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>;
 
     /// Produce a fused batched opening proof for one shared opening point.
     ///
@@ -114,6 +123,6 @@ where
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D>,
+        P: AkitaPolyOps<F, D> + RootPolyShape<F, D>,
         B: ProverComputeBackend<F>;
 }

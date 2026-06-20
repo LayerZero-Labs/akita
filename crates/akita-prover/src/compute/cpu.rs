@@ -728,7 +728,7 @@ mod tests {
 
     fn prepared() -> CpuPreparedSetup<F, D> {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
     }
 
@@ -766,9 +766,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -785,9 +785,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -864,7 +864,6 @@ mod tests {
         let row_width = 3;
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
             8,
-            1,
             1,
             setup_envelope_with_zk(32, row_len * row_width, row_len * row_width),
         )

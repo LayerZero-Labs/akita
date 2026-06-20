@@ -6,7 +6,11 @@ use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{
+    CanonicalBytes, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+    TranscriptChallenge,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
@@ -208,7 +212,13 @@ fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
 }
 
 fn make_dense_fixture<
-    FField: CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    FField: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + HasWide
+        + RandomSampling
+        + FromPrimitiveInt
+        + 'static,
     const D: usize,
     Cfg: CommitmentConfig<Field = FField>,
 >(
@@ -226,7 +236,7 @@ where
         CommitHint = AkitaCommitmentHint<FField, D>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
-    Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
+    <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
@@ -251,9 +261,9 @@ where
     let (commitment, hint) =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .unwrap();
 
@@ -423,9 +433,9 @@ fn full_d64_prove_verify() {
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .unwrap();
 
@@ -574,9 +584,9 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            &poly_refs,
             &CpuBackend,
             &prepared,
-            &poly_refs,
         )
         .unwrap();
         let commitments = [commitment];
@@ -800,9 +810,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            std::slice::from_ref(&poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&poly),
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
@@ -853,9 +863,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             let (recomputed_commitment, _) =
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
+                    std::slice::from_ref(&reconstructed),
                     &CpuBackend,
                     &prepared,
-                    std::slice::from_ref(&reconstructed),
                 )
                 .expect("recompute commitment from direct witness");
             assert_eq!(
@@ -986,9 +996,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            std::slice::from_ref(&onehot_poly),
             &CpuBackend,
             &prepared,
-            std::slice::from_ref(&onehot_poly),
         )
         .unwrap();
 
@@ -1157,11 +1167,12 @@ fn batched_onehot_same_point_round_trip() {
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let commit_group = [poly_a.clone(), poly_b.clone()];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            &commit_group,
             &CpuBackend,
             &prepared,
-            &poly_group,
         )
         .unwrap();
         let commitments = [commitment];
@@ -1278,9 +1289,9 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
+            &polys,
             &CpuBackend,
             &prepared,
-            &poly_group,
         )
         .unwrap();
         let commitments = [commitment];

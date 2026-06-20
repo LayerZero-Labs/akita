@@ -53,9 +53,9 @@ fn run_single_onehot_tensor(nv: usize) {
         let (commitment, hint) =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
                 &setup,
+                commit_input,
                 &CpuBackend,
                 &prepared,
-                commit_input,
             )
             .expect("commit");
 
@@ -211,9 +211,9 @@ fn run_single_dense_tensor(nv: usize) {
         let (commitment, hint) =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
                 &setup,
+                commit_input,
                 &CpuBackend,
                 &prepared,
-                commit_input,
             )
             .expect("commit");
 

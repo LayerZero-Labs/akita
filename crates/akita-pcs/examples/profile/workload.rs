@@ -3,12 +3,13 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{RootCommitBackend, RootCommitPoly};
 use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
     FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
@@ -333,7 +334,12 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
+fn run_prove<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF>,
+    P: AkitaPolyOps<FF, D> + RootCommitPoly<FF, D>,
+>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
@@ -367,17 +373,18 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         + HasWide
         + AkitaSerialize
         + 'static,
+    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF>,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
+    CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         setup,
+        std::slice::from_ref(poly),
         &CpuBackend,
         prepared,
-        std::slice::from_ref(poly),
     )
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -584,7 +591,15 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
+    run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
+        label,
+        &setup,
+        &prepared,
+        &poly,
+        &original_pt,
+        opening,
+        plan,
+    );
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -675,7 +690,15 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
+    run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
+        label,
+        &setup,
+        &prepared,
+        &onehot_poly,
+        &pt,
+        opening,
+        plan,
+    );
 }
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -787,13 +810,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_crt_profile(label, prepared.shared_ntt_profile());
 
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        &poly_refs,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &CpuBackend, &prepared)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());

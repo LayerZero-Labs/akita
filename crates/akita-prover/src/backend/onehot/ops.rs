@@ -566,10 +566,10 @@ where
 
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
-    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 
 /// Borrowed commit view over one-hot chunk storage.
@@ -901,8 +901,8 @@ where
     }
 }
 
-impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotTensorBatchView<'_, F, D, I>, F, E, D>
-    for CpuBackend
+impl<F, E, const D: usize, I>
+    TensorProjectionBatchKernel<OneHotTensorBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: ExtField<F>,

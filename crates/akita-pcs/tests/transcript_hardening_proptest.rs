@@ -47,9 +47,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
         &setup,
+        &polys,
         &CpuBackend,
         &prepared,
-        &polys,
     )
     .expect("batched commit");
 

@@ -635,10 +635,10 @@ fn accumulate_cached_digit_planes<const D: usize>(
 
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
-    RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::FromPrimitiveInt;
@@ -922,7 +922,9 @@ where
         E: FpExtEncoding<F>,
     {
         Ok(RootTensorProjectionPoly::Dense(
-            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(source.poly)?,
+            <DensePoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(
+                source.poly,
+            )?,
         ))
     }
 }

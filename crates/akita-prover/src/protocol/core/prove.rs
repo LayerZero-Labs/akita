@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::compute::RootPolyShape;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -214,7 +215,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
+    P: AkitaPolyOps<Cfg::Field, D> + RootPolyShape<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
@@ -326,7 +327,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
+    P: AkitaPolyOps<Cfg::Field, D> + RootPolyShape<Cfg::Field, D>,
     B: ProverComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;

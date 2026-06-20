@@ -19,5 +19,4 @@ pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{MultiChunkEntry, OneHotIndex, OneHotPoly, SingleChunkEntry};
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, SuffixWitness};
-pub(crate) use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
 pub use sparse_ring::{SparseRingBlockEntry, SparseRingPoly};

@@ -282,9 +282,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                std::slice::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 
@@ -414,9 +414,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                std::slice::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 
@@ -573,9 +573,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                std::slice::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 
@@ -720,9 +720,9 @@ mod tests {
         let (commitment, batched_hint) =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 &setup,
+                std::slice::from_ref(&poly),
                 &CpuBackend,
                 &prepared,
-                std::slice::from_ref(&poly),
             )
             .expect("commitment");
 

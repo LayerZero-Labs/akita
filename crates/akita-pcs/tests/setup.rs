@@ -135,9 +135,9 @@ where
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .expect("commit");
 
@@ -226,9 +226,9 @@ where
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        std::slice::from_ref(&poly),
         &CpuBackend,
         &prepared,
-        std::slice::from_ref(&poly),
     )
     .expect("commit");
 
@@ -315,9 +315,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        &polys,
         &CpuBackend,
         &prepared,
-        &polys,
     )
     .expect("batched commit");
     let commitments = [commitment];
@@ -416,9 +416,9 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
+        &polys,
         &CpuBackend,
         &prepared,
-        &polys,
     )
     .expect("batched onehot commit");
     let commitments = [commitment];
