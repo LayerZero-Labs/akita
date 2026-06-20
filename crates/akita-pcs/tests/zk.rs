@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "zk")]
 
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
 mod common;
@@ -84,11 +85,18 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (_, e_folded) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let e_folded = opening.folded;
 
     let mut transcript = AkitaTranscript::<F>::new(label);
     commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
