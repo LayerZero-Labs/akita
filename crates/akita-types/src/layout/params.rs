@@ -9,7 +9,9 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
 
-pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
+pub use crate::sis::{
+    fold_witness_linf_cap_policy, AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily,
+};
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -319,6 +321,8 @@ impl LevelParams {
         mut self,
         field_bits: u32,
         root_num_claims: usize,
+        fold_level: usize,
+        grind_schedule: crate::sis::GrindTargetAcceptSchedule,
     ) -> Result<Self, AkitaError> {
         self.field_bits_hint = field_bits;
         self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
@@ -327,6 +331,8 @@ impl LevelParams {
             self.ring_dimension,
             self.op_norm_rejection,
             self.inner_width(),
+            fold_level,
+            grind_schedule,
         )?;
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
@@ -850,7 +856,71 @@ impl LevelParams {
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
         };
         let field_bits = self.field_bits_for_cache();
-        rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
+        let grind = (
+            self.fold_linf_cap_config.grind_target_accept_num,
+            self.fold_linf_cap_config.grind_target_accept_den,
+        );
+        rebuilt.with_fold_linf_cap_config_using_grind(
+            field_bits,
+            self.cached_num_digits_fold_claims,
+            grind,
+        )
+    }
+
+    /// Like [`Self::with_fold_linf_cap_config`], but preserves an explicit grind
+    /// target (used when recomputing digit depths without a fold-level index).
+    pub fn with_fold_linf_cap_config_using_grind(
+        mut self,
+        field_bits: u32,
+        root_num_claims: usize,
+        grind_target: (u128, u128),
+    ) -> Result<Self, AkitaError> {
+        self.field_bits_hint = field_bits;
+        let policy = fold_witness_linf_cap_policy(
+            &self.stage1_config,
+            self.fold_challenge_shape,
+            self.ring_dimension,
+        );
+        self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+            policy,
+            &self.stage1_config,
+            self.fold_challenge_shape,
+            self.ring_dimension,
+            self.op_norm_rejection,
+            self.inner_width(),
+            grind_target.0,
+            grind_target.1,
+        )?;
+        let challenge =
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
+        let witness = self.fold_witness_norms();
+        self.num_digits_fold_one = crate::sis::num_digits_fold(
+            self.r_vars,
+            1,
+            field_bits,
+            self.log_basis,
+            challenge,
+            witness,
+            self.fold_linf_cap_config,
+        )
+        .unwrap_or(1);
+        if root_num_claims > 1 {
+            self.cached_num_digits_fold_claims = root_num_claims;
+            self.cached_num_digits_fold_value = crate::sis::num_digits_fold(
+                self.r_vars,
+                root_num_claims,
+                field_bits,
+                self.log_basis,
+                challenge,
+                witness,
+                self.fold_linf_cap_config,
+            )
+            .unwrap_or(self.num_digits_fold_one);
+        } else {
+            self.cached_num_digits_fold_claims = 0;
+            self.cached_num_digits_fold_value = self.num_digits_fold_one;
+        }
+        Ok(self)
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
@@ -914,7 +984,12 @@ impl LevelParams {
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         }
-        .with_fold_linf_cap_config(field_bits, 0)
+        .with_fold_linf_cap_config(
+            field_bits,
+            0,
+            0,
+            crate::sis::GrindTargetAcceptSchedule::PRODUCTION,
+        )
     }
 }
 
@@ -1036,7 +1111,7 @@ mod tests {
             .with_decomp(8, 6, 1, 1, 0)
             .unwrap()
             .with_onehot_chunk_size(1)
-            .with_fold_linf_cap_config(64, 1)
+            .with_fold_linf_cap_config(64, 1, 0, crate::sis::GrindTargetAcceptSchedule::PRODUCTION)
             .unwrap();
 
         assert_eq!(lp.fold_witness_norms().l2_sq_per_row_max(), 64);
@@ -1049,7 +1124,7 @@ mod tests {
             .with_decomp(8, 6, 1, 1, 0)
             .unwrap()
             .with_onehot_chunk_size(256)
-            .with_fold_linf_cap_config(128, 1)
+            .with_fold_linf_cap_config(128, 1, 0, crate::sis::GrindTargetAcceptSchedule::PRODUCTION)
             .unwrap();
 
         assert_eq!(lp.fold_witness_norms().l2_sq_per_row_max(), 1);

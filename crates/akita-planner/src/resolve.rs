@@ -364,6 +364,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             tiered: false,
+            grind_target_schedule: akita_types::GrindTargetAcceptSchedule::PRODUCTION,
         }
     }
 

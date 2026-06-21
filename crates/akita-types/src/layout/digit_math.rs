@@ -91,6 +91,8 @@ pub fn optimal_m_r_split(
     reduced_vars: usize,
     num_ring: usize,
     field_bits: u32,
+    fold_level: usize,
+    grind_schedule: crate::sis::GrindTargetAcceptSchedule,
 ) -> (usize, usize, u32) {
     // Too few variables to optimize; too many would overflow `2^r` in u64.
     if reduced_vars <= 2 || reduced_vars >= 53 {
@@ -128,6 +130,8 @@ pub fn optimal_m_r_split(
             r,
             num_claims,
             inner_width as u64,
+            fold_level,
+            grind_schedule,
         ) else {
             continue;
         };
@@ -149,6 +153,8 @@ pub fn optimal_m_r_split(
             d as usize,
             fold_challenge,
             fold_witness,
+            fold_level,
+            grind_schedule,
         ) else {
             continue;
         };

@@ -14,7 +14,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{grind_target_schedule_for, policy_of, CommitmentConfig};
 use akita_planner::{find_schedule, PlannerPolicy};
 use akita_types::AkitaScheduleLookupKey;
 
@@ -90,6 +90,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
+        grind_target_schedule: grind_target_schedule_for::<Cfg>(),
     };
     assert_eq!(
         policy, expected,

@@ -31,6 +31,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.basis_range.1));
     h.write_u64(identity.onehot_chunk_size as u64);
     h.write_u64(u64::from(identity.tiered));
+    h.write_u64(grind_target_schedule_tag(identity.grind_target_schedule));
     h.write_u64(match identity.root_fold_shape {
         TensorChallengeShape::Flat => 0,
         TensorChallengeShape::Tensor => 1,
@@ -55,6 +56,13 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
     }
 }
 
+fn grind_target_schedule_tag(schedule: akita_types::GrindTargetAcceptSchedule) -> u64 {
+    match schedule {
+        akita_types::GrindTargetAcceptSchedule::Uniform => 0,
+        akita_types::GrindTargetAcceptSchedule::StepAfterEarlyLevels { .. } => 1,
+    }
+}
+
 /// Fields derived from policy, entries, and runtime hooks for identity checks.
 struct CatalogIdentityExpectation {
     family_name: &'static str,
@@ -68,6 +76,7 @@ struct CatalogIdentityExpectation {
     basis_range: (u32, u32),
     onehot_chunk_size: usize,
     tiered: bool,
+    grind_target_schedule: akita_types::GrindTargetAcceptSchedule,
     root_fold_shape: TensorChallengeShape,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
@@ -104,6 +113,7 @@ fn catalog_identity_expectation(
         basis_range: policy.basis_range,
         onehot_chunk_size: policy.onehot_chunk_size,
         tiered: policy.tiered,
+        grind_target_schedule: policy.grind_target_schedule,
         root_fold_shape,
         ring_dimensions,
         ring_challenge_config_digest,
@@ -142,6 +152,7 @@ pub fn expected_catalog_identity(
         basis_range: expected.basis_range,
         onehot_chunk_size: expected.onehot_chunk_size,
         tiered: expected.tiered,
+        grind_target_schedule: expected.grind_target_schedule,
         root_fold_shape: expected.root_fold_shape,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
@@ -188,6 +199,7 @@ pub fn validate_catalog_identity(
     check_field!(basis_range);
     check_field!(onehot_chunk_size);
     check_field!(tiered);
+    check_field!(grind_target_schedule);
     check_field!(root_fold_shape);
     if embedded.ring_dimensions != expected.ring_dimensions.as_slice() {
         return Err(catalog_identity_mismatch_error(
@@ -370,6 +382,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             tiered: false,
+            grind_target_schedule: akita_types::GrindTargetAcceptSchedule::PRODUCTION,
         }
     }
 
