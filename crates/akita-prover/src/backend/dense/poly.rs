@@ -1,12 +1,12 @@
 //! Dense polynomial storage and constructors.
 
+use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
+use crate::kernels::linear::try_centered_i8;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::{tensor_opening_split, TensorColumnSource};
-use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
-use crate::kernels::linear::try_centered_i8;
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +164,10 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         })
     }
 
-    pub(super) fn tensor_shape<E>(&self, logical_point: Option<&[E]>) -> Result<(usize, usize), AkitaError>
+    pub(super) fn tensor_shape<E>(
+        &self,
+        logical_point: Option<&[E]>,
+    ) -> Result<(usize, usize), AkitaError>
     where
         E: ExtField<F>,
     {

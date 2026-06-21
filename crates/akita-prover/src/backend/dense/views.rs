@@ -2,8 +2,8 @@
 
 use super::poly::DensePoly;
 use crate::compute::{
-    RootBaseEvalsSource, RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
-    DirectRootWitnessSource,
+    DirectRootWitnessSource, RootBaseEvalsSource, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource,
 };
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{CleartextWitnessProof, FlatRingVec};

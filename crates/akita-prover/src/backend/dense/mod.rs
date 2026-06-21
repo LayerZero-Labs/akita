@@ -8,12 +8,11 @@ mod kernels;
 mod ops;
 mod poly;
 mod tensor_fold;
-mod views;
 #[cfg(test)]
 mod tests;
+mod views;
 
 pub use poly::DensePoly;
 pub use views::{
-    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView,
-    DenseTensorView,
+    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView, DenseTensorView,
 };

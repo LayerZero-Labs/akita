@@ -5,17 +5,17 @@ use super::views::{
     DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView, DenseTensorView,
 };
 use crate::backend::RootTensorProjectionPoly;
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::FpExtEncoding;
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 impl<F, const D: usize> RootCommitKernel<DenseCommitView<'_, F, D>, F, D> for CpuBackend
 where

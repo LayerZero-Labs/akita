@@ -3,28 +3,22 @@
 use super::commit::{accumulate_cached_digit_planes, decompose_commit_rows};
 use super::poly::{DenseColumnSource, DensePoly};
 use super::tensor_fold;
-use crate::backend::RootTensorProjectionPoly;
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource,
+use crate::backend::poly_helpers::{
+    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
+    decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
 };
+use crate::backend::RootTensorProjectionPoly;
+use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource};
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::{
-    embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding,
-};
-use crate::backend::poly_helpers::{
-    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
-};
-use akita_algebra::ring::cyclotomic::{
-    decompose_centering_threshold,
-};
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use akita_types::{embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding};
 
 impl<F, const D: usize> DensePoly<F, D>
 where
