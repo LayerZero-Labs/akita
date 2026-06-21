@@ -1,9 +1,7 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::poly::DensePoly;
-use super::views::{
-    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView, DenseTensorView,
-};
+use super::views::{DenseBatchView, DenseView};
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
@@ -17,28 +15,28 @@ use akita_field::{
 };
 use akita_types::FpExtEncoding;
 
-impl<F, const D: usize> RootCommitKernel<DenseCommitView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        source: DenseCommitView<'_, F, D>,
+        source: DenseView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         source.poly.commit_inner(self, prepared, plan)
     }
 }
 
-impl<F, const D: usize> OpeningFoldKernel<DenseOpeningView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn evaluate_and_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseOpeningView<'_, F, D>,
+        source: DenseView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let (eval, folded) = match plan {
@@ -63,7 +61,7 @@ where
     fn decompose_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseOpeningView<'_, F, D>,
+        source: DenseView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         Ok(source.poly.decompose_fold(
@@ -75,14 +73,14 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<DenseOpeningBatchView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseOpeningBatchView<'_, F, D>,
+        source: DenseBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match plan {
@@ -103,7 +101,7 @@ where
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionKernel<DenseTensorView<'_, F, D>, F, E, D> for CpuBackend
+impl<F, E, const D: usize> TensorProjectionKernel<DenseView<'_, F, D>, F, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F>,
@@ -111,7 +109,7 @@ where
     fn column_partials(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseTensorView<'_, F, D>,
+        source: DenseView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
@@ -123,7 +121,7 @@ where
     fn packed_witness(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseTensorView<'_, F, D>,
+        source: DenseView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
             source.poly.tensor_packed_extension_evals()?,
@@ -133,7 +131,7 @@ where
     fn root_projection(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseTensorView<'_, F, D>,
+        source: DenseView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         E: FpExtEncoding<F>,
@@ -142,7 +140,7 @@ where
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseTensorBatchView<'_, F, D>, F, E, D>
+impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField,
@@ -151,7 +149,7 @@ where
     fn column_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseTensorBatchView<'_, F, D>,
+        source: DenseBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
@@ -163,7 +161,7 @@ where
     fn sparse_linear_combination(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: DenseTensorBatchView<'_, F, D>,
+        source: DenseBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)

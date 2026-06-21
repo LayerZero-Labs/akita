@@ -15,11 +15,7 @@ use akita_field::{
 };
 use akita_types::{CleartextWitnessProof, FpExtEncoding};
 
-use crate::backend::{
-    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView,
-    DenseTensorView, OneHotCommitView, OneHotOpeningBatchView, OneHotOpeningView,
-    OneHotTensorBatchView, OneHotTensorView,
-};
+use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
     CommitInnerPlan, CpuBackend, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
@@ -255,7 +251,7 @@ where
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         source.dispatch(
             |poly| {
-                RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner(
+                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
                     self,
                     prepared,
                     poly.commit_view()?,
@@ -263,7 +259,7 @@ where
                 )
             },
             |poly| {
-                RootCommitKernel::<OneHotCommitView<'_, F, D, I>, F, D>::commit_inner(
+                RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner(
                     self,
                     prepared,
                     poly.commit_view()?,
@@ -288,7 +284,7 @@ where
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         source.dispatch(
             |poly| {
-                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -296,7 +292,7 @@ where
                 )
             },
             |poly| {
-                OpeningFoldKernel::<OneHotOpeningView<'_, F, D, I>, F, D>::evaluate_and_fold(
+                OpeningFoldKernel::<OneHotView<'_, F, D, I>, F, D>::evaluate_and_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -314,7 +310,7 @@ where
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         source.dispatch(
             |poly| {
-                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::decompose_fold(
+                OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -322,7 +318,7 @@ where
                 )
             },
             |poly| {
-                OpeningFoldKernel::<OneHotOpeningView<'_, F, D, I>, F, D>::decompose_fold(
+                OpeningFoldKernel::<OneHotView<'_, F, D, I>, F, D>::decompose_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -354,7 +350,7 @@ where
                     return Ok(None);
                 };
                 let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
-                OpeningBatchKernel::<DenseOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+                OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
             }
@@ -363,7 +359,7 @@ where
                     return Ok(None);
                 };
                 let onehot_view = OneHotPoly::<F, D, I>::opening_batch(&onehot_polys)?;
-                OpeningBatchKernel::<OneHotOpeningBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
+                OpeningBatchKernel::<OneHotBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
                     self,
                     prepared,
                     onehot_view,
@@ -392,7 +388,7 @@ where
     {
         source.dispatch(
             |poly| {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -400,7 +396,7 @@ where
                 )
             },
             |poly| {
-                TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::column_partials(
+                TensorProjectionKernel::<OneHotView<'_, F, D, I>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -417,14 +413,14 @@ where
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         source.dispatch(
             |poly| {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
             },
             |poly| {
-                TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::packed_witness(
+                TensorProjectionKernel::<OneHotView<'_, F, D, I>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -443,14 +439,14 @@ where
     {
         source.dispatch(
             |poly| {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
             },
             |poly| {
-                TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::root_projection(
+                TensorProjectionKernel::<OneHotView<'_, F, D, I>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -485,7 +481,7 @@ where
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
                 let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
-                TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
+                TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
                     dense_view,
@@ -497,7 +493,7 @@ where
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
                 let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
-                TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D, I>, F, E, D>::column_partials_batch(
+                TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
                     onehot_view,
@@ -522,7 +518,7 @@ where
                     return Ok(None);
                 };
                 let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
-                TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
+                TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,
                     dense_view,
@@ -534,7 +530,7 @@ where
                     return Ok(None);
                 };
                 let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
-                TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D, I>, F, E, D>::sparse_linear_combination(
+                TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,
                     onehot_view,
@@ -613,7 +609,7 @@ mod tests {
             })
             .collect();
         let dense_view = DensePoly::<F, D>::tensor_batch(&inner_refs).unwrap();
-        let expected = TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
+        let expected = TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend,
             None,
             dense_view,
@@ -657,7 +653,7 @@ mod tests {
             .collect();
         let onehot_view = OneHotPoly::<F, D>::tensor_batch(&inner_refs).unwrap();
         let expected = TensorProjectionBatchKernel::<
-            OneHotTensorBatchView<'_, F, D>,
+            OneHotBatchView<'_, F, D>,
             F,
             E,
             D,

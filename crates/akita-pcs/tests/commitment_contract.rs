@@ -14,7 +14,7 @@ use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_prover::backend::DenseCommitView;
+use akita_prover::backend::DenseView;
 use akita_prover::compute::{
     CommitInnerPlan, CommitmentComputeBackend, ComputeBackendSetup, DenseCommitRowsPlan,
     DigitRowsComputeBackend, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
@@ -161,7 +161,7 @@ where
         plan: CommitInnerPlan,
     ) -> Result<akita_prover::CommitInnerWitness<F, D>, AkitaError> {
         let dense = DensePoly::<F, D>::from_ring_coeffs(source.poly.coeffs.clone());
-        RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner(
+        RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
             &CpuBackend,
             prepared,
             dense.commit_view()?,

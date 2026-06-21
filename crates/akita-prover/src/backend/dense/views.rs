@@ -7,33 +7,18 @@ use crate::compute::{
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{CleartextWitnessProof, FlatRingVec};
 
-/// Borrowed commit view over dense ring storage.
+/// Borrowed single-polynomial view over dense ring storage.
+///
+/// One view type backs the commit, opening-fold, and tensor-projection kernels;
+/// the kernel trait it is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
-pub struct DenseCommitView<'a, F: FieldCore, const D: usize> {
+pub struct DenseView<'a, F: FieldCore, const D: usize> {
     pub(super) poly: &'a DensePoly<F, D>,
 }
 
-/// Borrowed opening view for fold and decompose-fold kernels.
+/// Same-point batch view over several dense polynomials.
 #[derive(Debug, Clone, Copy)]
-pub struct DenseOpeningView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a DensePoly<F, D>,
-}
-
-/// Same-point batch opening view over several dense polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct DenseOpeningBatchView<'a, F: FieldCore, const D: usize> {
-    pub(super) polys: &'a [&'a DensePoly<F, D>],
-}
-
-/// Borrowed tensor projection view over dense ring storage.
-#[derive(Debug, Clone, Copy)]
-pub struct DenseTensorView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a DensePoly<F, D>,
-}
-
-/// Same-point batch tensor view over several dense polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct DenseTensorBatchView<'a, F: FieldCore, const D: usize> {
+pub struct DenseBatchView<'a, F: FieldCore, const D: usize> {
     pub(super) polys: &'a [&'a DensePoly<F, D>],
 }
 
@@ -55,12 +40,12 @@ where
     F: FieldCore,
 {
     type CommitView<'a>
-        = DenseCommitView<'a, F, D>
+        = DenseView<'a, F, D>
     where
         Self: 'a;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(DenseCommitView { poly: self })
+        Ok(DenseView { poly: self })
     }
 }
 
@@ -69,21 +54,21 @@ where
     F: FieldCore,
 {
     type OpeningView<'a>
-        = DenseOpeningView<'a, F, D>
+        = DenseView<'a, F, D>
     where
         Self: 'a;
 
     type OpeningBatchView<'a>
-        = DenseOpeningBatchView<'a, F, D>
+        = DenseBatchView<'a, F, D>
     where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        Ok(DenseOpeningView { poly: self })
+        Ok(DenseView { poly: self })
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        Ok(DenseOpeningBatchView { polys })
+        Ok(DenseBatchView { polys })
     }
 }
 
@@ -92,21 +77,21 @@ where
     F: FieldCore,
 {
     type TensorView<'a>
-        = DenseTensorView<'a, F, D>
+        = DenseView<'a, F, D>
     where
         Self: 'a;
 
     type TensorBatchView<'a>
-        = DenseTensorBatchView<'a, F, D>
+        = DenseBatchView<'a, F, D>
     where
         Self: 'a;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(DenseTensorView { poly: self })
+        Ok(DenseView { poly: self })
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
-        Ok(DenseTensorBatchView { polys })
+        Ok(DenseBatchView { polys })
     }
 }
 

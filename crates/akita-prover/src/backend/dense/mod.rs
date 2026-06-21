@@ -13,6 +13,4 @@ mod tests;
 mod views;
 
 pub use poly::DensePoly;
-pub use views::{
-    DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorBatchView, DenseTensorView,
-};
+pub use views::{DenseBatchView, DenseView};

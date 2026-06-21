@@ -18,33 +18,18 @@ use crate::compute::{
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
-/// Borrowed commit view over sparse signed ring coefficients.
+/// Borrowed single-polynomial view over sparse signed ring coefficients.
+///
+/// One view type backs the commit, opening-fold, and tensor-projection kernels;
+/// the kernel trait it is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
-pub struct SparseRingCommitView<'a, F: FieldCore, const D: usize> {
+pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
     pub(super) poly: &'a SparseRingPoly<F, D>,
 }
 
-/// Borrowed opening view for sparse-ring fold and decompose-fold kernels.
+/// Same-point batch view over several sparse-ring polynomials.
 #[derive(Debug, Clone, Copy)]
-pub struct SparseRingOpeningView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a SparseRingPoly<F, D>,
-}
-
-/// Same-point batch opening view over several sparse-ring polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct SparseRingOpeningBatchView<'a, F: FieldCore, const D: usize> {
-    pub(super) polys: &'a [&'a SparseRingPoly<F, D>],
-}
-
-/// Borrowed tensor projection view over sparse-ring coefficients.
-#[derive(Debug, Clone, Copy)]
-pub struct SparseRingTensorView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a SparseRingPoly<F, D>,
-}
-
-/// Same-point batch tensor view over several sparse-ring polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct SparseRingTensorBatchView<'a, F: FieldCore, const D: usize> {
+pub struct SparseRingBatchView<'a, F: FieldCore, const D: usize> {
     pub(super) polys: &'a [&'a SparseRingPoly<F, D>],
 }
 
@@ -66,12 +51,12 @@ where
     F: FieldCore,
 {
     type CommitView<'a>
-        = SparseRingCommitView<'a, F, D>
+        = SparseRingView<'a, F, D>
     where
         Self: 'a;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(SparseRingCommitView { poly: self })
+        Ok(SparseRingView { poly: self })
     }
 }
 
@@ -80,21 +65,21 @@ where
     F: FieldCore,
 {
     type OpeningView<'a>
-        = SparseRingOpeningView<'a, F, D>
+        = SparseRingView<'a, F, D>
     where
         Self: 'a;
 
     type OpeningBatchView<'a>
-        = SparseRingOpeningBatchView<'a, F, D>
+        = SparseRingBatchView<'a, F, D>
     where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        Ok(SparseRingOpeningView { poly: self })
+        Ok(SparseRingView { poly: self })
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        Ok(SparseRingOpeningBatchView { polys })
+        Ok(SparseRingBatchView { polys })
     }
 }
 
@@ -103,21 +88,21 @@ where
     F: FieldCore,
 {
     type TensorView<'a>
-        = SparseRingTensorView<'a, F, D>
+        = SparseRingView<'a, F, D>
     where
         Self: 'a;
 
     type TensorBatchView<'a>
-        = SparseRingTensorBatchView<'a, F, D>
+        = SparseRingBatchView<'a, F, D>
     where
         Self: 'a;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(SparseRingTensorView { poly: self })
+        Ok(SparseRingView { poly: self })
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
-        Ok(SparseRingTensorBatchView { polys })
+        Ok(SparseRingBatchView { polys })
     }
 }
 
@@ -145,7 +130,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootCommitKernel<SparseRingCommitView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> RootCommitKernel<SparseRingView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
@@ -153,14 +138,14 @@ where
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        source: SparseRingCommitView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         source.poly.commit_inner(self, prepared, plan)
     }
 }
 
-impl<F, const D: usize> OpeningFoldKernel<SparseRingOpeningView<'_, F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningFoldKernel<SparseRingView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
@@ -168,7 +153,7 @@ where
     fn evaluate_and_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingOpeningView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let (eval, folded) = match plan {
@@ -193,7 +178,7 @@ where
     fn decompose_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingOpeningView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         Ok(source.poly.decompose_fold(
@@ -205,8 +190,7 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<SparseRingOpeningBatchView<'_, F, D>, F, D>
-    for CpuBackend
+impl<F, const D: usize> OpeningBatchKernel<SparseRingBatchView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
@@ -214,7 +198,7 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingOpeningBatchView<'_, F, D>,
+        source: SparseRingBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match plan {
@@ -235,8 +219,7 @@ where
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionKernel<SparseRingTensorView<'_, F, D>, F, E, D>
-    for CpuBackend
+impl<F, E, const D: usize> TensorProjectionKernel<SparseRingView<'_, F, D>, F, E, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
@@ -245,7 +228,7 @@ where
     fn column_partials(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingTensorView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
@@ -257,7 +240,7 @@ where
     fn packed_witness(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingTensorView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
             Some(witness) => TensorPackedWitness::Sparse(witness),
@@ -268,7 +251,7 @@ where
     fn root_projection(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingTensorView<'_, F, D>,
+        source: SparseRingView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         E: FpExtEncoding<F>,
@@ -279,7 +262,7 @@ where
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionBatchKernel<SparseRingTensorBatchView<'_, F, D>, F, E, D>
+impl<F, E, const D: usize> TensorProjectionBatchKernel<SparseRingBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -289,7 +272,7 @@ where
     fn column_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingTensorBatchView<'_, F, D>,
+        source: SparseRingBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
@@ -305,7 +288,7 @@ where
     fn sparse_linear_combination(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SparseRingTensorBatchView<'_, F, D>,
+        source: SparseRingBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         if source.polys.len() != coeffs.len() {

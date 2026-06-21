@@ -16,33 +16,18 @@ use akita_field::MulBaseUnreduced;
 /// the computed partials are independent of its value.
 const ONEHOT_TENSOR_PARTIALS_INNER_BITS: usize = 12;
 
-/// Borrowed commit view over one-hot chunk storage.
+/// Borrowed single-polynomial view over one-hot chunk storage.
+///
+/// One view type backs the commit, opening-fold, and tensor-projection kernels;
+/// the kernel trait it is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotCommitView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     poly: &'a OneHotPoly<F, D, I>,
 }
 
-/// Borrowed opening view for one-hot fold and decompose-fold kernels.
+/// Same-point batch view over several one-hot polynomials.
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotOpeningView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    poly: &'a OneHotPoly<F, D, I>,
-}
-
-/// Same-point batch opening view over several one-hot polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct OneHotOpeningBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    polys: &'a [&'a OneHotPoly<F, D, I>],
-}
-
-/// Borrowed tensor projection view over one-hot chunk storage.
-#[derive(Debug, Clone, Copy)]
-pub struct OneHotTensorView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    poly: &'a OneHotPoly<F, D, I>,
-}
-
-/// Same-point batch tensor view over several one-hot polynomials.
-#[derive(Debug, Clone, Copy)]
-pub struct OneHotTensorBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, D, I>],
 }
 
@@ -70,12 +55,12 @@ where
     I: OneHotIndex,
 {
     type CommitView<'a>
-        = OneHotCommitView<'a, F, D, I>
+        = OneHotView<'a, F, D, I>
     where
         Self: 'a;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(OneHotCommitView { poly: self })
+        Ok(OneHotView { poly: self })
     }
 }
 
@@ -85,21 +70,21 @@ where
     I: OneHotIndex,
 {
     type OpeningView<'a>
-        = OneHotOpeningView<'a, F, D, I>
+        = OneHotView<'a, F, D, I>
     where
         Self: 'a;
 
     type OpeningBatchView<'a>
-        = OneHotOpeningBatchView<'a, F, D, I>
+        = OneHotBatchView<'a, F, D, I>
     where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        Ok(OneHotOpeningView { poly: self })
+        Ok(OneHotView { poly: self })
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        Ok(OneHotOpeningBatchView { polys })
+        Ok(OneHotBatchView { polys })
     }
 }
 
@@ -109,21 +94,21 @@ where
     I: OneHotIndex,
 {
     type TensorView<'a>
-        = OneHotTensorView<'a, F, D, I>
+        = OneHotView<'a, F, D, I>
     where
         Self: 'a;
 
     type TensorBatchView<'a>
-        = OneHotTensorBatchView<'a, F, D, I>
+        = OneHotBatchView<'a, F, D, I>
     where
         Self: 'a;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(OneHotTensorView { poly: self })
+        Ok(OneHotView { poly: self })
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
-        Ok(OneHotTensorBatchView { polys })
+        Ok(OneHotBatchView { polys })
     }
 }
 
@@ -161,7 +146,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootCommitKernel<OneHotCommitView<'_, F, D, I>, F, D> for CpuBackend
+impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
@@ -169,14 +154,14 @@ where
     fn commit_inner(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        source: OneHotCommitView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         source.poly.commit_inner(self, prepared, plan)
     }
 }
 
-impl<F, const D: usize, I> OpeningFoldKernel<OneHotOpeningView<'_, F, D, I>, F, D> for CpuBackend
+impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
@@ -184,7 +169,7 @@ where
     fn evaluate_and_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotOpeningView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let (eval, folded) = match plan {
@@ -209,7 +194,7 @@ where
     fn decompose_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotOpeningView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         Ok(source.poly.decompose_fold(
@@ -221,8 +206,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> OpeningBatchKernel<OneHotOpeningBatchView<'_, F, D, I>, F, D>
-    for CpuBackend
+impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
@@ -230,7 +214,7 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotOpeningBatchView<'_, F, D, I>,
+        source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match plan {
@@ -262,7 +246,7 @@ where
     }
 }
 
-impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotTensorView<'_, F, D, I>, F, E, D>
+impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -272,7 +256,7 @@ where
     fn column_partials(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotTensorView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
@@ -284,7 +268,7 @@ where
     fn packed_witness(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotTensorView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
             Some(witness) => TensorPackedWitness::Sparse(witness),
@@ -295,7 +279,7 @@ where
     fn root_projection(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotTensorView<'_, F, D, I>,
+        source: OneHotView<'_, F, D, I>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         E: FpExtEncoding<F>,
@@ -304,8 +288,8 @@ where
     }
 }
 
-impl<F, E, const D: usize, I>
-    TensorProjectionBatchKernel<OneHotTensorBatchView<'_, F, D, I>, F, E, D> for CpuBackend
+impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D>
+    for CpuBackend
 where
     F: FieldCore + CanonicalField + HasWide,
     E: ExtField<F>,
@@ -314,7 +298,7 @@ where
     fn column_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotTensorBatchView<'_, F, D, I>,
+        source: OneHotBatchView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
@@ -326,7 +310,7 @@ where
     fn sparse_linear_combination(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: OneHotTensorBatchView<'_, F, D, I>,
+        source: OneHotBatchView<'_, F, D, I>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         OneHotPoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)

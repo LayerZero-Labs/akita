@@ -93,7 +93,7 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
-    use akita_prover::backend::DenseOpeningView;
+    use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
@@ -300,7 +300,7 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),
@@ -438,7 +438,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),
@@ -607,7 +607,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),
@@ -761,7 +761,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let opening = OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),

@@ -23,10 +23,7 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
 
-pub use ops::{
-    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView,
-    SparseRingTensorBatchView, SparseRingTensorView,
-};
+pub use ops::{SparseRingBatchView, SparseRingView};
 
 mod tensor_fold;
 

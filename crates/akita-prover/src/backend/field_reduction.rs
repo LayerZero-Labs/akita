@@ -6,14 +6,9 @@ use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FpExtEncoding};
 use std::sync::Arc;
 
-use super::dense::{DenseCommitView, DenseOpeningBatchView, DenseOpeningView, DenseTensorView};
-use super::recursive_witness::{
-    OwnedSuffixWitness, SuffixWitnessOpeningBatchView, SuffixWitnessOpeningView,
-    SuffixWitnessTensorView,
-};
-use super::sparse_ring::{
-    SparseRingCommitView, SparseRingOpeningBatchView, SparseRingOpeningView, SparseRingTensorView,
-};
+use super::dense::{DenseBatchView, DenseView};
+use super::recursive_witness::{OwnedSuffixWitness, SuffixWitnessBatchView, SuffixWitnessView};
+use super::sparse_ring::{SparseRingBatchView, SparseRingView};
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
@@ -195,15 +190,16 @@ where
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => RootCommitKernel::<
-                DenseCommitView<'_, F, D>,
-                F,
-                D,
-            >::commit_inner(
-                self, prepared, poly.commit_view()?, plan
-            ),
+            RootTensorProjectionPoly::Dense(poly) => {
+                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
+                    self,
+                    prepared,
+                    poly.commit_view()?,
+                    plan,
+                )
+            }
             RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingCommitView<'_, F, D>, F, D>::commit_inner(
+                RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner(
                     self,
                     prepared,
                     poly.as_ref().commit_view()?,
@@ -230,15 +226,16 @@ where
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => OpeningFoldKernel::<
-                DenseOpeningView<'_, F, D>,
-                F,
-                D,
-            >::evaluate_and_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
+            RootTensorProjectionPoly::Dense(poly) => {
+                OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            }
             RootTensorProjectionPoly::Sparse(poly) => {
-                OpeningFoldKernel::<SparseRingOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                OpeningFoldKernel::<SparseRingView<'_, F, D>, F, D>::evaluate_and_fold(
                     self,
                     prepared,
                     poly.as_ref().opening_view()?,
@@ -246,7 +243,7 @@ where
                 )
             }
             RootTensorProjectionPoly::Recursive(poly) => {
-                OpeningFoldKernel::<SuffixWitnessOpeningView<F, D>, F, D>::evaluate_and_fold(
+                OpeningFoldKernel::<SuffixWitnessView<F, D>, F, D>::evaluate_and_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -263,15 +260,16 @@ where
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => OpeningFoldKernel::<
-                DenseOpeningView<'_, F, D>,
-                F,
-                D,
-            >::decompose_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
+            RootTensorProjectionPoly::Dense(poly) => {
+                OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            }
             RootTensorProjectionPoly::Sparse(poly) => {
-                OpeningFoldKernel::<SparseRingOpeningView<'_, F, D>, F, D>::decompose_fold(
+                OpeningFoldKernel::<SparseRingView<'_, F, D>, F, D>::decompose_fold(
                     self,
                     prepared,
                     poly.as_ref().opening_view()?,
@@ -279,7 +277,7 @@ where
                 )
             }
             RootTensorProjectionPoly::Recursive(poly) => {
-                OpeningFoldKernel::<SuffixWitnessOpeningView<F, D>, F, D>::decompose_fold(
+                OpeningFoldKernel::<SuffixWitnessView<F, D>, F, D>::decompose_fold(
                     self,
                     prepared,
                     poly.opening_view()?,
@@ -315,7 +313,7 @@ where
                     }
                 }
                 let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
-                OpeningBatchKernel::<DenseOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+                OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
             }
@@ -330,8 +328,11 @@ where
                     }
                 }
                 let sparse_view = SparseRingPoly::<F, D>::opening_batch(&sparse_polys)?;
-                OpeningBatchKernel::<SparseRingOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
-                    self, prepared, sparse_view, plan,
+                OpeningBatchKernel::<SparseRingBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+                    self,
+                    prepared,
+                    sparse_view,
+                    plan,
                 )
             }
             RootTensorProjectionPoly::Recursive(_) => {
@@ -343,7 +344,7 @@ where
                     }
                 }
                 let recursive_view = OwnedSuffixWitness::<F, D>::opening_batch(&recursive_polys)?;
-                OpeningBatchKernel::<SuffixWitnessOpeningBatchView<F, D>, F, D>::decompose_fold_batch(
+                OpeningBatchKernel::<SuffixWitnessBatchView<F, D>, F, D>::decompose_fold_batch(
                     self,
                     prepared,
                     recursive_view,
@@ -372,7 +373,7 @@ where
     {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -380,7 +381,7 @@ where
                 )
             }
             RootTensorProjectionPoly::Sparse(poly) => {
-                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::column_partials(
+                TensorProjectionKernel::<SparseRingView<'_, F, D>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.as_ref().tensor_view()?,
@@ -388,7 +389,7 @@ where
                 )
             }
             RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessTensorView<F, D>, F, E, D>::column_partials(
+                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -405,21 +406,21 @@ where
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
             }
             RootTensorProjectionPoly::Sparse(poly) => {
-                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::packed_witness(
+                TensorProjectionKernel::<SparseRingView<'_, F, D>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.as_ref().tensor_view()?,
                 )
             }
             RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessTensorView<F, D>, F, E, D>::packed_witness(
+                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
@@ -438,21 +439,21 @@ where
     {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
-                TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
+                TensorProjectionKernel::<DenseView<'_, F, D>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
             }
             RootTensorProjectionPoly::Sparse(poly) => {
-                TensorProjectionKernel::<SparseRingTensorView<'_, F, D>, F, E, D>::root_projection(
+                TensorProjectionKernel::<SparseRingView<'_, F, D>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.as_ref().tensor_view()?,
                 )
             }
             RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessTensorView<F, D>, F, E, D>::root_projection(
+                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
