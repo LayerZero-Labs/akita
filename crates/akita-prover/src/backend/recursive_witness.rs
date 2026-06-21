@@ -11,14 +11,13 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-use akita_field::ExtField;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
     FlatDigitBlocks, FpExtEncoding,
@@ -233,7 +232,7 @@ where
         ))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let num_blocks = self.num_blocks_for_block_len(block_len);
         cfg_into_iter!(0..num_blocks)
@@ -254,7 +253,7 @@ where
             .collect()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
@@ -366,16 +365,6 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 
-    pub(crate) fn decompose_fold_batched(
-        _polys: &[&Self],
-        _challenges: &[SparseChallenge],
-        _block_len: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
-        None
-    }
-
     pub(crate) fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _tensor: &TensorChallenges,
@@ -386,7 +375,6 @@ where
         Ok(None)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner<B>(
         &self,
@@ -652,14 +640,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         match plan {
-            DecomposeFoldBatchPlan::Sparse {
-                challenges,
-                block_len,
-                num_digits,
-                log_basis,
-            } => Ok(SuffixWitness::decompose_fold_batched(
-                &refs, challenges, block_len, num_digits, log_basis,
-            )),
+            DecomposeFoldBatchPlan::Sparse { .. } => Ok(None),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,

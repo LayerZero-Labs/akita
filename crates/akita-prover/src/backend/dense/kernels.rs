@@ -86,18 +86,7 @@ where
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match plan {
-            DecomposeFoldBatchPlan::Sparse {
-                challenges,
-                block_len,
-                num_digits,
-                log_basis,
-            } => Ok(DensePoly::decompose_fold_batched(
-                source.polys,
-                challenges,
-                block_len,
-                num_digits,
-                log_basis,
-            )),
+            DecomposeFoldBatchPlan::Sparse { .. } => Ok(None),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,

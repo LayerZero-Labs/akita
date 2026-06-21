@@ -405,17 +405,6 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
-    #[allow(dead_code)] // sparse batched fold uses tensor path only
-    pub(crate) fn decompose_fold_batched(
-        _polys: &[&Self],
-        _challenges: &[SparseChallenge],
-        _block_len: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
-        None
-    }
-
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
     pub(crate) fn decompose_fold_tensor_batched(
         polys: &[&Self],

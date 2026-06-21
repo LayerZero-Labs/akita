@@ -10,8 +10,6 @@ mod poly;
 mod tensor_fold;
 mod views;
 #[cfg(test)]
-mod test_helpers;
-#[cfg(test)]
 mod tests;
 
 pub use poly::DensePoly;

@@ -239,16 +239,6 @@ where
         Ok(self.tensor_packed_extension_poly::<E>()?.into())
     }
 
-    pub(crate) fn decompose_fold_batched(
-        _polys: &[&Self],
-        _challenges: &[SparseChallenge],
-        _block_len: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
-        None
-    }
-
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
     pub(crate) fn decompose_fold(
         &self,
