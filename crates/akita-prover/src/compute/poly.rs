@@ -213,6 +213,19 @@ where
 {
 }
 
+impl<F, const D: usize, B> RootTensorProjectionCommitKernels<F, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    B: CommitmentComputeBackend<F>
+        + for<'a> RootCommitKernel<
+            <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+            F,
+            D,
+        >,
+{
+}
+
 /// Kernel bounds on [`RootTensorProjectionPoly`] opening/tensor views (extension-reduction path).
 pub trait RootTensorProjectionProveKernels<F, ChallengeE, const D: usize>:
     CommitmentComputeBackend<F>
@@ -221,6 +234,34 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     ChallengeE: ExtField<F>,
     Self: for<'a> OpeningFoldKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
+            F,
+            D,
+        > + for<'a> OpeningBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            D,
+        > + for<'a> TensorProjectionKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
+            F,
+            ChallengeE,
+            D,
+        > + for<'a> TensorProjectionBatchKernel<
+            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
+            F,
+            ChallengeE,
+            D,
+        >,
+{
+}
+
+impl<F, ChallengeE, const D: usize, B> RootTensorProjectionProveKernels<F, ChallengeE, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ChallengeE: ExtField<F>,
+    B: CommitmentComputeBackend<F>
+        + for<'a> OpeningFoldKernel<
             <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
             F,
             D,
