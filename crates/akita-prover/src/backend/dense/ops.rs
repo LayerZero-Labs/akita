@@ -8,7 +8,7 @@ use crate::backend::poly_helpers::{
     decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
 };
 use crate::backend::RootTensorProjectionPoly;
-use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource};
+use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -84,14 +84,6 @@ where
             self.fold_blocks_ring(fold_scalars, block_len),
             eval_outer_scalars,
         )
-    }
-
-    pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
-        })?;
-        Ok(field_elems.coeffs().to_vec())
     }
 
     pub(crate) fn tensor_extension_column_partials<E>(

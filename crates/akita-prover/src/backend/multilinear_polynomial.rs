@@ -23,9 +23,8 @@ use crate::backend::{
 use crate::compute::{
     CommitInnerPlan, CpuBackend, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -238,19 +237,6 @@ where
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),
-        }
-    }
-}
-
-impl<F, const D: usize, I> RootBaseEvalsSource<F, D> for MultilinearPolynomial<F, D, I>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    I: OneHotIndex,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        match self {
-            Self::Dense(poly) => poly.base_evals(),
-            Self::OneHot(poly) => poly.base_evals(),
         }
     }
 }

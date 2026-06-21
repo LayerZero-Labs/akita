@@ -4,9 +4,8 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -159,16 +158,6 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(evals),
         ))
-    }
-}
-
-impl<F, const D: usize, I> RootBaseEvalsSource<F, D> for OneHotPoly<F, D, I>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    I: OneHotIndex,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        self.base_evals()
     }
 }
 
@@ -404,14 +393,6 @@ where
             self.fold_blocks_ring(fold_scalars, block_len),
             eval_outer_scalars,
         )
-    }
-
-    pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
-        })?;
-        Ok(field_elems.coeffs().to_vec())
     }
 
     pub(crate) fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>

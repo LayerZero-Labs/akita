@@ -1,7 +1,8 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
-use crate::backend::OwnedSuffixWitness;
-use crate::compute::{DirectRootWitnessSource, RootPolyShape, RootProveFlowBackend, RootProvePoly};
+use crate::compute::{
+    DirectRootWitnessSource, RecursiveProveBackend, RootPolyShape, RootProvePoly,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -221,38 +222,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
-        + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, D>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            D,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 32>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            32,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 64>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            64,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 128>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            128,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 256>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            256,
-        >,
+    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -366,38 +336,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    B: RootProveFlowBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>
-        + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, D>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            D,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 32>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            32,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 64>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            64,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 128>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            128,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 256>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            256,
-        >,
+    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 

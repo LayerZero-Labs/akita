@@ -7,10 +7,10 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    RootCommitBackend, RootCommitPoly, RootProveFlowBackend, RootProvePoly,
+    RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
 };
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{AkitaProverSetup, CommitmentProver, OwnedSuffixWitness, ProverClaims};
+use akita_prover::{AkitaProverSetup, CommitmentProver, ProverClaims};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
@@ -132,12 +132,7 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RootProveFlowBackend<F, P, Self::ExtField, Self::ExtField, D>
-            + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, Self::ExtField, Self::ExtField, D>
-            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, Self::ExtField, Self::ExtField, 32>
-            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 64>, Self::ExtField, Self::ExtField, 64>
-            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 128>, Self::ExtField, Self::ExtField, 128>
-            + RootProveFlowBackend<F, OwnedSuffixWitness<F, 256>, Self::ExtField, Self::ExtField, 256>,
+        B: RecursiveProveBackend<F, P, Self::ExtField, Self::ExtField, D>,
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;

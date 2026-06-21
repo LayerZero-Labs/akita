@@ -5,6 +5,7 @@ use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+use crate::backend::OwnedSuffixWitness;
 #[cfg(feature = "zk")]
 use crate::DensePoly;
 use crate::RootTensorProjectionPoly;
@@ -112,35 +113,38 @@ where
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
 }
 
-/// Capability: materialize the dense field-element evaluation table.
-///
-/// Required only by the extension-opening reduction's dense-term fallback, which
-/// must produce dense evaluations even for sparse/one-hot representations (where
-/// the tensor kernels would otherwise keep a sparse witness). Kept separate from
-/// [`RootTensorSource`] so it does not widen the commit-path capability bound.
-pub trait RootBaseEvalsSource<F, const D: usize>: RootPolyShape<F, D>
-where
-    F: FieldCore,
-{
-    /// Dense field-element evaluation table for this polynomial.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the representation cannot materialize its dense
-    /// evaluation table.
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError>;
-}
-
-/// Capability: materialize a direct root witness for zero-fold openings.
+/// Capability: materialize a direct root witness for zero-fold openings, and
+/// the dense field-element evaluation table derived from it.
 ///
 /// This is an explicit opt-in, not a hidden default on every root polynomial:
-/// only proving paths that may select a root-direct schedule require it.
+/// only proving paths that may select a root-direct schedule (or the
+/// extension-opening reduction's dense-term fallback) require it. Both are
+/// prove-only capabilities, so bundling them does not widen the commit-path
+/// capability bound.
 pub trait DirectRootWitnessSource<F, const D: usize>: RootPolyShape<F, D>
 where
     F: FieldCore,
 {
     /// Materialize a direct root witness payload.
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
+
+    /// Dense field-element evaluation table for this polynomial.
+    ///
+    /// Defaults to the field-element payload of [`Self::direct_root_witness`].
+    /// Representations whose direct witness is unavailable, or whose evaluations
+    /// have a cheaper derivation, override this.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the representation cannot materialize its dense
+    /// evaluation table.
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
+        })?;
+        Ok(field_elems.coeffs().to_vec())
+    }
 }
 
 /// One opening-point polynomial bundle passed to commit entry points.
@@ -262,10 +266,7 @@ where
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
 pub trait RootProvePoly<F, const D: usize>:
-    RootOpeningSource<F, D>
-    + RootTensorSource<F, D>
-    + RootBaseEvalsSource<F, D>
-    + DirectRootWitnessSource<F, D>
+    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
 where
     F: FieldCore,
 {
@@ -274,10 +275,7 @@ where
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
     F: FieldCore,
-    P: RootOpeningSource<F, D>
-        + RootTensorSource<F, D>
-        + RootBaseEvalsSource<F, D>
-        + DirectRootWitnessSource<F, D>,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
 {
 }
 
@@ -400,6 +398,48 @@ where
 {
 }
 
+/// Backend bundle for a full recursive prove run.
+///
+/// Recursive proving dispatches the suffix witness over the fixed set of
+/// supported ring dimensions, so prove entry points need [`RootProveFlowBackend`]
+/// for the root polynomial `P` at `D` plus [`OwnedSuffixWitness`] at every
+/// recursion dimension. This umbrella captures that repeated bound in one place
+/// (and is the single point that records which ring dimensions recursion
+/// supports), replacing the five-way `RootProveFlowBackend<… OwnedSuffixWitness …>`
+/// list that was previously copied across every prove-facing signature.
+pub trait RecursiveProveBackend<F, P, ClaimE, ChallengeE, const D: usize>:
+    RootProveFlowBackend<F, P, ClaimE, ChallengeE, D>
+    + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, ClaimE, ChallengeE, D>
+    + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, ClaimE, ChallengeE, 32>
+    + RootProveFlowBackend<F, OwnedSuffixWitness<F, 64>, ClaimE, ChallengeE, 64>
+    + RootProveFlowBackend<F, OwnedSuffixWitness<F, 128>, ClaimE, ChallengeE, 128>
+    + RootProveFlowBackend<F, OwnedSuffixWitness<F, 256>, ClaimE, ChallengeE, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+{
+}
+
+impl<F, P, ClaimE, ChallengeE, const D: usize, B> RecursiveProveBackend<F, P, ClaimE, ChallengeE, D>
+    for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    ClaimE: ExtField<F>,
+    ChallengeE: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    B: RootProveFlowBackend<F, P, ClaimE, ChallengeE, D>
+        + RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, ClaimE, ChallengeE, D>
+        + RootProveFlowBackend<F, OwnedSuffixWitness<F, 32>, ClaimE, ChallengeE, 32>
+        + RootProveFlowBackend<F, OwnedSuffixWitness<F, 64>, ClaimE, ChallengeE, 64>
+        + RootProveFlowBackend<F, OwnedSuffixWitness<F, 128>, ClaimE, ChallengeE, 128>
+        + RootProveFlowBackend<F, OwnedSuffixWitness<F, 256>, ClaimE, ChallengeE, 256>,
+{
+}
+
 impl<F, const D: usize, P> RootPolyShape<F, D> for &P
 where
     F: FieldCore,
@@ -415,94 +455,5 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         RootPolyShape::onehot_chunk_size(*self)
-    }
-}
-
-impl<F, const D: usize, P> RootCommitSource<F, D> for &P
-where
-    F: FieldCore,
-    P: RootCommitSource<F, D>,
-{
-    type CommitView<'a>
-        = P::CommitView<'a>
-    where
-        Self: 'a;
-
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        (*self).commit_view()
-    }
-}
-
-impl<F, const D: usize, P> RootTensorSource<F, D> for &P
-where
-    F: FieldCore,
-    P: RootTensorSource<F, D>,
-{
-    type TensorView<'a>
-        = P::TensorView<'a>
-    where
-        Self: 'a;
-
-    type TensorBatchView<'a>
-        = P::TensorBatchView<'a>
-    where
-        Self: 'a;
-
-    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        (*self).tensor_view()
-    }
-
-    fn tensor_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
-        Err(AkitaError::InvalidInput(
-            "tensor_batch through a polynomial reference is not supported; pass by value"
-                .to_string(),
-        ))
-    }
-}
-
-impl<F, const D: usize, P> RootBaseEvalsSource<F, D> for &P
-where
-    F: FieldCore,
-    P: RootBaseEvalsSource<F, D>,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        (*self).base_evals()
-    }
-}
-
-impl<F, const D: usize, P> RootOpeningSource<F, D> for &P
-where
-    F: FieldCore,
-    P: RootOpeningSource<F, D>,
-{
-    type OpeningView<'a>
-        = P::OpeningView<'a>
-    where
-        Self: 'a;
-
-    type OpeningBatchView<'a>
-        = P::OpeningBatchView<'a>
-    where
-        Self: 'a;
-
-    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        (*self).opening_view()
-    }
-
-    fn opening_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        Err(AkitaError::InvalidInput(
-            "opening_batch through a polynomial reference is not supported; pass by value"
-                .to_string(),
-        ))
-    }
-}
-
-impl<F, const D: usize, P> DirectRootWitnessSource<F, D> for &P
-where
-    F: FieldCore,
-    P: DirectRootWitnessSource<F, D>,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        (*self).direct_root_witness()
     }
 }

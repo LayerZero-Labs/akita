@@ -1,6 +1,6 @@
 use super::*;
 use crate::backend::OwnedSuffixWitness;
-use crate::compute::RootProveFlowBackend;
+use crate::compute::{RecursiveProveBackend, RootProveFlowBackend};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -82,37 +82,13 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, D>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            D,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 32>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            32,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 64>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            64,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 128>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            128,
-        > + RootProveFlowBackend<
-            Cfg::Field,
-            OwnedSuffixWitness<Cfg::Field, 256>,
-            Cfg::ExtField,
-            Cfg::ExtField,
-            256,
-        >,
+    B: RecursiveProveBackend<
+        Cfg::Field,
+        OwnedSuffixWitness<Cfg::Field, D>,
+        Cfg::ExtField,
+        Cfg::ExtField,
+        D,
+    >,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {

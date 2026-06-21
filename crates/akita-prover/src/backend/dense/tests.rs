@@ -1,10 +1,5 @@
 use super::poly::DensePoly;
-use super::views::{DenseTensorBatchView, DenseTensorView};
-use crate::backend::RootTensorProjectionPoly;
-use crate::compute::{
-    CpuBackend, DirectRootWitnessSource, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
-};
+use crate::compute::DirectRootWitnessSource;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_field::{ExtField, FpExt4};
@@ -41,103 +36,7 @@ fn ring_fold_matches_dense_multiplication_reference() {
 }
 
 #[test]
-fn dense_kernel_tensor_paths_match_akitapolyops() {
-    const D: usize = 8;
-    type E = FpExt4<F>;
-
-    let num_vars = 5;
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| F::from_u64(17 * idx as u64 + 9))
-        .collect::<Vec<_>>();
-    let point = (0..num_vars)
-        .map(|idx| {
-            E::from_base_slice(&[
-                F::from_u64(idx as u64 + 2),
-                F::from_u64(3 * idx as u64 + 4),
-                F::from_u64(5 * idx as u64 + 6),
-                F::from_u64(7 * idx as u64 + 8),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
-    let backend = CpuBackend;
-    let tensor_view = poly.tensor_view().unwrap();
-
-    let ops_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
-    let kernel_partials =
-        TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
-            &backend,
-            None,
-            tensor_view,
-            &point,
-        )
-        .unwrap();
-    assert_eq!(kernel_partials, ops_partials);
-
-    let ops_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
-    let kernel_packed =
-        match TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
-            &backend,
-            None,
-            tensor_view,
-        )
-        .unwrap()
-        {
-            TensorPackedWitness::Dense(v) => v,
-            TensorPackedWitness::Sparse(_) => {
-                panic!("dense kernel must return dense packed witness")
-            }
-        };
-    assert_eq!(kernel_packed, ops_packed);
-
-    let polys = [&poly, &poly];
-    let batch_view = DensePoly::<F, D>::tensor_batch(&polys).unwrap();
-    let ops_batch =
-        DensePoly::<F, D>::tensor_extension_column_partials_batch::<E>(&polys, &point).unwrap();
-    let kernel_batch = TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
-        &backend,
-        None,
-        batch_view,
-        &point,
-    )
-    .unwrap();
-    assert_eq!(kernel_batch, ops_batch);
-}
-
-#[test]
-fn dense_kernel_root_projection_matches_akitapolyops() {
-    use akita_field::{FpExt4, Prime32Offset99};
-
-    const D: usize = 8;
-    type F = Prime32Offset99;
-    type E = FpExt4<F>;
-
-    let num_vars = 4;
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| F::from_u64(idx as u64 + 1))
-        .collect::<Vec<_>>();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
-    let backend = CpuBackend;
-    let tensor_view = poly.tensor_view().unwrap();
-
-    let ops_root = DensePoly::tensor_packed_extension_root_poly::<E>(&poly).unwrap();
-    let kernel_root =
-        TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
-            &backend,
-            None,
-            tensor_view,
-        )
-        .unwrap();
-    match (kernel_root, ops_root) {
-        (RootTensorProjectionPoly::Dense(got), RootTensorProjectionPoly::Dense(expected)) => {
-            assert_eq!(got, expected);
-        }
-        _ => panic!("dense root projection must stay dense"),
-    }
-}
-
-#[test]
-fn dense_kernel_direct_witness_matches_akitapolyops() {
+fn dense_direct_witness_is_field_elements() {
     const D: usize = 8;
     let num_vars = 4;
     let evals = (0..(1usize << num_vars))

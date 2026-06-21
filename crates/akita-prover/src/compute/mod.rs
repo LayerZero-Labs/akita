@@ -52,7 +52,7 @@ pub use plans::{
 };
 pub use poly::ZkHidingCommitBackend;
 pub use poly::{
-    DirectRootWitnessSource, RootBaseEvalsSource, RootCommitBackend, RootCommitPoly,
+    DirectRootWitnessSource, RecursiveProveBackend, RootCommitBackend, RootCommitPoly,
     RootCommitPolys, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
     RootProveFlowBackend, RootProvePoly, RootTensorProjectionCommitKernels,
     RootTensorProjectionProveKernels, RootTensorSource,

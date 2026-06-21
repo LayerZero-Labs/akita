@@ -2,10 +2,9 @@
 
 use super::poly::DensePoly;
 use crate::compute::{
-    DirectRootWitnessSource, RootBaseEvalsSource, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource,
+    DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, FieldCore};
 use akita_types::{CleartextWitnessProof, FlatRingVec};
 
 /// Borrowed commit view over dense ring storage.
@@ -132,14 +131,5 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(coeffs),
         ))
-    }
-}
-
-impl<F, const D: usize> RootBaseEvalsSource<F, D> for DensePoly<F, D>
-where
-    F: FieldCore + CanonicalField,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        self.base_evals()
     }
 }

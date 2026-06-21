@@ -12,9 +12,8 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -143,19 +142,6 @@ where
         Ok(CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(coeffs),
         ))
-    }
-}
-
-impl<F, const D: usize> RootBaseEvalsSource<F, D> for SparseRingPoly<F, D>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
-        })?;
-        Ok(field_elems.coeffs().to_vec())
     }
 }
 

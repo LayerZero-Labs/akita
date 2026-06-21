@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{RootBaseEvalsSource, RootTensorSource, TensorProjectionBatchKernel};
+use crate::compute::{DirectRootWitnessSource, RootTensorSource, TensorProjectionBatchKernel};
 
 pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) proof_partials: Vec<E>,
@@ -39,7 +39,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
-    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    P: RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
     B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span =
@@ -135,7 +135,7 @@ fn build_dense_extension_opening_reduction_terms<F, E, P, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
-    P: RootBaseEvalsSource<F, D>,
+    P: DirectRootWitnessSource<F, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_dense_witnesses", num_terms = polys.len()).entered();
@@ -187,7 +187,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
     T: Transcript<F>,
-    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    P: RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
     B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let num_claims = opening_batch.num_claims();
@@ -394,7 +394,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
-    P: RootTensorSource<F, D> + RootBaseEvalsSource<F, D>,
+    P: RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
     B: for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>,
 {
     let _span = tracing::info_span!(

@@ -10,10 +10,9 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    OpeningFoldKernel, OpeningFoldPlan, RootCommitBackend, RootCommitPoly, RootPolyShape,
-    RootProveFlowBackend, RootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootCommitBackend, RootCommitPoly,
+    RootPolyShape, RootProvePoly,
 };
-use akita_prover::OwnedSuffixWitness;
 use akita_prover::{
     AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, FoldGrindObserverGuard,
     OneHotIndex, OneHotPoly,
@@ -389,12 +388,7 @@ fn run_prove<
     <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
     CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>
-        + RootProveFlowBackend<FF, P, Cfg::ExtField, Cfg::ExtField, D>
-        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, D>, Cfg::ExtField, Cfg::ExtField, D>
-        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 32>, Cfg::ExtField, Cfg::ExtField, 32>
-        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 64>, Cfg::ExtField, Cfg::ExtField, 64>
-        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 128>, Cfg::ExtField, Cfg::ExtField, 128>
-        + RootProveFlowBackend<FF, OwnedSuffixWitness<FF, 256>, Cfg::ExtField, Cfg::ExtField, 256>,
+        + RecursiveProveBackend<FF, P, Cfg::ExtField, Cfg::ExtField, D>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 

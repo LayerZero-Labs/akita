@@ -17,9 +17,8 @@ use super::sparse_ring::{
 use crate::compute::{
     CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -174,18 +173,12 @@ where
             Self::Sparse(poly) => DirectRootWitnessSource::direct_root_witness(poly.as_ref()),
         }
     }
-}
 
-impl<F, const D: usize> RootBaseEvalsSource<F, D> for RootTensorProjectionPoly<F, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
-{
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => RootBaseEvalsSource::base_evals(poly),
-            Self::Recursive(poly) => RootBaseEvalsSource::base_evals(poly),
-            Self::Sparse(poly) => RootBaseEvalsSource::base_evals(poly.as_ref()),
+            Self::Dense(poly) => DirectRootWitnessSource::base_evals(poly),
+            Self::Recursive(poly) => DirectRootWitnessSource::base_evals(poly),
+            Self::Sparse(poly) => DirectRootWitnessSource::base_evals(poly.as_ref()),
         }
     }
 }

@@ -428,9 +428,9 @@ where
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootBaseEvalsSource,
-    RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
@@ -563,21 +563,16 @@ where
     }
 }
 
-impl<F, const D: usize> RootBaseEvalsSource<F, D> for OwnedSuffixWitness<F, D>
-where
-    F: FieldCore + CanonicalField,
-{
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        self.rebuild()?.base_evals()
-    }
-}
-
 impl<F, const D: usize> DirectRootWitnessSource<F, D> for OwnedSuffixWitness<F, D>
 where
     F: FieldCore + CanonicalField,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         self.rebuild()?.direct_root_witness()
+    }
+
+    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
+        self.rebuild()?.base_evals()
     }
 }
 
