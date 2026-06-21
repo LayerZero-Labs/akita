@@ -21,7 +21,7 @@ use crate::backend::{
     OneHotTensorBatchView, OneHotTensorView,
 };
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    CommitInnerPlan, CpuBackend, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
     OpeningFoldPlan, RootBaseEvalsSource, RootCommitKernel, RootCommitSource, RootOpeningSource,
     RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
@@ -72,6 +72,74 @@ pub struct MultilinearPolynomialView<'a, F: FieldCore, const D: usize, I: OneHot
 pub struct MultilinearPolynomialBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize>
 {
     polys: &'a [&'a MultilinearPolynomial<F, D, I>],
+}
+
+impl<'a, F, const D: usize, I> MultilinearPolynomialView<'a, F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    fn dispatch<T>(
+        self,
+        dense: impl FnOnce(&DensePoly<F, D>) -> Result<T, AkitaError>,
+        onehot: impl FnOnce(&OneHotPoly<F, D, I>) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError> {
+        match self.poly {
+            MultilinearPolynomial::Dense(poly) => dense(poly),
+            MultilinearPolynomial::OneHot(poly) => onehot(poly),
+        }
+    }
+}
+
+impl<'a, F, const D: usize, I> MultilinearPolynomialBatchView<'a, F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    fn homogeneous_dense_polys(self) -> Option<Vec<&'a DensePoly<F, D>>> {
+        let mut dense = Vec::with_capacity(self.polys.len());
+        for poly in self.polys {
+            match poly {
+                MultilinearPolynomial::Dense(inner) => dense.push(inner),
+                MultilinearPolynomial::OneHot(_) => return None,
+            }
+        }
+        Some(dense)
+    }
+
+    fn homogeneous_onehot_polys(self) -> Option<Vec<&'a OneHotPoly<F, D, I>>> {
+        let mut onehot = Vec::with_capacity(self.polys.len());
+        for poly in self.polys {
+            match poly {
+                MultilinearPolynomial::OneHot(inner) => onehot.push(inner),
+                MultilinearPolynomial::Dense(_) => return None,
+            }
+        }
+        Some(onehot)
+    }
+
+    fn column_partials_per_poly<E>(
+        self,
+        backend: &CpuBackend,
+        prepared: Option<&CpuPreparedSetup<F, D>>,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        self.polys
+            .iter()
+            .map(|poly| {
+                TensorProjectionKernel::<MultilinearPolynomialView<'_, F, D, I>, F, E, D>::column_partials(
+                    backend,
+                    prepared,
+                    poly.tensor_view()?,
+                    logical_point,
+                )
+            })
+            .collect()
+    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, D, I>
@@ -168,8 +236,8 @@ where
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
-            Self::OneHot(poly) => DirectRootWitnessSource::direct_root_witness(poly),
+            Self::Dense(poly) => poly.direct_root_witness(),
+            Self::OneHot(poly) => poly.direct_root_witness(),
         }
     }
 }
@@ -181,8 +249,8 @@ where
 {
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => RootBaseEvalsSource::base_evals(poly),
-            Self::OneHot(poly) => RootBaseEvalsSource::base_evals(poly),
+            Self::Dense(poly) => poly.base_evals(),
+            Self::OneHot(poly) => poly.base_evals(),
         }
     }
 }
@@ -199,23 +267,24 @@ where
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => {
+        source.dispatch(
+            |poly| {
                 RootCommitKernel::<DenseCommitView<'_, F, D>, F, D>::commit_inner(
                     self,
                     prepared,
                     poly.commit_view()?,
                     plan,
                 )
-            }
-            MultilinearPolynomial::OneHot(poly) => RootCommitKernel::<
-                OneHotCommitView<'_, F, D, I>,
-                F,
-                D,
-            >::commit_inner(
-                self, prepared, poly.commit_view()?, plan
-            ),
-        }
+            },
+            |poly| {
+                RootCommitKernel::<OneHotCommitView<'_, F, D, I>, F, D>::commit_inner(
+                    self,
+                    prepared,
+                    poly.commit_view()?,
+                    plan,
+                )
+            },
+        )
     }
 }
 
@@ -231,22 +300,24 @@ where
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => OpeningFoldKernel::<
-                DenseOpeningView<'_, F, D>,
-                F,
-                D,
-            >::evaluate_and_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
-            MultilinearPolynomial::OneHot(poly) => OpeningFoldKernel::<
-                OneHotOpeningView<'_, F, D, I>,
-                F,
-                D,
-            >::evaluate_and_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
-        }
+        source.dispatch(
+            |poly| {
+                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            },
+            |poly| {
+                OpeningFoldKernel::<OneHotOpeningView<'_, F, D, I>, F, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            },
+        )
     }
 
     fn decompose_fold(
@@ -255,22 +326,24 @@ where
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => OpeningFoldKernel::<
-                DenseOpeningView<'_, F, D>,
-                F,
-                D,
-            >::decompose_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
-            MultilinearPolynomial::OneHot(poly) => OpeningFoldKernel::<
-                OneHotOpeningView<'_, F, D, I>,
-                F,
-                D,
-            >::decompose_fold(
-                self, prepared, poly.opening_view()?, plan
-            ),
-        }
+        source.dispatch(
+            |poly| {
+                OpeningFoldKernel::<DenseOpeningView<'_, F, D>, F, D>::decompose_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            },
+            |poly| {
+                OpeningFoldKernel::<OneHotOpeningView<'_, F, D, I>, F, D>::decompose_fold(
+                    self,
+                    prepared,
+                    poly.opening_view()?,
+                    plan,
+                )
+            },
+        )
     }
 }
 
@@ -291,26 +364,18 @@ where
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
-                        MultilinearPolynomial::OneHot(_) => return Ok(None),
-                    }
-                }
+                let Some(dense_polys) = source.homogeneous_dense_polys() else {
+                    return Ok(None);
+                };
                 let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseOpeningBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
             }
             MultilinearPolynomial::OneHot(_) => {
-                let mut onehot_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
-                        MultilinearPolynomial::Dense(_) => return Ok(None),
-                    }
-                }
+                let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
+                    return Ok(None);
+                };
                 let onehot_view = OneHotPoly::<F, D, I>::opening_batch(&onehot_polys)?;
                 OpeningBatchKernel::<OneHotOpeningBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
                     self,
@@ -339,24 +404,24 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => {
+        source.dispatch(
+            |poly| {
                 TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
                     logical_point,
                 )
-            }
-            MultilinearPolynomial::OneHot(poly) => {
+            },
+            |poly| {
                 TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::column_partials(
                     self,
                     prepared,
                     poly.tensor_view()?,
                     logical_point,
                 )
-            }
-        }
+            },
+        )
     }
 
     fn packed_witness(
@@ -364,22 +429,22 @@ where
         prepared: Option<&Self::PreparedSetup<D>>,
         source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => {
+        source.dispatch(
+            |poly| {
                 TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
-            }
-            MultilinearPolynomial::OneHot(poly) => {
+            },
+            |poly| {
                 TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::packed_witness(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
-            }
-        }
+            },
+        )
     }
 
     fn root_projection(
@@ -390,22 +455,22 @@ where
     where
         E: FpExtEncoding<F>,
     {
-        match source.poly {
-            MultilinearPolynomial::Dense(poly) => {
+        source.dispatch(
+            |poly| {
                 TensorProjectionKernel::<DenseTensorView<'_, F, D>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
-            }
-            MultilinearPolynomial::OneHot(poly) => {
+            },
+            |poly| {
                 TensorProjectionKernel::<OneHotTensorView<'_, F, D, I>, F, E, D>::root_projection(
                     self,
                     prepared,
                     poly.tensor_view()?,
                 )
-            }
-        }
+            },
+        )
     }
 }
 
@@ -430,31 +495,9 @@ where
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
-                        MultilinearPolynomial::OneHot(_) => {
-                            return source
-                                .polys
-                                .iter()
-                                .map(|poly| {
-                                    TensorProjectionKernel::<
-                                        MultilinearPolynomialView<'_, F, D, I>,
-                                        F,
-                                        E,
-                                        D,
-                                    >::column_partials(
-                                        self,
-                                        prepared,
-                                        poly.tensor_view()?,
-                                        logical_point,
-                                    )
-                                })
-                                .collect();
-                        }
-                    }
-                }
+                let Some(dense_polys) = source.homogeneous_dense_polys() else {
+                    return source.column_partials_per_poly(self, prepared, logical_point);
+                };
                 let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::column_partials_batch(
                     self,
@@ -464,31 +507,9 @@ where
                 )
             }
             MultilinearPolynomial::OneHot(_) => {
-                let mut onehot_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
-                        MultilinearPolynomial::Dense(_) => {
-                            return source
-                                .polys
-                                .iter()
-                                .map(|poly| {
-                                    TensorProjectionKernel::<
-                                        MultilinearPolynomialView<'_, F, D, I>,
-                                        F,
-                                        E,
-                                        D,
-                                    >::column_partials(
-                                        self,
-                                        prepared,
-                                        poly.tensor_view()?,
-                                        logical_point,
-                                    )
-                                })
-                                .collect();
-                        }
-                    }
-                }
+                let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
+                    return source.column_partials_per_poly(self, prepared, logical_point);
+                };
                 let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D, I>, F, E, D>::column_partials_batch(
                     self,
@@ -511,13 +532,9 @@ where
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::Dense(inner) => dense_polys.push(inner),
-                        MultilinearPolynomial::OneHot(_) => return Ok(None),
-                    }
-                }
+                let Some(dense_polys) = source.homogeneous_dense_polys() else {
+                    return Ok(None);
+                };
                 let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseTensorBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
                     self,
@@ -527,13 +544,9 @@ where
                 )
             }
             MultilinearPolynomial::OneHot(_) => {
-                let mut onehot_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        MultilinearPolynomial::OneHot(inner) => onehot_polys.push(inner),
-                        MultilinearPolynomial::Dense(_) => return Ok(None),
-                    }
-                }
+                let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
+                    return Ok(None);
+                };
                 let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotTensorBatchView<'_, F, D, I>, F, E, D>::sparse_linear_combination(
                     self,
