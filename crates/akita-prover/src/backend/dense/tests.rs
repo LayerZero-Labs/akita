@@ -1,13 +1,13 @@
 use super::poly::DensePoly;
-use super::views::{DenseOpeningView, DenseTensorBatchView, DenseTensorView};
+use super::views::{DenseTensorBatchView, DenseTensorView};
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CpuBackend, DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootTensorSource,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    CpuBackend, DirectRootWitnessSource, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
-use akita_field::{CanonicalField, ExtField, FpExt4};
+use akita_field::{ExtField, FpExt4};
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
 };
