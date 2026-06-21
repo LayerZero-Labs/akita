@@ -2,8 +2,8 @@
 #[allow(unused_imports)]
 use super::{
     DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, GrindTargetAcceptProb,
-    GrindTargetAcceptSchedule, SisModulusFamily, TensorChallengeShape,
+    GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
+    TensorChallengeShape,
 };
 
 #[rustfmt::skip]
@@ -394,7 +394,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     basis_range: (2, 6),
     onehot_chunk_size: 1,
     tiered: false,
-    grind_target_schedule: GrindTargetAcceptSchedule::PRODUCTION,
     root_fold_shape: TensorChallengeShape::Flat,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 8681687331899630279,

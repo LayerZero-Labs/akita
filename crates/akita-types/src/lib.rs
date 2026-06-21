@@ -115,7 +115,7 @@ pub use schedule::{
     DirectStep, ExecutionSchedule, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
-pub use sis::{AjtaiKeyParams, GrindTargetAcceptProb, GrindTargetAcceptSchedule, SisModulusFamily};
+pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,

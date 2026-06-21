@@ -4,9 +4,7 @@ pub use akita_planner::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
 };
-pub use akita_planner::{
-    DecompositionParams, GrindTargetAcceptProb, GrindTargetAcceptSchedule, TensorChallengeShape,
-};
+pub use akita_planner::{DecompositionParams, TensorChallengeShape};
 
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-d128-full")]

@@ -150,7 +150,6 @@ fn derive_candidate_level_params(
     ring_challenge_config: RingChallengeConfigFn<'_>,
     current_witness_len: usize,
     log_basis: u32,
-    fold_level: usize,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
     let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
         return Ok(None);
@@ -201,8 +200,6 @@ fn derive_candidate_level_params(
             r,
             1,
             width_s as u64,
-            fold_level,
-            policy.grind_target_schedule,
         ) else {
             continue;
         };
@@ -262,12 +259,7 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         }
-        .with_fold_linf_cap_config(
-            policy.decomposition.field_bits(),
-            1,
-            fold_level,
-            policy.grind_target_schedule,
-        ) else {
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
             continue;
         };
 
@@ -501,7 +493,6 @@ fn derive_optimal_suffix_schedule(
         ring_challenge_config,
         current_witness_len,
         current_lb,
-        level,
     )?
     .is_some()
     {
@@ -528,13 +519,7 @@ fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(
-                policy,
-                ring_challenge_config,
-                current_witness_len,
-                lb,
-                level,
-            )?
+            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
         else {
             continue;
         };
@@ -721,8 +706,6 @@ fn compute_root_direct_level_params(
             num_vars - alpha,
             0,
             decomp.field_bits(),
-            0,
-            policy.grind_target_schedule,
         );
         (m_vars, r_vars)
     } else {
@@ -755,8 +738,6 @@ fn compute_root_direct_level_params(
         r_vars,
         num_claims,
         width_s as u64,
-        0,
-        policy.grind_target_schedule,
     ) else {
         return Ok(None);
     };
@@ -824,12 +805,7 @@ fn compute_root_direct_level_params(
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
     }
-    .with_fold_linf_cap_config(
-        decomp.field_bits(),
-        num_claims,
-        0,
-        policy.grind_target_schedule,
-    )?;
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
 }
 
@@ -975,8 +951,6 @@ fn find_schedule_inner(
                 r_vars,
                 t_vectors,
                 width_s as u64,
-                0,
-                policy.grind_target_schedule,
             ) else {
                 continue;
             };
@@ -1048,12 +1022,7 @@ fn find_schedule_inner(
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
             }
-            .with_fold_linf_cap_config(
-                field_bits,
-                key.num_t_vectors,
-                0,
-                policy.grind_target_schedule,
-            ) else {
+            .with_fold_linf_cap_config(field_bits, key.num_t_vectors) else {
                 continue;
             };
 

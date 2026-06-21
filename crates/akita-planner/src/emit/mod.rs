@@ -175,24 +175,6 @@ fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
     }
 }
 
-fn emit_grind_target_schedule(schedule: akita_types::GrindTargetAcceptSchedule) -> String {
-    match schedule {
-        akita_types::GrindTargetAcceptSchedule::Uniform => {
-            "GrindTargetAcceptSchedule::PRODUCTION".to_string()
-        }
-        akita_types::GrindTargetAcceptSchedule::StepAfterEarlyLevels {
-            early_levels,
-            early,
-            late,
-        } => format!(
-            "GrindTargetAcceptSchedule::StepAfterEarlyLevels {{ \
-             early_levels: {early_levels}, early: GrindTargetAcceptProb {{ num: {}, den: {} }}, \
-             late: GrindTargetAcceptProb {{ num: {}, den: {} }} }}",
-            early.num, early.den, late.num, late.den
-        ),
-    }
-}
-
 fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
     let ring_dims: String = identity
         .ring_dimensions
@@ -218,7 +200,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    tiered: {tiered},\n",
-            "    grind_target_schedule: {grind_target_schedule},\n",
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -239,7 +220,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
         tiered = identity.tiered,
-        grind_target_schedule = emit_grind_target_schedule(identity.grind_target_schedule),
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
@@ -277,7 +257,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
         out,
         "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, \
          GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
-         GrindTargetAcceptProb, GrindTargetAcceptSchedule, SisModulusFamily, TensorChallengeShape,\n}};"
+         SisModulusFamily, TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

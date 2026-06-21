@@ -131,8 +131,6 @@ impl GeneratedFoldStep {
             r_vars,
             num_claims,
             inner_width as u64,
-            fold_level,
-            policy.grind_target_schedule,
         )
         .map(|(rej, bucket, _n_a)| (rej, bucket))
         .ok_or_else(|| no_layout("A"))?;
@@ -248,12 +246,7 @@ impl GeneratedFoldStep {
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         };
-        params.with_fold_linf_cap_config(
-            policy.decomposition.field_bits(),
-            num_claims,
-            fold_level,
-            policy.grind_target_schedule,
-        )
+        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
     }
 }
 

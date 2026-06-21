@@ -10,7 +10,6 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
 use super::decomposition_digits::{num_digits_fold, num_digits_for_bound};
-use super::grind_target_schedule::GrindTargetAcceptSchedule;
 use crate::DecompositionParams;
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -391,8 +390,6 @@ pub fn fold_level_witness_scoring_cost(
     ring_dimension: usize,
     fold_challenge: FoldChallengeNorms,
     fold_witness: FoldWitnessNorms,
-    fold_level: usize,
-    grind_schedule: GrindTargetAcceptSchedule,
 ) -> Option<u64> {
     let field_bits = decomposition.field_bits();
     let log_basis = decomposition.log_basis;
@@ -407,8 +404,8 @@ pub fn fold_level_witness_scoring_cost(
     let num_blocks = 1u64.checked_shl(r_vars as u32)?;
     let m_eff = block_len as u64;
     let cap_policy = fold_witness_linf_cap_policy(stage1_config, fold_shape, ring_dimension);
-    let (grind_target_accept_num, grind_target_accept_den) =
-        grind_schedule.at_fold_level(fold_level);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
         cap_policy,
         stage1_config,
@@ -467,8 +464,6 @@ pub fn choose_op_norm_rejection_for_a_role(
     r_vars: usize,
     num_claims: usize,
     inner_width: u64,
-    fold_level: usize,
-    grind_schedule: GrindTargetAcceptSchedule,
 ) -> Option<(bool, u128, usize)> {
     let omega = fold_shape.effective_l1_mass(stage1_config) as u128;
     let gamma = fold_shape.effective_operator_norm_cap(stage1_config) as u128;
@@ -510,8 +505,6 @@ pub fn choose_op_norm_rejection_for_a_role(
             d,
             challenge,
             witness,
-            fold_level,
-            grind_schedule,
         )?;
         let witness_cost_l1 = fold_level_witness_scoring_cost(
             rank_l1,
@@ -525,8 +518,6 @@ pub fn choose_op_norm_rejection_for_a_role(
             d,
             challenge,
             witness,
-            fold_level,
-            grind_schedule,
         )?;
         if witness_cost_gamma < witness_cost_l1 {
             Some((true, bucket_gamma, rank_gamma))
@@ -841,10 +832,8 @@ impl FoldWitnessLinfCapConfig {
     /// Tail-aware sizing inputs for a fold level from its sparse family, shape,
     /// ring degree, and inner A-matrix width (`block_len · δ_commit`).
     ///
-    /// The grind acceptance target is taken from `grind_schedule` at
-    /// `fold_level` so planner digit sizing and prover rerolls can tighten
-    /// `p_grind` on later folds while the transcript descriptor keeps the
-    /// production default.
+    /// The grind acceptance target is read from [`crate::FoldLinfProtocolBinding::CURRENT`]
+    /// so planner digit sizing, prover rerolls, and the transcript descriptor agree.
     ///
     /// # Errors
     ///
@@ -857,11 +846,9 @@ impl FoldWitnessLinfCapConfig {
         ring_dimension: usize,
         op_norm_rejection: bool,
         inner_width: usize,
-        fold_level: usize,
-        grind_schedule: GrindTargetAcceptSchedule,
     ) -> Result<Self, AkitaError> {
-        let (grind_target_accept_num, grind_target_accept_den) =
-            grind_schedule.at_fold_level(fold_level);
+        let binding = crate::FoldLinfProtocolBinding::CURRENT;
+        let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
         let policy =
             fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, ring_dimension);
         let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
@@ -1116,8 +1103,6 @@ mod tests {
                     r_vars,
                     1,
                     inner_width,
-                    0,
-                    GrindTargetAcceptSchedule::PRODUCTION,
                 ) else {
                     continue;
                 };
@@ -1165,8 +1150,6 @@ mod tests {
                     64,
                     challenge,
                     witness,
-                    0,
-                    GrindTargetAcceptSchedule::PRODUCTION,
                 )
                 .expect("gamma witness score");
                 let witness_cost_l1 = fold_level_witness_scoring_cost(
@@ -1181,8 +1164,6 @@ mod tests {
                     64,
                     challenge,
                     witness,
-                    0,
-                    GrindTargetAcceptSchedule::PRODUCTION,
                 )
                 .expect("l1 witness score");
                 if reject {
@@ -1225,8 +1206,6 @@ mod tests {
             3,
             1,
             10_000,
-            0,
-            GrindTargetAcceptSchedule::PRODUCTION,
         )
         .expect("main shell should size");
         assert!(
@@ -1430,8 +1409,6 @@ mod tests {
             32,
             true,
             64,
-            0,
-            GrindTargetAcceptSchedule::PRODUCTION,
         )
         .is_err());
     }

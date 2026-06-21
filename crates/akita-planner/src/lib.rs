@@ -12,9 +12,7 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-pub use akita_types::{
-    DecompositionParams, GrindTargetAcceptProb, GrindTargetAcceptSchedule, SisModulusFamily,
-};
+pub use akita_types::{DecompositionParams, SisModulusFamily};
 
 pub mod catalog_identity;
 pub mod emit;
@@ -73,6 +71,4 @@ pub struct PlannerPolicy {
     /// tiered schedule catalog so a tiered policy never aliases a
     /// non-tiered table.
     pub tiered: bool,
-    /// Per-fold grind acceptance schedule (`p_grind`) for tail-bound digit sizing.
-    pub grind_target_schedule: GrindTargetAcceptSchedule,
 }

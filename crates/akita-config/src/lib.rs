@@ -13,12 +13,10 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::GrindTargetAcceptSchedule;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, OpeningBatch,
     Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
-use std::any::TypeId;
 
 pub mod generated_families;
 pub mod proof_optimized;
@@ -51,18 +49,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
-        grind_target_schedule: grind_target_schedule_for::<Cfg>(),
-    }
-}
-
-pub fn grind_target_schedule_for<Cfg: CommitmentConfig>() -> GrindTargetAcceptSchedule {
-    let id = TypeId::of::<Cfg>();
-    if id == TypeId::of::<crate::proof_optimized::fp128::D64Full>()
-        || id == TypeId::of::<crate::proof_optimized::fp128::D64OneHot>()
-    {
-        GrindTargetAcceptSchedule::TWO_EIGHTH_THEN_SIXTEENTH
-    } else {
-        GrindTargetAcceptSchedule::PRODUCTION
     }
 }
 

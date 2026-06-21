@@ -71,7 +71,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub basis_range: (u32, u32),
     pub onehot_chunk_size: usize,
     pub tiered: bool,
-    pub grind_target_schedule: GrindTargetAcceptSchedule,
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
@@ -86,7 +85,7 @@ pub struct GeneratedScheduleTable {
 }
 
 pub mod expand;
-pub use akita_types::{GrindTargetAcceptSchedule, SisModulusFamily};
+pub use akita_types::SisModulusFamily;
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
