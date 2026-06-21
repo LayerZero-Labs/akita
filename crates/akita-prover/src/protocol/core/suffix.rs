@@ -82,13 +82,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: RecursiveProveBackend<
-        Cfg::Field,
-        OwnedSuffixWitness<Cfg::Field, D>,
-        Cfg::ExtField,
-        Cfg::ExtField,
-        D,
-    >,
+    B: RecursiveProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, D>, Cfg::ExtField, D>,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -263,7 +257,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, L, L, D>,
+    B: RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, L, D>,
 {
     {
         let x: u8 = 0;

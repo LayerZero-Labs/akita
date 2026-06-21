@@ -132,7 +132,7 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, Self::ExtField, D>,
+        B: RecursiveProveBackend<F, P, Self::ExtField, D>,
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;

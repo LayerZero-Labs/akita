@@ -202,7 +202,7 @@ where
     let openings = folded_rings
         .iter()
         .map(|folded_ring| {
-            scalar_opening_from_folded_ring::<F, E, E, D>(
+            scalar_opening_from_folded_ring::<F, E, D>(
                 folded_ring,
                 prepared_point,
                 inner_claim_point,
@@ -297,7 +297,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     P: RootProvePoly<F, D>,
     V: FnOnce() -> Result<(), AkitaError>,
-    B: RootProveFlowBackend<F, P, E, E, D>,
+    B: RootProveFlowBackend<F, P, E, D>,
 {
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, P, B, D>(

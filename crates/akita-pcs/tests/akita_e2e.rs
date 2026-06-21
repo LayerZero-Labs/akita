@@ -168,10 +168,10 @@ fn verify_input<'a, FF: FieldCore, C>(
     )
 }
 
-type DenseFixture<FField, E, L, const D: usize> = (
+type DenseFixture<FField, E, const D: usize> = (
     AkitaVerifierSetup<FField>,
     RingCommitment<FField, D>,
-    AkitaBatchedProof<FField, L>,
+    AkitaBatchedProof<FField, E>,
     Vec<E>,
     E,
     LevelParams,
@@ -224,7 +224,7 @@ fn make_dense_fixture<
 >(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<FField, Cfg::ExtField, Cfg::ExtField, D>
+) -> DenseFixture<FField, Cfg::ExtField, D>
 where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,

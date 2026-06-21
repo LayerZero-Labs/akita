@@ -81,8 +81,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
 
-    /// Absorb a claim-field element into a base-field transcript.
-    fn append_claim_field<T: Transcript<Self::Field>>(
+    /// Absorb an extension-field element into a base-field transcript.
+    fn append_extension_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
         x: &Self::ExtField,
@@ -90,8 +90,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         append_ext_field::<Self::Field, Self::ExtField, T>(transcript, label, x);
     }
 
-    /// Squeeze a challenge-field element from a base-field transcript.
-    fn sample_challenge_field<T: Transcript<Self::Field>>(
+    /// Squeeze an extension-field element from a base-field transcript.
+    fn sample_extension_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
     ) -> Self::ExtField {
@@ -338,7 +338,7 @@ mod tests {
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let c1 =
-            SingleExtensionConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
+            SingleExtensionConfig::sample_extension_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
         let c2 = sample_ext_challenge::<Base, BaseExt, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
         assert_eq!(c1, c2);
     }
@@ -364,7 +364,7 @@ mod tests {
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-        SingleExtensionConfig::append_claim_field(
+        SingleExtensionConfig::append_extension_field(
             &mut t1,
             labels::ABSORB_EVALUATION_CLAIMS,
             &opening,

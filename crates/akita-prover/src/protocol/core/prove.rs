@@ -222,7 +222,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>,
+    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
@@ -233,13 +233,12 @@ where
     let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
             std::slice::from_ref(&prepared_claims.opening_point),
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-            num_vars,
-        ) {
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
+        {
             let commit_params =
                 Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
@@ -336,7 +335,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, Cfg::ExtField, D>,
+    B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
 
@@ -357,7 +356,7 @@ where
 
     #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
-        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, B, D>(
+        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, B, D>(
             backend,
             prepared,
             schedule,

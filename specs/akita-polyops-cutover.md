@@ -771,6 +771,20 @@ Result enums such as `TensorPackedWitness::Dense(Vec<E>)` versus
 because the protocol output alternatives are fixed. The prohibited enum is a
 closed input-source enum that downstream users cannot extend.
 
+### Post-cutover naming (views and fields)
+
+After the trait-surface hygiene pass on `quang/po-cutover-v2`:
+
+- **Views:** each representation exposes one single-polynomial view and one batch
+  view (`DenseView` / `DenseBatchView`, `OneHotView` / `OneHotBatchView`, and so
+  on). The kernel trait the view is passed to selects the operation; per-cluster
+  `*CommitView` / `*OpeningView` / `*TensorView` aliases are gone.
+- **Fields:** the protocol uses base field `F` and a single extension field `E`
+  (`CommitmentConfig::ExtField`). The historical claim-field / challenge-field
+  split (`L` vs `C`, `ClaimE` vs `ChallengeE`, separate descriptor degrees) is
+  retired. Prove/commit backend bundles, layout gates, and transcript descriptor
+  algebra all take one `E: ExtField<F>`.
+
 ### Public API Cutover
 
 Affected public and semi-public surfaces:
@@ -1375,7 +1389,7 @@ CpuBackend machinery, not things to invent for a streaming consumer.
   at the entry level.
 
 So `CommitTraversal` is not a new subsystem; it is a small generalization of the
-existing `OneHotCommitView` / `commit_plan_blocks()` boundary
+existing `OneHotView` / `commit_plan_blocks()` boundary
 (`backend/onehot/ops.rs`). What is genuinely missing is narrow and splits by
 materialization model:
 
@@ -1444,7 +1458,7 @@ schedule.
 
 The genuine constraint is coherence between the two forms, which makes the
 blanket a now-or-later decision: concrete per-view impls
-(`impl RootCommitKernel<DenseCommitView> for CpuBackend`, etc.) and a later
+(`impl RootCommitKernel<DenseView> for CpuBackend`, etc.) and a later
 blanket `impl<S: CommitTraversal> ...` overlap and cannot coexist. Enabling the
 blanket form later therefore means routing the built-in views through
 `CommitTraversal` too. That is an internal akita-prover refactor (it does not
@@ -1506,7 +1520,7 @@ cheap to add later belong in the cutover PRs.
    blanket-over-traversal extension and is the one irreversible mistake here.
 
 5. (PO-CUTOVER, SHOULD) Note that the entry/block boundary a streaming consumer
-   needs already exists (`OneHotCommitView` / `commit_plan_blocks()` /
+   needs already exists (`OneHotView` / `commit_plan_blocks()` /
    `OneHotBlocks`, see "What already exists in Akita today"); the only coupling is
    that its sole producer is `OneHotPoly::blocks_for` -> `FlatBlocks::from_indices`
    over a materialized index vector. The cheap, real move is to keep the commit

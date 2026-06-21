@@ -78,11 +78,11 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, E, D>,
+    B: RootProveFlowBackend<F, P, E, D>,
 {
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
-    let needs_extension_reduction = root_tensor_projection_enabled::<F, E, E, D>(opening_num_vars);
+    let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
 
     if shared_opening_point.len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {
@@ -171,7 +171,7 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, E, D>,
+    B: RootProveFlowBackend<F, P, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let num_claims = opening_batch.num_claims();
@@ -279,7 +279,7 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, E, D>,
+    B: RootProveFlowBackend<F, P, E, D>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let num_claims = opening_batch.num_claims();

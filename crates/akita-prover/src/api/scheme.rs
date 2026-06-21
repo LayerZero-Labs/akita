@@ -129,5 +129,5 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, Self::ExtField, D>;
+        B: RecursiveProveBackend<F, P, Self::ExtField, D>;
 }

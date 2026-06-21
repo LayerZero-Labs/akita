@@ -505,9 +505,7 @@ fn should_transform_root_commitment<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-        opening_batch.num_vars(),
-    ) {
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(opening_batch.num_vars()) {
         return Ok(false);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;

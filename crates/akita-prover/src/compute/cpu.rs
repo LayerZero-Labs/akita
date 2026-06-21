@@ -596,41 +596,6 @@ where
 {
 }
 
-impl<F, P, ClaimE, ChallengeE, const D: usize>
-    crate::compute::RootProveBackend<F, P, ClaimE, ChallengeE, D> for CpuBackend
-where
-    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    ClaimE: akita_field::ExtField<F>,
-    ChallengeE: akita_field::ExtField<F>,
-    P: crate::compute::RootProvePoly<F, D>,
-    Self: for<'a> crate::compute::OpeningFoldKernel<
-            <P as crate::compute::RootOpeningSource<F, D>>::OpeningView<'a>,
-            F,
-            D,
-        > + for<'a> crate::compute::OpeningBatchKernel<
-            <P as crate::compute::RootOpeningSource<F, D>>::OpeningBatchView<'a>,
-            F,
-            D,
-        > + for<'a> crate::compute::TensorProjectionKernel<
-            <P as crate::compute::RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            ChallengeE,
-            D,
-        > + for<'a> crate::compute::TensorProjectionBatchKernel<
-            <P as crate::compute::RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            ClaimE,
-            D,
-        > + for<'a> crate::compute::TensorProjectionBatchKernel<
-            <P as crate::compute::RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            ChallengeE,
-            D,
-        >,
-{
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -387,8 +387,8 @@ fn run_prove<
         + 'static,
     <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
-    CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField, Cfg::ExtField, D>,
+    CpuBackend:
+        RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
