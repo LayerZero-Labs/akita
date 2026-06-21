@@ -125,7 +125,7 @@ fn compute_observation<F: CanonicalField, const D: usize>(
 ) -> Result<L2PubBoundObservation, AkitaError> {
     let field_bits = field_bits_for_level(lp);
     let num_digits_fold = lp.num_digits_fold(num_claims, field_bits)?;
-    let witness_norms = lp.fold_witness_norms();
+    let witness_norms = lp.fold_witness_l2_pub_norms();
     let challenge_l2_sq = lp.challenge_l2_sq_max();
     let b_l2_pub = fold_witness_l2_pub_bound_sq(
         lp.r_vars,

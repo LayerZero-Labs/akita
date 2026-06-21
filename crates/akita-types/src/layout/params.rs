@@ -223,6 +223,25 @@ impl LevelParams {
         )
     }
 
+    /// Per-row witness envelope used only by the public folded-L2 certificate.
+    ///
+    /// The regular fold witness norms above still size coefficientwise `β_inf`
+    /// and digit depths. For small-field one-hot roots, the prover folds the
+    /// tensor-projected sparse ring input: each nonzero base coordinate becomes
+    /// at most two signed ring monomials in one projected row. Its per-row L2
+    /// envelope is therefore `2`, not the raw `K = 1` ring-row envelope `D`.
+    #[inline]
+    pub fn fold_witness_l2_pub_norms(&self) -> crate::sis::FoldWitnessNorms {
+        let is_onehot = self.onehot_chunk_size > 0;
+        crate::sis::fold_witness_l2_pub_norms(
+            self.log_basis,
+            self.ring_dimension,
+            if is_onehot { self.onehot_chunk_size } else { 1 },
+            is_onehot,
+            self.field_bits_for_cache(),
+        )
+    }
+
     /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
     /// accounting for the challenge shape (flat vs tensor).
     #[inline]
@@ -1009,6 +1028,32 @@ mod tests {
         assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
         assert_eq!(lp.log_block_len(), layout_lp.m_vars);
         assert_eq!(lp.outer_vars(), layout_lp.m_vars + layout_lp.r_vars);
+    }
+
+    #[test]
+    fn l2_pub_norm_uses_projected_onehot_signed_row_for_small_fields() {
+        let lp = sample_params_only()
+            .with_decomp(8, 6, 1, 1, 0)
+            .unwrap()
+            .with_onehot_chunk_size(1)
+            .with_fold_linf_cap_config(64, 1)
+            .unwrap();
+
+        assert_eq!(lp.fold_witness_norms().l2_sq_per_row_max(), 64);
+        assert_eq!(lp.fold_witness_l2_pub_norms().l2_sq_per_row_max(), 2);
+    }
+
+    #[test]
+    fn l2_pub_norm_keeps_raw_onehot_chunk_envelope_on_fp128() {
+        let lp = sample_params_only()
+            .with_decomp(8, 6, 1, 1, 0)
+            .unwrap()
+            .with_onehot_chunk_size(256)
+            .with_fold_linf_cap_config(128, 1)
+            .unwrap();
+
+        assert_eq!(lp.fold_witness_norms().l2_sq_per_row_max(), 1);
+        assert_eq!(lp.fold_witness_l2_pub_norms().l2_sq_per_row_max(), 1);
     }
 
     #[test]

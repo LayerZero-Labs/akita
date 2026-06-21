@@ -672,10 +672,16 @@ B_l2_pub_raw = challenge_l2_sq_per_block · num_fold_blocks · inner_width
 where `rho2 = ||c||_2^2` on the exact-shell family (e.g. `75` for production
 `(31,11)`), `B = num_claims · 2^{r_vars}` fold blocks,
 `W = inner_width = block_len · δ_commit` folded response rows, and
-`||s||_2^2_row_max` is the witness-class envelope `‖s‖_1 · ‖s‖_∞` for one
-ring row (`FoldWitnessNorms` in code; implemented as
-[`fold_witness_l2_pub_bound_sq`]).
-Do not multiply by `N_z = W · d` here: `FoldWitnessNorms` already bounds the
+`||s||_2^2_row_max` is the public row envelope for the fold input.
+For ordinary dense rows and raw one-hot rows this is the witness-class envelope
+`‖s‖_1 · ‖s‖_∞` for one ring row ([`fold_witness_l2_pub_norms`] in code;
+implemented as [`fold_witness_l2_pub_bound_sq`]).
+For small-field tensor-projected one-hot roots, the prover folds the projected
+sparse signed-ring input, where each nonzero base coordinate expands to at most
+two signed ring monomials in one projected row; the L2 public row envelope is
+therefore `2`, while the coefficientwise `β_inf` and digit-depth sizing continue
+to use the ordinary fold witness norms ([`FoldWitnessNorms::new`]).
+Do not multiply by `N_z = W · d` here: the row envelope already bounds the
 full `d`-coefficient ring-row norm.
 
 **Rounding policy.** The geometry module (`fold_l2_certificate`, no-wrap gate,

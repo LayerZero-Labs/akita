@@ -522,8 +522,8 @@ pub(crate) fn emit_l2_pub_bound_summary(label: &str, observations: &[L2PubBoundO
         observations.len()
     );
     eprintln!(
-        "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
-        "fold", "r_v", "nc", "blocks", "K_f", "N_z", "rej", "Z_SQUARED", "B_l2_pub", "L2_DET", "B/Z", "Z/B", "tier"
+        "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
+        "fold", "r_v", "nc", "blocks", "K_f", "z_inf", "N_z", "rej", "Z_SQUARED", "B_l2_pub", "L2_DET", "B/Z", "Z/B", "tier"
     );
 
     for obs in observations {
@@ -535,12 +535,13 @@ pub(crate) fn emit_l2_pub_bound_summary(label: &str, observations: &[L2PubBoundO
         }
 
         eprintln!(
-            "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
+            "[{label}]   {:>4} {:>3} {:>2} {:>5} {:>3} {:>4} {:>4} {:>3} {:>12} {:>12} {:>12} {:>8} {:>8} {:>22}",
             obs.fold_index,
             obs.r_vars,
             obs.num_claims,
             obs.num_blocks,
             obs.num_digits_fold,
+            obs.centered_inf_norm,
             obs.num_fold_coeffs,
             if obs.op_norm_rejection { "Y" } else { "N" },
             obs.z_squared,

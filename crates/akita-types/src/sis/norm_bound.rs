@@ -151,6 +151,16 @@ impl FoldWitnessNorms {
         }
     }
 
+    /// Sparse signed-unit row with at most `nonzeros` nonzero coefficients.
+    #[inline]
+    #[must_use]
+    pub const fn signed_unit_row(nonzeros: u128) -> Self {
+        Self {
+            infinity_norm: 1,
+            l1_norm: nonzeros,
+        }
+    }
+
     /// Conservative per-row `||s||_2^2` from the digit envelope:
     /// `||s||_1 · ||s||_inf` (exact for one-hot; `D · (b/2)^2` for dense).
     #[inline]
@@ -158,6 +168,27 @@ impl FoldWitnessNorms {
     pub fn l2_sq_per_row_max(&self) -> u128 {
         self.l1_norm().saturating_mul(self.infinity_norm())
     }
+}
+
+/// Public L2-certificate row envelope for [`fold_witness_l2_pub_bound_sq`].
+///
+/// Coefficientwise `β_inf` and fold digit depths still use
+/// [`FoldWitnessNorms::new`]. For small-field tensor-projected one-hot roots,
+/// each nonzero base coordinate expands to at most two signed ring monomials in
+/// one projected row, so the public per-row L2 envelope is `2`.
+#[inline]
+#[must_use]
+pub fn fold_witness_l2_pub_norms(
+    log_basis: u32,
+    ring_dimension: usize,
+    onehot_chunk_size: usize,
+    is_onehot: bool,
+    field_bits: u32,
+) -> FoldWitnessNorms {
+    if is_onehot && onehot_chunk_size == 1 && (1..128).contains(&field_bits) {
+        return FoldWitnessNorms::signed_unit_row(2);
+    }
+    FoldWitnessNorms::new(log_basis, ring_dimension, onehot_chunk_size, is_onehot)
 }
 
 /// Public second-moment ceiling on the fold response squared norm.
