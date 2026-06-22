@@ -14,7 +14,7 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    CommittedPolynomials, ProverClaims, ProverComputeBackend, ProverTranscriptGrind,
+    CommittedPolynomials, ProverClaims, ProverTranscriptGrind,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
@@ -471,7 +471,7 @@ fn build_zk_hiding_context<F, E, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + 'static,
     E: FpExtEncoding<F> + ExtField<F>,
-    B: ProverComputeBackend<F> + ZkHidingCommitBackend<F, D>,
+    B: crate::ProverComputeBackend<F> + ZkHidingCommitBackend<F, D>,
 {
     let mut rng = OsRng;
     let fold_steps = schedule
