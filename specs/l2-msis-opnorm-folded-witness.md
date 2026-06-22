@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
 | Status      | proposed, draft for iteration |
-| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); D64 op-norm rejection cutover (split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
+| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
 
 ## Summary
 
@@ -61,7 +61,9 @@ Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
 infrastructure: the planner may enable it only when Γ collision pricing
 strictly lowers audited A-rank vs ω pricing **and** the fold-level witness
 scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
-`optimal_m_r_split`) is strictly lower with rejection on at that geometry.
+`optimal_m_r_split`) is strictly lower with rejection on at that geometry **and**
+the fold draw samples at most `2^12` sparse challenges (flat `2^{r_vars} · num_claims`,
+or tensor `num_claims · (left_len + right_len)`).
 **Production scope today is D=64 only.** The only shipped binding preset is
 `ExactShell { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
 D=32 uses `BoundedL1Norm`; D=128 and D=256 use `Uniform` sparse challenges
@@ -74,6 +76,12 @@ Extending rejection to other ring dimensions is deferred until a binding Γ
 preset and a certified acceptance floor exist for that `(family, d)` pair.
 L2 certificate geometry (`fold_l2_certificate`, `B_l2_pub`) is a separate
 follow-up PR split from #195.
+
+**Implementation notes ([#207](https://github.com/LayerZero-Labs/akita/pull/207)).**
+The certified op-norm predicate uses transposed frequency tables with `i64`
+accumulators and fused 4-wide chunk paths (AVX2 / NEON).
+`choose_op_norm_rejection_for_a_role` is memoized on its geometry key so offline
+schedule search and table expansion do not repeat witness-scoring work.
 
 ### Invariants
 
@@ -188,7 +196,7 @@ follow-up PR split from #195.
       and descriptor binding are implemented. Production D=64 ships `(31, 11)` with
       `T = 18`; the planner enables rejection sampling only on fold levels where
       Γ pricing strictly lowers audited A-rank **and** witness-scoring cost is cheaper
-      with rejection on.
+      with rejection on **and** sparse-draw count is at most `2^12`.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
       *(D64 op-norm split PR ships rational floor `117/500` at `T = 18`;
@@ -977,7 +985,7 @@ SparseChallengeConfig::ExactShell {
     count_mag1: 31,
     count_mag2: 11,
 }
-operator_norm_threshold = 16
+operator_norm_threshold = 18
 ```
 
 The raw support is:
@@ -989,7 +997,7 @@ binom(64, 42) · binom(42, 31) · 2^42 ~= 2^130.152255.
 To retain 128 accepted challenge bits, the proof must establish:
 
 ```text
-Pr[gamma(c) <= 16] >= 2^(128 - 130.152255...) ~= 0.225.
+Pr[gamma(c) <= 18] >= 2^(128 - 130.152255...) ~= 0.225.
 ```
 
 The implementation must not rely on machine floating-point FFTs to enforce
@@ -1383,8 +1391,9 @@ Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later sl
   `collision_l2_sq` rename, wire A/B/D pricing through `collision_l2_sq_for_linf_envelope`.
   *(Done in #155.)*
 - **S3**: operator-norm threshold + transcript rejection.
-  **Production D=64 cutover landed** in the op-norm split PR (`(31, 11), T = 18`,
-  per-level gating, `fp128_d64_*` regen). Vendored S2 ≥128-bit acceptance cert still open.
+  **Production D=64 cutover landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207)
+  (`(31, 11), T = 18`, per-level gating, `2^12` sparse-draw cap, fused predicate,
+  planner memoization, `fp128_d64_*` regen). Vendored S2 ≥128-bit acceptance cert still open.
 - **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
 
 ### Decisions To Lock (gating)
@@ -1396,8 +1405,9 @@ Each gates specific slices, noted in parentheses.
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
 - D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
-- Production D=64 shell and threshold: **`(31, 11), T = 18` shipped** in the D64
-  op-norm split PR (per-level `op_norm_rejection` gating, witness-scoring cost).
+- Production D=64 shell and threshold: **`(31, 11), T = 18` shipped** in
+  [#207](https://github.com/LayerZero-Labs/akita/pull/207) (per-level `op_norm_rejection`
+  gating, witness-scoring cost, `2^12` sparse-draw cap).
   Vendored S2 accepted-support lower bound ≥128 bits remains a follow-up artifact.
 - Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
   level (not `‖s‖_2` surrogates). (S4, S8)
@@ -1486,11 +1496,14 @@ target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
 
 **S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell)*
 `crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`,
-`akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate),
-`akita-planner` (`choose_op_norm_rejection_for_a_role`), `LevelParams.op_norm_rejection`.
+`sampler/op_norm_accumulate.rs` (transposed `i64` predicate, AVX2/NEON fusion),
+`akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate, `2^12` cap,
+thread-local memoization on `choose_op_norm_rejection_for_a_role`),
+`akita-planner` (`choose_op_norm_rejection_for_a_role`, `expand` n_a audit),
+`LevelParams.op_norm_rejection`.
 Production D=64: `ExactShell { count_mag1: 31, count_mag2: 11 }`, `T = 18`,
 certified acceptance floor `117/500`, `fp128_d64_*` schedule regen.
-**Landed** in the D64 op-norm split PR. Vendored S2 ≥128-bit acceptance cert remains open.
+**Landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207). Vendored S2 ≥128-bit acceptance cert remains open.
 
 **S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*
 [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).

@@ -4,8 +4,8 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-10                                                |
-| Status      | implemented (#189 fold-linf); D64 op-norm rejection cutover pending merge |
-| PR          | [#189](https://github.com/LayerZero-Labs/akita/pull/189) (fold-linf digit tightening); D64 op-norm rejection (split from #195) |
+| Status      | implemented (#189 fold-linf; D64 op-norm rejection cutover [#207](https://github.com/LayerZero-Labs/akita/pull/207)) |
+| PR          | [#189](https://github.com/LayerZero-Labs/akita/pull/189) (fold-linf digit tightening); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from #195) |
 
 ## Summary
 
@@ -187,6 +187,13 @@ The feature introduces or modifies:
 - [x] Prover `fold_grind` and verifier stage-1 replay pass `op_norm_rejection` into
   `sample_folding_challenges` / `preview_folding_challenges`; descriptor bytes bind the
   flag and acceptance rational.
+- [x] Production op-norm predicate: transposed frequency tables with `i64` accumulators
+  (`op_norm_accumulate`), fused 4-wide chunk paths on AVX2 and NEON; legacy nested `i128`
+  loop retained for criterion A/B only.
+- [x] Planner hot path: thread-local memoization on `choose_op_norm_rejection_for_a_role`
+  (repeated `find_schedule` / table-expand calls share witness-scoring results).
+- [x] Tiered e2e smoke retargeted to `nv = 29` (witness-cost gating dropped root tiering at
+  `nv = 27/28` under regen'd `fp128_d64_onehot_tiered` schedules).
 
 ### Testing Strategy
 
@@ -223,6 +230,11 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
   levels where `t* < β_inf` crosses a digit boundary.
 - No verifier cost beyond consuming one extra nonce per fold level.
 - A-role rank, setup size, and the L2 pricing are unchanged.
+- Op-norm rejection sampling adds per-sparse-challenge predicate work on enabled levels;
+  the production path uses fused transposed `i64` accumulation (~2.7× faster than the
+  legacy nested `i128` loop in local criterion A/B). Planner `choose_op_norm_rejection`
+  is memoized per geometry so schedule drift guards (`generated_schedule_tables_match_find_schedule`,
+  setup-envelope scans) stay tractable in CI.
 
 ## Design
 
@@ -618,9 +630,10 @@ F10  e2e tamper / termination / ZK parity tests             (all)               
 F11  transcript-seeded grind probe order in ZK prover paths [akita-prover]      landed
      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
 F12  fold grind probe-count observer for profile metrics    [akita-prover]      landed
-F13  D64 operator-norm rejection cutover                     [split PR]          this branch
+F13  D64 operator-norm rejection cutover                     [#207]              landed
      `(31, 11), T = 18`; `LevelParams.op_norm_rejection`; Γ-vs-ω A-role pricing;
-     witness-scoring gate; `fp128_d64_*` schedule regen; descriptor bind
+     witness-scoring gate; `2^12` sparse-draw cap; fused transposed predicate;
+     planner memoization; `fp128_d64_*` schedule regen; descriptor bind
 ```
 
 **Out of scope for F13** (follow-up PRs split from #195):
