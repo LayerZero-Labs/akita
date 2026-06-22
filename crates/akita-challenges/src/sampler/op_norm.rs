@@ -42,7 +42,7 @@
 
 use akita_field::AkitaError;
 
-use super::op_norm_accumulate::{self, accumulate_transposed};
+use super::op_norm_accumulate;
 
 /// Internal fixed-point scale for the certified `pi` and trig interval math.
 /// Chosen so that products of two scaled values stay within `i128`
@@ -54,7 +54,6 @@ const TRIG_ONE: i128 = 1i128 << TRIG_SCALE;
 /// omitted term is below `2^-29` at [`TRIG_SCALE`] for `phi <= pi/4`, and the
 /// largest factorial used for the remainder bound (`26!`) fits `i128`.
 const NTERMS: usize = 12;
-
 /// Decision of the operator-norm acceptance predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Decision {
@@ -191,13 +190,7 @@ impl OpNormTable {
         t: u64,
         num_freqs: usize,
     ) -> Result<Decision, AkitaError> {
-        self.decide_parts_inner(
-            positions,
-            coeffs,
-            t,
-            num_freqs,
-            DecideAccum::TransposedI64,
-        )
+        self.decide_parts_inner(positions, coeffs, t, num_freqs, DecideAccum::TransposedI64)
     }
 
     /// Legacy `k`-outer nested loop with `i128` accumulators (A/B benchmark baseline).
@@ -277,22 +270,9 @@ impl OpNormTable {
         };
         match accum {
             DecideAccum::TransposedI64 => {
-                let mut acc_re = vec![0i64; num_freqs];
-                let mut acc_im = vec![0i64; num_freqs];
-                accumulate_transposed(self, positions, coeffs, &mut acc_re, &mut acc_im);
-                for k in 0..num_freqs {
-                    let abs_re = i128::from(acc_re[k].abs());
-                    let abs_im = i128::from(acc_im[k].abs());
-                    let re = i128::from(acc_re[k]);
-                    let im = i128::from(acc_im[k]);
-                    if decide_frequency(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)? {
-                        return Ok(Decision::Reject);
-                    }
-                    if !frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)
-                    {
-                        indeterminate = true;
-                    }
-                }
+                return decide_transposed_fused(
+                    self, positions, coeffs, r, two_r, two_r_sq, threshold, num_freqs,
+                );
             }
             DecideAccum::NestedI128 => {
                 for k in 0..num_freqs {
@@ -307,8 +287,9 @@ impl OpNormTable {
                     }
                     let abs_re = acc_re.abs();
                     let abs_im = acc_im.abs();
-                    if decide_frequency(abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold)?
-                    {
+                    if decide_frequency(
+                        abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
+                    )? {
                         return Ok(Decision::Reject);
                     }
                     if !frequency_accepts_upper(
@@ -330,6 +311,46 @@ impl OpNormTable {
 enum DecideAccum {
     TransposedI64,
     NestedI128,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decide_transposed_fused(
+    table: &OpNormTable,
+    positions: &[u32],
+    coeffs: &[i8],
+    r: i128,
+    two_r: i128,
+    two_r_sq: i128,
+    threshold: i128,
+    num_freqs: usize,
+) -> Result<Decision, AkitaError> {
+    debug_assert_eq!(num_freqs, table.d / 2);
+    let mut indeterminate = false;
+    let mut start_k = 0;
+    while start_k < num_freqs {
+        let len = (num_freqs - start_k).min(op_norm_accumulate::FUSED_CHUNK_FREQS);
+        let (acc_re, acc_im) = op_norm_accumulate::accumulate_transposed_chunk(
+            table, positions, coeffs, start_k, len, num_freqs,
+        );
+        for lane in 0..len {
+            let re = i128::from(acc_re[lane]);
+            let im = i128::from(acc_im[lane]);
+            let abs_re = re.abs();
+            let abs_im = im.abs();
+            if decide_frequency(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)? {
+                return Ok(Decision::Reject);
+            }
+            if !frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
+                indeterminate = true;
+            }
+        }
+        start_k += len;
+    }
+    if indeterminate {
+        Ok(Decision::Indeterminate)
+    } else {
+        Ok(Decision::Accept)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -507,7 +528,7 @@ fn taylor_cos(phi: (i128, i128)) -> (i128, i128) {
             iadd(sum, term)
         };
     }
-    add_remainder(sum, phi2, pow, fact, NTERMS + 1)
+    add_remainder(sum, phi2, pow, fact, 2 * NTERMS + 1)
 }
 
 /// `sin(phi)` enclosure at [`TRIG_SCALE`] for `phi in [0, pi/4]`.

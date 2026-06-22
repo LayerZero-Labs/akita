@@ -23,10 +23,10 @@
 
 #![allow(missing_docs)]
 
+use akita_challenges::op_norm_bench::Table;
 use akita_challenges::{
     sample_sparse_challenges, sparse_challenges_from_seed, SparseChallenge, SparseChallengeConfig,
 };
-use akita_challenges::op_norm_bench::Table;
 use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -137,12 +137,7 @@ fn bench_decide_ab(c: &mut Criterion) {
             i += 1;
             black_box(
                 table
-                    .decide_legacy_nested_i128(
-                        &ch.positions,
-                        &ch.coeffs,
-                        t,
-                        half_d,
-                    )
+                    .decide_legacy_nested_i128(&ch.positions, &ch.coeffs, t, half_d)
                     .expect("legacy decide"),
             );
         });

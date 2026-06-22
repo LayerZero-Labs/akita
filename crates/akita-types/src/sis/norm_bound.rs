@@ -5,8 +5,8 @@
 //! ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_challenges::fold_sparse_challenge_sample_count;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
@@ -1173,11 +1173,11 @@ mod tests {
 
     #[test]
     fn choose_op_norm_rejection_disabled_when_sparse_draw_exceeds_cap() {
+        use crate::DecompositionParams;
         use akita_challenges::{
             fold_sparse_challenge_sample_count, D64_PRODUCTION_EXACT_SHELL_MAG1,
             D64_PRODUCTION_EXACT_SHELL_MAG2, D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        use crate::DecompositionParams;
 
         let shell = SparseChallengeConfig::ExactShell {
             count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
@@ -1190,21 +1190,22 @@ mod tests {
             log_open_bound: Some(128),
         };
         let inner_width = 50_000_000u64;
-        let (reject_within_cap, _, _) = choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
-            SisModulusFamily::Q128,
-            64,
-            decomp,
-            &shell,
-            TensorChallengeShape::Flat,
-            true,
-            256,
-            1,
-            10,
-            1,
-            inner_width,
-            OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
-        )
-        .expect("within-cap draw should size");
+        let (reject_within_cap, _, _) =
+            choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+                SisModulusFamily::Q128,
+                64,
+                decomp,
+                &shell,
+                TensorChallengeShape::Flat,
+                true,
+                256,
+                1,
+                10,
+                1,
+                inner_width,
+                OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
+            )
+            .expect("within-cap draw should size");
         let (reject_over_cap, _, _) = choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
             SisModulusFamily::Q128,
             64,

@@ -33,6 +33,7 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
@@ -47,6 +48,9 @@ use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 /// `T <= 2D`, `D <= MAX_STACK_RING_DIM`) while leaving the certified
 /// uncertainty band negligible.
 const OP_NORM_PREDICATE_SCALE: u32 = 48;
+type CachedOpNormTable = Arc<OpNormTable>;
+static D64_PRODUCTION_OP_NORM_TABLE: LazyLock<Mutex<Option<CachedOpNormTable>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Liveness cap on operator-norm rejection attempts per challenge slot.
 ///
@@ -182,7 +186,7 @@ pub fn sparse_challenge_absorb_buf<const D: usize>(
 /// per [`sample_sparse_challenges`] call and shared across all `n` slots.
 fn op_norm_rejection_oracle<const D: usize>(
     cfg: &SparseChallengeConfig,
-) -> Result<Option<(OpNormTable, u64)>, AkitaError> {
+) -> Result<Option<(CachedOpNormTable, u64)>, AkitaError> {
     if !cfg.operator_norm_rejection_binds() {
         return Ok(None);
     }
@@ -197,8 +201,51 @@ fn op_norm_rejection_oracle<const D: usize>(
     };
     let l1 = (count_mag1 + 2 * count_mag2) as u64;
     let t = u64::from(*operator_norm_threshold);
-    let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
+    let table = cached_op_norm_table::<D>(cfg, l1, t)?;
     Ok(Some((table, t)))
+}
+
+fn cached_op_norm_table<const D: usize>(
+    cfg: &SparseChallengeConfig,
+    l1: u64,
+    t: u64,
+) -> Result<CachedOpNormTable, AkitaError> {
+    let is_d64_production = D == 64
+        && matches!(
+            cfg,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: crate::D64_PRODUCTION_EXACT_SHELL_MAG1,
+                count_mag2: crate::D64_PRODUCTION_EXACT_SHELL_MAG2,
+                operator_norm_threshold: crate::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+            }
+        );
+    if !is_d64_production {
+        return Ok(Arc::new(OpNormTable::new(
+            D,
+            OP_NORM_PREDICATE_SCALE,
+            l1,
+            t,
+        )?));
+    }
+
+    if let Some(table) = D64_PRODUCTION_OP_NORM_TABLE
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("D64 op-norm table cache poisoned".to_string()))?
+        .as_ref()
+        .cloned()
+    {
+        return Ok(table);
+    }
+
+    let table = Arc::new(OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?);
+    let mut cache = D64_PRODUCTION_OP_NORM_TABLE
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("D64 op-norm table cache poisoned".to_string()))?;
+    if let Some(cached) = cache.as_ref() {
+        return Ok(Arc::clone(cached));
+    }
+    *cache = Some(Arc::clone(&table));
+    Ok(table)
 }
 
 fn exact_shell_counts(cfg: &SparseChallengeConfig) -> Result<(usize, usize), AkitaError> {

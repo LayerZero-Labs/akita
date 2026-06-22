@@ -757,9 +757,7 @@ pub fn fold_sparse_challenge_sample_count(
         ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
         ChallengeShape::Tensor => {
             let (left_len, right_len) = tensor_split(num_blocks).ok()?;
-            left_len
-                .checked_add(right_len)?
-                .checked_mul(num_claims)
+            left_len.checked_add(right_len)?.checked_mul(num_claims)
         }
     }
 }
