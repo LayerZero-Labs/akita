@@ -1,3 +1,21 @@
+//! Prover compute stack: per-fold stack selection and per-cluster routing.
+//!
+//! Two orthogonal axes:
+//!
+//! 1. **Per-fold stack** ([`LevelProveStacks`]): which [`UniformProverStack`]
+//!    runs fold `level`. `batched_prove` / `prove` take `&impl LevelProveStacks`;
+//!    passing `&stack` is the degenerate case (same stack at every level).
+//!    Tiered hardware provers use [`TieredProveStacks`] or a custom impl.
+//!
+//! 2. **Per-cluster context** (inside one stack): commit, opening, tensor, and
+//!    ring-switch each hold a validated [`OperationCtx`]. Protocol internals route
+//!    kernels to the matching cluster (for example `commit_next_w` uses
+//!    `stack.commit()`, `ring_switch_build_w` uses `stack.ring_switch()`).
+//!
+//! Commit entry points call `stack.commit()` and `stack.tensor()` directly.
+//! Prove entry points call `stacks.prove_stack_at_level(level)` once per fold,
+//! then dispatch through the cluster accessors on that stack.
+
 use crate::compute::backend::ComputeBackendSetup;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::AkitaExpandedSetup;
@@ -55,12 +73,13 @@ where
     }
 }
 
-/// Per-operation-cluster prover compute stack.
+/// One fold-level prover stack with four operation clusters.
 ///
-/// Each cluster (commit / opening / tensor / ring-switch) carries its own
-/// backend plus prepared context, so a proof may mix backends across clusters.
-/// A CPU-only prover is the degenerate case where every cluster shares one
-/// backend and prepared setup ([`ProverComputeStack::uniform`]).
+/// A single proof may use different stacks at different fold levels via
+/// [`LevelProveStacks`]. Within one stack, each cluster (commit / opening /
+/// tensor / ring-switch) may still use a different backend and prepared setup.
+/// [`UniformProverStack`] is the degenerate case where all four clusters share
+/// one backend ([`ProverComputeStack::uniform`]).
 pub struct ProverComputeStack<'a, F, const D: usize, C, O, T, R>
 where
     F: FieldCore + CanonicalField,
@@ -127,6 +146,131 @@ where
 
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
 pub type UniformProverStack<'a, F, B, const D: usize> = ProverComputeStack<'a, F, D, B, B, B, B>;
+
+/// Per-fold selection of a [`UniformProverStack`] during proving.
+///
+/// `prove_fold` and suffix preparation call `prove_stack_at_level(level)` before
+/// routing work to commit / opening / tensor / ring-switch clusters on that
+/// stack.
+///
+/// **Uniform case:** `UniformProverStack` returns `self` for every level (what
+/// `batched_prove(..., &stack, ...)` uses today).
+///
+/// **Tiered case:** [`TieredProveStacks`] maps fold ranges to distinct stacks
+/// (for example multi-GPU folds 0–1, single-GPU 2–3, CPU thereafter). Each tier
+/// may itself be a heterogeneous [`ProverComputeStack::new`] stack.
+///
+/// **Facade alternative:** a single backend type that dispatches on `level`
+/// internally also works; this trait is not required when the backend owns tier
+/// selection.
+pub trait LevelProveStacks<'a, F, B, const D: usize>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    /// Stack whose operation clusters should execute fold `level`.
+    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D>;
+}
+
+impl<'a, F, B, const D: usize> LevelProveStacks<'a, F, B, D> for UniformProverStack<'a, F, B, D>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    fn prove_stack_at_level(&self, _level: usize) -> &Self {
+        self
+    }
+}
+
+impl<'a, F, B, const D: usize, S> LevelProveStacks<'a, F, B, D> for &S
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+    S: LevelProveStacks<'a, F, B, D> + ?Sized,
+{
+    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D> {
+        (*self).prove_stack_at_level(level)
+    }
+}
+
+/// Tiered fold boundaries for [`LevelProveStacks`].
+///
+/// `tier_max_level[i]` is the last fold level (inclusive) handled by `stacks[i]`.
+/// The final tier should use `usize::MAX` so every remaining fold maps to it.
+///
+/// # Example
+///
+/// Folds 0–1 on `multi_gpu`, 2–3 on `single_gpu`, 4+ on `cpu`:
+///
+/// ```ignore
+/// let stacks = [multi_gpu, single_gpu, cpu];
+/// let tiered = TieredProveStacks::new(&stacks, &[1, 3, usize::MAX])?;
+/// batched_prove(..., &tiered, ...)?;
+/// ```
+pub struct TieredProveStacks<'a, F, B, const D: usize>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    stacks: &'a [UniformProverStack<'a, F, B, D>],
+    tier_max_level: &'a [usize],
+}
+
+impl<'a, F, B, const D: usize> TieredProveStacks<'a, F, B, D>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    /// Build a tier table. `stacks.len()` must equal `tier_max_level.len()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tier table is empty or `tier_max_level` is not
+    /// strictly increasing.
+    pub fn new(
+        stacks: &'a [UniformProverStack<'a, F, B, D>],
+        tier_max_level: &'a [usize],
+    ) -> Result<Self, AkitaError> {
+        if stacks.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "tiered prove stacks require at least one stack".to_string(),
+            ));
+        }
+        if tier_max_level.len() != stacks.len() {
+            return Err(AkitaError::InvalidInput(
+                "tiered prove stacks length mismatch".to_string(),
+            ));
+        }
+        for window in tier_max_level.windows(2) {
+            if window[0] >= window[1] {
+                return Err(AkitaError::InvalidInput(
+                    "tier_max_level must be strictly increasing".to_string(),
+                ));
+            }
+        }
+        Ok(Self {
+            stacks,
+            tier_max_level,
+        })
+    }
+
+    fn tier_index_for_level(&self, level: usize) -> usize {
+        self.tier_max_level
+            .iter()
+            .position(|max_level| level <= *max_level)
+            .unwrap_or(self.stacks.len() - 1)
+    }
+}
+
+impl<'a, F, B, const D: usize> LevelProveStacks<'a, F, B, D> for TieredProveStacks<'a, F, B, D>
+where
+    F: FieldCore + CanonicalField,
+    B: ComputeBackendSetup<F>,
+{
+    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D> {
+        &self.stacks[self.tier_index_for_level(level)]
+    }
+}
 
 impl<'a, F, B, const D: usize> ProverComputeStack<'a, F, D, B, B, B, B>
 where
@@ -274,5 +418,31 @@ mod tests {
             stack.ring_switch().backend() as *const _,
             &ring_backend as *const _
         );
+    }
+
+    #[test]
+    fn tiered_prove_stacks_selects_by_fold_level() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup a");
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(8192))
+            .expect("setup b");
+        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
+        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
+        let stack_a =
+            UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
+                .expect("stack a");
+        let stack_b =
+            UniformProverStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
+                .expect("stack b");
+        let stacks = [stack_a, stack_b];
+        let tiered = TieredProveStacks::new(&stacks, &[1, usize::MAX]).expect("tiered");
+        assert!(std::ptr::eq(
+            tiered.prove_stack_at_level(0),
+            tiered.prove_stack_at_level(1),
+        ));
+        assert!(!std::ptr::eq(
+            tiered.prove_stack_at_level(0),
+            tiered.prove_stack_at_level(2),
+        ));
     }
 }

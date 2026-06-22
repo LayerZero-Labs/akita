@@ -1,6 +1,9 @@
 use super::*;
 use crate::backend::OwnedSuffixWitness;
-use crate::compute::{RecursiveProveBackend, RootProveFlowBackend};
+use crate::compute::{
+    ComputeBackendSetup, LevelProveStacks, ProverComputeBackend, RecursiveProveBackend,
+    RootProveFlowBackend, UniformProverStack,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -52,11 +55,10 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<Cfg, T, B, const D: usize>(
+pub fn prove_suffix<'stack, Cfg, T, B, const D: usize, Stacks>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack Stacks,
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
@@ -82,7 +84,12 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: RecursiveProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, D>, Cfg::ExtField, D>,
+    B: RecursiveProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, D>, Cfg::ExtField, D>
+        + ProverComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    Stacks: LevelProveStacks<'stack, Cfg::Field, B, D>,
+    <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -108,9 +115,9 @@ where
             MRowLayout::WithDBlock
         };
         let out = if level_d == D {
+            let stack = stacks.prove_stack_at_level(level);
             let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, D>(
-                backend,
-                prepared,
+                stack,
                 transcript,
                 current_state,
                 level,
@@ -120,11 +127,10 @@ where
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
             })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D>(
+            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D, Stacks>(
                 expanded,
                 prefix_slots,
-                backend,
-                prepared,
+                stacks,
                 transcript,
                 level,
                 &scheduled,
@@ -143,11 +149,13 @@ where
             })
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+                let level_backend = stacks.prove_stack_at_level(level).opening().backend();
+                let level_prepared = level_backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+                let level_stack =
+                    UniformProverStack::uniform(level_backend, &level_prepared, expanded.as_ref())?;
                 let level_prefix_slots = SetupPrefixProverRegistry::new();
                 let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, { D_LEVEL }>(
-                    backend,
-                    &level_prepared,
+                    &level_stack,
                     transcript,
                     current_state,
                     level,
@@ -159,11 +167,18 @@ where
                         "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
                     ))
                 })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, { D_LEVEL }>(
+                prove_fold::<
+                    Cfg::Field,
+                    Cfg::ExtField,
+                    T,
+                    B,
+                    Cfg,
+                    { D_LEVEL },
+                    UniformProverStack<'_, Cfg::Field, B, { D_LEVEL }>,
+                >(
                     expanded,
                     &level_prefix_slots,
-                    backend,
-                    &level_prepared,
+                    &level_stack,
                     transcript,
                     level,
                     &scheduled,
@@ -230,8 +245,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prepare_suffix<F, L, T, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, F, B, D>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
     level: usize,
@@ -292,8 +306,7 @@ where
         u: commitment_u.to_vec(),
     };
     prepare_fold_inner::<F, L, T, _, _, B, D>(
-        backend,
-        prepared,
+        stack,
         needs_extension_reduction,
         &logical_polys,
         &fold_polys,

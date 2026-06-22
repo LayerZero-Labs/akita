@@ -104,9 +104,13 @@ fn plain_root_d_image<const D: usize>(
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
     }
 
-    let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
-        &CpuBackend,
-        prepared,
+    let expanded = CpuBackend.prepared_expanded_setup::<D>(prepared);
+    let op_ctx =
+        akita_prover::OperationCtx::new(&CpuBackend, prepared, expanded).expect("operation ctx");
+
+    let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+        &op_ctx,
+        &op_ctx,
         ring_opening_point,
         ring_multiplier_point,
         &[poly],

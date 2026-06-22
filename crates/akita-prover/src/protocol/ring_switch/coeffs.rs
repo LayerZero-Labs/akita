@@ -1,4 +1,5 @@
 use super::*;
+use crate::compute::OperationCtx;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]
@@ -44,8 +45,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ring_switch_ctx: &OperationCtx<'_, F, B, D>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
 ) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
@@ -58,6 +58,8 @@ where
         + AkitaSerialize,
     B: RingSwitchComputeBackend<F>,
 {
+    let backend = ring_switch_ctx.backend();
+    let prepared = ring_switch_ctx.prepared();
     let num_claims = instance.opening_batch().num_claims();
     {
         let x: u8 = 0;

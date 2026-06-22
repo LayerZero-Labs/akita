@@ -1,5 +1,8 @@
 use super::*;
-use crate::compute::{RootProveFlowBackend, RootProvePoly};
+use crate::compute::{
+    ComputeBackendSetup, LevelProveStacks, ProverComputeBackend, RootProveFlowBackend,
+    RootProvePoly, UniformProverStack,
+};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -47,8 +50,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_root<F, E, T, P, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, F, B, D>,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -93,8 +95,7 @@ where
 
     let commitment_rows = flatten_batched_commitment_rows(commitments);
     prepare_fold_inner::<F, E, T, P, _, B, D>(
-        backend,
-        prepared,
+        stack,
         needs_extension_reduction,
         polys,
         polys,
@@ -136,11 +137,10 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
+pub fn prove_root<'stack, F, E, T, P, B, Cfg, const D: usize, Stacks>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack Stacks,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -171,9 +171,12 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D>,
+    B: RootProveFlowBackend<F, P, E, D> + ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    Stacks: LevelProveStacks<'stack, F, B, D>,
+    <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
+    let stack = stacks.prove_stack_at_level(0);
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
@@ -198,8 +201,7 @@ where
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
     let prepared_fold = prepare_root::<F, E, T, P, B, D>(
-        backend,
-        prepared,
+        stack,
         transcript,
         polys,
         opening_batch,
@@ -213,11 +215,10 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, B, Cfg, D>(
+    prove_fold::<F, E, T, B, Cfg, D, Stacks>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stacks,
         transcript,
         0,
         scheduled,
@@ -244,10 +245,9 @@ where
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
+pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, B, const D: usize, Stacks>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack Stacks,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -279,9 +279,12 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D>,
+    B: RootProveFlowBackend<F, P, E, D> + ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    Stacks: LevelProveStacks<'stack, F, B, D>,
+    <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
+    let stack = stacks.prove_stack_at_level(0);
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
@@ -308,8 +311,7 @@ where
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
     let prepared_fold = prepare_root::<F, E, T, P, B, D>(
-        backend,
-        prepared,
+        stack,
         transcript,
         polys,
         opening_batch,
@@ -323,11 +325,10 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, B, Cfg, D>(
+    let terminal_result = prove_fold::<F, E, T, B, Cfg, D, Stacks>(
         expanded,
         &prefix_slots,
-        backend,
-        prepared,
+        stacks,
         transcript,
         0,
         scheduled,

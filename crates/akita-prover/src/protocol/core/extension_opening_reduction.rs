@@ -380,7 +380,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B, const D: usize>(
-    backend: &B,
+    tensor_backend: &B,
     polys: &[&P],
     opening_batch: &OpeningBatch,
     shared_opening_point: &[E],
@@ -403,6 +403,7 @@ where
         num_claims = opening_batch.num_claims()
     )
     .entered();
+    let backend = tensor_backend;
     let prepared = prepare_extension_opening_reduction::<F, E, T, P, B, D>(
         backend,
         polys,

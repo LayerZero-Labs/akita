@@ -461,8 +461,7 @@ fn append_zk_extension_reduction_slots<F, L>(
 
 #[cfg(feature = "zk")]
 fn build_zk_hiding_context<F, E, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &crate::compute::OperationCtx<'_, F, B, D>,
     schedule: &Schedule,
     root_commit_params: &LevelParams,
     num_vars: usize,
@@ -539,12 +538,8 @@ where
             current_opening_vars = sumcheck_rounds(step.params.ring_dimension, step.next_w_len);
         }
     }
-    let (u_blind, b_blinding_digits) = commit_zk_hiding_witness::<F, B, D>(
-        backend,
-        prepared,
-        root_commit_params,
-        &hiding_witness,
-    )?;
+    let (u_blind, b_blinding_digits) =
+        commit_zk_hiding_witness::<F, B, D>(commit_ctx, root_commit_params, &hiding_witness)?;
     Ok((
         ZkHidingCommitment {
             u_blind,

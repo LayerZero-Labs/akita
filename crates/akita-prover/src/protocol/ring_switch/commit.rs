@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::CommitInnerPlan;
+use crate::compute::{CommitInnerPlan, OperationCtx};
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -28,14 +28,15 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &OperationCtx<'_, F, B, D>,
     commit_layout: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
+    let backend = commit_ctx.backend();
+    let prepared = commit_ctx.prepared();
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
             "commit_w layout D={} does not match target D={D}",
@@ -163,12 +164,12 @@ where
     let commit_d = commit_params.ring_dimension;
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
         let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
+        let commit_ctx = OperationCtx::new(backend, &prepared_commit, expanded.as_ref())?;
         if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 logical_w,
                 expanded.as_ref(),
-                backend,
-                &prepared_commit,
+                &commit_ctx,
                 &commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -187,8 +188,7 @@ where
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 &committed_w,
                 expanded.as_ref(),
-                backend,
-                &prepared_commit,
+                &commit_ctx,
                 &commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -215,8 +215,7 @@ where
 pub fn commit_next_w<Cfg, B, const D: usize>(
     commit_params: &LevelParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &OperationCtx<'_, Cfg::Field, B, D>,
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where
@@ -229,8 +228,7 @@ where
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 logical_w,
                 expanded.as_ref(),
-                backend,
-                prepared,
+                commit_ctx,
                 commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -246,8 +244,7 @@ where
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 &committed_w,
                 expanded.as_ref(),
-                backend,
-                prepared,
+                commit_ctx,
                 commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -258,7 +255,7 @@ where
         }
     } else {
         dispatch_commit_w_with_layout_policy::<Cfg, B>(
-            backend,
+            commit_ctx.backend(),
             commit_params.clone(),
             expanded,
             logical_w,

@@ -1,8 +1,8 @@
 use super::*;
 use crate::compute::{
-    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootProveFlowBackend,
-    RootProvePoly,
+    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    RootProveFlowBackend, RootProvePoly, UniformProverStack,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -258,8 +258,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, F, B, D>,
     needs_extension_reduction: bool,
     eor_polys: &[&P],
     fold_polys: &[&P],
@@ -299,9 +298,10 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     B: RootProveFlowBackend<F, P, E, D>,
 {
+    let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, P, B, D>(
-            backend,
+            tensor.backend(),
             eor_polys,
             opening_batch,
             opening_point,
@@ -332,8 +332,7 @@ where
         if pad_base_evals {
             let fold_refs = fold_polys.to_vec();
             finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
-                backend,
-                prepared,
+                stack,
                 fold_refs: &fold_refs,
                 protocol_point: &protocol_point,
                 reduction,
@@ -362,14 +361,17 @@ where
                         .entered();
                 cfg_iter!(fold_polys)
                     .map(|poly| {
-                        tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), *poly)
+                        tensor_root_projection::<F, P, E, B, D>(
+                            tensor.backend(),
+                            Some(tensor.prepared()),
+                            *poly,
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
             finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, B, D>(FinishFoldArgs {
-                backend,
-                prepared,
+                stack,
                 fold_refs: &fold_refs,
                 protocol_point: &protocol_point,
                 reduction,
@@ -395,8 +397,7 @@ where
     } else {
         let fold_refs = fold_polys.to_vec();
         finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
-            backend,
-            prepared,
+            stack,
             fold_refs: &fold_refs,
             protocol_point: &protocol_point,
             reduction,
@@ -428,8 +429,7 @@ where
     E: FieldCore,
     B: ComputeBackendSetup<F>,
 {
-    backend: &'a B,
-    prepared: &'a B::PreparedSetup<D>,
+    stack: &'a UniformProverStack<'a, F, B, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
@@ -475,8 +475,7 @@ where
         + for<'b> OpeningFoldKernel<Q::OpeningView<'b>, F, D>,
 {
     let FinishFoldArgs {
-        backend,
-        prepared,
+        stack,
         fold_refs,
         protocol_point,
         reduction,
@@ -498,6 +497,7 @@ where
         m_row_layout,
         commitment,
     } = args;
+    let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
         protocol_point,
         basis,
@@ -506,7 +506,7 @@ where
         block_order,
     )?;
     let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
-        backend,
+        opening.backend(),
         fold_refs,
         &prepared_point,
         level_params.block_len,
@@ -534,9 +534,9 @@ where
         }
     }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-        backend,
-        prepared,
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _, _>(
+        opening,
+        stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
         prepared_point.ring_multiplier_point.clone(),
         fold_refs,
@@ -628,11 +628,10 @@ type BoundNextWitness<F> = (
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<F, L, T, B, Cfg, const D: usize>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, B, Cfg, const D: usize, Stacks>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack Stacks,
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
@@ -657,9 +656,12 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: ProverComputeBackend<F>,
+    B: ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
+    Stacks: LevelProveStacks<'stack, F, B, D>,
+    <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
+    let stack = stacks.prove_stack_at_level(level);
     #[cfg(feature = "zk")]
     let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
@@ -668,8 +670,7 @@ where
     let build_output = ring_switch_build_w::<F, B, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
-        backend,
-        prepared,
+        stack.ring_switch(),
         lp,
         is_terminal_fold,
     )?;
@@ -682,8 +683,7 @@ where
         Some(crate::commit_next_w::<Cfg, B, D>(
             &scheduled.next_params,
             expanded,
-            backend,
-            prepared,
+            stack.commit(),
             &logical_w,
         )?)
     };

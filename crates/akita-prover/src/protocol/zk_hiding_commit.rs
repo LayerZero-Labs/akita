@@ -1,4 +1,6 @@
-use crate::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource, ZkHidingCommitBackend};
+use crate::compute::{
+    CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource, ZkHidingCommitBackend,
+};
 use crate::protocol::masking::sample_blinding_digits;
 use crate::DensePoly;
 use akita_algebra::CyclotomicRing;
@@ -16,8 +18,7 @@ fn flattened_zk_blinding_digits<const D: usize>(
 }
 
 pub(crate) fn commit_zk_hiding_witness<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &OperationCtx<'_, F, B, D>,
     root_params: &LevelParams,
     hiding_witness: &[F],
 ) -> Result<(Vec<F>, Vec<i8>), AkitaError>
@@ -25,6 +26,8 @@ where
     F: FieldCore + CanonicalField + RandomSampling + 'static,
     B: ZkHidingCommitBackend<F, D>,
 {
+    let backend = commit_ctx.backend();
+    let prepared = commit_ctx.prepared();
     let num_ring = hiding_witness.len().div_ceil(D).max(1).next_power_of_two();
     let eval_len = num_ring
         .checked_mul(D)

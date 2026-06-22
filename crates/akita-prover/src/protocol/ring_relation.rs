@@ -4,7 +4,7 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, RootOpeningSource,
+    OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
@@ -356,9 +356,8 @@ where
     }
 }
 
-fn compute_v_rows_for_layout<F, T, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
+    ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
     transcript: &mut T,
     lp: &LevelParams,
     e_hat: &FlatDigitBlocks<D>,
@@ -368,8 +367,10 @@ fn compute_v_rows_for_layout<F, T, B, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    B: DigitRowsComputeBackend<F>,
+    RB: DigitRowsComputeBackend<F>,
 {
+    let backend = ring_switch_ctx.backend();
+    let prepared = ring_switch_ctx.prepared();
     match m_row_layout {
         MRowLayout::WithDBlock => {
             let _span = tracing::info_span!(
@@ -420,9 +421,9 @@ impl RingRelationProver {
     #[allow(clippy::too_many_arguments, clippy::new_ret_no_self)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub fn new<F, const D: usize, T, P, B>(
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+    pub fn new<F, const D: usize, T, P, OB, RB>(
+        opening_ctx: &OperationCtx<'_, F, OB, D>,
+        ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         polys: &[&P],
@@ -439,9 +440,10 @@ impl RingRelationProver {
         F: FieldCore + CanonicalField,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         P: RootOpeningSource<F, D>,
-        B: DigitRowsComputeBackend<F>
+        OB: DigitRowsComputeBackend<F>
             + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
             + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+        RB: DigitRowsComputeBackend<F>,
     {
         {
             let x: u8 = 0;
@@ -520,9 +522,9 @@ impl RingRelationProver {
             MRowLayout::WithoutDBlock => FlatDigitBlocks::<D>::empty(),
         };
 
-        let v = compute_v_rows_for_layout::<F, T, B, D>(
-            backend,
-            prepared,
+        let opening_backend = opening_ctx.backend();
+        let v = compute_v_rows_for_layout::<F, T, RB, D>(
+            ring_switch_ctx,
             transcript,
             &lp,
             &e_hat,
@@ -544,8 +546,12 @@ impl RingRelationProver {
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
         let (z_folded_rings, challenges, fold_grind_nonce) =
-            fold_grind::sample_fold_decompose_witness::<F, _, B, T, D>(
-                backend, transcript, polys, &lp, num_claims,
+            fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
+                opening_backend,
+                transcript,
+                polys,
+                &lp,
+                num_claims,
             )?;
 
         let commitment_rows = commitments

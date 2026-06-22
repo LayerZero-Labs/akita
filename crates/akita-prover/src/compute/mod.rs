@@ -20,7 +20,7 @@
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
 //! | `poly` | Root polynomial capability traits (`RootPolyShape`, `RootCommitSource`, …) |
-//! | `stack` | `OperationCtx` and heterogeneous `ProverComputeStack` |
+//! | `stack` | Per-fold [`LevelProveStacks`] + per-cluster [`OperationCtx`] / [`ProverComputeStack`] |
 
 mod backend;
 mod cpu;
@@ -58,4 +58,6 @@ pub use poly::{
     RootProveFlowBackend, RootProvePoly, RootTensorProjectionCommitKernels,
     RootTensorProjectionProveKernels, RootTensorSource,
 };
-pub use stack::{OperationCtx, ProverComputeStack, UniformProverStack};
+pub use stack::{
+    LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,
+};

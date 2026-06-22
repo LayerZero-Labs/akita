@@ -329,9 +329,12 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
-            &CpuBackend,
-            &prepared,
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+            &op_ctx,
+            &op_ctx,
             ring_opening_point,
             ring_multiplier_point.clone(),
             &[&poly],
@@ -346,15 +349,9 @@ mod tests {
         )
         .expect("ring relation");
 
-        let build_output = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &lp,
-            false,
-        )
-        .expect("ring-switch witness");
+        let build_output =
+            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+                .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -468,9 +465,12 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
-            &CpuBackend,
-            &prepared,
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+            &op_ctx,
+            &op_ctx,
             ring_opening_point,
             ring_multiplier_point.clone(),
             &[&poly],
@@ -485,15 +485,9 @@ mod tests {
         )
         .expect("ring relation");
 
-        let build_output = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &lp,
-            false,
-        )
-        .expect("ring-switch witness");
+        let build_output =
+            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+                .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -642,9 +636,12 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
-            &CpuBackend,
-            &prepared,
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+            &op_ctx,
+            &op_ctx,
             ring_opening_point.clone(),
             ring_multiplier_point.clone(),
             &[&poly],
@@ -659,15 +656,8 @@ mod tests {
         )
         .expect("ring relation");
 
-        ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &level_params,
-            false,
-        )
-        .expect("ring-switch witness");
+        ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &level_params, false)
+            .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -801,9 +791,12 @@ mod tests {
         }
         let opening_batch = single_point_group_opening_batch(NV, 1);
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _>(
-            &CpuBackend,
-            &prepared,
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+            &op_ctx,
+            &op_ctx,
             ring_opening_point,
             ring_multiplier_point,
             &[&poly],
@@ -821,8 +814,7 @@ mod tests {
         let build_output = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
             witness,
-            &CpuBackend,
-            &prepared,
+            &op_ctx,
             &level_params,
             true,
         )

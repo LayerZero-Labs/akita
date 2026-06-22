@@ -29,11 +29,11 @@ pub use backend::{
 pub use compute::{
     BatchDecomposeFoldOutcome, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
     CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    OperationCtx, PreparedCrtNttProfile, ProverComputeBackend, ProverComputeStack,
-    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
-    UniformProverStack,
+    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, OneHotCommitBlocks,
+    OneHotCommitRowsPlan, OperationCtx, PreparedCrtNttProfile, ProverComputeBackend,
+    ProverComputeStack, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    SparseRingCommitRowsPlan, TieredProveStacks, UniformProverStack,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
