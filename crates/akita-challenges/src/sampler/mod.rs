@@ -23,6 +23,7 @@ pub(crate) mod bounded_l1;
 mod bounded_l1_support;
 mod exact_shell;
 pub(crate) mod op_norm;
+mod op_norm_accumulate;
 mod uniform;
 mod xof;
 
@@ -41,7 +42,7 @@ use op_norm::OpNormTable;
 use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 
 /// Fixed-point scale for the certified operator-norm predicate tables built
-/// during rejection sampling. `q = 48` keeps the predicate's `i128`
+/// during rejection sampling. `q = 48` keeps the predicate's `i64`
 /// accumulators within range for every shipping shell (`||c||_1 <= 2D`,
 /// `T <= 2D`, `D <= MAX_STACK_RING_DIM`) while leaving the certified
 /// uncertainty band negligible.

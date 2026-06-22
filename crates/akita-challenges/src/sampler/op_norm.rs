@@ -42,6 +42,8 @@
 
 use akita_field::AkitaError;
 
+use super::op_norm_accumulate::{self, accumulate_transposed};
+
 /// Internal fixed-point scale for the certified `pi` and trig interval math.
 /// Chosen so that products of two scaled values stay within `i128`
 /// (`2 * TRIG_SCALE < 127`).
@@ -81,6 +83,15 @@ pub(crate) struct OpNormTable {
     max_l1: i128,
     /// Largest threshold `t` the overflow validation covered.
     max_t: i128,
+    /// `base_cos[t]` and `base_sin[t]` downcast for `i64` inner accumulation.
+    /// `i64` mirrors of `base_cos` / `base_sin` (parity checks in unit tests).
+    #[allow(dead_code)]
+    base_cos_i64: Vec<i64>,
+    #[allow(dead_code)]
+    base_sin_i64: Vec<i64>,
+    /// Transposed rows `freq_cos_at[pos * half_d + k]` for fast accumulation.
+    freq_cos_at: Vec<i64>,
+    freq_sin_at: Vec<i64>,
 }
 
 impl OpNormTable {
@@ -93,6 +104,7 @@ impl OpNormTable {
     /// Returns [`AkitaError::InvalidSetup`] if `d` is not a positive multiple of
     /// 4, if `q` is outside `1..=56`, or if the worst-case accumulator/square
     /// bounds for `(max_l1, max_t)` do not fit `i128`.
+    #[doc(hidden)]
     pub(crate) fn new(d: usize, q: u32, max_l1: u64, max_t: u64) -> Result<Self, AkitaError> {
         if d < 4 || !d.is_multiple_of(4) {
             return Err(AkitaError::InvalidSetup(format!(
@@ -110,6 +122,30 @@ impl OpNormTable {
         let max_l1 = i128::from(max_l1);
         let max_t = i128::from(max_t);
         validate_no_overflow(q, eps_root, max_l1, max_t)?;
+        validate_i64_accumulators(q, max_l1)?;
+
+        let base_cos_i64: Vec<i64> = base_cos
+            .iter()
+            .map(|&v| {
+                i64::try_from(v).map_err(|_| {
+                    AkitaError::InvalidSetup(
+                        "OpNormTable: base_cos entry does not fit i64 accumulator path".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let base_sin_i64: Vec<i64> = base_sin
+            .iter()
+            .map(|&v| {
+                i64::try_from(v).map_err(|_| {
+                    AkitaError::InvalidSetup(
+                        "OpNormTable: base_sin entry does not fit i64 accumulator path".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let (freq_cos_at, freq_sin_at) =
+            op_norm_accumulate::build_freq_at_tables(d, &base_cos_i64, &base_sin_i64);
 
         Ok(Self {
             d,
@@ -119,7 +155,60 @@ impl OpNormTable {
             eps_root,
             max_l1,
             max_t,
+            base_cos_i64,
+            base_sin_i64,
+            freq_cos_at,
+            freq_sin_at,
         })
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn base_cos_i64(&self, idx: usize) -> i64 {
+        self.base_cos_i64[idx]
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn base_sin_i64(&self, idx: usize) -> i64 {
+        self.base_sin_i64[idx]
+    }
+
+    #[inline]
+    pub(super) fn freq_row(&self, pos: usize, half_d: usize) -> (&[i64], &[i64]) {
+        let row = pos * half_d;
+        (
+            &self.freq_cos_at[row..row + half_d],
+            &self.freq_sin_at[row..row + half_d],
+        )
+    }
+
+    /// Production predicate on stack-buffered `(positions, coeffs)` slices.
+    pub(crate) fn decide_parts(
+        &self,
+        positions: &[u32],
+        coeffs: &[i8],
+        t: u64,
+        num_freqs: usize,
+    ) -> Result<Decision, AkitaError> {
+        self.decide_parts_inner(
+            positions,
+            coeffs,
+            t,
+            num_freqs,
+            DecideAccum::TransposedI64,
+        )
+    }
+
+    /// Legacy `k`-outer nested loop with `i128` accumulators (A/B benchmark baseline).
+    pub(crate) fn decide_parts_legacy_nested_i128(
+        &self,
+        positions: &[u32],
+        coeffs: &[i8],
+        t: u64,
+        num_freqs: usize,
+    ) -> Result<Decision, AkitaError> {
+        self.decide_parts_inner(positions, coeffs, t, num_freqs, DecideAccum::NestedI128)
     }
 
     /// Slice form of the production (strict) predicate for stack-buffered rejection draws.
@@ -132,12 +221,13 @@ impl OpNormTable {
         Ok(self.decide_parts(positions, coeffs, t, self.d / 2)? == Decision::Accept)
     }
 
-    fn decide_parts(
+    fn decide_parts_inner(
         &self,
         positions: &[u32],
         coeffs: &[i8],
         t: u64,
         num_freqs: usize,
+        accum: DecideAccum,
     ) -> Result<Decision, AkitaError> {
         if positions.len() != coeffs.len() {
             return Err(AkitaError::InvalidInput(
@@ -171,9 +261,8 @@ impl OpNormTable {
             )));
         }
 
-        // Angle index math stays in `usize`: `mult * pos < 2 d^2`, so this avoids
-        // an `i128` modulo (a compiler-rt libcall) on the inner loop while the
-        // accumulators and squarings stay `i128` for precision.
+        // Angle index math stays in `usize` for the legacy nested path. The
+        // transposed path precomputes indices at table-build time.
         let two_d = 2 * self.d;
         let r = l1 * self.eps_root;
         let two_r = 2 * r;
@@ -181,30 +270,54 @@ impl OpNormTable {
         let threshold = (i128::from(t) * i128::from(t)) << (2 * self.q);
 
         let mut indeterminate = false;
-        for k in 0..num_freqs {
-            let mult = (2 * k + 1) % two_d;
-            let mut acc_re: i128 = 0;
-            let mut acc_im: i128 = 0;
-            for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
-                let idx = (mult * pos as usize) % two_d;
-                let coeff = i128::from(coeff);
-                acc_re += coeff * self.base_cos[idx];
-                acc_im += coeff * self.base_sin[idx];
+        let accum = match (accum, num_freqs == self.d / 2) {
+            (DecideAccum::TransposedI64, true) => DecideAccum::TransposedI64,
+            (DecideAccum::TransposedI64, false) => DecideAccum::NestedI128,
+            (DecideAccum::NestedI128, _) => DecideAccum::NestedI128,
+        };
+        match accum {
+            DecideAccum::TransposedI64 => {
+                let mut acc_re = vec![0i64; num_freqs];
+                let mut acc_im = vec![0i64; num_freqs];
+                accumulate_transposed(self, positions, coeffs, &mut acc_re, &mut acc_im);
+                for k in 0..num_freqs {
+                    let abs_re = i128::from(acc_re[k].abs());
+                    let abs_im = i128::from(acc_im[k].abs());
+                    let re = i128::from(acc_re[k]);
+                    let im = i128::from(acc_im[k]);
+                    if decide_frequency(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)? {
+                        return Ok(Decision::Reject);
+                    }
+                    if !frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)
+                    {
+                        indeterminate = true;
+                    }
+                }
             }
-            let abs_re = acc_re.abs();
-            let abs_im = acc_im.abs();
-            let center = acc_re * acc_re + acc_im * acc_im;
-            let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
-            if upper <= threshold {
-                continue;
+            DecideAccum::NestedI128 => {
+                for k in 0..num_freqs {
+                    let mult = (2 * k + 1) % two_d;
+                    let mut acc_re: i128 = 0;
+                    let mut acc_im: i128 = 0;
+                    for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
+                        let idx = (mult * pos as usize) % two_d;
+                        let coeff = i128::from(coeff);
+                        acc_re += coeff * self.base_cos[idx];
+                        acc_im += coeff * self.base_sin[idx];
+                    }
+                    let abs_re = acc_re.abs();
+                    let abs_im = acc_im.abs();
+                    if decide_frequency(abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold)?
+                    {
+                        return Ok(Decision::Reject);
+                    }
+                    if !frequency_accepts_upper(
+                        abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
+                    ) {
+                        indeterminate = true;
+                    }
+                }
             }
-            let low_re = (abs_re - r).max(0);
-            let low_im = (abs_im - r).max(0);
-            let lower = low_re * low_re + low_im * low_im;
-            if lower > threshold {
-                return Ok(Decision::Reject);
-            }
-            indeterminate = true;
         }
         if indeterminate {
             Ok(Decision::Indeterminate)
@@ -212,6 +325,65 @@ impl OpNormTable {
             Ok(Decision::Accept)
         }
     }
+}
+
+enum DecideAccum {
+    TransposedI64,
+    NestedI128,
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn frequency_accepts_upper(
+    abs_re: i128,
+    abs_im: i128,
+    re: i128,
+    im: i128,
+    _r: i128,
+    two_r: i128,
+    two_r_sq: i128,
+    threshold: i128,
+) -> bool {
+    let center = re * re + im * im;
+    let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
+    upper <= threshold
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn decide_frequency(
+    abs_re: i128,
+    abs_im: i128,
+    re: i128,
+    im: i128,
+    r: i128,
+    two_r: i128,
+    two_r_sq: i128,
+    threshold: i128,
+) -> Result<bool, AkitaError> {
+    if frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
+        return Ok(false);
+    }
+    let low_re = (abs_re - r).max(0);
+    let low_im = (abs_im - r).max(0);
+    let lower = low_re * low_re + low_im * low_im;
+    Ok(lower > threshold)
+}
+
+/// Validate worst-case `i64` accumulator magnitudes for the transposed path.
+fn validate_i64_accumulators(q: u32, max_l1: i128) -> Result<(), AkitaError> {
+    let overflow = || {
+        AkitaError::InvalidSetup(
+            "OpNormTable: worst-case i64 accumulator does not fit i64".to_string(),
+        )
+    };
+    let max_acc = max_l1
+        .checked_mul(1i128.checked_shl(q).ok_or_else(overflow)?)
+        .ok_or_else(overflow)?;
+    if max_acc > i128::from(i64::MAX) {
+        return Err(overflow());
+    }
+    Ok(())
 }
 
 /// Validate the worst-case `i128` accumulator and square bounds for the

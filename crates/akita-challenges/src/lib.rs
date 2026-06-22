@@ -44,3 +44,50 @@ pub use tensor::{
     stage1_fold_challenge_labels, tensor_left_digest, tensor_split, ChallengeLabels,
     ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges, TensorChallenges,
 };
+
+/// Bench-only surface for criterion `op_norm_rejection` (not a stable API).
+#[doc(hidden)]
+pub mod op_norm_bench {
+    use akita_field::AkitaError;
+
+    use crate::sampler::op_norm::{Decision, OpNormTable};
+
+    /// Opaque handle wrapping a certified D=64 predicate table.
+    pub struct Table(OpNormTable);
+
+    impl Table {
+        /// Production table parameters: `D=64`, `q=48`, `max_l1=2D`, `max_t=64`.
+        pub fn d64_q48() -> Self {
+            Self(
+                OpNormTable::new(64, 48, 128, 64).expect("D64 op-norm table"),
+            )
+        }
+
+        pub fn decide_production(
+            &self,
+            positions: &[u32],
+            coeffs: &[i8],
+            t: u64,
+            num_freqs: usize,
+        ) -> Result<bool, AkitaError> {
+            Ok(matches!(
+                self.0.decide_parts(positions, coeffs, t, num_freqs)?,
+                Decision::Accept
+            ))
+        }
+
+        pub fn decide_legacy_nested_i128(
+            &self,
+            positions: &[u32],
+            coeffs: &[i8],
+            t: u64,
+            num_freqs: usize,
+        ) -> Result<bool, AkitaError> {
+            Ok(matches!(
+                self.0
+                    .decide_parts_legacy_nested_i128(positions, coeffs, t, num_freqs)?,
+                Decision::Accept
+            ))
+        }
+    }
+}
