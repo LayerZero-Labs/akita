@@ -77,15 +77,10 @@ impl ChallengeShape {
 
     /// Effective per-logical-block operator-norm cap `Gamma` for this shape.
     ///
-    /// This is the operator-norm analogue of [`Self::effective_l1_mass`]: the
-    /// cap used by operator-norm rejection (`gamma(c) <= Gamma`). A-role SIS
-    /// sizing still uses Lemma 7 (`8·ω·fold_witness_beta·ν`) with `ω` from
-    /// [`Self::effective_l1_mass`]. A flat fold applies one sampled
-    /// challenge per block, so its cap is the family's
-    /// [`SparseChallengeConfig::operator_norm_cap`]. A tensor fold materializes
-    /// the product `α_p · β_q`, which is *not* itself operator-norm rejected;
-    /// the operator norm is submultiplicative (`γ(α·β) <= γ(α)·γ(β)`), so the
-    /// sound cap is the product of the two factors' caps, `Gamma^2`.
+    /// Flat folds use [`SparseChallengeConfig::operator_norm_cap`]; tensor folds
+    /// use the submultiplicative product `Gamma^2`. A-role committed-fold
+    /// collision sizing reads this cap; fold-digit `beta_inf` still uses
+    /// [`Self::effective_l1_mass`].
     #[inline]
     #[must_use]
     pub fn effective_operator_norm_cap(&self, cfg: &SparseChallengeConfig) -> u64 {

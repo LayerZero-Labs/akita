@@ -36,7 +36,7 @@ use akita_transcript::Transcript;
 use crate::{SparseChallenge, SparseChallengeConfig};
 
 use bounded_l1::{sample_bounded_l1_challenge, D_32};
-use exact_shell::sample_exact_shell_challenge;
+use exact_shell::{sample_exact_shell_challenge, ExactShellScratch};
 use op_norm::OpNormTable;
 use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 
@@ -62,17 +62,46 @@ pub(crate) fn sparse_challenges_from_xof_cursor<const D: usize>(
     cursor: &mut XofCursor,
     n: usize,
     cfg: &SparseChallengeConfig,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut challenges = Vec::with_capacity(n);
-    match op_norm_rejection_oracle::<D>(cfg)? {
+    let oracle = if op_norm_rejection {
+        op_norm_rejection_oracle::<D>(cfg)?
+    } else {
+        None
+    };
+    match oracle {
         Some((table, t)) => {
+            let (count_mag1, count_mag2) = exact_shell_counts(cfg)?;
+            let mut scratch = ExactShellScratch::new(count_mag1, count_mag2);
             for _ in 0..n {
-                challenges.push(sample_with_op_norm_rejection::<D>(cursor, cfg, &table, t)?);
+                challenges.push(sample_with_op_norm_rejection(
+                    cursor,
+                    D,
+                    count_mag1,
+                    count_mag2,
+                    &mut scratch,
+                    &table,
+                    t,
+                )?);
             }
         }
         None => {
-            for _ in 0..n {
-                challenges.push(parse_challenge::<D>(cursor, cfg));
+            if let SparseChallengeConfig::ExactShell {
+                count_mag1,
+                count_mag2,
+                ..
+            } = cfg
+            {
+                let mut scratch = ExactShellScratch::new(*count_mag1, *count_mag2);
+                for _ in 0..n {
+                    scratch.sample(cursor, D, *count_mag1, *count_mag2);
+                    challenges.push(scratch.take_challenge());
+                }
+            } else {
+                for _ in 0..n {
+                    challenges.push(parse_challenge::<D>(cursor, cfg));
+                }
             }
         }
     }
@@ -97,9 +126,10 @@ pub fn sparse_challenges_from_seed<const D: usize>(
     seed: &[u8],
     n: usize,
     cfg: &SparseChallengeConfig,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut cursor = XofCursor::from_seed(seed);
-    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
+    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg, op_norm_rejection)
 }
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
@@ -152,21 +182,34 @@ pub fn sparse_challenge_absorb_buf<const D: usize>(
 fn op_norm_rejection_oracle<const D: usize>(
     cfg: &SparseChallengeConfig,
 ) -> Result<Option<(OpNormTable, u64)>, AkitaError> {
+    if !cfg.operator_norm_rejection_binds() {
+        return Ok(None);
+    }
+    let SparseChallengeConfig::ExactShell {
+        count_mag1,
+        count_mag2,
+        operator_norm_threshold,
+    } = cfg
+    else {
+        debug_assert!(false, "operator_norm_rejection_binds implies ExactShell");
+        return Ok(None);
+    };
+    let l1 = (count_mag1 + 2 * count_mag2) as u64;
+    let t = u64::from(*operator_norm_threshold);
+    let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
+    Ok(Some((table, t)))
+}
+
+fn exact_shell_counts(cfg: &SparseChallengeConfig) -> Result<(usize, usize), AkitaError> {
     match cfg {
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
-            operator_norm_threshold,
-        } => {
-            let l1 = (count_mag1 + 2 * count_mag2) as u64;
-            let t = u64::from(*operator_norm_threshold);
-            if t >= l1 {
-                return Ok(None);
-            }
-            let table = OpNormTable::new(D, OP_NORM_PREDICATE_SCALE, l1, t)?;
-            Ok(Some((table, t)))
-        }
-        _ => Ok(None),
+            ..
+        } => Ok((*count_mag1, *count_mag2)),
+        _ => Err(AkitaError::InvalidInput(
+            "exact shell counts requested for non-ExactShell config".to_string(),
+        )),
     }
 }
 
@@ -176,16 +219,19 @@ fn op_norm_rejection_oracle<const D: usize>(
 /// Each rejected candidate advances the shared XOF cursor identically for
 /// prover and verifier, so the accepted challenge (and the cursor position the
 /// next slot starts from) is a deterministic function of the transcript.
-fn sample_with_op_norm_rejection<const D: usize>(
+fn sample_with_op_norm_rejection(
     cursor: &mut XofCursor,
-    cfg: &SparseChallengeConfig,
+    d: usize,
+    count_mag1: usize,
+    count_mag2: usize,
+    scratch: &mut ExactShellScratch,
     table: &OpNormTable,
     t: u64,
 ) -> Result<SparseChallenge, AkitaError> {
     for _ in 0..MAX_OP_NORM_ATTEMPTS {
-        let candidate = parse_challenge::<D>(cursor, cfg);
-        if table.accept_strict(&candidate, t)? {
-            return Ok(candidate);
+        scratch.sample(cursor, d, count_mag1, count_mag2);
+        if table.accept_strict_parts(scratch.positions(), scratch.coeffs(), t)? {
+            return Ok(scratch.take_challenge());
         }
     }
     Err(AkitaError::InvalidInput(format!(
@@ -214,6 +260,10 @@ where
 /// via SHAKE256 XOF into all per-challenge randomness in one streaming
 /// pass.
 ///
+/// Set `op_norm_rejection` only for levels whose layout is priced with the
+/// operator-norm cap. When it is `false`, even a binding exact-shell threshold
+/// samples from the full shell and only the deterministic L1 cap is guaranteed.
+///
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
@@ -224,6 +274,7 @@ pub fn sample_sparse_challenges<F, T, const D: usize>(
     n: usize,
     cfg: &SparseChallengeConfig,
     grind_nonce: u32,
+    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -233,5 +284,5 @@ where
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
-    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
+    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg, op_norm_rejection)
 }
