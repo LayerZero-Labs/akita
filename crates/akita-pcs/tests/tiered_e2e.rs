@@ -62,6 +62,12 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
 
         let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
@@ -70,9 +76,7 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(
-            &setup, std::slice::from_ref(&poly), &CpuBackend, &prepared
-        )
+        >>::commit(&setup, std::slice::from_ref(&poly), &stack)
         .expect("commit");
         assert_eq!(
             commitment.u.len(),
@@ -84,8 +88,7 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
         let proof = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::batched_prove(
             &setup,
             prove_input(&pt[..], &[&poly], &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -154,6 +157,12 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
 
         let setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::setup_prover(nv, num_polys).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
@@ -162,7 +171,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(&setup, &polys, &CpuBackend, &prepared)
+        >>::commit(&setup, &polys, &stack)
         .expect("commit");
 
         let poly_refs: Vec<&OneHotPoly<F, TIERED_D, u8>> = polys.iter().collect();
@@ -171,8 +180,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let proof = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<F, TIERED_D>>::batched_prove(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,

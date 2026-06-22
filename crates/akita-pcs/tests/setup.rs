@@ -130,14 +130,16 @@ where
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&poly),
-        &CpuBackend,
-        &prepared,
+        &stack,
     )
     .expect("commit");
 
@@ -156,8 +158,7 @@ where
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -221,14 +222,16 @@ where
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&poly),
-        &CpuBackend,
-        &prepared,
+        &stack,
     )
     .expect("commit");
 
@@ -247,8 +250,7 @@ where
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -309,17 +311,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-        &setup,
-        &polys,
-        &CpuBackend,
-        &prepared,
-    )
-    .expect("batched commit");
+    let (commitment, hint) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
+            .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -333,8 +334,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -410,17 +410,16 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     )
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-        &setup,
-        &polys,
-        &CpuBackend,
-        &prepared,
-    )
-    .expect("batched onehot commit");
+    let (commitment, hint) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
+            .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -434,8 +433,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

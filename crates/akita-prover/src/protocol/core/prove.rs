@@ -2,6 +2,7 @@ use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     DirectRootWitnessSource, RecursiveProveBackend, RootPolyShape, RootProvePoly,
+    UniformProverStack,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -188,8 +189,7 @@ where
 pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
     claims: ProverClaims<
         'a,
         Cfg::ExtField,
@@ -224,7 +224,6 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
         prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
@@ -278,8 +277,7 @@ where
     prove::<Cfg, T, P, B, D>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stack,
         transcript,
         prepared_claims,
         &schedule,
@@ -306,8 +304,7 @@ where
 pub fn prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
     schedule: &Schedule,
@@ -337,7 +334,9 @@ where
     P: RootProvePoly<Cfg::Field, D>,
     B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
+    let opening = stack.opening();
+    let backend = opening.backend();
+    let prepared = opening.prepared();
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
 

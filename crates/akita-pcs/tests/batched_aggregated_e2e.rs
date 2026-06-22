@@ -73,6 +73,12 @@ mod non_zk_aggregated_cases {
             >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let stack = akita_prover::UniformProverStack::uniform(
+                &CpuBackend,
+                &prepared,
+                setup.expanded.as_ref(),
+            )
+            .expect("stack");
             let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
@@ -81,7 +87,7 @@ mod non_zk_aggregated_cases {
             let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::commit(&setup, &polys, &CpuBackend, &prepared)
+            >>::commit(&setup, &polys, &stack)
             .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
@@ -104,8 +110,7 @@ mod non_zk_aggregated_cases {
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
-                &CpuBackend,
-                &prepared,
+                &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -175,6 +180,12 @@ mod non_zk_aggregated_cases {
             >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let stack = akita_prover::UniformProverStack::uniform(
+                &CpuBackend,
+                &prepared,
+                setup.expanded.as_ref(),
+            )
+            .expect("stack");
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -182,10 +193,7 @@ mod non_zk_aggregated_cases {
 
             let (commitments, hints) =
                 <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::commit(
-                    &setup,
-                    &polys,
-                    &CpuBackend,
-                    &prepared,
+                    &setup, &polys, &stack,
                 )
                 .map(|(commitment, hint)| (vec![commitment], vec![hint]))
                 .expect("grouped commit");
@@ -208,8 +216,7 @@ mod non_zk_aggregated_cases {
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
-                &CpuBackend,
-                &prepared,
+                &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -312,6 +319,12 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         >>::setup_prover(NV, BATCH_SIZE)
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -320,7 +333,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&setup, &polys, &CpuBackend, &prepared)
+        >>::commit(&setup, &polys, &stack)
         .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
@@ -337,8 +350,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &polys.iter().collect::<Vec<_>>()[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
-            ), &CpuBackend,
-            &prepared,
+            ), &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

@@ -256,14 +256,16 @@ where
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1)
         .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
             &setup,
             std::slice::from_ref(&poly),
-            &CpuBackend,
-            &prepared,
+            &stack,
         )
         .unwrap();
 
@@ -280,8 +282,7 @@ where
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -431,11 +432,16 @@ fn full_d64_prove_verify() {
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             std::slice::from_ref(&poly),
-            &CpuBackend,
-            &prepared,
+            &stack,
         )
         .unwrap();
 
@@ -455,8 +461,7 @@ fn full_d64_prove_verify() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -580,13 +585,16 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            &polys,
-            &CpuBackend,
-            &prepared,
+            &setup, &polys, &stack,
         )
         .unwrap();
         let commitments = [commitment];
@@ -595,8 +603,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point[..], &poly_refs[..], &commitments[0], hint),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -806,13 +813,18 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             std::slice::from_ref(&poly),
-            &CpuBackend,
-            &prepared,
+            &stack,
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
@@ -830,8 +842,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -860,14 +871,13 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         );
         #[cfg(not(feature = "zk"))]
         {
-            let (recomputed_commitment, _) =
-                <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                    &setup,
-                    std::slice::from_ref(&reconstructed),
-                    &CpuBackend,
-                    &prepared,
-                )
-                .expect("recompute commitment from direct witness");
+            let (recomputed_commitment, _) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+                F,
+                D,
+            >>::commit(
+                &setup, std::slice::from_ref(&reconstructed), &stack
+            )
+            .expect("recompute commitment from direct witness");
             assert_eq!(
                 recomputed_commitment, commitments[0],
                 "direct witness should preserve the root commitment"
@@ -992,13 +1002,18 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             std::slice::from_ref(&onehot_poly),
-            &CpuBackend,
-            &prepared,
+            &stack,
         )
         .unwrap();
 
@@ -1017,8 +1032,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1165,14 +1179,19 @@ fn batched_onehot_same_point_round_trip() {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let commit_group = [poly_a.clone(), poly_b.clone()];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             &commit_group,
-            &CpuBackend,
-            &prepared,
+            &stack,
         )
         .unwrap();
         let commitments = [commitment];
@@ -1187,8 +1206,7 @@ fn batched_onehot_same_point_round_trip() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -1285,13 +1303,16 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         )
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            &polys,
-            &CpuBackend,
-            &prepared,
+            &setup, &polys, &stack,
         )
         .unwrap();
         let commitments = [commitment];
@@ -1307,8 +1328,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

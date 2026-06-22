@@ -1,6 +1,8 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly};
+use crate::compute::{
+    RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly, UniformProverStack,
+};
 use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -72,8 +74,7 @@ where
     fn commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -95,8 +96,7 @@ where
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         polys_per_commitment_group: &[&[P]],
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -118,8 +118,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,

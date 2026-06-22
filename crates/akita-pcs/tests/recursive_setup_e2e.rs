@@ -115,6 +115,9 @@ fn prove_onehot_with_setup_mode(
     }
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
@@ -123,7 +126,7 @@ fn prove_onehot_with_setup_mode(
     let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
-    >>::commit(&setup, commit_input, &CpuBackend, &prepared)
+    >>::commit(&setup, commit_input, &stack)
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -133,8 +136,7 @@ fn prove_onehot_with_setup_mode(
         <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
             prove_input(&point[..], &poly_refs[..], &commitment, hint),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             proof_mode,

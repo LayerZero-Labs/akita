@@ -279,14 +279,19 @@ mod tests {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &CpuBackend,
-                &prepared,
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -418,14 +423,19 @@ mod tests {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &CpuBackend,
-                &prepared,
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -587,14 +597,19 @@ mod tests {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &CpuBackend,
-                &prepared,
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -741,14 +756,19 @@ mod tests {
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &CpuBackend,
-                &prepared,
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];

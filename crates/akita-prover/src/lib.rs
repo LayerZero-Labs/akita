@@ -27,12 +27,13 @@ pub use backend::{
     SuffixWitness,
 };
 pub use compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
-    CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, PreparedCrtNttProfile,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    BatchDecomposeFoldOutcome, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
+    CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
+    DigitRowsComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    OperationCtx, PreparedCrtNttProfile, ProverComputeBackend, ProverComputeStack,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    UniformProverStack,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};

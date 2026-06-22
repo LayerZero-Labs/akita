@@ -329,39 +329,69 @@ where
     };
 
     if needs_extension_reduction {
-        let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
-            let _span =
-                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                    .entered();
-            cfg_iter!(fold_polys)
-                .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), *poly))
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let fold_refs = transformed.iter().collect::<Vec<_>>();
-        finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, B, D>(FinishFoldArgs {
-            backend,
-            prepared,
-            fold_refs: &fold_refs,
-            protocol_point: &protocol_point,
-            reduction,
-            row_coefficients,
-            trace_opening_batch,
-            relation_opening_batch,
-            level_params,
-            alpha_bits,
-            basis,
-            block_order,
-            #[cfg(feature = "zk")]
-            no_eor_trace_eval_target_public,
-            pad_base_evals,
-            transcript,
-            #[cfg(feature = "zk")]
-            zk_hiding,
-            commitment_hints,
-            commitments,
-            m_row_layout,
-            commitment,
-        })
+        if pad_base_evals {
+            let fold_refs = fold_polys.to_vec();
+            finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
+                backend,
+                prepared,
+                fold_refs: &fold_refs,
+                protocol_point: &protocol_point,
+                reduction,
+                row_coefficients,
+                trace_opening_batch,
+                relation_opening_batch,
+                level_params,
+                alpha_bits,
+                basis,
+                block_order,
+                #[cfg(feature = "zk")]
+                no_eor_trace_eval_target_public,
+                pad_base_evals,
+                transcript,
+                #[cfg(feature = "zk")]
+                zk_hiding,
+                commitment_hints,
+                commitments,
+                m_row_layout,
+                commitment,
+            })
+        } else {
+            let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
+                let _span =
+                    tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
+                        .entered();
+                cfg_iter!(fold_polys)
+                    .map(|poly| {
+                        tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), *poly)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            let fold_refs = transformed.iter().collect::<Vec<_>>();
+            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, B, D>(FinishFoldArgs {
+                backend,
+                prepared,
+                fold_refs: &fold_refs,
+                protocol_point: &protocol_point,
+                reduction,
+                row_coefficients,
+                trace_opening_batch,
+                relation_opening_batch,
+                level_params,
+                alpha_bits,
+                basis,
+                block_order,
+                #[cfg(feature = "zk")]
+                no_eor_trace_eval_target_public,
+                pad_base_evals,
+                transcript,
+                #[cfg(feature = "zk")]
+                zk_hiding,
+                commitment_hints,
+                commitments,
+                m_row_layout,
+                commitment,
+            })
+        }
     } else {
         let fold_refs = fold_polys.to_vec();
         finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {

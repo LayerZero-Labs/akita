@@ -2,10 +2,11 @@ use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -216,32 +217,38 @@ where
         _prepared: Option<&Self::PreparedSetup<D>>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         match plan {
             DecomposeFoldBatchPlan::Sparse {
                 challenges,
                 block_len,
                 num_digits,
                 log_basis,
-            } => Ok(OneHotPoly::decompose_fold_batched(
+            } => match OneHotPoly::decompose_fold_batched(
                 source.polys,
                 challenges,
                 block_len,
                 num_digits,
                 log_basis,
-            )),
+            ) {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
+            },
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            } => OneHotPoly::decompose_fold_tensor_batched(
+            } => match OneHotPoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            ),
+            )? {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
+            },
         }
     }
 }

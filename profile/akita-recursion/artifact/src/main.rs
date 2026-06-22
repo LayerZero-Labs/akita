@@ -337,8 +337,7 @@ fn run() -> Result<(), String> {
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
-        &CpuBackend,
-        &prepared,
+        &stack,
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
@@ -358,8 +357,7 @@ fn run() -> Result<(), String> {
                 hint,
             }],
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

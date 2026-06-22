@@ -30,15 +30,14 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE)
         .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup =
         <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
-        &setup,
-        &polys,
-        &CpuBackend,
-        &prepared,
-    )
-    .expect("batched onehot commit");
+    let (commitment, hint) =
+        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(&setup, &polys, &stack)
+            .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -53,8 +52,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 hint: hints.into_iter().next().unwrap(),
             }],
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

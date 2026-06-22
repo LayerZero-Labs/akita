@@ -43,23 +43,21 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let setup =
         <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
-        &setup,
-        &polys,
-        &CpuBackend,
-        &prepared,
-    )
-    .expect("batched commit");
+    let (commitment, hint) =
+        <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(&setup, &polys, &stack)
+            .expect("batched commit");
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
         &setup,
         prove_input(&opening_point, &polys, &commitment, hint),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,

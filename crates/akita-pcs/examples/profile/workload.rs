@@ -354,7 +354,7 @@ fn run_prove<
 >(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
-    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
+    stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend, D>,
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
@@ -396,8 +396,7 @@ fn run_prove<
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         setup,
         std::slice::from_ref(poly),
-        &CpuBackend,
-        prepared,
+        stack,
     )
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -427,8 +426,7 @@ fn run_prove<
                 hint,
             }],
         ),
-        &CpuBackend,
-        prepared,
+        stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -594,6 +592,9 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -609,7 +610,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
         label,
         &setup,
-        &prepared,
+        &stack,
         &poly,
         &original_pt,
         opening,
@@ -693,6 +694,9 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -708,7 +712,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
         label,
         &setup,
-        &prepared,
+        &stack,
         &onehot_poly,
         &pt,
         opening,
@@ -812,6 +816,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -826,8 +833,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &CpuBackend, &prepared)
-            .unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -851,8 +857,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 hint: hints.into_iter().next().unwrap(),
             }],
         ),
-        &CpuBackend,
-        &prepared,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

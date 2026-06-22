@@ -111,6 +111,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
 
     group.bench_function("commit", |b| {
         b.iter(|| {
@@ -118,8 +121,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
                     black_box(std::slice::from_ref(&poly)),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                 )
                 .unwrap(),
             )
@@ -129,8 +131,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&poly),
-        &CpuBackend,
-        &prepared,
+        &stack,
     )
     .unwrap();
 
@@ -159,8 +160,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                                     hint: h.into_iter().next().unwrap(),
                                 }],
                             ),
-                            &CpuBackend,
-                            &prepared,
+                            &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -183,8 +183,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     hint: hint.clone(),
                 }],
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -217,8 +216,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
                     std::slice::from_ref(&poly),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                 )
                 .unwrap();
                 let cms = [cm];
@@ -233,8 +231,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                             hint: h,
                         }],
                     ),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -316,6 +313,9 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
@@ -326,8 +326,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
                     black_box(std::slice::from_ref(&onehot_poly)),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                 )
                 .unwrap(),
             )
@@ -337,8 +336,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&onehot_poly),
-        &CpuBackend,
-        &prepared,
+        &stack,
     )
     .unwrap();
 
@@ -367,8 +365,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                                     hint: h.into_iter().next().unwrap(),
                                 }],
                             ),
-                            &CpuBackend,
-                            &prepared,
+                            &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -391,8 +388,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     hint: hint.clone(),
                 }],
             ),
-            &CpuBackend,
-            &prepared,
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -425,8 +421,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
                     std::slice::from_ref(&onehot_poly),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                 )
                 .unwrap();
                 let cms = [cm];
@@ -441,8 +436,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                             hint: h,
                         }],
                     ),
-                    &CpuBackend,
-                    &prepared,
+                    &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,

@@ -1,13 +1,14 @@
 //! Prover-owned commitment kernels.
 
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, RootCommitBackend, RootCommitKernel, RootCommitPoly,
-    RootCommitSource, RootPolyShape,
+    tensor_root_projection, CommitInnerPlan, DigitRowsComputeBackend, OperationCtx,
+    RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitSource, RootPolyShape,
+    UniformProverStack,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{CommitInnerWitness, CommitmentComputeBackend, RootTensorProjectionPoly};
+use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
@@ -317,7 +318,7 @@ pub(crate) fn tiered_commit_u_final<F, const D: usize, B>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: CommitmentComputeBackend<F>,
+    B: DigitRowsComputeBackend<F>,
 {
     let f_key = params.f_key.as_ref().ok_or_else(|| {
         AkitaError::InvalidSetup("tiered_commit_u_final requires a second-tier F key".to_string())
@@ -353,16 +354,17 @@ where
 
 fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
-    B: CommitmentComputeBackend<F>
+    B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
+    let backend = ctx.backend();
+    let prepared = ctx.prepared();
     let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_blocks,
@@ -463,21 +465,19 @@ where
 pub fn commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
-    B: CommitmentComputeBackend<F>
+    B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
     validate_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
-    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
+    commit_with_validated_params::<F, D, P, B>(polys, ctx, params)
 }
 
 /// Decide whether a root commitment must be tensor-projected before commit.
@@ -516,8 +516,7 @@ where
 pub fn commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
 ) -> Result<
     (
         RingCommitment<Cfg::Field, D>,
@@ -533,7 +532,8 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let commit_ctx = stack.commit();
+    let tensor_ctx = stack.tensor();
     let opening_batch = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
@@ -542,8 +542,8 @@ where
             .iter()
             .map(|poly| {
                 tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                    backend,
-                    Some(prepared),
+                    tensor_ctx.backend(),
+                    Some(tensor_ctx.prepared()),
                     poly,
                 )
             })
@@ -554,10 +554,10 @@ where
             D,
             RootTensorProjectionPoly<Cfg::Field, D>,
             B,
-        >(&transformed, backend, prepared, &params);
+        >(&transformed, commit_ctx, &params);
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
+    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)
 }
 
 /// Validate a batched commitment request and derive its `OpeningBatch`.
@@ -640,8 +640,7 @@ where
 pub fn batched_commit<Cfg, const D: usize, P, B>(
     polys_per_commitment_group: &[&[P]],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
 ) -> Result<
     Vec<(
         RingCommitment<Cfg::Field, D>,
@@ -657,7 +656,8 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let commit_ctx = stack.commit();
+    let tensor_ctx = stack.tensor();
     let opening_batch =
         prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_commitment_group, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
@@ -673,8 +673,8 @@ where
                         .iter()
                         .map(|poly| {
                             tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                                backend,
-                                Some(prepared),
+                                tensor_ctx.backend(),
+                                Some(tensor_ctx.prepared()),
                                 poly,
                             )
                         })
@@ -690,7 +690,7 @@ where
                     D,
                     RootTensorProjectionPoly<Cfg::Field, D>,
                     B,
-                >(group, backend, prepared, &params)
+                >(group, commit_ctx, &params)
             })
             .collect();
     }
@@ -698,7 +698,7 @@ where
     polys_per_commitment_group
         .iter()
         .map(|group| {
-            commit_with_validated_params::<Cfg::Field, D, P, B>(group, backend, prepared, &params)
+            commit_with_validated_params::<Cfg::Field, D, P, B>(group, commit_ctx, &params)
         })
         .collect()
 }
@@ -718,17 +718,15 @@ where
 pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys_per_commitment_group: &[&[P]],
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
-    B: CommitmentComputeBackend<F>
+    B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_batched_commit_inputs::<F, D, P>(polys_per_commitment_group, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
     for group in polys_per_commitment_group {
@@ -736,7 +734,7 @@ where
     }
     polys_per_commitment_group
         .iter()
-        .map(|group| commit_with_validated_params::<F, D, P, B>(group, backend, prepared, params))
+        .map(|group| commit_with_validated_params::<F, D, P, B>(group, ctx, params))
         .collect()
 }
 
@@ -744,7 +742,7 @@ where
 mod tests {
     use super::*;
     use crate::kernels::linear::check_decomposed_rows_i8_match;
-    use crate::{AkitaProverSetup, OneHotPoly};
+    use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
@@ -886,6 +884,36 @@ mod tests {
         ));
         validate_onehot_chunk_size_for_params::<F, D, _>(&[ok], &params)
             .expect("matching onehot_k should be accepted");
+    }
+
+    #[test]
+    fn validate_onehot_chunk_size_rejects_wrapped_onehot_mismatch() {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_onehot_chunk_size(256);
+        let wrong_wrapped = MultilinearPolynomial::onehot(
+            OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap(),
+        );
+        let ok_wrapped = MultilinearPolynomial::onehot(
+            OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap(),
+        );
+
+        assert!(matches!(
+            validate_onehot_chunk_size_for_params::<F, D, _>(&[wrong_wrapped], &params),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        validate_onehot_chunk_size_for_params::<F, D, _>(&[ok_wrapped], &params)
+            .expect("matching wrapped onehot_k should be accepted");
     }
 
     #[test]

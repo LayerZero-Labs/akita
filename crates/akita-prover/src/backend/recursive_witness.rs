@@ -413,10 +413,10 @@ where
 
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+    OpeningFoldPlan, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
@@ -451,23 +451,23 @@ impl<F: FieldCore, const D: usize> OwnedSuffixWitness<F, D> {
     }
 }
 
-// The recursive views own a lifetime-free digit-buffer snapshot of the witness
-// and rebuild a borrowed `SuffixWitness` inside each kernel.
+// Borrowed views over owned recursive suffix witnesses. `OwnedSuffixWitness` remains
+// the owned `P` for HRTB; views borrow its digit buffer instead of cloning it.
 
-/// Owned single-witness view over a recursive [`SuffixWitness`].
+/// Borrowed single-witness view over a recursive [`SuffixWitness`].
 ///
 /// One view type backs the opening-fold and tensor-projection kernels; the
 /// kernel trait it is passed to selects the operation.
-#[derive(Debug, Clone)]
-pub struct SuffixWitnessView<F: FieldCore, const D: usize> {
-    digits: Vec<i8>,
+#[derive(Debug, Clone, Copy)]
+pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
+    digits: &'a [i8],
     _marker: PhantomData<F>,
 }
 
 /// Same-point batch view over several recursive witnesses.
-#[derive(Debug, Clone)]
-pub struct SuffixWitnessBatchView<F: FieldCore, const D: usize> {
-    digits: Vec<Vec<i8>>,
+#[derive(Debug, Clone, Copy)]
+pub struct SuffixWitnessBatchView<'a, F: FieldCore, const D: usize> {
+    polys: &'a [&'a OwnedSuffixWitness<F, D>],
     _marker: PhantomData<F>,
 }
 
@@ -485,25 +485,25 @@ where
     F: FieldCore,
 {
     type OpeningView<'v>
-        = SuffixWitnessView<F, D>
+        = SuffixWitnessView<'v, F, D>
     where
         Self: 'v;
 
     type OpeningBatchView<'v>
-        = SuffixWitnessBatchView<F, D>
+        = SuffixWitnessBatchView<'v, F, D>
     where
         Self: 'v;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
         Ok(SuffixWitnessView {
-            digits: self.digits.clone(),
+            digits: &self.digits,
             _marker: PhantomData,
         })
     }
 
     fn opening_batch<'v>(polys: &'v [&'v Self]) -> Result<Self::OpeningBatchView<'v>, AkitaError> {
         Ok(SuffixWitnessBatchView {
-            digits: polys.iter().map(|p| p.digits.clone()).collect(),
+            polys,
             _marker: PhantomData,
         })
     }
@@ -514,25 +514,25 @@ where
     F: FieldCore,
 {
     type TensorView<'v>
-        = SuffixWitnessView<F, D>
+        = SuffixWitnessView<'v, F, D>
     where
         Self: 'v;
 
     type TensorBatchView<'v>
-        = SuffixWitnessBatchView<F, D>
+        = SuffixWitnessBatchView<'v, F, D>
     where
         Self: 'v;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
         Ok(SuffixWitnessView {
-            digits: self.digits.clone(),
+            digits: &self.digits,
             _marker: PhantomData,
         })
     }
 
     fn tensor_batch<'v>(polys: &'v [&'v Self]) -> Result<Self::TensorBatchView<'v>, AkitaError> {
         Ok(SuffixWitnessBatchView {
-            digits: polys.iter().map(|p| p.digits.clone()).collect(),
+            polys,
             _marker: PhantomData,
         })
     }
@@ -551,17 +551,17 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningFoldKernel<SuffixWitnessView<F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn evaluate_and_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessView<F, D>,
+        source: SuffixWitnessView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
+        let poly = SuffixWitness::<F, D>::from_i8_digits(source.digits)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 eval_outer_scalars,
@@ -580,10 +580,10 @@ where
     fn decompose_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessView<F, D>,
+        source: SuffixWitnessView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
+        let poly = SuffixWitness::<F, D>::from_i8_digits(source.digits)?;
         Ok(poly.decompose_fold(
             plan.challenges,
             plan.block_len,
@@ -593,37 +593,41 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<F, D>, F, D> for CpuBackend
+impl<F, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessBatchView<F, D>,
+        source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let polys = source
-            .digits
+            .polys
             .iter()
-            .map(|d| SuffixWitness::<F, D>::from_i8_digits(d))
+            .map(|p| SuffixWitness::<F, D>::from_i8_digits(&p.digits))
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(None),
+            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            } => SuffixWitness::decompose_fold_tensor_batched(
+            } => match SuffixWitness::decompose_fold_tensor_batched(
                 &refs, tensor, block_len, num_digits, log_basis,
-            ),
+            )? {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
+            },
         }
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionKernel<SuffixWitnessView<F, D>, F, E, D> for CpuBackend
+impl<F, E, const D: usize> TensorProjectionKernel<SuffixWitnessView<'_, F, D>, F, E, D>
+    for CpuBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F>,
@@ -631,22 +635,22 @@ where
     fn column_partials(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessView<F, D>,
+        source: SuffixWitnessView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
-        let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
+        let poly = SuffixWitness::<F, D>::from_i8_digits(source.digits)?;
         poly.tensor_extension_column_partials(logical_point)
     }
 
     fn packed_witness(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessView<F, D>,
+        source: SuffixWitnessView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        let poly = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
+        let poly = SuffixWitness::<F, D>::from_i8_digits(source.digits)?;
         Ok(TensorPackedWitness::Dense(
             poly.tensor_packed_extension_evals()?,
         ))
@@ -655,22 +659,19 @@ where
     fn root_projection(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessView<F, D>,
+        source: SuffixWitnessView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
-        // Recursive witnesses fold directly over their ring blocks, never
-        // tensor-packed like root reps. The `Recursive` variant dispatches folds
-        // back to the suffix witness kernels.
-        let witness = SuffixWitness::<F, D>::from_i8_digits(&source.digits)?;
-        Ok(RootTensorProjectionPoly::Recursive(
-            OwnedSuffixWitness::from_suffix(&witness),
+        let _ = source;
+        Err(AkitaError::InvalidInput(
+            "recursive suffix witnesses are not tensor-projected root polynomials".to_string(),
         ))
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<F, D>, F, E, D>
+impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField,
@@ -679,16 +680,16 @@ where
     fn column_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessBatchView<F, D>,
+        source: SuffixWitnessBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
         let polys = source
-            .digits
+            .polys
             .iter()
-            .map(|d| SuffixWitness::<F, D>::from_i8_digits(d))
+            .map(|p| SuffixWitness::<F, D>::from_i8_digits(&p.digits))
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitness::tensor_extension_column_partials_batch(&refs, logical_point)
@@ -697,13 +698,13 @@ where
     fn sparse_linear_combination(
         &self,
         _prepared: Option<&Self::PreparedSetup<D>>,
-        source: SuffixWitnessBatchView<F, D>,
+        source: SuffixWitnessBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         let polys = source
-            .digits
+            .polys
             .iter()
-            .map(|d| SuffixWitness::<F, D>::from_i8_digits(d))
+            .map(|p| SuffixWitness::<F, D>::from_i8_digits(&p.digits))
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitness::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
@@ -714,6 +715,39 @@ where
 mod tests {
     use super::*;
     use akita_field::Prime128OffsetA7F7 as F;
+
+    #[test]
+    fn suffix_opening_views_borrow_owned_digit_buffer() {
+        const D: usize = 16;
+        let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
+        let suffix = SuffixWitness::<F, D>::from_i8_digits(&digits).expect("suffix");
+        let witness = OwnedSuffixWitness::<F, D>::from_suffix(&suffix);
+        let opening = witness.opening_view().expect("opening view");
+        let tensor = witness.tensor_view().expect("tensor view");
+        assert_eq!(opening.digits, digits.as_slice());
+        assert_eq!(tensor.digits, digits.as_slice());
+
+        let polys = [&witness];
+        let batch = OwnedSuffixWitness::opening_batch(&polys).expect("opening batch");
+        assert_eq!(batch.polys[0].digits, digits.as_slice());
+    }
+
+    #[test]
+    fn suffix_root_projection_is_rejected() {
+        const D: usize = 16;
+        type E = akita_field::FpExt4<F>;
+        let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
+        let suffix = SuffixWitness::<F, D>::from_i8_digits(&digits).expect("suffix");
+        let witness = OwnedSuffixWitness::<F, D>::from_suffix(&suffix);
+        let view = witness.tensor_view().expect("tensor view");
+        let err = TensorProjectionKernel::<SuffixWitnessView<'_, F, D>, F, E, D>::root_projection(
+            &CpuBackend,
+            None,
+            view,
+        )
+        .expect_err("suffix witnesses must not tensor-project");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
 
     #[test]
     fn logical_rows_use_strided_column_major_indices() {

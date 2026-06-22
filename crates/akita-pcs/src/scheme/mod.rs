@@ -7,7 +7,7 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
+    RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly, UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitmentProver, ProverClaims};
@@ -81,8 +81,7 @@ where
     fn commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -91,7 +90,7 @@ where
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
-        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
+        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
     #[allow(clippy::type_complexity)]
@@ -99,8 +98,7 @@ where
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         polys_per_commitment_group: &[&[P]],
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -112,8 +110,7 @@ where
         akita_prover::batched_commit::<Cfg, D, P, B>(
             polys_per_commitment_group,
             setup.expanded.as_ref(),
-            backend,
-            prepared,
+            stack,
         )
     }
 
@@ -121,8 +118,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        stack: &UniformProverStack<'_, F, B, D>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -139,8 +135,7 @@ where
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
-            backend,
-            prepared,
+            stack,
             claims,
             transcript,
             basis,

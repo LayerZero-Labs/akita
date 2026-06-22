@@ -7,13 +7,13 @@ use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FpExtE
 use std::sync::Arc;
 
 use super::dense::{DenseBatchView, DenseView};
-use super::recursive_witness::{OwnedSuffixWitness, SuffixWitnessBatchView, SuffixWitnessView};
 use super::sparse_ring::{SparseRingBatchView, SparseRingView};
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -31,12 +31,6 @@ pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
     Dense(DensePoly<F, D>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F, D>>),
-    /// Recursive suffix witness folded directly over its ring blocks.
-    ///
-    /// Unlike root representations, recursive witnesses are not tensor-projected;
-    /// the fold delegates to the suffix witness's own kernels (matching the legacy
-    /// dense original-root behavior). Never committed via this enum.
-    Recursive(OwnedSuffixWitness<F, D>),
 }
 
 impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectionPoly<F, D> {
@@ -59,11 +53,6 @@ impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
     }
 }
 
-// ===========================================================================
-// PO-CUTOVER (Phase A, additive): source-typed views + CpuBackend kernels for
-// `RootTensorProjectionPoly`, dispatching to the inner dense/sparse kernels.
-// ===========================================================================
-
 /// Borrowed view over a committed tensor-projected root polynomial.
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
@@ -83,7 +72,6 @@ where
     fn num_ring_elems(&self) -> usize {
         match self {
             Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
-            Self::Recursive(poly) => RootPolyShape::num_ring_elems(poly),
             Self::Sparse(poly) => RootPolyShape::num_ring_elems(poly.as_ref()),
         }
     }
@@ -91,7 +79,6 @@ where
     fn num_vars(&self) -> usize {
         match self {
             Self::Dense(poly) => RootPolyShape::num_vars(poly),
-            Self::Recursive(poly) => RootPolyShape::num_vars(poly),
             Self::Sparse(poly) => RootPolyShape::num_vars(poly.as_ref()),
         }
     }
@@ -164,7 +151,6 @@ where
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
             Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
-            Self::Recursive(poly) => DirectRootWitnessSource::direct_root_witness(poly),
             Self::Sparse(poly) => DirectRootWitnessSource::direct_root_witness(poly.as_ref()),
         }
     }
@@ -172,7 +158,6 @@ where
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         match self {
             Self::Dense(poly) => DirectRootWitnessSource::base_evals(poly),
-            Self::Recursive(poly) => DirectRootWitnessSource::base_evals(poly),
             Self::Sparse(poly) => DirectRootWitnessSource::base_evals(poly.as_ref()),
         }
     }
@@ -206,10 +191,6 @@ where
                     plan,
                 )
             }
-            RootTensorProjectionPoly::Recursive(_) => Err(AkitaError::InvalidInput(
-                "recursive tensor-projection poly is a fold input and is never committed"
-                    .to_string(),
-            )),
         }
     }
 }
@@ -242,14 +223,6 @@ where
                     plan,
                 )
             }
-            RootTensorProjectionPoly::Recursive(poly) => {
-                OpeningFoldKernel::<SuffixWitnessView<F, D>, F, D>::evaluate_and_fold(
-                    self,
-                    prepared,
-                    poly.opening_view()?,
-                    plan,
-                )
-            }
         }
     }
 
@@ -276,14 +249,6 @@ where
                     plan,
                 )
             }
-            RootTensorProjectionPoly::Recursive(poly) => {
-                OpeningFoldKernel::<SuffixWitnessView<F, D>, F, D>::decompose_fold(
-                    self,
-                    prepared,
-                    poly.opening_view()?,
-                    plan,
-                )
-            }
         }
     }
 }
@@ -299,9 +264,12 @@ where
         prepared: Option<&Self::PreparedSetup<D>>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys.first() else {
-            return Ok(None);
+            return Ok(match plan {
+                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
+                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
+            });
         };
         match *first {
             RootTensorProjectionPoly::Dense(_) => {
@@ -309,7 +277,16 @@ where
                 for poly in source.polys {
                     match *poly {
                         RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
-                        _ => return Ok(None),
+                        _ => {
+                            return Ok(match plan {
+                                DecomposeFoldBatchPlan::Sparse { .. } => {
+                                    BatchDecomposeFoldOutcome::FallbackPerPoly
+                                }
+                                DecomposeFoldBatchPlan::Tensor { .. } => {
+                                    BatchDecomposeFoldOutcome::Unsupported
+                                }
+                            });
+                        }
                     }
                 }
                 let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
@@ -324,7 +301,16 @@ where
                         RootTensorProjectionPoly::Sparse(inner) => {
                             sparse_polys.push(inner.as_ref())
                         }
-                        _ => return Ok(None),
+                        _ => {
+                            return Ok(match plan {
+                                DecomposeFoldBatchPlan::Sparse { .. } => {
+                                    BatchDecomposeFoldOutcome::FallbackPerPoly
+                                }
+                                DecomposeFoldBatchPlan::Tensor { .. } => {
+                                    BatchDecomposeFoldOutcome::Unsupported
+                                }
+                            });
+                        }
                     }
                 }
                 let sparse_view = SparseRingPoly::<F, D>::opening_batch(&sparse_polys)?;
@@ -332,22 +318,6 @@ where
                     self,
                     prepared,
                     sparse_view,
-                    plan,
-                )
-            }
-            RootTensorProjectionPoly::Recursive(_) => {
-                let mut recursive_polys = Vec::with_capacity(source.polys.len());
-                for poly in source.polys {
-                    match poly {
-                        RootTensorProjectionPoly::Recursive(inner) => recursive_polys.push(inner),
-                        _ => return Ok(None),
-                    }
-                }
-                let recursive_view = OwnedSuffixWitness::<F, D>::opening_batch(&recursive_polys)?;
-                OpeningBatchKernel::<SuffixWitnessBatchView<F, D>, F, D>::decompose_fold_batch(
-                    self,
-                    prepared,
-                    recursive_view,
                     plan,
                 )
             }
@@ -388,14 +358,6 @@ where
                     logical_point,
                 )
             }
-            RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::column_partials(
-                    self,
-                    prepared,
-                    poly.tensor_view()?,
-                    logical_point,
-                )
-            }
         }
     }
 
@@ -417,13 +379,6 @@ where
                     self,
                     prepared,
                     poly.as_ref().tensor_view()?,
-                )
-            }
-            RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::packed_witness(
-                    self,
-                    prepared,
-                    poly.tensor_view()?,
                 )
             }
         }
@@ -450,13 +405,6 @@ where
                     self,
                     prepared,
                     poly.as_ref().tensor_view()?,
-                )
-            }
-            RootTensorProjectionPoly::Recursive(poly) => {
-                TensorProjectionKernel::<SuffixWitnessView<F, D>, F, E, D>::root_projection(
-                    self,
-                    prepared,
-                    poly.tensor_view()?,
                 )
             }
         }
@@ -544,15 +492,6 @@ where
 
 /// Pack a logical recursive digit witness into the canonical tensor extension
 /// ring-subfield layout.
-///
-/// For degree-one fields this is the identity. For small fields this stores
-/// the extension-valued tensor table in the same ring-subfield layout used by
-/// folded extension openings.
-///
-/// # Errors
-///
-/// Returns an error if the logical witness length is not compatible with the
-/// full tensor split or if ring-subfield packing fails.
 pub fn tensor_pack_recursive_witness<F, E, const D: usize>(
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<RecursiveWitnessFlat, AkitaError>

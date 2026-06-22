@@ -10,10 +10,11 @@ use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding};
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -200,21 +201,24 @@ where
         _prepared: Option<&Self::PreparedSetup<D>>,
         source: SparseRingBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(None),
+            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            } => SparseRingPoly::decompose_fold_tensor_batched(
+            } => match SparseRingPoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            ),
+            )? {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
+            },
         }
     }
 }

@@ -27,6 +27,17 @@ pub enum TensorPackedWitness<E: FieldCore> {
     Sparse(SparseExtensionOpeningWitness<E>),
 }
 
+/// Outcome of a batched decompose-fold kernel invocation.
+#[derive(Debug)]
+pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
+    /// Fused batched witness produced by the kernel.
+    Fused(DecomposeFoldWitness<F, D>),
+    /// No fused path; caller should decompose-fold each polynomial and aggregate.
+    FallbackPerPoly,
+    /// Batch shape or challenge plan is not supported.
+    Unsupported,
+}
+
 /// Inner Ajtai commit kernel over a borrowed commit source view `S`.
 ///
 /// `S` is the extensibility hook: a downstream crate defines its own commit
@@ -109,16 +120,12 @@ where
     F: FieldCore + CanonicalField,
 {
     /// Fused batched decompose-fold at one opening point.
-    ///
-    /// Returns `Ok(None)` when the backend/source has no fused batched path,
-    /// `Ok(Some(_))` for the fused witness, and `Err(_)` when a batched fold was
-    /// attempted but the input was rejected.
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
         source: S,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>;
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError>;
 }
 
 /// Tensor projection kernel over a borrowed tensor view `S` for opening at an

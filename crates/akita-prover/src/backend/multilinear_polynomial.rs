@@ -17,10 +17,11 @@ use akita_types::{CleartextWitnessProof, FpExtEncoding};
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, CpuPreparedSetup,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -153,6 +154,13 @@ where
         match self {
             Self::Dense(poly) => RootPolyShape::num_vars(poly),
             Self::OneHot(poly) => RootPolyShape::num_vars(poly),
+        }
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(_) => None,
+            Self::OneHot(poly) => RootPolyShape::onehot_chunk_size(poly),
         }
     }
 }
@@ -340,14 +348,24 @@ where
         prepared: Option<&Self::PreparedSetup<D>>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys.first() else {
-            return Ok(None);
+            return Ok(match plan {
+                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
+                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
+            });
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
-                    return Ok(None);
+                    return Ok(match plan {
+                        DecomposeFoldBatchPlan::Sparse { .. } => {
+                            BatchDecomposeFoldOutcome::FallbackPerPoly
+                        }
+                        DecomposeFoldBatchPlan::Tensor { .. } => {
+                            BatchDecomposeFoldOutcome::Unsupported
+                        }
+                    });
                 };
                 let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
@@ -356,7 +374,14 @@ where
             }
             MultilinearPolynomial::OneHot(_) => {
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
-                    return Ok(None);
+                    return Ok(match plan {
+                        DecomposeFoldBatchPlan::Sparse { .. } => {
+                            BatchDecomposeFoldOutcome::FallbackPerPoly
+                        }
+                        DecomposeFoldBatchPlan::Tensor { .. } => {
+                            BatchDecomposeFoldOutcome::Unsupported
+                        }
+                    });
                 };
                 let onehot_view = OneHotPoly::<F, D, I>::opening_batch(&onehot_polys)?;
                 OpeningBatchKernel::<OneHotBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
@@ -585,6 +610,23 @@ mod tests {
     }
 
     #[test]
+    fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
+        const D: usize = 16;
+        let onehot = OneHotPoly::<Prime24Offset3, D>::new(256, vec![Some(1), None]).unwrap();
+        let dense = sample_dense::<D>();
+        assert_eq!(
+            RootPolyShape::onehot_chunk_size(&MultilinearPolynomial::onehot(onehot)),
+            Some(256)
+        );
+        assert_eq!(
+            RootPolyShape::onehot_chunk_size(
+                &MultilinearPolynomial::<Prime24Offset3, D, usize>::dense(dense)
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
         type F = Prime24Offset3;
         type E = FpExt4<F>;
@@ -743,5 +785,40 @@ mod tests {
         >::sparse_linear_combination(&backend, None, batch_view, &coeffs)
         .unwrap();
         assert!(got.is_none());
+    }
+
+    #[test]
+    fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
+        type F = Prime24Offset3;
+        const D: usize = 16;
+
+        let onehot = sample_onehot::<D>();
+        let num_vars = RootPolyShape::num_vars(&onehot);
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+            .collect::<Vec<_>>();
+        let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
+        let wrapped = [
+            MultilinearPolynomial::dense(dense),
+            MultilinearPolynomial::onehot(onehot),
+        ];
+        let wrapped_refs = [&wrapped[0], &wrapped[1]];
+        let batch_view = MultilinearPolynomial::<F, D>::opening_batch(&wrapped_refs).unwrap();
+        let outcome = OpeningBatchKernel::<MultilinearPolynomialBatchView<'_, F, D>, F, D>::decompose_fold_batch(
+            &CpuBackend,
+            None,
+            batch_view,
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &[],
+                block_len: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+        .expect("batch fold outcome");
+        assert!(matches!(
+            outcome,
+            BatchDecomposeFoldOutcome::FallbackPerPoly
+        ));
     }
 }

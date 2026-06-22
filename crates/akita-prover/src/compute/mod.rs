@@ -38,8 +38,9 @@ pub use backend::{
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
 pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel,
+    RingSwitchRelationKernel, RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,

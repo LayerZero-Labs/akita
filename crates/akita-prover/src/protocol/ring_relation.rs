@@ -3,8 +3,8 @@
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
 use crate::compute::{
-    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
-    RootOpeningSource,
+    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+    OpeningFoldKernel, RootOpeningSource,
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
@@ -246,7 +246,7 @@ where
                 )?);
             }
             let batch_view = P::opening_batch(point_polys)?;
-            if let Some(z_point) = OpeningBatchKernel::decompose_fold_batch(
+            match OpeningBatchKernel::decompose_fold_batch(
                 backend,
                 None,
                 batch_view,
@@ -257,26 +257,30 @@ where
                     log_basis: lp.log_basis,
                 },
             )? {
-                Ok(z_point)
-            } else {
-                let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
-                    .iter()
-                    .zip(point_challenges.chunks(*num_blocks_per_claim))
-                    .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
-                        OpeningFoldKernel::decompose_fold(
-                            backend,
-                            None,
-                            poly.opening_view()?,
-                            DecomposeFoldPlan {
-                                challenges: poly_challenges,
-                                block_len: lp.block_len,
-                                num_digits: lp.num_digits_commit,
-                                log_basis: lp.log_basis,
-                            },
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                aggregate_decompose_fold_witnesses(witnesses)
+                BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
+                BatchDecomposeFoldOutcome::FallbackPerPoly => {
+                    let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
+                        .iter()
+                        .zip(point_challenges.chunks(*num_blocks_per_claim))
+                        .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
+                            OpeningFoldKernel::decompose_fold(
+                                backend,
+                                None,
+                                poly.opening_view()?,
+                                DecomposeFoldPlan {
+                                    challenges: poly_challenges,
+                                    block_len: lp.block_len,
+                                    num_digits: lp.num_digits_commit,
+                                    log_basis: lp.log_basis,
+                                },
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    aggregate_decompose_fold_witnesses(witnesses)
+                }
+                BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
+                    "sparse batched fold is unsupported for this polynomial backend".to_string(),
+                )),
             }
         }
         Challenges::Tensor { factored: _ } => {
@@ -301,8 +305,9 @@ where
                     log_basis: lp.log_basis,
                 },
             )? {
-                Some(witness) => Ok(witness),
-                None => Err(AkitaError::InvalidSetup(
+                BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
+                BatchDecomposeFoldOutcome::FallbackPerPoly
+                | BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
                     "polynomial backend has no tensor-shaped fold kernel".to_string(),
                 )),
             }

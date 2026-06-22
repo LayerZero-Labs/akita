@@ -128,6 +128,9 @@ where
     let setup =
         <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let opening_batch =
         OpeningBatch::same_point(num_vars, num_polys).expect("benchmark opening_batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)
@@ -172,8 +175,7 @@ where
                     commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
                         &transformed_polys,
                         setup.expanded.as_ref(),
-                        &CpuBackend,
-                        &prepared,
+                        stack.commit(),
                         &params,
                     )
                     .expect("benchmark transformed commitment");
@@ -190,13 +192,9 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                    &setup,
-                    &polys,
-                    &CpuBackend,
-                    &prepared,
-                )
-                .expect("benchmark scheme commitment");
+                let committed =
+                    <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
+                        .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

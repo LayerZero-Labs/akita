@@ -4,9 +4,9 @@ use super::poly::DensePoly;
 use super::views::{DenseBatchView, DenseView};
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -82,21 +82,24 @@ where
         _prepared: Option<&Self::PreparedSetup<D>>,
         source: DenseBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(None),
+            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            } => DensePoly::decompose_fold_tensor_batched(
+            } => match DensePoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
                 num_digits,
                 log_basis,
-            ),
+            )? {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
+            },
         }
     }
 }

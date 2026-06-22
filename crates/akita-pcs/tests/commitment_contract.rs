@@ -16,11 +16,14 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, ComputeBackendSetup, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RootCommitKernel, RootCommitSource, RootPolyShape, SparseRingCommitRowsPlan,
+    CommitInnerPlan, ComputeBackendSetup, DenseCommitRowsPlan, DigitRowsComputeBackend,
+    OneHotCommitRowsPlan, OperationCtx, RecursiveWitnessCommitRowsPlan, RootCommitKernel,
+    RootCommitSource, RootPolyShape, SparseRingCommitRowsPlan, UniformProverStack,
 };
-use akita_prover::{commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly};
+use akita_prover::{
+    batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
+    DensePoly,
+};
 use akita_types::OpeningBatch;
 
 type Cfg = fp64::D32Full;
@@ -111,44 +114,6 @@ where
     }
 }
 
-impl<F> CommitmentComputeBackend<F> for ContractCommitBackend
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    <F as HasWide>::Wide: ReduceTo<F> + std::ops::Add<Output = <F as HasWide>::Wide>,
-{
-    fn dense_commit_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<RING_D>,
-        plan: DenseCommitRowsPlan<'_, F, RING_D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend.dense_commit_rows(prepared, plan)
-    }
-
-    fn onehot_commit_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<RING_D>,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend.onehot_commit_rows(prepared, plan)
-    }
-
-    fn sparse_ring_commit_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<RING_D>,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend.sparse_ring_commit_rows(prepared, plan)
-    }
-
-    fn recursive_witness_commit_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<RING_D>,
-        plan: RecursiveWitnessCommitRowsPlan<'_, RING_D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend.recursive_witness_commit_rows(prepared, plan)
-    }
-}
-
 impl RootCommitKernel<ContractCommitView<'_>, F, D> for ContractCommitBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -195,25 +160,80 @@ fn custom_commit_source_runs_commit_with_params() {
         .prepare_setup(&setup)
         .expect("prepared");
     let expanded = setup.expanded.as_ref();
+    let contract_ctx =
+        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
 
     let (contract_commitment, contract_hint) = commit_with_params::<F, D, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
-        &ContractCommitBackend,
-        &prepared,
+        &contract_ctx,
         &params,
     )
     .expect("contract commit");
 
     let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
+    let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) = commit_with_params::<F, D, DensePoly<F, D>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
-        &CpuBackend,
-        &cpu_prepared,
+        &cpu_ctx,
         &params,
     )
     .expect("dense oracle commit");
+
+    assert_eq!(contract_commitment.u, dense_commitment.u);
+    assert_eq!(
+        contract_hint.decomposed_inner_rows,
+        dense_hint.decomposed_inner_rows
+    );
+}
+
+#[test]
+fn custom_commit_source_runs_batched_commit_with_params() {
+    const NUM_VARS: usize = 8;
+    let len = 1usize << NUM_VARS;
+    let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
+    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
+    let opening_batch = OpeningBatch::same_point(NUM_VARS, 1).expect("opening batch");
+    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+
+    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F, D>::generate_with_capacity(NUM_VARS, 1, setup_envelope)
+        .expect("setup");
+    let prepared = ContractCommitBackend
+        .prepare_setup(&setup)
+        .expect("prepared");
+    let expanded = setup.expanded.as_ref();
+    let contract_ctx =
+        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
+
+    let contract_groups = [std::slice::from_ref(&contract)];
+    let (contract_commitment, contract_hint) =
+        batched_commit_with_params::<F, D, ContractRootPoly, ContractCommitBackend>(
+            &contract_groups,
+            expanded,
+            &contract_ctx,
+            &params,
+        )
+        .expect("contract batched commit")
+        .into_iter()
+        .next()
+        .expect("one commitment group");
+
+    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
+    let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
+    let dense_groups = [std::slice::from_ref(&dense)];
+    let (dense_commitment, dense_hint) = batched_commit_with_params::<
+        F,
+        D,
+        DensePoly<F, D>,
+        CpuBackend,
+    >(&dense_groups, expanded, &cpu_ctx, &params)
+    .expect("dense batched commit")
+    .into_iter()
+    .next()
+    .expect("one commitment group");
 
     assert_eq!(contract_commitment.u, dense_commitment.u);
     assert_eq!(

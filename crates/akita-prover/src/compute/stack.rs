@@ -160,7 +160,8 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
-    use akita_field::Fp64;
+    use crate::CpuPreparedSetup;
+    use akita_field::{AkitaError, Fp64};
     use akita_types::SetupMatrixEnvelope;
 
     type F = Fp64<4294967197>;
@@ -198,5 +199,80 @@ mod tests {
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("matching expanded metadata should validate");
+    }
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct CommitClusterBackend;
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct RingSwitchClusterBackend;
+
+    impl ComputeBackendSetup<F> for CommitClusterBackend {
+        type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
+
+        fn prepare_expanded<const RING_D: usize>(
+            &self,
+            expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
+        ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
+            CpuBackend.prepare_expanded(expanded)
+        }
+
+        fn prepared_expanded_setup<'a, const RING_D: usize>(
+            &self,
+            prepared: &'a Self::PreparedSetup<RING_D>,
+        ) -> &'a akita_types::AkitaExpandedSetup<F> {
+            CpuBackend.prepared_expanded_setup(prepared)
+        }
+    }
+
+    impl ComputeBackendSetup<F> for RingSwitchClusterBackend {
+        type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
+
+        fn prepare_expanded<const RING_D: usize>(
+            &self,
+            expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
+        ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
+            CpuBackend.prepare_expanded(expanded)
+        }
+
+        fn prepared_expanded_setup<'a, const RING_D: usize>(
+            &self,
+            prepared: &'a Self::PreparedSetup<RING_D>,
+        ) -> &'a akita_types::AkitaExpandedSetup<F> {
+            CpuBackend.prepared_expanded_setup(prepared)
+        }
+    }
+
+    fn assert_distinct_backend_types<C: 'static, R: 'static>() {
+        fn type_id<T: 'static>() -> std::any::TypeId {
+            std::any::TypeId::of::<T>()
+        }
+        assert_ne!(type_id::<C>(), type_id::<R>());
+    }
+
+    #[test]
+    fn heterogeneous_stack_accepts_distinct_operation_clusters() {
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let commit_backend = CommitClusterBackend;
+        let ring_backend = RingSwitchClusterBackend;
+        let stack = ProverComputeStack::new(
+            (&commit_backend, &prepared),
+            (&CpuBackend, &prepared),
+            (&CpuBackend, &prepared),
+            (&ring_backend, &prepared),
+            setup.expanded.as_ref(),
+        )
+        .expect("heterogeneous stack");
+        assert_distinct_backend_types::<CommitClusterBackend, RingSwitchClusterBackend>();
+        assert_eq!(
+            stack.commit().backend() as *const _,
+            &commit_backend as *const _
+        );
+        assert_eq!(
+            stack.ring_switch().backend() as *const _,
+            &ring_backend as *const _
+        );
     }
 }
