@@ -198,13 +198,20 @@ fn image_claim_matches_row_weight_dot_witness_for_flat_layout() {
     let r_j: Vec<F64> = (0..row_bits).map(|i| F64::from_u64(7 + i as u64)).collect();
     let half_q = field_modulus::<F64>() / 2;
     let eq_j = EqPolynomial::evals(&r_j).unwrap();
-    let image_claim = image.coords().iter().zip(eq_j.iter()).fold(F64::zero(), |acc, (&coord, &weight)| {
-        acc + weight * embed_signed_i32::<F64>(coord, half_q).unwrap()
-    });
+    let image_claim = image
+        .coords()
+        .iter()
+        .zip(eq_j.iter())
+        .fold(F64::zero(), |acc, (&coord, &weight)| {
+            acc + weight * embed_signed_i32::<F64>(coord, half_q).unwrap()
+        });
     let g = build_jl_row_weights(&matrix, &r_j).unwrap();
-    let flat_claim = witness.iter().zip(g.iter()).fold(F64::zero(), |acc, (&w, &weight)| {
-        acc + weight * embed_signed_i32::<F64>(w, half_q).unwrap()
-    });
+    let flat_claim = witness
+        .iter()
+        .zip(g.iter())
+        .fold(F64::zero(), |acc, (&w, &weight)| {
+            acc + weight * embed_signed_i32::<F64>(w, half_q).unwrap()
+        });
 
     assert_eq!(image_claim, flat_claim);
 }

@@ -34,7 +34,9 @@ tracing = "0.1"
 
 [dev-dependencies]
 rand = "0.8"
-akita-types = { version = "0.1.0", path = "../akita-types", features = ["jl-test-fixtures"] }
+akita-types = { version = "0.1.0", path = "../akita-types", features = [
+  "jl-test-fixtures",
+] }
 
 [features]
 default = ["schedules-default"]

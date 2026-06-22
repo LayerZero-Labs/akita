@@ -45,8 +45,8 @@ use crate::jl::panel::byte_aligned_panel_cols;
 use crate::jl::panel::{panel_span, parallel_jl_enabled};
 use crate::jl::JlProjectionMatrix;
 use common::{
-    accumulate_row_weight_range, scatter_row_weight_range, validate_eq_tables,
-    validate_mle_points, JlMleLayout,
+    accumulate_row_weight_range, scatter_row_weight_range, validate_eq_tables, validate_mle_points,
+    JlMleLayout,
 };
 use lut::{accumulate_rows_from_byte_lut, build_sign_weight_lut_256};
 
