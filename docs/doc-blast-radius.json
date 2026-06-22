@@ -18,6 +18,7 @@
       "code": [
         "crates/akita-planner/**",
         "crates/akita-config/**",
+        "crates/akita-schedules/**",
         "crates/akita-types/src/schedule*",
         "crates/akita-types/src/**/schedule*",
         "crates/akita-types/src/proof_size.rs",
@@ -91,7 +92,6 @@
         "book/src/how/verification.md",
         "AGENTS.md",
         "docs/verifier-panic-audit.md",
-        "specs/optimized_verifier.md",
         "specs/security-hardening.md"
       ]
     },

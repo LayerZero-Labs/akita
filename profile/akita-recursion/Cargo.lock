@@ -84,6 +84,7 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-planner",
+ "akita-schedules",
  "akita-transcript",
  "akita-types",
  "tracing",
@@ -206,6 +207,13 @@ dependencies = [
  "jolt-sdk-macros",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "akita-schedules"
+version = "0.1.0"
+dependencies = [
+ "akita-planner",
 ]
 
 [[package]]
