@@ -38,7 +38,7 @@ pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN: u128 = 500;
 /// Different families trade off challenge entropy against the
 /// resulting coefficient mass, which in turn affects the folded witness bounds
 /// used by the protocol.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SparseChallengeConfig {
     /// Uniform sparse challenge over the full ring.
     ///

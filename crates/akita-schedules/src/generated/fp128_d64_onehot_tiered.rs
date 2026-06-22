@@ -378,7 +378,7 @@ pub(crate) static FP128_D64_ONEHOT_TIERED_SCHEDULES: &[GeneratedScheduleTableEnt
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 50, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 20, n_a: 9, n_b: 2, n_d: 2, tier_split: Some(8), n_f: Some(1) }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 20, n_a: 10, n_b: 2, n_d: 2, tier_split: Some(8), n_f: Some(1) }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 8, n_b: 1, n_d: 1, tier_split: Some(4), n_f: Some(1) }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: Some(2), n_f: Some(1) }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 12, r_vars: 6, n_a: 4, n_b: 1, n_d: 1, tier_split: Some(2), n_f: Some(1) }),

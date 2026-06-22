@@ -318,6 +318,30 @@ fn effective_op_norm_rejection_max_sparse_samples() -> usize {
         .unwrap_or(OP_NORM_REJECTION_MAX_SPARSE_SAMPLES)
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct OpNormRejectionCacheKey {
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomposition: DecompositionParams,
+    stage1_config: SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    is_root: bool,
+    onehot_chunk_size: usize,
+    ring_subfield_norm_bound: u32,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: u64,
+    max_sparse_samples: usize,
+}
+
+type OpNormRejectionCache =
+    std::collections::HashMap<OpNormRejectionCacheKey, Option<(bool, u128, usize)>>;
+
+thread_local! {
+    static OP_NORM_REJECTION_CACHE: std::cell::RefCell<OpNormRejectionCache> =
+        std::cell::RefCell::new(OpNormRejectionCache::new());
+}
+
 /// Like [`choose_op_norm_rejection_for_a_role`] with an explicit sparse-draw cap
 /// (for planner what-if analysis).
 #[allow(clippy::too_many_arguments)]
@@ -335,11 +359,11 @@ pub fn choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
     inner_width: u64,
     max_sparse_samples: usize,
 ) -> Option<(bool, u128, usize)> {
-    choose_op_norm_rejection_for_a_role_inner(
+    let key = OpNormRejectionCacheKey {
         sis_family,
         d,
         decomposition,
-        stage1_config,
+        stage1_config: stage1_config.clone(),
         fold_shape,
         is_root,
         onehot_chunk_size,
@@ -348,7 +372,29 @@ pub fn choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
         num_claims,
         inner_width,
         max_sparse_samples,
-    )
+    };
+    OP_NORM_REJECTION_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(hit) = cache.get(&key) {
+            return *hit;
+        }
+        let result = choose_op_norm_rejection_for_a_role_inner(
+            sis_family,
+            d,
+            decomposition,
+            stage1_config,
+            fold_shape,
+            is_root,
+            onehot_chunk_size,
+            ring_subfield_norm_bound,
+            r_vars,
+            num_claims,
+            inner_width,
+            max_sparse_samples,
+        );
+        cache.insert(key, result);
+        result
+    })
 }
 
 /// Choose per-level operator-norm rejection for A-role SIS sizing.
