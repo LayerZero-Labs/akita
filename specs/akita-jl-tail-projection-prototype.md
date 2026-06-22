@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao, Cursor agent (model: Claude Opus 4.8) |
 | Created     | 2026-06-15                     |
-| Status      | **prototype landed** on branch `quang/jl-projection-tail` ([PR #191](https://github.com/LayerZero-Labs/akita/pull/191)): PR1 projection, PR1b MLE eval, PR2 consistency sumcheck. Fusion roadmap D1–D8 and security accounting remain open. |
+| Status      | **prototype landed** on branch `quang/jl-projection-tail` ([PR #191](https://github.com/LayerZero-Labs/akita/pull/191)): PR1 projection, PR1b MLE eval, PR2 consistency sumcheck (split across `akita-types::jl`, `akita-prover::protocol::jl`, `akita-verifier::protocol::jl`). Fusion roadmap D1–D8 and security accounting remain open. |
 | PR          | [#191](https://github.com/LayerZero-Labs/akita/pull/191) |
 | Related     | Full cutover protocol design: [`akita-jl-projection-protocol.md`](akita-jl-projection-protocol.md) (Slot 2/3, stage-2 fusion, SIS repricing; not implemented here). |
 
@@ -25,19 +25,21 @@ This prototype does not make that replacement in the recursive flow.
 The prototype is built as standalone, well-tested library code that is not wired into the recursive prove/verify flow.
 The goal is to land reusable JL primitives, exercise the consistency-sumcheck mechanics across representative fields and ring dimensions, and document the fusion roadmap so later protocol-integration work can measure any proof-size or rank impact on the real flow.
 
-### Implementation status (PR #191, 2026-06-18)
+### Implementation status (PR #191, 2026-06-22)
 
 | Slice | Crate / path | Landed |
 |-------|----------------|--------|
 | PR1 — matrix sample, integer projection, norm helpers | `akita-challenges::jl` | yes |
 | PR1 — fast kernels (column-panel `i8`/`i32`, runtime SIMD) | `akita-challenges::jl::kernels` | yes |
 | PR1b — `build_jl_row_weights`, `eval_jl_mle_at` | `akita-challenges::jl::mle` | yes (production MLE path is **LUT-amortized** per 4-column byte window; see **Joint MLE evaluation**) |
-| PR2 — consistency prove/verify harness | `akita-prover::protocol::jl` | yes |
+| PR2 — layout, wire validation, transcript replay, image claim | `akita-types::jl` | yes |
+| PR2 — consistency prove harness | `akita-prover::protocol::jl` | yes |
+| PR2 — consistency verify harness | `akita-verifier::protocol::jl` | yes |
 | Transcript labels | `akita-transcript::labels` (`ABSORB_JL_PROJECTION`, `CHALLENGE_JL_SEED`, `ABSORB_JL_IMAGE`, `CHALLENGE_JL_ROW`) | yes |
 | Benches | `benches/jl_projection.rs`, `benches/jl_mle.rs` | yes |
 | Fusion D1–D8 | — | not started |
 
-Tests (local): 26 in `akita-challenges` (`jl` filter), 7 in `akita-prover` (`jl` filter). Nothing in `prove_batched` / `verify_batched` calls the new modules.
+Tests (local): 26 in `akita-challenges` (`jl` filter), 3 in `akita-types` (`jl`), 4 in `akita-prover` (`jl`), 7 in `akita-verifier` (`jl`). Nothing in `prove_batched` / `verify_batched` calls the new modules.
 
 ## Motivation: why JL projection (and what it does *not* do)
 
@@ -164,7 +166,9 @@ Concretely the prototype introduces:
 
 - `akita-challenges::jl` (new module): the dense projection matrix `JlProjectionMatrix`, deterministic transcript-seeded expansion (`sample`), integer projection (`project`) over centered witness coefficients, signed-coordinate encoding checks, and Euclidean-norm helpers. The projection acts on the flat integer coefficient vector of base-field elements, so the public API takes a flat `&[F]` coefficient slice (`F: FieldCore + CanonicalField`) and the caller flattens any ring layout. Ring structure (`const D`) is irrelevant to the projection and reappears only in the consistency sumcheck (the `akita-prover` module below), so it is not a parameter of this crate; this keeps `akita-challenges` at its field + transcript dependency layer.
 - `akita-challenges::jl::mle` (new submodule, PR1b): optimized joint-matrix MLE evaluation `eval_jl_mle_at` and the prover-side row-weight builder `build_jl_row_weights`. This is the verifier-critical bottleneck and reuses the packed-ternary row format plus Dao–Thaler split-eq contraction (see **Joint MLE evaluation** below). Adds a dependency on `akita-algebra` for `SplitEqEvals` only in this submodule.
-- `akita-prover::protocol::jl` (new module, PR2, not called by the flow): the projection-consistency claim builder that batches JL rows with `eq` weights on the row hypercube, wires `eval_jl_mle_at` / `build_jl_row_weights` into the sumcheck oracle, and runs a prototype degree-2 product sumcheck. Since the standalone module is not connected to a commitment verifier, its verifier side must either take the witness as public test data or take an external trusted `w_tilde(r)` evaluation hook. Full cryptographic binding is deferred to fusion.
+- `akita-types::jl` (new module, PR2): shared consistency shapes — `JlWitnessLayout`, verifier-wire image embedding/norm checks, transcript absorb/sample helpers, and the batched image input claim. Mirrors the `trace_weight` split: layout and wire contracts live in `akita-types`, not in `akita-challenges`.
+- `akita-prover::protocol::jl` (new module, PR2 prove side, not called by the flow): degree-2 product sumcheck prover (`prove_jl_consistency`, `JlConsistencyProver`). Builds padded witness/row-weight tables from `build_jl_row_weights`.
+- `akita-verifier::protocol::jl` (new module, PR2 verify side, not called by the flow): degree-2 product sumcheck verifier (`verify_jl_consistency`, `JlConsistencyVerifier`). Standalone tests use a `w_eval_hook` instead of a commitment opening; full cryptographic binding is deferred to fusion.
 - Cross-field, cross-dimension tests that exercise representative non-degenerate `(field, ring dim)` combinations the workspace ships.
 
 ### Invariants
@@ -200,7 +204,8 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 - [x] Projection-vs-reference test: `project` matches a naive integer reference for random witnesses across fields and dims.
 - [x] fp128 digit test: small balanced digits project correctly over an fp128 base field; a non-digit, full-magnitude fp128 coefficient (centered value past `i64`) is rejected without panic.
 - [x] Signed-coordinate tests: accepted coordinates embed injectively into the base field, and boundary aliases are rejected.
-- [x] `akita-prover::protocol::jl` consistency prove/verify round-trips for honest `(w, p)` across representative non-degenerate `(field, ring dim)` combinations, using public test witness data or an explicit `w_tilde(r)` evaluation hook.
+- [x] `akita-prover::protocol::jl` proves JL consistency for honest `(w, p)` with `w_eval_hook`-free prover tables.
+- [x] `akita-verifier::protocol::jl` verifies JL consistency round-trips for honest `(w, p)` across fp32/fp64/fp128 base fields, using public test witness data or an explicit `w_tilde(r)` evaluation hook.
 - [x] Soundness-direction tests: an image inconsistent with `w` is rejected by the consistency sumcheck for all but a negligible fraction of `r_J`; an over-norm image is rejected by the norm check.
 - [x] Malformed-input tests: wrong matrix shape, wrong image length, wrong point dimension all return `AkitaError`, never panic.
 - [x] All pre-existing workspace tests pass unchanged.
@@ -212,7 +217,9 @@ New tests live alongside the new modules.
 
 - `akita-challenges`: unit tests for `sample` determinism, packed-matrix round-trip (`00 -> -1`, `01/10 -> 0`, `11 -> +1`), `project` correctness vs reference, signed-coordinate injectivity, checked integer norm computation, fp128 small-digit projection, and oversized non-digit rejection. Port the analogous implementation tests from `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`, but do not inherit its fixed row count or its dual `i64`/`i128` width split.
 - `akita-challenges::jl::mle`: differential tests of `eval_jl_mle_at` and `build_jl_row_weights` against a naive `Θ(n_rows · cols)` reference; identity `eval_jl_mle_at(J,r_J,r_w) == eval_mle_from_weights(build_jl_row_weights(J,r_J), r_w)`; SIMD vs scalar kernel parity; malformed shape errors return `AkitaError`.
-- `akita-prover`: a `protocol::jl` test module that builds a random witness, samples `J` and the row batching point `r_J`, computes `p`, and round-trips the consistency sumcheck through the real `akita-sumcheck` driver and the transcript. Since this is standalone, the test verifier supplies the witness evaluations directly or through an explicit final-evaluation hook. The sweep covers representative non-degenerate `(field, ring dim)` pairs: fp32, fp64, fp128 base fields and the supported `D` values used by shipped configs. Include the soundness-direction and malformed-input tests.
+- `akita-types::jl`: layout pinning (`JlWitnessLayout`), wire validation (`embed_jl_image_coords`), layout/MLE geometry checks (`validate_layout_for_matrix_mle`).
+- `akita-prover`: prove-side rejection tests (image norm bound, malformed layout).
+- `akita-verifier`: round-trip, tampered-image, and malformed-layout tests across fp32/fp64/fp128 base fields; row-weight vs direct-projection identity check.
 
 Feature combinations: tests pass with and without `parallel` if both feature sets compile in the touched crates. ZK is out of scope (the reveal leaks), so any reveal-path test that assumes public image data is gated to non-`zk` builds or clearly marked as a non-ZK mechanics test.
 
@@ -259,16 +266,27 @@ Depends on `akita-algebra` for `SplitEqEvals`. Shares packed-row decode (`SIGNS_
 
 The matrix sampling and projection geometry (`n_rows`, seed domain) are intended to be bound into the instance descriptor when fusion lands; the prototype binds them through the transcript context buffer only and records descriptor binding as a fusion task.
 
-**`akita-prover::protocol::jl` (consistency claim, prototype prove/verify).**
-`akita-prover` depends on `akita-challenges`, `akita-sumcheck`, `akita-witness`, `akita-transcript`, and `akita-algebra`, so it is the natural home for the consistency sumcheck and the place fusion will happen. The module is not referenced by `flow.rs` or any prove/verify entry point.
+**`akita-types::jl` (consistency layout and verifier-wire shapes, PR2).**
+Depends on `akita-algebra` (eq tables for the image claim) and `akita-transcript` (absorb/sample labels). Mirrors `trace_weight`: shared contracts consumed by both prover and verifier.
+
+- `JlWitnessLayout`: flat witness hypercube `w[x * 2^ring_bits + y]` with power-of-two padding.
+- `embed_jl_image_coords`, `jl_image_claim`, `absorb_jl_image`, `sample_jl_row_point`, `padded_live_table`, `validate_layout_for_matrix_mle`.
+
+**`akita-prover::protocol::jl` (consistency prove, PR2).**
+Depends on `akita-challenges`, `akita-sumcheck`, `akita-types::jl`, and `akita-transcript`. Not referenced by `flow.rs` or any prove entry point.
+
+- `prove_jl_consistency`, `JlConsistencyProver`: degree-2 product sumcheck prover over padded witness and row-weight tables.
+
+**`akita-verifier::protocol::jl` (consistency verify, PR2).**
+Depends on `akita-challenges`, `akita-sumcheck`, `akita-types::jl`, and `akita-transcript`. Exported as `verify_jl_consistency` from `akita-verifier`. Not referenced by `verify_batched`.
+
+- `verify_jl_consistency`, `JlConsistencyVerifier`: replays transcript absorb/sample, checks the image claim, and verifies the sumcheck with `eval_jl_mle_at` at the final point.
 
 See **Projection-consistency sumcheck** below for the default relation, batching, and verifier evaluation model.
 
-- `build_jl_row_weights(matrix, r_J) -> Vec<L>` (PR1b, in `akita-challenges::jl::mle`): same as the former `batch_jl_rows`; for each witness coefficient index `i`, compute `g[i] = sum_j eq(r_J, j) J[j, i]`. Column-panel / split-eq implementation; reference name kept in prose as "row weights".
+- `build_jl_row_weights(matrix, r_J) -> Vec<L>` (PR1b, in `akita-challenges::jl::mle`): for each witness coefficient index `i`, compute `g[i] = sum_j eq(r_J, j) J[j, i]`.
 - `eval_jl_mle_at(matrix, r_J, r_w) -> L` (PR1b): fused verifier path; equals `sum_{j,i} eq(r_J,j) eq(r_w,i) J[j,i]` without materializing the full `g` table.
-- `build_jl_weight_table(layout, g) -> JlWeightTable`: map `g[i]` to `JlWeight(x, y)` on the same `(x, y)` hypercube as stage-2 witness table `w` (flattening convention must match `center_coefficients` / `build_w_coeffs`).
-- `JlConsistencyInstance`: degree-2 product sumcheck via `akita-sumcheck` (`oracle = w_tilde * g_tilde`, `input_claim = sum_j eq(r_J, j) embed(p[j])`).
-- `prove_jl_consistency` / `verify_jl_consistency`: absorb the image, sample `r_J` from the transcript after the witness is bound (wire-before-squeeze), check coordinate injectivity and the integer norm bound, build `g` / `JlWeight`, then run the sumcheck. The verifier obtains `w_tilde(r_w)` from the sumcheck output (standalone tests may supply a witness hook).
+- `prove_jl_consistency` / `verify_jl_consistency`: absorb the image, sample `r_J` from the transcript after the witness is bound (wire-before-squeeze), check coordinate injectivity and the integer norm bound, then run the sumcheck. The verifier obtains `w_tilde(r_w)` from the sumcheck output (standalone tests supply a witness hook).
 
 **Why the consistency is in fused-row form now.**
 The current stage-2 fused sumcheck batches subclaims by powers of `gamma`: `gamma^0 * relation + gamma^1 * range + gamma^2 * trace`, all sharing one witness scan over `w(x, y)`.
@@ -278,7 +296,7 @@ The exact `gamma` power `k`, the `w(x, y)` column layout, and the final-point ev
 
 ### Projection-consistency sumcheck
 
-This subsection is the canonical design for PR2 (`akita-prover::protocol::jl`) and for stage-2 fusion (D2).
+This subsection is the canonical design for PR2 (`akita-types::jl`, `akita-prover::protocol::jl`, `akita-verifier::protocol::jl`) and for stage-2 fusion (D2).
 
 #### Objects and indexing
 
@@ -716,7 +734,7 @@ D6 and D4 (security: size `n_rows` for the single projection, settle the `T_p ->
 ## Documentation
 
 - This spec is the primary design record for the prototype and the fusion roadmap.
-- Crate-level module docs (`//!`) landed on `akita-challenges::jl`, `akita-challenges::jl::mle`, `akita-prover::protocol::jl`, and the kernel/MLE submodules.
+- Crate-level module docs (`//!`) landed on `akita-challenges::jl`, `akita-challenges::jl::mle`, `akita-types::jl`, `akita-prover::protocol::jl`, `akita-verifier::protocol::jl`, and the kernel/MLE submodules.
 - No public book or security-doc changes until fusion (the prototype changes no shipped behavior). When fusion lands, the security-model and norm-bounds pages need the JL paradigm-schedule and the weak-binding realized-norm pricing (operator factor retained).
 
 ## Execution
@@ -726,14 +744,13 @@ Prototype phases (all complete on PR #191):
 1. [x] `akita-challenges::jl`: packed-ternary matrix, transcript-seeded expansion, `project`, norm helpers, signed-coordinate embedding.
 2. [x] Signed-coordinate encoding and checked norm helpers (before consistency work).
 3. [x] `akita-challenges::jl::mle` (PR1b): `eval_jl_mle_at` + `build_jl_row_weights`; LUT production path; differential tests; `benches/jl_mle.rs`.
-4. [x] `akita-prover::protocol::jl` (PR2): degree-2 product sumcheck via `akita-sumcheck`; `JlWitnessLayout` pins flat order `w[x * 2^ring_bits + y]`; prove/verify with `w_eval_hook`; round-trip, tampered-image, norm-bound, and layout tests.
-5. [x] Lint and targeted test sweep (`cargo test -p akita-challenges -- jl`, `cargo test -p akita-prover -- jl`).
+4. [x] `akita-types::jl` + `akita-prover::protocol::jl` + `akita-verifier::protocol::jl` (PR2): degree-2 product sumcheck via `akita-sumcheck`; `JlWitnessLayout` pins flat order `w[x * 2^ring_bits + y]`; prove on prover, verify on verifier with `w_eval_hook`; round-trip, tampered-image, norm-bound, and layout tests.
+5. [x] Lint and targeted test sweep (`cargo test -p akita-challenges -- jl`, `cargo test -p akita-types -- jl`, `cargo test -p akita-prover -- jl`, `cargo test -p akita-verifier -- jl`).
 
 Open before fusion (D2):
 
 - Confirm `JlWitnessLayout::flat_index` matches stage-2 `w(x, y)` / `build_w_coeffs` on real prover layouts (prototype tests use synthetic small layouts only).
 - Confirm gamma power and fused stage-2 oracle wiring against `akita_stage2` when cutting over.
-- Cross-field sweep in PR2 tests is fp64-only today; extend if fusion needs fp32/fp128 extension-field consistency paths.
 
 ## References
 
