@@ -179,7 +179,9 @@ The feature introduces or modifies:
   `op_norm_rejection` enabled.
 - [x] Per-level `LevelParams.op_norm_rejection` is enabled only when Γ collision pricing
   strictly lowers audited A-rank **and** `fold_level_witness_scoring_cost` is strictly
-  cheaper with rejection on; otherwise ω pricing and no rejection oracle.
+  cheaper with rejection on **and** the fold draw samples at most `2^12` sparse challenges
+  (flat `2^{r_vars} · num_claims`, or tensor `num_claims · (left_len + right_len)`);
+  otherwise ω pricing and no rejection oracle.
 - [x] `fp128_d64_*` shipped schedule tables regenerated under smart per-level rejection;
   `generated_schedule_tables_match_find_schedule` and catalog-digest tests pass.
 - [x] Prover `fold_grind` and verifier stage-1 replay pass `op_norm_rejection` into

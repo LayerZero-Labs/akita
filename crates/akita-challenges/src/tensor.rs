@@ -742,6 +742,28 @@ pub fn tensor_split(num_blocks: usize) -> Result<(usize, usize), AkitaError> {
     Ok((1usize << left_bits, 1usize << right_bits))
 }
 
+/// Total sparse challenges drawn in one fold round.
+///
+/// Flat: `num_blocks · num_claims` with `num_blocks = 2^{r_vars}`.
+/// Tensor: `num_claims · (left_len + right_len)` after [`tensor_split`].
+#[inline]
+pub fn fold_sparse_challenge_sample_count(
+    shape: ChallengeShape,
+    r_vars: usize,
+    num_claims: usize,
+) -> Option<usize> {
+    let num_blocks = 1usize.checked_shl(r_vars as u32)?;
+    match shape {
+        ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
+        ChallengeShape::Tensor => {
+            let (left_len, right_len) = tensor_split(num_blocks).ok()?;
+            left_len
+                .checked_add(right_len)?
+                .checked_mul(num_claims)
+        }
+    }
+}
+
 /// Compute the canonical digest absorbed between tensor-left and tensor-right
 /// challenge sampling.
 ///

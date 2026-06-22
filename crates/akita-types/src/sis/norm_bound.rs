@@ -6,6 +6,7 @@
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::fold_sparse_challenge_sample_count;
 use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
@@ -304,13 +305,61 @@ pub fn fold_level_witness_scoring_cost(
     Some(opening_cost.saturating_add(folding_cost))
 }
 
+/// Maximum sparse challenges in one fold draw for which the planner may enable
+/// operator-norm rejection (verifier replays the certified predicate per slot).
+pub const OP_NORM_REJECTION_MAX_SPARSE_SAMPLES: usize = 1 << 12;
+
+/// Override via `AKITA_OP_NORM_MAX_SPARSE_SAMPLES` for planner what-if runs.
+#[inline]
+fn effective_op_norm_rejection_max_sparse_samples() -> usize {
+    std::env::var("AKITA_OP_NORM_MAX_SPARSE_SAMPLES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(OP_NORM_REJECTION_MAX_SPARSE_SAMPLES)
+}
+
+/// Like [`choose_op_norm_rejection_for_a_role`] with an explicit sparse-draw cap
+/// (for planner what-if analysis).
+#[allow(clippy::too_many_arguments)]
+pub fn choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomposition: DecompositionParams,
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    is_root: bool,
+    onehot_chunk_size: usize,
+    ring_subfield_norm_bound: u32,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: u64,
+    max_sparse_samples: usize,
+) -> Option<(bool, u128, usize)> {
+    choose_op_norm_rejection_for_a_role_inner(
+        sis_family,
+        d,
+        decomposition,
+        stage1_config,
+        fold_shape,
+        is_root,
+        onehot_chunk_size,
+        ring_subfield_norm_bound,
+        r_vars,
+        num_claims,
+        inner_width,
+        max_sparse_samples,
+    )
+}
+
 /// Choose per-level operator-norm rejection for A-role SIS sizing.
 ///
 /// Rejection is enabled only when pricing with the operator-norm cap `Γ` yields
 /// a strictly smaller audited [`crate::sis::min_secure_rank`] than L1-mass `ω` pricing at
 /// the same inner width **and** [`fold_level_witness_scoring_cost`] is strictly
-/// lower with rejection on at that geometry. When both ranks match, rejection is
-/// off (no proof-size benefit; avoids wasteful rejection sampling).
+/// lower with rejection on at that geometry **and** the fold draw samples at most
+/// [`OP_NORM_REJECTION_MAX_SPARSE_SAMPLES`] sparse challenges (flat
+/// `2^{r_vars} · num_claims`, or the tensor left+right total). When both ranks
+/// match, rejection is off (no proof-size benefit; avoids wasteful rejection sampling).
 ///
 /// Production binding presets exist only at D=64 today (`ExactShell` with
 /// `T < ||c||_1`). D=32 (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep
@@ -334,6 +383,37 @@ pub fn choose_op_norm_rejection_for_a_role(
     num_claims: usize,
     inner_width: u64,
 ) -> Option<(bool, u128, usize)> {
+    choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+        sis_family,
+        d,
+        decomposition,
+        stage1_config,
+        fold_shape,
+        is_root,
+        onehot_chunk_size,
+        ring_subfield_norm_bound,
+        r_vars,
+        num_claims,
+        inner_width,
+        effective_op_norm_rejection_max_sparse_samples(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choose_op_norm_rejection_for_a_role_inner(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomposition: DecompositionParams,
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    is_root: bool,
+    onehot_chunk_size: usize,
+    ring_subfield_norm_bound: u32,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: u64,
+    max_sparse_samples: usize,
+) -> Option<(bool, u128, usize)> {
     let omega = fold_shape.effective_l1_mass(stage1_config) as u128;
     let gamma = fold_shape.effective_operator_norm_cap(stage1_config) as u128;
     if omega == 0 {
@@ -351,7 +431,10 @@ pub fn choose_op_norm_rejection_for_a_role(
     let bucket_l1 = collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf_l1)?;
     let rank_l1 = super::ajtai_key::min_secure_rank(sis_family, d as u32, bucket_l1, inner_width)?;
 
-    if gamma == omega {
+    let sample_count = fold_sparse_challenge_sample_count(fold_shape, r_vars, num_claims);
+    let rejection_allowed = sample_count.is_some_and(|n| n <= max_sparse_samples);
+
+    if gamma == omega || !rejection_allowed {
         return Some((false, bucket_l1, rank_l1));
     }
 
@@ -1042,8 +1125,16 @@ mod tests {
                     assert_eq!(bucket, bucket_l1);
                     assert_eq!(rank, rank_l1);
                     if rank_gamma < rank_l1 {
-                        saw_rank_win_declined_by_witness_cost = true;
-                        assert!(witness_cost_gamma >= witness_cost_l1);
+                        let draw_within_cap = fold_sparse_challenge_sample_count(
+                            TensorChallengeShape::Flat,
+                            r_vars,
+                            1,
+                        )
+                        .is_some_and(|n| n <= OP_NORM_REJECTION_MAX_SPARSE_SAMPLES);
+                        if draw_within_cap {
+                            saw_rank_win_declined_by_witness_cost = true;
+                            assert!(witness_cost_gamma >= witness_cost_l1);
+                        }
                     } else {
                         assert!(rank_gamma >= rank_l1);
                     }
@@ -1077,6 +1168,103 @@ mod tests {
         assert!(
             !reject_loose,
             "non-binding T=54 should not enable rejection when ranks tie"
+        );
+    }
+
+    #[test]
+    fn choose_op_norm_rejection_disabled_when_sparse_draw_exceeds_cap() {
+        use akita_challenges::{
+            fold_sparse_challenge_sample_count, D64_PRODUCTION_EXACT_SHELL_MAG1,
+            D64_PRODUCTION_EXACT_SHELL_MAG2, D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        use crate::DecompositionParams;
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let decomp = DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 1,
+            log_open_bound: Some(128),
+        };
+        let inner_width = 50_000_000u64;
+        let (reject_within_cap, _, _) = choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+            SisModulusFamily::Q128,
+            64,
+            decomp,
+            &shell,
+            TensorChallengeShape::Flat,
+            true,
+            256,
+            1,
+            10,
+            1,
+            inner_width,
+            OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
+        )
+        .expect("within-cap draw should size");
+        let (reject_over_cap, _, _) = choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+            SisModulusFamily::Q128,
+            64,
+            decomp,
+            &shell,
+            TensorChallengeShape::Flat,
+            true,
+            256,
+            1,
+            13,
+            1,
+            inner_width,
+            OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
+        )
+        .expect("over-cap draw should size");
+        assert_eq!(
+            fold_sparse_challenge_sample_count(TensorChallengeShape::Flat, 12, 1),
+            Some(1 << 12)
+        );
+        assert_eq!(
+            fold_sparse_challenge_sample_count(TensorChallengeShape::Flat, 13, 1),
+            Some(1 << 13)
+        );
+        assert!(
+            fold_sparse_challenge_sample_count(TensorChallengeShape::Flat, 12, 1)
+                .is_some_and(|n| n <= OP_NORM_REJECTION_MAX_SPARSE_SAMPLES)
+        );
+        assert!(
+            reject_within_cap,
+            "2^10 draws are within the 2^12 cap and should still explore rejection"
+        );
+        assert!(
+            !reject_over_cap,
+            "above 2^12 flat draws must not enable rejection"
+        );
+
+        let (left_len, right_len) = akita_challenges::tensor_split(1 << 12).unwrap();
+        assert_eq!(
+            fold_sparse_challenge_sample_count(TensorChallengeShape::Tensor, 12, 1),
+            Some(left_len + right_len)
+        );
+        let tensor_inner = 5_000_000u64;
+        let (reject_tensor, _, _) = choose_op_norm_rejection_for_a_role_with_max_sparse_samples(
+            SisModulusFamily::Q128,
+            64,
+            decomp,
+            &shell,
+            TensorChallengeShape::Tensor,
+            true,
+            256,
+            1,
+            12,
+            1,
+            tensor_inner,
+            OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
+        )
+        .expect("tensor draw within cap should size");
+        assert!(
+            reject_tensor,
+            "tensor totals use left+right factor draws, not num_blocks"
         );
     }
 

@@ -41,8 +41,9 @@ pub use sampler::{
     sample_sparse_challenges, sparse_challenge_absorb_buf, sparse_challenges_from_seed,
 };
 pub use tensor::{
-    stage1_fold_challenge_labels, tensor_left_digest, tensor_split, ChallengeLabels,
-    ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges, TensorChallenges,
+    fold_sparse_challenge_sample_count, stage1_fold_challenge_labels, tensor_left_digest,
+    tensor_split, ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape,
+    Challenges, TensorChallenges,
 };
 
 /// Bench-only surface for criterion `op_norm_rejection` (not a stable API).
@@ -58,9 +59,7 @@ pub mod op_norm_bench {
     impl Table {
         /// Production table parameters: `D=64`, `q=48`, `max_l1=2D`, `max_t=64`.
         pub fn d64_q48() -> Self {
-            Self(
-                OpNormTable::new(64, 48, 128, 64).expect("D64 op-norm table"),
-            )
+            Self(OpNormTable::new(64, 48, 128, 64).expect("D64 op-norm table"))
         }
 
         pub fn decide_production(

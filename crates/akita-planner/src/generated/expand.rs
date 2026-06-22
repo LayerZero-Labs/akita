@@ -119,7 +119,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (op_norm_rejection, a_bucket) = choose_op_norm_rejection_for_a_role(
+        let (op_norm_rejection, a_bucket, expected_n_a) = choose_op_norm_rejection_for_a_role(
             sis_family,
             ring_d,
             decomp,
@@ -132,8 +132,13 @@ impl GeneratedFoldStep {
             num_claims,
             inner_width as u64,
         )
-        .map(|(rej, bucket, _n_a)| (rej, bucket))
         .ok_or_else(|| no_layout("A"))?;
+        if self.n_a as usize != expected_n_a {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
+                self.n_a
+            )));
+        }
 
         let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
