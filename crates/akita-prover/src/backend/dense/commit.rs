@@ -4,6 +4,8 @@ use super::poly::DensePoly;
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_commit_rows_i8_into;
 use akita_algebra::CyclotomicRing;
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 
