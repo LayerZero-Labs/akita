@@ -109,11 +109,17 @@ pub fn padded_live_table<F: FieldCore>(
     Ok(table)
 }
 
-/// Validate that `layout` matches the matrix MLE hypercube geometry.
+/// Validate that `layout` matches the matrix column count and MLE hypercube geometry.
 pub fn validate_layout_for_matrix_mle(
     matrix_cols: usize,
     layout: JlWitnessLayout,
 ) -> Result<(), AkitaError> {
+    if layout.live_len() != matrix_cols {
+        return Err(AkitaError::InvalidSize {
+            expected: matrix_cols,
+            actual: layout.live_len(),
+        });
+    }
     let matrix_hyper = matrix_cols.next_power_of_two();
     if layout.padded_len() != matrix_hyper {
         return Err(AkitaError::InvalidInput(format!(
@@ -156,5 +162,11 @@ mod tests {
     fn rejects_nonminimal_layout_for_matrix_mle() {
         let layout = JlWitnessLayout::new(8, 2, 2, 2).unwrap();
         assert!(validate_layout_for_matrix_mle(8, layout).is_err());
+    }
+
+    #[test]
+    fn rejects_layout_whose_live_len_differs_from_matrix_cols() {
+        let layout = JlWitnessLayout::new(12, 3, 2, 2).unwrap();
+        assert!(validate_layout_for_matrix_mle(10, layout).is_err());
     }
 }
