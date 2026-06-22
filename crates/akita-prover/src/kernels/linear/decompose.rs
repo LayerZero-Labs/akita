@@ -161,31 +161,80 @@ pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usi
 ) {
     decompose_rows_i8_into(rows, out, num_digits, log_basis);
     #[cfg(debug_assertions)]
-    debug_assert_decomposed_rows_i8_match(rows, out, num_digits, log_basis);
-}
-
-/// Debug-only round-trip check that digit planes recompose to the source rows.
-#[cfg(debug_assertions)]
-fn debug_assert_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
-    rows: &[CyclotomicRing<F, D>],
-    out: &[[i8; D]],
-    num_digits: usize,
-    log_basis: u32,
-) {
-    debug_assert_eq!(out.len(), rows.len() * num_digits);
-    for (row_idx, row) in rows.iter().enumerate() {
-        let row_digits = &out[row_idx * num_digits..(row_idx + 1) * num_digits];
-        if row.is_zero() {
-            debug_assert!(
-                row_digits.iter().all(|plane| plane.iter().all(|&d| d == 0)),
-                "zero row {row_idx} must decompose to zero digits"
-            );
-        } else {
-            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
-            debug_assert_eq!(
-                row, &recomposed,
-                "row {row_idx} must round-trip through i8 digit decomposition"
-            );
+    {
+        if let Err(err) = check_rows_i8_digit_planes(rows, out, num_digits, log_basis) {
+            debug_assert!(false, "{err}");
         }
     }
+}
+
+fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    digits: &[[i8; D]],
+    num_digits: usize,
+    log_basis: u32,
+) -> Result<(), AkitaError> {
+    if digits.len() != rows.len() * num_digits {
+        return Err(AkitaError::InvalidSetup(format!(
+            "expected {} digit planes for {} rows with {num_digits} digits each, got {}",
+            rows.len() * num_digits,
+            rows.len(),
+            digits.len()
+        )));
+    }
+    for (row_idx, row) in rows.iter().enumerate() {
+        let row_digits = &digits[row_idx * num_digits..(row_idx + 1) * num_digits];
+        if row.is_zero() {
+            if row_digits.iter().any(|plane| plane.iter().any(|&d| d != 0)) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "nonzero decomposed digits for zero inner commitment row {row_idx}"
+                )));
+            }
+        } else {
+            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
+            if *row != recomposed {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recomposed row {row_idx} does not match decomposed digits"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Test helper for inner-commitment digit round-trip checks.
+#[cfg(test)]
+pub fn check_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
+    inner: &crate::CommitInnerWitness<F, D>,
+    n_a: usize,
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<(), AkitaError> {
+    use crate::api::commitment::commit_inner_block_digit_count;
+
+    let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
+    for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
+        let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+        if block_digits.len() != expected_block_digits {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {actual} decomposed digits for inner commitment block {block_idx}, expected {expected_block_digits}",
+                actual = block_digits.len(),
+                block_idx = block_idx,
+                expected_block_digits = expected_block_digits
+            )));
+        }
+        if recomposed_block.len() != n_a {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {actual} rows for inner commitment block {block_idx}, expected {n_a} A rows",
+                actual = recomposed_block.len(),
+                block_idx = block_idx,
+                n_a = n_a
+            )));
+        }
+        check_rows_i8_digit_planes(recomposed_block, block_digits, num_digits_open, log_basis)
+            .map_err(|err| {
+                AkitaError::InvalidSetup(format!("inner commitment block {block_idx}: {err}"))
+            })?;
+    }
+    Ok(())
 }
