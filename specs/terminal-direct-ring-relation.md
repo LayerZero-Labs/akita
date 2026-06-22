@@ -327,6 +327,9 @@ The mode must also be reflected in proof shape because the terminal stage-2 byte
 - **Transparent-only first slice.** Under `feature = "zk"`, selecting direct terminal mode rejects with `InvalidSetup`.
   A masked direct relation design is a separate protocol.
 
+- **Single-tier terminal only.** Segment-typed terminal witnesses require `tier_split == 1` and forbid hidden `û_concat` digit planes.
+  Configs with `tier_split > 1` must reject before terminal witness construction in both sumcheck and direct modes.
+
 ## Design
 
 ### Type And Descriptor Changes
@@ -490,7 +493,7 @@ In `RingSwitchSumcheck` mode:
 In `DirectRingRelations` mode:
 
 1. do not call `compute_relation_quotient`,
-2. build `SegmentTyped(z, e, t)` with zero `r_field_elems` (tiered layouts still emit the hidden `û_concat` digit planes from `build_w_coeffs`; witness sizing follows `w_ring_element_count_with_counts_for_layout_bits`, which adds `u_concat_count` when `tier_split > 1`),
+2. build `SegmentTyped(z, e, t)` with zero `r_field_elems`,
 3. absorb the same terminal `e` bytes and remainder bytes,
 4. do not call `ring_switch_finalize` (there is no `ring_switch_finalize_terminal`; the terminal sumcheck path calls `ring_switch_finalize` with `MRowLayout::WithoutDBlock`, `crates/akita-prover/src/protocol/ring_switch/finalize.rs:19`),
 5. do not sample terminal `alpha` or terminal `tau1`,
@@ -505,7 +508,12 @@ The direct-mode builder should still compute the data needed by direct row verif
 - the commitment-row relation target `y` (consistency / commitment / inner-B / A rows; public-output rows of `y` stay zero per #154),
 - row coefficients and row rings already bound by the relation instance.
 
-The prover does not send `y` (removed in #154) and does not send an opening evaluation; the verifier recomputes the relation target and evaluates the revealed witness at the opening point itself.
+The prover does not send `y` (removed in #154) and does not send an opening evaluation; the verifier recomputes the relation target and enforces the #154 trace-opening identity itself.
+
+Segment-typed terminal witnesses (sumcheck and direct) require `tier_split == 1`.
+`prove_fold` already rejects terminal artifacts with nonzero `u_concat_planes` (`crates/akita-prover/src/protocol/core/fold.rs:793-797`).
+Tiered terminal layouts (`tier_split > 1`, hidden `û_concat` from `build_w_coeffs`) are out of scope for this S1 spec and must reject before witness construction, matching the current segment-typed guard.
+The later S2 terminal `t`-state cutover (`specs/tail-wire-encoding.md`) is the planned path for tiered terminal tails.
 
 Do not reconstruct `r` and then drop it.
 The point of the mode is to remove quotient work as well as quotient bytes.
@@ -639,6 +647,7 @@ A future ZK direct mode needs a separate masked direct-row relation argument.
 - [ ] `TerminalLevelProofShape` and `TerminalLevelProof` use an explicit terminal relation proof enum.
 - [ ] Direct terminal proof bytes contain no terminal stage-2 sumcheck.
 - [ ] Direct terminal `SegmentTyped` shape has `r_field_elems = 0`.
+- [ ] Segment-typed terminal witnesses reject `tier_split > 1` / nonzero `u_concat_planes` before encoding.
 - [ ] Direct terminal prover does not call `compute_relation_quotient`.
 - [ ] Direct terminal prover does not call terminal ring-switch finalization.
 - [ ] Direct terminal transcript contains no terminal `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, or terminal sumcheck round challenge.
