@@ -19,6 +19,7 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use super::montgomery::forward_dif_tail_i32_avx2;
 use super::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,
     reduce_range_16x_i32_avx512, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
@@ -48,7 +49,7 @@ unsafe fn forward_dif_stages<const D: usize>(
     let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
 
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 4 {
         let base = len - 1;
         let mut start = 0usize;
         while start < D {
@@ -87,7 +88,7 @@ unsafe fn forward_dif_stages<const D: usize>(
                         mont_mul_8x_i32_avx2(_mm256_sub_epi32(u, v), w, p256, pinv256),
                     );
                 }
-            } else if len == 4 {
+            } else {
                 // SAFETY: one 4-lane butterfly covers the whole run; SSE proven.
                 unsafe {
                     let u = _mm_loadu_si128(a_ptr.add(start) as *const __m128i);
@@ -102,7 +103,20 @@ unsafe fn forward_dif_stages<const D: usize>(
                         mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p128, pinv128),
                     );
                 }
-            } else {
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+
+    if D.is_multiple_of(16) {
+        // SAFETY: AVX2 proven by this function's safety contract.
+        unsafe { forward_dif_tail_i32_avx2::<D>(a_ptr, tw_ptr, p128, pinv128) };
+    } else {
+        while len > 0 {
+            let base = len - 1;
+            let mut start = 0usize;
+            while start < D {
                 for j in 0..len {
                     let w = tw.fwd_twiddles[base + j];
                     let u = a[start + j];
@@ -112,10 +126,10 @@ unsafe fn forward_dif_stages<const D: usize>(
                     a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                     a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
+                start += 2 * len;
             }
-            start += 2 * len;
+            len /= 2;
         }
-        len /= 2;
     }
 }
 
@@ -325,7 +339,9 @@ pub(super) unsafe fn forward_ntt_i32<const D: usize>(
     unsafe {
         mont_mul_table(a, prime, &tw.psi_pows);
         forward_dif_stages(a, prime, tw);
-        reduce_range_all(a, prime);
+        if !D.is_multiple_of(16) {
+            reduce_range_all(a, prime);
+        }
     }
 }
 
@@ -361,7 +377,9 @@ pub(super) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     // SAFETY: feature contract forwarded to each helper.
     unsafe {
         forward_dif_stages(a, prime, tw);
-        reduce_range_all(a, prime);
+        if !D.is_multiple_of(16) {
+            reduce_range_all(a, prime);
+        }
     }
 }
 

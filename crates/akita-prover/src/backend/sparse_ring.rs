@@ -18,7 +18,7 @@ use crate::compute::{
     CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource, FlatBlockTable,
     SparseRingCommitRowsPlan,
 };
-use crate::kernels::linear::decompose_rows_i8_into;
+use crate::kernels::linear::decompose_commit_rows_i8_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
@@ -823,7 +823,9 @@ where
         .zip(cfg_iter!(rows))
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
+            } else {
+                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
         });
     #[cfg(not(feature = "parallel"))]
@@ -832,7 +834,9 @@ where
         .zip(rows.iter())
         .for_each(|(dst, row)| {
             if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(row, dst, num_digits_open, log_basis);
+                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
+            } else {
+                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
         });
     Ok(out)

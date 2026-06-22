@@ -843,13 +843,17 @@ where
             .zip(cfg_iter!(t))
             .for_each(|(dst, t_i)| {
                 if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+                    decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+                } else {
+                    debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
                 }
             });
         #[cfg(not(feature = "parallel"))]
         dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
             if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+                decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
+            } else {
+                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
             }
         });
 

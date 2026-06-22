@@ -7,7 +7,10 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::{tensor_opening_split, TensorColumnSource};
+use std::mem::size_of;
 use std::sync::OnceLock;
+
+const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DenseDigitCache<const D: usize> {
@@ -138,6 +141,15 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         if let Some(cache) = self.digit_cache.get() {
             return (cache.num_digits == num_digits && cache.log_basis == log_basis)
                 .then_some(cache.planes.as_slice());
+        }
+
+        let cache_bytes = self
+            .coeffs
+            .len()
+            .checked_mul(num_digits)?
+            .checked_mul(size_of::<[i8; D]>())?;
+        if cache_bytes > MAX_DENSE_DIGIT_CACHE_BYTES {
+            return None;
         }
 
         let q = (-F::one()).to_canonical_u128() + 1;

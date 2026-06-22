@@ -1,11 +1,12 @@
 //! Dense polynomial opening, tensor, and fold operations.
 
-use super::commit::{accumulate_cached_digit_planes, decompose_commit_rows};
+use super::commit::decompose_commit_rows;
 use super::poly::{DenseColumnSource, DensePoly};
 use super::tensor_fold;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
+    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
+    DecomposeParams,
 };
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
@@ -239,7 +240,12 @@ where
         if let Some(digit_planes) = self.digit_planes_for(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                accumulate_cached_digit_planes::<D>(digit_planes, challenges, block_len, num_digits)
+                cached_digit_decompose_fold_partitioned::<D>(
+                    digit_planes,
+                    challenges,
+                    block_len,
+                    num_digits,
+                )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;
             return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
