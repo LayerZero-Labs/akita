@@ -11,6 +11,7 @@ pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
+pub mod jl;
 pub mod layout;
 pub mod proof;
 pub mod proof_size;
@@ -47,6 +48,11 @@ pub use instance_descriptor::{
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
     FoldLinfProtocolBinding, PlanSection, ProtocolFeatureSet, SetupSection,
     FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
+};
+pub use jl::{
+    absorb_jl_image, embed_jl_image_coords, embed_signed_i32, field_modulus, jl_image_claim,
+    padded_live_table, sample_jl_row_point, validate_layout_for_matrix_mle, JlWitnessLayout,
+    JL_CONSISTENCY_DEGREE,
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,

@@ -4,6 +4,7 @@ use akita_field::AkitaError;
 use akita_types::LevelParams;
 
 pub(crate) mod core;
+pub(crate) mod jl;
 pub(crate) mod ring_switch;
 mod slice_mle;
 

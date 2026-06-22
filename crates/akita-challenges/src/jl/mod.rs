@@ -13,8 +13,9 @@
 //!
 //! Scope: matrix sampling, integer projection, checked Euclidean-norm helpers,
 //! and an injective signed-coordinate field embedding. Joint matrix MLE eval lives
-//! in [`mle`]; the standalone consistency sumcheck harness lives in
-//! `akita-prover::protocol::jl`. Nonce regrind and recursive-flow wiring remain
+//! in [`mle`]; consistency layout and wire shapes live in `akita-types::jl`;
+//! prove/verify sumcheck instances live in `akita-prover::protocol::jl` and
+//! `akita-verifier::protocol::jl`. Nonce regrind and recursive-flow wiring remain
 //! deferred (see `specs/akita-jl-tail-projection-prototype.md`, fusion D1–D8).
 
 #[cfg(feature = "parallel")]
