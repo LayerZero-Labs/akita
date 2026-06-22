@@ -168,6 +168,7 @@ pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     digits: &[[i8; D]],

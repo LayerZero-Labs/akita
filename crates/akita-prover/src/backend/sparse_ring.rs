@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{embed_ring_subfield_vector};
+use akita_types::embed_ring_subfield_vector;
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};

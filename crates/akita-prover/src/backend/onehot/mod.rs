@@ -37,9 +37,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
-use akita_types::{
-    CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView,
-};
+use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
