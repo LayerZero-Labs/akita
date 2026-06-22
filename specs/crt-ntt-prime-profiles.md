@@ -68,7 +68,7 @@ Primary surfaces:
   by new `K`; current prime-major `limbs[K][D]` CPU reference layout.
 - `crates/akita-prover/src/kernels/crt_ntt.rs`: `ProtocolCrtNttParams`,
   `NttSlotCache`, `select_crt_ntt_params`.
-- `crates/akita-prover/src/compute.rs`: `CpuPreparedSetup`, backend prepared
+- `crates/akita-prover/src/compute/cpu.rs`: `CpuPreparedSetup`, backend prepared
   setup boundary, dense/recursive/ring-switch compute operation calls.
 - `crates/akita-prover/src/kernels/linear/ntt_matvec.rs`,
   `single_cyclic.rs`, `fused_quotients.rs`: explicit `NttSlotCache` match arms
@@ -177,7 +177,7 @@ larger ring degree.
    must return `AkitaError::InvalidSetup` before hot kernels run.
    The validating boundary is `CpuBackend::prepare_expanded` (the
    `ComputeBackendSetup::prepare_expanded` impl in
-   `crates/akita-prover/src/compute.rs`), which already selects the profile via
+   `crates/akita-prover/src/compute/cpu.rs`), which already selects the profile via
    `build_ntt_slot` and runs before any matvec/quotient kernel.
    It validates the universal envelope for the selected `(F, D)` profile: the
    maximum supported balanced i8 digit (`MAX_I8_LOG_BASIS`) and raw signed-i8
@@ -581,7 +581,7 @@ layout migration may consider:
    vector lanes or device coalescing, hidden behind `ComputeBackendSetup`.
 
 Do not make `NttSlotCache` the long-term backend ABI.
-The durable API is the compute operation surface in `crates/akita-prover/src/compute.rs`:
+The durable API is the compute operation surface in `crates/akita-prover/src/compute/`:
 `dense_commit_rows`, `digit_rows`, `cyclic_digit_rows`,
 `recursive_witness_commit_rows`, `ring_switch_relation_rows`, and
 `ring_switch_quotient_rows`.
@@ -683,7 +683,7 @@ and it removes roughly 800 lines of duplicated kernel code.
 - Update module docs in `ntt/tables.rs` and `crt_ntt.rs` dispatch comment to
   describe Q16 and reduced counts.
 - If a future backend-prepared layout is kept, document it in
-  `crates/akita-prover/src/compute.rs` or the local prepared-cache module:
+  `crates/akita-prover/src/compute/cpu.rs` or the local prepared-cache module:
   physical ordering, domain coverage (`neg`, `cyc`, or both), alignment
   expectations, and why it remains backend-private.
 - No paper or verifier doc changes required.
@@ -708,7 +708,7 @@ Suggested implementation slices:
    (D-aware, `D <= 256`, no width fallback on `D`).
 5. Fix const-generic `K` throughout prover linear + setup NTT cache build,
    including `ntt_matvec.rs`, `single_cyclic.rs`, `fused_quotients.rs`,
-   `compute.rs`, algebra tests, and benches.
+   `compute/cpu.rs`, algebra tests, and benches.
 6. Add capacity validation in `CpuBackend::prepare_expanded`, direct `D = 128`
    / `D = 256` capacity unit tests, and forced-chunk tests for cyclic/fused/
    `z_pre` on new `K`; keep the linear-kernel tests split into focused files

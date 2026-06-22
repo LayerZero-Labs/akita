@@ -88,6 +88,80 @@ pub(super) unsafe fn reduce_range_4x_i32_avx2(a: __m128i, p: __m128i) -> __m128i
     _mm_add_epi32(after_sub, _mm_and_si128(p, lt_mask))
 }
 
+/// 4-wide `caddp` for i32: add `p` where negative, mapping `(-p, p)` → `[0, p)`.
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn caddp_4x_i32_avx2(a: __m128i, p: __m128i) -> __m128i {
+    let zero = _mm_setzero_si128();
+    let lt_mask = _mm_cmpgt_epi32(zero, a);
+    _mm_add_epi32(a, _mm_and_si128(p, lt_mask))
+}
+
+/// Transpose a 4×4 matrix of `i32` held in four `__m128i` row registers.
+#[inline(always)]
+unsafe fn transpose4_epi32(
+    r0: __m128i,
+    r1: __m128i,
+    r2: __m128i,
+    r3: __m128i,
+) -> (__m128i, __m128i, __m128i, __m128i) {
+    let t0 = _mm_unpacklo_epi32(r0, r1);
+    let t1 = _mm_unpacklo_epi32(r2, r3);
+    let t2 = _mm_unpackhi_epi32(r0, r1);
+    let t3 = _mm_unpackhi_epi32(r2, r3);
+    (
+        _mm_unpacklo_epi64(t0, t1),
+        _mm_unpackhi_epi64(t0, t1),
+        _mm_unpacklo_epi64(t2, t3),
+        _mm_unpackhi_epi64(t2, t3),
+    )
+}
+
+/// Vectorized final two DIF stages (`len = 2`, then `len = 1`) for forward i32 NTTs.
+///
+/// Mirrors the AArch64 `neon::forward_dif_tail_i32` kernel: a 4×4 coefficient
+/// transpose via SSE unpacks lands four independent size-4 sub-DFTs across lanes,
+/// both remaining stages run 4-wide, and the closing `caddp` folds the transform's
+/// final `reduce_range` pass into the last stage outputs.
+///
+/// Requires `D` divisible by 16.
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn forward_dif_tail_i32_avx2<const D: usize>(
+    a_ptr: *mut i32,
+    fwd_twiddles: *const i32,
+    p: __m128i,
+    pinv: __m128i,
+) {
+    let tw0 = _mm_set1_epi32(*fwd_twiddles);
+    let tw1 = _mm_set1_epi32(*fwd_twiddles.add(1));
+    let tw2 = _mm_set1_epi32(*fwd_twiddles.add(2));
+
+    let mut base = 0usize;
+    while base < D {
+        let x0 = _mm_loadu_si128(a_ptr.add(base) as *const __m128i);
+        let x1 = _mm_loadu_si128(a_ptr.add(base + 4) as *const __m128i);
+        let x2 = _mm_loadu_si128(a_ptr.add(base + 8) as *const __m128i);
+        let x3 = _mm_loadu_si128(a_ptr.add(base + 12) as *const __m128i);
+        let (r0, r1, r2, r3) = transpose4_epi32(x0, x1, x2, x3);
+
+        let s0 = reduce_range_4x_i32_avx2(_mm_add_epi32(r0, r2), p);
+        let d0 = mont_mul_4x_i32_avx2(_mm_sub_epi32(r0, r2), tw1, p, pinv);
+        let s1 = reduce_range_4x_i32_avx2(_mm_add_epi32(r1, r3), p);
+        let d1 = mont_mul_4x_i32_avx2(_mm_sub_epi32(r1, r3), tw2, p, pinv);
+
+        let o0 = caddp_4x_i32_avx2(reduce_range_4x_i32_avx2(_mm_add_epi32(s0, s1), p), p);
+        let o1 = caddp_4x_i32_avx2(mont_mul_4x_i32_avx2(_mm_sub_epi32(s0, s1), tw0, p, pinv), p);
+        let o2 = caddp_4x_i32_avx2(reduce_range_4x_i32_avx2(_mm_add_epi32(d0, d1), p), p);
+        let o3 = caddp_4x_i32_avx2(mont_mul_4x_i32_avx2(_mm_sub_epi32(d0, d1), tw0, p, pinv), p);
+
+        let (y0, y1, y2, y3) = transpose4_epi32(o0, o1, o2, o3);
+        _mm_storeu_si128(a_ptr.add(base) as *mut __m128i, y0);
+        _mm_storeu_si128(a_ptr.add(base + 4) as *mut __m128i, y1);
+        _mm_storeu_si128(a_ptr.add(base + 8) as *mut __m128i, y2);
+        _mm_storeu_si128(a_ptr.add(base + 12) as *mut __m128i, y3);
+        base += 16;
+    }
+}
+
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
 pub(super) unsafe fn mont_mul_16x_i32_avx512(
     a: __m512i,
