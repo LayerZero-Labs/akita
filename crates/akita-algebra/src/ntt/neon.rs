@@ -19,30 +19,35 @@ pub fn use_neon_ntt() -> bool {
     *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
 }
 
-/// 4-wide Montgomery multiply for i32 primes.
+/// True 4-wide signed Montgomery multiply for i32 primes.
 ///
-/// Uses two 2-wide `vmull_s32` chains (since i32×i32→i64 only fills 2 lanes
-/// of a 128-bit register) and combines the results.
+/// Computes `a * b * R^{-1} mod p` (R = 2^32) for all four lanes at once,
+/// matching the scalar [`NttPrime::mont_mul_raw`] convention exactly
+/// (`pinv = p^{-1} mod 2^32`, signed). Result lies in `(-p, p)`.
+///
+/// Uses the high-multiply formulation from Becker–Hwang–Kannwischer–Yang
+/// ("Neon NTT"): `vqdmulhq_s32` yields `(2·a·b) >> 32` with a single 4-lane
+/// multiply, so the reduction needs two `vqdmulhq_s32`, two `vmulq_s32`, and one
+/// halving subtract instead of two 2-lane `vmull_s32` widening chains.
+/// Every NTT prime here is `< 2^30`, so neither `2·a·b` nor `2·m·p` saturates
+/// an `int32x4_t` after the `>> 32`.
 #[inline(always)]
-unsafe fn mont_mul_4x_i32(a: int32x4_t, b: int32x4_t, p: int32x2_t, pinv: int32x2_t) -> int32x4_t {
-    let a_lo = vget_low_s32(a);
-    let a_hi = vget_high_s32(a);
-    let b_lo = vget_low_s32(b);
-    let b_hi = vget_high_s32(b);
-
-    // Low pair
-    let c_lo = vmull_s32(a_lo, b_lo);
-    let t_lo = vmul_s32(vmovn_s64(c_lo), pinv);
-    let tp_lo = vmull_s32(t_lo, p);
-    let r_lo = vmovn_s64(vshrq_n_s64::<32>(vsubq_s64(c_lo, tp_lo)));
-
-    // High pair
-    let c_hi = vmull_s32(a_hi, b_hi);
-    let t_hi = vmul_s32(vmovn_s64(c_hi), pinv);
-    let tp_hi = vmull_s32(t_hi, p);
-    let r_hi = vmovn_s64(vshrq_n_s64::<32>(vsubq_s64(c_hi, tp_hi)));
-
-    vcombine_s32(r_lo, r_hi)
+unsafe fn mont_mul_4x_i32(
+    a: int32x4_t,
+    b: int32x4_t,
+    p_q: int32x4_t,
+    pinv_q: int32x4_t,
+) -> int32x4_t {
+    // top = (2·a·b) >> 32, the doubled high word of the full product.
+    let top = vqdmulhq_s32(a, b);
+    // lo = (a·b) mod 2^32 = low word of the product.
+    let lo = vmulq_s32(a, b);
+    // m = lo · pinv mod 2^32 (signed), the Montgomery quotient digit.
+    let m = vmulq_s32(lo, pinv_q);
+    // sub = (2·m·p) >> 32, the doubled high word of m·p.
+    let sub = vqdmulhq_s32(m, p_q);
+    // (top - sub) >> 1 = (a·b - m·p) >> 32, exact since the low 32 bits cancel.
+    vhsubq_s32(top, sub)
 }
 
 /// 4-wide range reduction for i32: maps `(-2p, 2p)` → `(-p, p)`.
@@ -68,18 +73,78 @@ unsafe fn reduce_range_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
     )
 }
 
+/// 4-wide `caddp`: add `p` to lanes that are negative, mapping `(-p, p)` → `[0, p)`.
+///
+/// Equivalent to [`reduce_range_4x_i32`] when the input is already in `(-p, p)`,
+/// but skips the (always-false) `csubp` comparison.
+#[inline(always)]
+unsafe fn caddp_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
+    let lt_mask = vcltq_s32(a, vdupq_n_s32(0));
+    vaddq_s32(
+        a,
+        vreinterpretq_s32_u32(vandq_u32(vreinterpretq_u32_s32(p), lt_mask)),
+    )
+}
+
+/// Vectorized final two DIF stages (`len = 2`, then `len = 1`) for forward i32 NTTs.
+///
+/// These stages have butterfly half-lengths below the 4-wide window, so the
+/// naive stage loop drops to a scalar path that runs `~3·D/4` scalar Montgomery
+/// multiplies per transform. Since each size-4 sub-DFT touches a contiguous run
+/// of four coefficients, a stride-4 `vld4q` deinterleave lands the four members
+/// of four independent sub-DFTs across the lanes of `r0..r3` (`r_e[lane]` holds
+/// element `e` of sub-DFT `lane`). The two stages then run fully 4-wide with the
+/// per-`j` twiddles broadcast across all sub-DFTs, and `vst4q` re-interleaves.
+///
+/// Requires `D` divisible by 16; callers fall back to the scalar tail otherwise.
+#[inline(always)]
+unsafe fn forward_dif_tail_i32<const D: usize>(
+    a_ptr: *mut i32,
+    fwd_twiddles: *const i32,
+    p_q: int32x4_t,
+    pinv_q: int32x4_t,
+) {
+    // tw0 is the (broadcast) len=1 twiddle; tw1/tw2 are the two len=2 twiddles.
+    let tw0 = vdupq_n_s32(*fwd_twiddles);
+    let tw1 = vdupq_n_s32(*fwd_twiddles.add(1));
+    let tw2 = vdupq_n_s32(*fwd_twiddles.add(2));
+
+    let mut base = 0usize;
+    while base < D {
+        let q = vld4q_s32(a_ptr.add(base));
+        let (r0, r1, r2, r3) = (q.0, q.1, q.2, q.3);
+
+        // len = 2: butterflies (e0,e2) with tw1, (e1,e3) with tw2.
+        let s0 = reduce_range_4x_i32(vaddq_s32(r0, r2), p_q);
+        let d0 = mont_mul_4x_i32(vsubq_s32(r0, r2), tw1, p_q, pinv_q);
+        let s1 = reduce_range_4x_i32(vaddq_s32(r1, r3), p_q);
+        let d1 = mont_mul_4x_i32(vsubq_s32(r1, r3), tw2, p_q, pinv_q);
+
+        // len = 1: butterflies (e0,e1) and (e2,e3), both with tw0. All four
+        // results land in (-p, p); the final `caddp` normalizes them to [0, p),
+        // which folds the transform's closing reduce_range pass into this stage.
+        let o0 = caddp_4x_i32(reduce_range_4x_i32(vaddq_s32(s0, s1), p_q), p_q);
+        let o1 = caddp_4x_i32(mont_mul_4x_i32(vsubq_s32(s0, s1), tw0, p_q, pinv_q), p_q);
+        let o2 = caddp_4x_i32(reduce_range_4x_i32(vaddq_s32(d0, d1), p_q), p_q);
+        let o3 = caddp_4x_i32(mont_mul_4x_i32(vsubq_s32(d0, d1), tw0, p_q, pinv_q), p_q);
+
+        vst4q_s32(a_ptr.add(base), int32x4x4_t(o0, o1, o2, o3));
+        base += 16;
+    }
+}
+
 /// NEON-accelerated forward negacyclic NTT for i32 primes.
 ///
-/// Processes 4 butterfly pairs per iteration when `len >= 4`;
-/// falls back to scalar for the final 2 stages (`len = 2, 1`).
+/// Processes 4 butterfly pairs per iteration while `len >= 4`, then runs the
+/// final two stages (`len = 2, 1`) through the vectorized [`forward_dif_tail_i32`]
+/// when `D` is a multiple of 16 (scalar fallback otherwise).
 pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    let p_d = vdup_n_s32(prime.p);
-    let pinv_d = vdup_n_s32(prime.pinv);
     let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     // Pre-twist by psi^i
@@ -89,36 +154,49 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         while i + 4 <= D {
             let ai = vld1q_s32(a_ptr.add(i));
             let psi = vld1q_s32(psi_ptr.add(i));
-            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, psi, p_d, pinv_d));
+            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, psi, p_q, pinv_q));
             i += 4;
         }
     }
 
-    // DIF butterfly stages
+    // DIF butterfly stages (4-wide while half-length permits).
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
-                let mut j = 0;
-                while j < len {
-                    let u = vld1q_s32(a_ptr.add(start + j));
-                    let v = vld1q_s32(a_ptr.add(start + j + len));
-                    let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
+            let mut j = 0;
+            while j < len {
+                let u = vld1q_s32(a_ptr.add(start + j));
+                let v = vld1q_s32(a_ptr.add(start + j + len));
+                let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
 
-                    let sum = vaddq_s32(u, v);
-                    let diff = vsubq_s32(u, v);
+                let sum = vaddq_s32(u, v);
+                let diff = vsubq_s32(u, v);
 
-                    vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
-                    vst1q_s32(
-                        a_ptr.add(start + j + len),
-                        mont_mul_4x_i32(diff, w, p_d, pinv_d),
-                    );
-                    j += 4;
-                }
-            } else {
+                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
+                vst1q_s32(
+                    a_ptr.add(start + j + len),
+                    mont_mul_4x_i32(diff, w, p_q, pinv_q),
+                );
+                j += 4;
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+
+    // Final two stages (len = 2, 1). The vectorized tail already normalizes its
+    // outputs to [0, p), so the closing reduce_range pass is only needed on the
+    // scalar fallback (D not a multiple of 16).
+    if D.is_multiple_of(16) {
+        forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
+    } else {
+        while len > 0 {
+            let twiddle_base = len - 1;
+            let mut start = 0usize;
+            while start < D {
                 for j in 0..len {
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
@@ -128,14 +206,12 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
                     a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                     a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
+                start += 2 * len;
             }
-            start += 2 * len;
+            len /= 2;
         }
-        len /= 2;
+        reduce_range_in_place_i32(a, p_q);
     }
-
-    // Final reduce_range pass
-    reduce_range_in_place_i32(a, p_q);
 }
 
 /// NEON-accelerated inverse negacyclic NTT for i32 primes.
@@ -144,9 +220,8 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    let p_d = vdup_n_s32(prime.p);
-    let pinv_d = vdup_n_s32(prime.pinv);
     let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     // DIT butterfly stages
@@ -162,7 +237,7 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
                     let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
                     let u = vld1q_s32(a_ptr.add(start + j));
                     let v_raw = vld1q_s32(a_ptr.add(start + j + len));
-                    let v = mont_mul_4x_i32(v_raw, w, p_d, pinv_d);
+                    let v = mont_mul_4x_i32(v_raw, w, p_q, pinv_q);
 
                     let sum = vaddq_s32(u, v);
                     let diff = vsubq_s32(u, v);
@@ -194,7 +269,7 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
         while i + 4 <= D {
             let ai = vld1q_s32(a_ptr.add(i));
             let f = vld1q_s32(fused_ptr.add(i));
-            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, f, p_d, pinv_d));
+            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, f, p_q, pinv_q));
             i += 4;
         }
     }
@@ -206,33 +281,42 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    let p_d = vdup_n_s32(prime.p);
-    let pinv_d = vdup_n_s32(prime.pinv);
     let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
-                let mut j = 0;
-                while j < len {
-                    let u = vld1q_s32(a_ptr.add(start + j));
-                    let v = vld1q_s32(a_ptr.add(start + j + len));
-                    let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
-                    let sum = vaddq_s32(u, v);
-                    let diff = vsubq_s32(u, v);
-                    vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
-                    vst1q_s32(
-                        a_ptr.add(start + j + len),
-                        mont_mul_4x_i32(diff, w, p_d, pinv_d),
-                    );
-                    j += 4;
-                }
-            } else {
+            let mut j = 0;
+            while j < len {
+                let u = vld1q_s32(a_ptr.add(start + j));
+                let v = vld1q_s32(a_ptr.add(start + j + len));
+                let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
+                let sum = vaddq_s32(u, v);
+                let diff = vsubq_s32(u, v);
+                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
+                vst1q_s32(
+                    a_ptr.add(start + j + len),
+                    mont_mul_4x_i32(diff, w, p_q, pinv_q),
+                );
+                j += 4;
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+
+    if D.is_multiple_of(16) {
+        forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
+    } else {
+        while len > 0 {
+            let twiddle_base = len - 1;
+            let mut start = 0usize;
+            while start < D {
                 for j in 0..len {
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
@@ -242,12 +326,12 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
                     a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                     a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
+                start += 2 * len;
             }
-            start += 2 * len;
+            len /= 2;
         }
-        len /= 2;
+        reduce_range_in_place_i32(a, p_q);
     }
-    reduce_range_in_place_i32(a, p_q);
 }
 
 /// NEON-accelerated inverse cyclic NTT for i32 (no negacyclic untwist).
@@ -256,9 +340,8 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    let p_d = vdup_n_s32(prime.p);
-    let pinv_d = vdup_n_s32(prime.pinv);
     let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = 1usize;
@@ -273,7 +356,7 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
                     let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
                     let u = vld1q_s32(a_ptr.add(start + j));
                     let v_raw = vld1q_s32(a_ptr.add(start + j + len));
-                    let v = mont_mul_4x_i32(v_raw, w, p_d, pinv_d);
+                    let v = mont_mul_4x_i32(v_raw, w, p_q, pinv_q);
                     let sum = vaddq_s32(u, v);
                     let diff = vsubq_s32(u, v);
                     vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
@@ -303,7 +386,7 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
         let mut i = 0;
         while i + 4 <= D {
             let ai = vld1q_s32(a_ptr.add(i));
-            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, d_inv_q, p_d, pinv_d));
+            vst1q_s32(a_ptr.add(i), mont_mul_4x_i32(ai, d_inv_q, p_q, pinv_q));
             i += 4;
         }
     }
@@ -320,16 +403,15 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     p: i32,
     pinv: i32,
 ) {
-    let p_d = vdup_n_s32(p);
-    let pinv_d = vdup_n_s32(pinv);
     let p_q = vdupq_n_s32(p);
+    let pinv_q = vdupq_n_s32(pinv);
     let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 4 <= d {
         let a = vld1q_s32(acc.add(i));
         let l = vld1q_s32(lhs.add(i));
         let r = vld1q_s32(rhs.add(i));
-        let prod = mont_mul_4x_i32(l, r, p_d, pinv_d);
+        let prod = mont_mul_4x_i32(l, r, p_q, pinv_q);
         let sum = vaddq_s32(a, prod);
         vst1q_s32(acc.add(i), reduce_range_4x_i32(sum, p_q));
         i += 4;
