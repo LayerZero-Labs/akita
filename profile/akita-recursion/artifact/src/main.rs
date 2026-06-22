@@ -328,6 +328,12 @@ fn run() -> Result<(), String> {
     let prepared = CpuBackend
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend,
+        &prepared,
+        prover_setup.expanded.as_ref(),
+    )
+    .map_err(|err| format!("prover stack validation failed: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"

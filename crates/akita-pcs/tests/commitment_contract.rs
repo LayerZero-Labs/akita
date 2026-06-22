@@ -16,9 +16,8 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{
-    CommitInnerPlan, ComputeBackendSetup, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    OneHotCommitRowsPlan, OperationCtx, RecursiveWitnessCommitRowsPlan, RootCommitKernel,
-    RootCommitSource, RootPolyShape, SparseRingCommitRowsPlan, UniformProverStack,
+    CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
+    RootCommitSource, RootPolyShape,
 };
 use akita_prover::{
     batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
