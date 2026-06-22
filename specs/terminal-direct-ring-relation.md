@@ -4,7 +4,7 @@
 |-------------|--------------------------------------------------------------|
 | Author(s)   | Quang Dao                                                    |
 | Created     | 2026-05-31                                                   |
-| Status      | proposed, refreshed after #190 segment-typed terminal tails  |
+| Status      | accepted for implementation; base = `main`, no PR-#165/#166 dependency |
 | PR          | #141                                                         |
 
 ## Summary
@@ -175,6 +175,25 @@ It can check the reduced relation directly:
 M_terminal * z_terminal == y_terminal in F[X] / (X^D + 1).
 ```
 
+#### Public-opening binding (post-#154)
+
+Direct mode must not rely on `y_terminal` alone to bind the public opening claim.
+Since #154 (`specs/y-ring-trace-internalization.md`), `generate_y` zeros the public-output rows of `y` and the public opening claim is bound through the fused trace term inside the terminal stage-2 sumcheck, not through `y` (`crates/akita-types/src/proof/relation.rs:24-60`, `crates/akita-types/src/trace_weight/stage2.rs`).
+Direct mode removes terminal stage 2, so it also removes that trace binding.
+Checking only `M_terminal * z_terminal == y_terminal` would therefore leave the public opening claim unbound, which is unsound.
+
+Direct mode replaces the stage-2 trace term with an explicit opening-consistency check:
+the verifier evaluates the revealed terminal witness multilinear at the bound opening point and compares it to the gamma-weighted public claim (`batched_eval_target_from_opening_batch`).
+This reuses the cleartext-opening evaluator already used by the zero-fold / root-direct path (`crates/akita-verifier/src/proof/direct.rs::cleartext_witness_opening_matches`).
+So the direct terminal statement is two checks, not one:
+
+```text
+1. M_terminal * z_terminal == y_terminal in F[X] / (X^D + 1)   (consistency, commitment, inner-B, A rows)
+2. eval(witness, opening_point) == sum_i gamma_i * claim_i      (public opening binding, replacing the stage-2 trace term)
+```
+
+Both checks bind the same revealed witness whose bytes were absorbed before any post-witness challenge, so the opening point and the gamma weights are transcript-fixed before the witness is read.
+
 Direct mode therefore:
 
 - uses the same terminal row semantics as `MRowLayout::WithoutDBlock`,
@@ -300,73 +319,98 @@ The mode must also be reflected in proof shape because the terminal stage-2 byte
 ### Type And Descriptor Changes
 
 Add `TerminalProofMode` to `akita-types`.
-A likely home is near `ProtocolFeatureSet` or proof shape definitions, because the mode affects descriptor bytes, schedule digest, proof shape, and verifier replay.
-
-Extend `ProtocolFeatureSet` or add an adjacent protocol-policy section:
 
 ```rust
-pub struct ProtocolFeatureSet {
-    pub zk: bool,
-    pub terminal_proof_mode: TerminalProofMode,
+pub enum TerminalProofMode {
+    RingSwitchSumcheck,
+    DirectRingRelations,
 }
 ```
 
-If the repo prefers to keep compile-time features and runtime protocol policy separate, add:
+The mode is **runtime config policy**, not a compile-time feature.
+`ProtocolFeatureSet` on `main` holds only `zk` and is built from `ProtocolFeatureSet::current()`, which reads `cfg!(feature = "zk")` (`crates/akita-types/src/instance_descriptor/mod.rs:135-150`).
+The terminal mode is chosen by `CommitmentConfig`, so it must not flow through `current()`.
+Add it as a runtime field on `SetupSection` (directly or via a small `ProtocolPolicySet`):
 
 ```rust
-pub struct ProtocolPolicySet {
-    pub terminal_proof_mode: TerminalProofMode,
+pub struct SetupSection {
+    pub decomposition: DecompositionParams,
+    pub sis_modulus_family: SisModulusFamily,
+    pub setup_seed_digest: DescriptorDigest,
+    pub protocol_features: ProtocolFeatureSet,
+    pub fold_linf: FoldLinfProtocolBinding,
+    pub terminal_proof_mode: TerminalProofMode,   // new
 }
 ```
 
-Either way, canonical descriptor bytes must bind the terminal mode with a stable tag:
+Canonical descriptor bytes bind the terminal mode with a stable tag:
 
 ```text
 0 = RingSwitchSumcheck
 1 = DirectRingRelations
 ```
 
-The descriptor version should bump if the serialized descriptor schema changes.
+Because the serialized descriptor schema changes, bump `AKITA_INSTANCE_DESCRIPTOR_VERSION` from `1` to `2` (`crates/akita-types/src/instance_descriptor/mod.rs:31`).
+`SetupSection::from_parts` gains a `terminal_proof_mode` argument; its single caller `bind_transcript_instance_descriptor` (`crates/akita-config/src/transcript_binding.rs:35-65`) sources it from a new `Cfg::terminal_proof_mode()` hook, and the descriptor round-trip tests (`crates/akita-types/src/instance_descriptor/tests.rs`) update accordingly.
 
-The config surface should expose a single terminal-mode hook.
-The default production presets stay `RingSwitchSumcheck` until direct-mode proof sizing, tests, and regenerated tables are accepted.
-A test-only or experimental preset can select `DirectRingRelations`.
+The config surface exposes a single terminal-mode hook on `CommitmentConfig` (`crates/akita-config/src/lib.rs`), defaulting to `RingSwitchSumcheck`:
+
+```rust
+fn terminal_proof_mode() -> TerminalProofMode {
+    TerminalProofMode::RingSwitchSumcheck
+}
+```
+
+Default production presets stay `RingSwitchSumcheck` until direct-mode proof sizing, tests, and regenerated tables are accepted.
+A test-only or experimental preset overrides the hook to `DirectRingRelations`.
 
 ### Proof Shape Changes
 
-Replace the terminal stage-2 shape field with an explicit relation-proof shape:
+The current terminal proof body nests the terminal witness inside the stage-2 payload.
+On `main` the terminal body is `AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof { sumcheck_proof, final_witness })` (`crates/akita-types/src/proof/levels.rs:72-98`), wrapped by `TerminalLevelProof { extension_opening_reduction, fold_grind_nonce, stage2 }` (`levels.rs:725-732`).
+`final_witness` is therefore a field of the terminal stage-2 struct, not a sibling of the sumcheck.
+
+This spec keeps that nesting (the narrowest cutover) and replaces only the `sumcheck_proof` field with an explicit relation enum:
+
+```rust
+pub enum TerminalRelationProof<L> {
+    RingSwitchSumcheck(
+        #[cfg(not(feature = "zk"))] SumcheckProof<L>,
+        #[cfg(feature = "zk")] SumcheckProofMasked<L>,
+    ),
+    DirectRingRelations,
+}
+
+pub struct AkitaTerminalStage2Proof<F, L> {
+    pub relation: TerminalRelationProof<L>,
+    pub final_witness: CleartextWitnessProof<F>,
+}
+```
+
+`AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof)` and the existing `final_witness()` / `final_witness_mut()` accessors stay; only the inner sumcheck field becomes the relation enum.
+This keeps direct mode an explicit enum variant, not an empty sumcheck (`stage2_sumcheck = []`).
+
+The proof shape mirrors the body:
 
 ```rust
 pub enum TerminalRelationProofShape {
     RingSwitchSumcheck(SumcheckProofShape),
     DirectRingRelations,
 }
-```
 
-`TerminalLevelProofShape` then carries:
-
-```rust
 pub struct TerminalLevelProofShape {
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionProofShape>,
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     pub relation: TerminalRelationProofShape,
     pub final_witness: CleartextWitnessShape,
 }
 ```
 
+This replaces the current `TerminalLevelProofShape { extension_opening_reduction, stage2_sumcheck, final_witness }` (`crates/akita-types/src/proof/shapes.rs:77-84`); the headerless terminal deserializer in `crates/akita-types/src/proof/wire.rs` branches on the relation discriminant to know whether stage-2 sumcheck bytes are present.
+
 Do not reintroduce a `y_rings` shape field.
 On-wire `y` was removed in #154 and is not part of `TerminalLevelProof` today.
 
-The proof body mirrors it:
-
-```rust
-pub enum TerminalRelationProof<L> {
-    RingSwitchSumcheck(SumcheckProof<L>),
-    DirectRingRelations,
-}
-```
-
-Under `feature = "zk"`, use a masked sumcheck variant for `RingSwitchSumcheck` and reject `DirectRingRelations`.
-Do not encode direct mode as `stage2_sumcheck = []`.
+Under `feature = "zk"`, the `RingSwitchSumcheck` arm carries the masked sumcheck and `DirectRingRelations` is rejected at the config / setup boundary before construction (see ZK Policy).
 
 ### Terminal Witness Layout Changes
 
@@ -435,7 +479,7 @@ In `DirectRingRelations` mode:
 1. do not call `compute_relation_quotient`,
 2. build `SegmentTyped(z, e, t)` with zero `r_field_elems` (tiered layouts still emit the hidden `û_concat` digit planes from `build_w_coeffs`; witness sizing follows `w_ring_element_count_with_counts_for_layout_bits`, which adds `u_concat_count` when `tier_split > 1`),
 3. absorb the same terminal `e` bytes and remainder bytes,
-4. do not call `ring_switch_finalize_terminal`,
+4. do not call `ring_switch_finalize` (there is no `ring_switch_finalize_terminal`; the terminal sumcheck path calls `ring_switch_finalize` with `MRowLayout::WithoutDBlock`, `crates/akita-prover/src/protocol/ring_switch/finalize.rs:19`),
 5. do not sample terminal `alpha` or terminal `tau1`,
 6. do not run terminal stage 2,
 7. emit a terminal relation proof body of `DirectRingRelations`.
@@ -445,46 +489,56 @@ The direct-mode builder should still compute the data needed by direct row verif
 - `e_folded`,
 - recomposed inner rows for `t`,
 - centered `z_folded` coefficients,
-- recomputed public-output row targets `y` for row-equality checks,
+- the commitment-row relation target `y` (consistency / commitment / inner-B / A rows; public-output rows of `y` stay zero per #154),
 - row coefficients and row rings already bound by the relation instance.
+
+The prover does not send `y` (removed in #154) and does not send an opening evaluation; the verifier recomputes the relation target and evaluates the revealed witness at the opening point itself.
 
 Do not reconstruct `r` and then drop it.
 The point of the mode is to remove quotient work as well as quotient bytes.
 
 ### Verifier Changes
 
-Add a verifier-side direct row checker.
-A likely module is:
+Add a verifier-side direct terminal checker.
+A likely module is a new sibling of the shared per-fold engine:
 
 ```text
-crates/akita-verifier/src/protocol/ring_switch/terminal_direct.rs
+crates/akita-verifier/src/protocol/core/terminal_direct.rs
 ```
+
+(The verifier ring-switch code is the single file `crates/akita-verifier/src/protocol/ring_switch.rs`, not a directory; the terminal dispatch lives in `crates/akita-verifier/src/protocol/core/{verify,root_fold,suffix,fold}.rs`.)
 
 The checker should accept already-decoded, mode-checked terminal data and return `Result<(), AkitaError>`.
 Its responsibilities:
 
-1. Validate the `SegmentTyped` layout against the descriptor-bound terminal mode and schedule shape.
+1. Validate the `SegmentTyped` layout against the descriptor-bound terminal mode and schedule shape (`r_field_elems == 0`).
 2. Decode `z` through the same Golomb-Rice public parameters used by #190.
 3. Decode `e` and `t` raw field segments.
-4. Reconstruct the row-local ring inputs in the same order as the current terminal relation builder.
-5. Evaluate every reduced row equation in `F[X] / (X^D + 1)`.
-6. Compare row outputs against the terminal row targets.
+4. Reconstruct the row-local ring inputs in the same order as the prover's terminal relation builder (`compute_relation_quotient`, `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:518-587`, which is the authoritative reference for row roles and block routing).
+5. Evaluate every reduced row equation in `F[X] / (X^D + 1)` and compare to the relation target `y` (check 1 below).
+6. Evaluate the revealed witness multilinear at the opening point and compare to the gamma-weighted public claim (check 2 below).
 
-The row targets are:
+The terminal statement is two checks:
 
-- consistency row equals zero,
-- public rows equal the recomputed `y` targets from witness and incidence,
-- commitment rows equal the current commitment-row semantics,
-- inner-B rows equal the current inner-B row semantics,
-- A rows equal zero,
-- D rows are absent.
+```text
+check 1 (ring relation): M_terminal * z_terminal == y_terminal
+  - consistency row equals zero,
+  - commitment rows equal the current commitment-row semantics
+    (y from generate_y + flatten_batched_commitment_rows),
+  - inner-B rows equal the current inner-B row semantics,
+  - A rows equal zero,
+  - public-output rows of y are zero (post-#154; bound by check 2, not by y),
+  - D rows are absent.
+
+check 2 (public opening): eval(witness, opening_point) == sum_i gamma_i * claim_i
+```
+
+There is no row-routing reuse from the current terminal path: terminal verification is sumcheck-only today (deferred row MLE via `RingSwitchDeferredRowEval::eval_at_point`, `crates/akita-verifier/src/protocol/ring_switch.rs:605-846`), so the all-row direct check is new code modeled on the prover's `compute_relation_quotient` loop.
+Reusable primitives are the root-direct cyclotomic helpers (`mat_vec_mul_i8_plain`, `direct_decomposed_inner_rows`, `crates/akita-verifier/src/protocol/core/verify.rs:178-348`) and the cleartext opening evaluator (`crates/akita-verifier/src/proof/direct.rs::cleartext_witness_opening_matches`) for check 2.
 
 The checker must support suffix-terminal and terminal-root surfaces.
 It should use explicit incidence and row-count inputs rather than deriving special cases from `num_points == 1`.
-
-Prefer reusing existing verifier helpers when they already validate bounds and row routing.
-If a helper currently lives under a root-direct-only module but has the right terminal row semantics, move it into a shared verifier module.
-Do not duplicate unchecked row-index arithmetic.
+Do not duplicate unchecked row-index arithmetic; gate all decode bounds, segment lengths, and row counts before hot arithmetic.
 
 ### Proof Size And Planner Changes
 
@@ -570,6 +624,7 @@ A future ZK direct mode needs a separate masked direct-row relation argument.
 - [ ] Direct terminal prover does not call terminal ring-switch finalization.
 - [ ] Direct terminal transcript contains no terminal `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, or terminal sumcheck round challenge.
 - [ ] Direct terminal verifier checks every reduced terminal row.
+- [ ] Direct terminal verifier binds the public opening claim by evaluating the revealed witness at the opening point (replacing the removed stage-2 trace term); tampering the opening claim or the witness rejects.
 - [ ] Direct terminal verifier supports suffix-terminal and terminal-root surfaces.
 - [ ] Cross-mode descriptor or proof-shape mismatch rejects before row checking.
 - [ ] Direct mode under `feature = "zk"` rejects with `InvalidSetup`.
@@ -687,11 +742,11 @@ Profile reporting should include:
 
 ### Slice 1: Mode And Shape Plumbing
 
-1. Add `TerminalProofMode`.
-2. Bind it in descriptor bytes.
-3. Add terminal relation proof shape and proof body enums.
-4. Thread mode through config policy.
-5. Add cross-mode deserialize and descriptor mismatch tests.
+1. Add `TerminalProofMode` to `akita-types`.
+2. Add `terminal_proof_mode` to `SetupSection`, bump `AKITA_INSTANCE_DESCRIPTOR_VERSION` to `2`, extend `SetupSection::from_parts`, and thread `Cfg::terminal_proof_mode()` through `bind_transcript_instance_descriptor`.
+3. Add `TerminalRelationProof` / `TerminalRelationProofShape`; replace `AkitaTerminalStage2Proof.sumcheck_proof` with `relation` and `TerminalLevelProofShape.stage2_sumcheck` with `relation`; update `wire.rs` headerless terminal decode and `TerminalLevelProof::shape()`; update the verifier expected-shape build in `core/verify.rs`.
+4. Add the defaulted `CommitmentConfig::terminal_proof_mode()` hook.
+5. Add cross-mode deserialize, descriptor round-trip (v2), and descriptor-mismatch tests.
 
 This slice should not change prover behavior yet.
 It should keep all production configs on `RingSwitchSumcheck`.
@@ -715,16 +770,17 @@ This slice should still be able to build sumcheck terminal witnesses unchanged.
 5. Reject direct mode under `feature = "zk"`.
 6. Add prover-side shape and proof-size assertions.
 
-### Slice 4: Verifier Direct Row Checker
+### Slice 4: Verifier Direct Terminal Checker
 
-1. Add `terminal_direct` verifier module.
-2. Validate mode, shape, layout, and incidence before decoding hot row data.
+1. Add the `protocol/core/terminal_direct.rs` verifier module.
+2. Validate mode, shape, layout (`r_field_elems == 0`), and incidence before decoding hot row data.
 3. Decode `z`, `e`, and `t`.
-4. Reconstruct reduced terminal row inputs.
-5. Check every row target directly in the cyclotomic ring.
-6. Wire suffix-terminal verification through it.
-7. Wire terminal-root verification through it.
-8. Add tamper and malformed-input tests.
+4. Reconstruct reduced terminal row inputs in the same order as the prover's `compute_relation_quotient`.
+5. Check 1: every reduced row in `F[X]/(X^D+1)` equals the relation target `y`.
+6. Check 2: evaluate the revealed witness at the opening point and compare to the gamma-weighted public claim (reuse `cleartext_witness_opening_matches`).
+7. Wire suffix-terminal verification through it (`core/suffix.rs`).
+8. Wire terminal-root verification through it (`core/root_fold.rs`, `core/verify.rs`).
+9. Add tamper (`z`, `e`, `t`, commitment-row, opening-claim) and malformed-input no-panic tests.
 
 ### Slice 5: E2E, Planner, And Profiling
 
@@ -779,11 +835,19 @@ The implementation should be fresh and based on current `SegmentTyped` surfaces.
 - `crates/akita-types/src/proof/shapes.rs`, `TerminalLevelProofShape`.
 - `crates/akita-types/src/proof/wire.rs`, proof serialization and shape-driven terminal deserialization.
 - `crates/akita-types/src/schedule.rs`, `DirectStep` and schedule descriptor bytes.
-- `crates/akita-types/src/instance_descriptor.rs`, `ProtocolFeatureSet` and descriptor binding.
-- `crates/akita-prover/src/protocol/ring_switch/coeffs.rs`, current terminal quotient and segment-typed artifact construction.
-- `crates/akita-prover/src/protocol/flow/suffix.rs`, current terminal stage-2 prover path.
-- `crates/akita-prover/src/protocol/flow/root_fold.rs`, terminal-root prover path.
-- `crates/akita-verifier/src/protocol/ring_switch.rs`, current terminal verifier replay and challenge sampling.
-- `crates/akita-verifier/src/protocol/levels.rs`, terminal verifier dispatch.
+- `crates/akita-types/src/instance_descriptor/mod.rs`, `ProtocolFeatureSet`, `SetupSection`, `AKITA_INSTANCE_DESCRIPTOR_VERSION`, and descriptor binding.
+- `crates/akita-config/src/transcript_binding.rs`, `bind_transcript_instance_descriptor` (sole `SetupSection::from_parts` caller).
+- `crates/akita-config/src/lib.rs`, `CommitmentConfig` (home of the new `terminal_proof_mode()` hook).
+- `crates/akita-prover/src/protocol/ring_switch/coeffs.rs`, `ring_switch_build_w` / `build_w_coeffs` and `RingSwitchTerminalArtifacts`.
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`, `compute_relation_quotient` (authoritative row roles / block routing for the direct checker).
+- `crates/akita-prover/src/protocol/ring_switch/finalize.rs`, `ring_switch_finalize` (alpha / tau1 sampling, skipped in direct mode).
+- `crates/akita-prover/src/protocol/core/fold.rs`, `prove_fold` (shared terminal engine), `bind_next_witness_for_ring_switch`, `prove_stage2`.
+- `crates/akita-prover/src/protocol/core/root_fold.rs`, `prove_terminal_root_fold_with_params`.
+- `crates/akita-prover/src/protocol/core/suffix.rs`, `prove_suffix` (recursive-terminal last level).
+- `crates/akita-verifier/src/protocol/core/fold.rs`, `verify_fold` (shared terminal engine), `verify_stage2`.
+- `crates/akita-verifier/src/protocol/core/{verify,root_fold,suffix}.rs`, terminal verifier dispatch and expected-shape gating.
+- `crates/akita-verifier/src/protocol/ring_switch.rs`, `ring_switch_verifier_terminal`, `RingSwitchDeferredRowEval` (current sumcheck-only terminal replay).
+- `crates/akita-verifier/src/protocol/core/verify.rs`, `mat_vec_mul_i8_plain` / `direct_decomposed_inner_rows` (reusable cyclotomic primitives).
+- `crates/akita-verifier/src/proof/direct.rs`, `cleartext_witness_opening_matches` (reused for the direct-mode public opening check).
 - `crates/akita-verifier/src/stages/stage2.rs`, current terminal stage-2 verifier over decoded direct witness.
 - `crates/akita-pcs/tests/transcript_hardening.rs`, terminal transcript and tamper coverage.
