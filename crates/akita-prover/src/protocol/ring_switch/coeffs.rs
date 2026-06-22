@@ -61,13 +61,6 @@ where
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
     let num_claims = instance.opening_batch().num_claims();
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            "ring_switch_build_w"
-        );
-    }
     let RingRelationWitness {
         z_folded_rings,
         fold_grind_nonce: _,

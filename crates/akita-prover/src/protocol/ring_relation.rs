@@ -445,13 +445,6 @@ impl RingRelationProver {
             + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
         RB: DigitRowsComputeBackend<F>,
     {
-        {
-            let x: u8 = 0;
-            tracing::trace!(
-                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-                "RingRelationProver::new"
-            );
-        }
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(

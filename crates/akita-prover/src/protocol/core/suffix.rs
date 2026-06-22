@@ -1,8 +1,8 @@
 use super::*;
 use crate::backend::OwnedSuffixWitness;
 use crate::compute::{
-    ComputeBackendSetup, LevelProveStacks, ProverComputeBackend, RecursiveProveBackend,
-    RootProveFlowBackend, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend,
+    RingSwitchComputeBackend, RootProveFlowBackend, UniformProverStack,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -55,10 +55,10 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, B, const D: usize, Stacks>(
+pub fn prove_suffix<'stack, Cfg, T, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    stacks: &'stack Stacks,
+    stacks: &'stack impl LevelProveStacks<'stack, Cfg::Field, B, D>,
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
@@ -85,10 +85,10 @@ where
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     B: RecursiveProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, D>, Cfg::ExtField, D>
-        + ProverComputeBackend<Cfg::Field>
+        + CommitmentComputeBackend<Cfg::Field>
+        + RingSwitchComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    Stacks: LevelProveStacks<'stack, Cfg::Field, B, D>,
     <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
@@ -127,7 +127,7 @@ where
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
             })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D, Stacks>(
+            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D>(
                 expanded,
                 prefix_slots,
                 stacks,
@@ -167,15 +167,7 @@ where
                         "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
                     ))
                 })?;
-                prove_fold::<
-                    Cfg::Field,
-                    Cfg::ExtField,
-                    T,
-                    B,
-                    Cfg,
-                    { D_LEVEL },
-                    UniformProverStack<'_, Cfg::Field, B, { D_LEVEL }>,
-                >(
+                prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, { D_LEVEL }>(
                     expanded,
                     &level_prefix_slots,
                     &level_stack,
@@ -248,7 +240,7 @@ fn prepare_suffix<F, L, T, B, const D: usize>(
     stack: &UniformProverStack<'_, F, B, D>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
-    level: usize,
+    _level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
@@ -273,15 +265,6 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
     B: RootProveFlowBackend<F, OwnedSuffixWitness<F, D>, L, D>,
 {
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level,
-            "prepare_suffix"
-        );
-    }
-
     let witness_view = OwnedSuffixWitness::<F, D>::from_suffix(&current_state.w.view::<F, D>()?);
     let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
     let typed_hint = current_state.hint.to_typed::<D>()?;

@@ -1,8 +1,9 @@
 use super::*;
 use crate::compute::{
-    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
-    RootProveFlowBackend, RootProvePoly, UniformProverStack,
+    tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
+    LevelProveStacks, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RingSwitchComputeBackend, RootOpeningSource, RootProveFlowBackend, RootProvePoly,
+    UniformProverStack,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -628,10 +629,10 @@ type BoundNextWitness<F> = (
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, B, Cfg, const D: usize, Stacks>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    stacks: &'stack Stacks,
+    stacks: &'stack impl LevelProveStacks<'stack, F, B, D>,
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
@@ -656,9 +657,8 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
-    Stacks: LevelProveStacks<'stack, F, B, D>,
     <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(level);

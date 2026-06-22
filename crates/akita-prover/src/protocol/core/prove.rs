@@ -186,10 +186,10 @@ where
 /// Returns an error if claim preparation, schedule selection, root-direct
 /// witness construction, transcript binding, or folded-root proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn batched_prove<'a, Cfg, T, P, B, const D: usize, Stacks>(
+pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    stacks: &'a Stacks,
+    stacks: &'a impl LevelProveStacks<'a, Cfg::Field, B, D>,
     claims: ProverClaims<
         'a,
         Cfg::ExtField,
@@ -225,7 +225,6 @@ where
     B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>
         + ComputeBackendSetup<Cfg::Field>
         + 'a,
-    Stacks: LevelProveStacks<'a, Cfg::Field, B, D>,
     <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let prepared_claims = {
@@ -278,7 +277,7 @@ where
             "root schedule does not start with a fold".to_string(),
         ));
     }
-    prove::<Cfg, T, P, B, D, Stacks>(
+    prove::<Cfg, T, P, B, D>(
         expanded,
         prefix_slots,
         stacks,
@@ -305,10 +304,10 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove<'a, Cfg, T, P, B, const D: usize, Stacks>(
+pub fn prove<'a, Cfg, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    stacks: &'a Stacks,
+    stacks: &'a impl LevelProveStacks<'a, Cfg::Field, B, D>,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
     schedule: &Schedule,
@@ -339,7 +338,6 @@ where
     B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>
         + ComputeBackendSetup<Cfg::Field>
         + 'a,
-    Stacks: LevelProveStacks<'a, Cfg::Field, B, D>,
     <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
@@ -376,32 +374,24 @@ where
         // Root is itself the terminal fold: no recursive suffix.
         #[cfg(not(feature = "zk"))]
         let terminal_shape = schedule_terminal_direct_witness_shape(schedule)?;
-        let terminal = prove_terminal_root_fold_with_params::<
-            Cfg,
-            Cfg::Field,
-            Cfg::ExtField,
-            T,
-            P,
-            B,
-            D,
-            Stacks,
-        >(
-            expanded,
-            stacks,
-            transcript,
-            &prepared_claims.flat_polys,
-            prepared_claims.opening_batch,
-            prepared_claims.opening_point,
-            &prepared_claims.commitments,
-            prepared_claims.commitment_hints,
-            &root_scheduled,
-            #[cfg(not(feature = "zk"))]
-            terminal_shape,
-            basis,
-            setup_contribution_mode,
-            #[cfg(feature = "zk")]
-            &mut zk_hiding_state,
-        )?;
+        let terminal =
+            prove_terminal_root_fold_with_params::<Cfg, Cfg::Field, Cfg::ExtField, T, P, B, D>(
+                expanded,
+                stacks,
+                transcript,
+                &prepared_claims.flat_polys,
+                prepared_claims.opening_batch,
+                prepared_claims.opening_point,
+                &prepared_claims.commitments,
+                prepared_claims.commitment_hints,
+                &root_scheduled,
+                #[cfg(not(feature = "zk"))]
+                terminal_shape,
+                basis,
+                setup_contribution_mode,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_state,
+            )?;
         #[cfg(feature = "zk")]
         let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
@@ -415,7 +405,7 @@ where
         ));
     }
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D, Stacks>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
         expanded,
         prefix_slots,
         stacks,
@@ -434,7 +424,7 @@ where
     let next_state = root.next_state;
     let root = AkitaBatchedRootProof::new(root.level_proof);
 
-    let suffix = crate::prove_suffix::<Cfg, T, B, D, Stacks>(
+    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
         expanded,
         prefix_slots,
         stacks,

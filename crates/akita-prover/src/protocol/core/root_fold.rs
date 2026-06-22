@@ -1,7 +1,6 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, LevelProveStacks, ProverComputeBackend, RootProveFlowBackend,
-    RootProvePoly, UniformProverStack,
+    ComputeBackendSetup, LevelProveStacks, RootProveFlowBackend, RootProvePoly, UniformProverStack,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -137,10 +136,10 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root<'stack, F, E, T, P, B, Cfg, const D: usize, Stacks>(
+pub fn prove_root<'stack, F, E, T, P, B, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    stacks: &'stack Stacks,
+    stacks: &'stack impl LevelProveStacks<'stack, F, B, D>,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -171,9 +170,8 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D> + ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    B: RootProveFlowBackend<F, P, E, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    Stacks: LevelProveStacks<'stack, F, B, D>,
     <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
@@ -184,16 +182,6 @@ where
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
-    }
-
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level = 0usize,
-            num_claims,
-            "prove_root"
-        );
     }
 
     append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
@@ -215,7 +203,7 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, B, Cfg, D, Stacks>(
+    prove_fold::<F, E, T, B, Cfg, D>(
         expanded,
         prefix_slots,
         stacks,
@@ -245,9 +233,9 @@ where
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, B, const D: usize, Stacks>(
+pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, B, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    stacks: &'stack Stacks,
+    stacks: &'stack impl LevelProveStacks<'stack, F, B, D>,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -279,9 +267,8 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D> + ProverComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    B: RootProveFlowBackend<F, P, E, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    Stacks: LevelProveStacks<'stack, F, B, D>,
     <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
@@ -292,16 +279,6 @@ where
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
-    }
-
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level = 0usize,
-            num_claims,
-            "prove_terminal_root_fold_with_params"
-        );
     }
 
     append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
@@ -325,7 +302,7 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, B, Cfg, D, Stacks>(
+    let terminal_result = prove_fold::<F, E, T, B, Cfg, D>(
         expanded,
         &prefix_slots,
         stacks,
