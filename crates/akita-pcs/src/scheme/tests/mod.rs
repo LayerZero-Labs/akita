@@ -192,7 +192,6 @@ fn expected_same_point_batched_shape(
         1,
         1,
         1,
-        1,
         akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
@@ -277,11 +276,11 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &prepared,
         (
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,

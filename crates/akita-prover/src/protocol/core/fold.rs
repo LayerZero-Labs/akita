@@ -265,8 +265,8 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     alpha_bits: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
-    commitments: &[RingCommitment<F, D>],
+    commitment_hint: AkitaCommitmentHint<F, D>,
+    ring_commitment: &RingCommitment<F, D>,
     m_row_layout: MRowLayout,
     commitment: FlatRingVec<F>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
@@ -374,9 +374,9 @@ where
         e_folded_by_claim,
         relation_opening_batch,
         level_params.clone(),
-        commitment_hints,
+        commitment_hint,
         transcript,
-        commitments,
+        ring_commitment,
         row_coefficient_rings,
         m_row_layout,
     )?;
@@ -767,7 +767,7 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] instance: &RingRelationInstance<F, D>,
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
@@ -796,10 +796,6 @@ where
                             .to_string(),
                     ));
                 }
-                let num_commitment_groups = instance
-                    .opening_batch()
-                    .num_polys_per_commitment_group()
-                    .len();
                 let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                     terminal_direct_witness_shape.ok_or_else(|| {
                         AkitaError::InvalidSetup(
@@ -826,7 +822,7 @@ where
                     num_w_vectors,
                     num_t_vectors,
                     num_public_rows,
-                    num_commitment_groups,
+                    1,
                 )?;
                 if segment.layout != scheduled_shape.layout {
                     return Err(AkitaError::InvalidSetup(

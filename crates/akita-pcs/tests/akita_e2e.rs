@@ -142,11 +142,11 @@ fn prove_input<'a, FF: FieldCore, P, C, H>(
 ) -> ProverClaims<'a, FF, P, C, H> {
     (
         point,
-        vec![CommittedPolynomials {
+        CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        }],
+        },
     )
 }
 
@@ -157,10 +157,10 @@ fn verify_input<'a, FF: FieldCore, C>(
 ) -> VerifierClaims<'a, FF, C> {
     (
         point,
-        vec![CommittedOpenings {
+        CommittedOpenings {
             openings,
             commitment,
-        }],
+        },
     )
 }
 

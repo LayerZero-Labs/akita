@@ -373,14 +373,14 @@ where
 pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     /// Shared opening point.
     pub opening_point: &'a [E],
-    /// Commitments in commitment-group order.
-    pub commitments: Vec<RingCommitment<F, D>>,
+    /// Batch commitment.
+    pub commitment: RingCommitment<F, D>,
     /// Normalized opening-batch summary that owns canonical root claim routing.
     pub opening_batch: OpeningBatch,
     /// Polynomials flattened in claim order.
     pub flat_polys: Vec<&'a P>,
-    /// Commitment hints in commitment-group order.
-    pub commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    /// Prover-side hint for the batch commitment.
+    pub commitment_hint: AkitaCommitmentHint<F, D>,
 }
 
 #[cfg(feature = "zk")]

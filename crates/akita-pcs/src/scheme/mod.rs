@@ -54,20 +54,20 @@ where
 
     fn setup_prover(
         max_num_vars: usize,
-        max_num_polys_per_commitment_group: usize,
+        max_num_polys_per_segment: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_setup::new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_polys_per_commitment_group)
+        akita_setup::new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_polys_per_segment)
     }
 
     fn setup_prover_recursion(
         max_num_vars: usize,
-        max_num_polys_per_commitment_group: usize,
+        max_num_polys_per_segment: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
         akita_setup::new_prover_setup_recursion::<F, D, Cfg>(
             max_num_vars,
-            max_num_polys_per_commitment_group,
+            max_num_polys_per_segment,
         )
     }
 
@@ -91,20 +91,19 @@ where
         akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
     }
 
-    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_commitment_group: &[&[P]],
-    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+        polys: &[P],
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, D>,
         B: CommitmentComputeBackend<F>,
     {
         akita_prover::batched_commit::<Cfg, D, P, B>(
-            polys_per_commitment_group,
+            polys,
             setup.expanded.as_ref(),
             backend,
             prepared,

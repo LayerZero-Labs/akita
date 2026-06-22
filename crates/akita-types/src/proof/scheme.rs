@@ -10,9 +10,7 @@ pub type OpeningPoints<'a, F> = &'a [F];
 /// One PCS commitment and the claimed openings of its bundled polynomials.
 ///
 /// `openings[i]` is the claimed evaluation of `polynomials[i]` at the batch's
-/// shared opening point. A batched call may cite multiple `CommittedOpenings`
-/// entries (multiple commitment objects), but every slot opens at the same
-/// point; multipoint openings (different points per claim) are not supported.
+/// shared opening point.
 #[derive(Debug, Clone)]
 pub struct CommittedOpenings<'a, F, C> {
     /// Claimed evaluations for the bundled polynomials at the shared point.
@@ -21,22 +19,18 @@ pub struct CommittedOpenings<'a, F, C> {
     pub commitment: &'a C,
 }
 
-/// Batched verifier input: one shared opening point plus commitment bundles.
+/// Batched verifier input: one shared opening point plus one commitment bundle.
 ///
-/// Shape: `(shared_point, vec![CommittedOpenings, ...])`.
+/// Shape: `(shared_point, CommittedOpenings)`.
 ///
 /// # Protocol contract
 ///
 /// - **Single opening point.** All claims in the batch share `shared_point`.
 ///   To open the same polynomials at different points, run separate prove/verify
 ///   calls.
-/// - **Folded batched prove/verify (production path).** One commitment object
-///   bundling `N` polynomials (`vec![CommittedOpenings { openings: N, .. }]`
-///   with `N > 1` or multiple slots in one bundle). This is the shape exercised
-///   by E2E tests and shipped planner tables.
-/// - **Multiple commitment objects at one point** are representable in this
-///   type but not yet supported on the folded recursion path (future work).
-pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>);
+/// - **Batched prove/verify.** One commitment object may bundle `N`
+///   polynomials, all opened at `shared_point`.
+pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, CommittedOpenings<'a, F, C>);
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///

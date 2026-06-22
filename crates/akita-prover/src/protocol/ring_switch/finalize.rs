@@ -45,8 +45,7 @@ where
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_batch = instance.opening_batch();
-    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
-    let num_commitment_groups = num_polys_per_commitment_group.len();
+    let num_polys = opening_batch.num_polynomials();
     let num_public_m_rows = 0usize;
 
     let num_ring_elems = w.len() / D;
@@ -56,7 +55,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count_for(num_commitment_groups, num_public_m_rows, m_row_layout)?;
+    let m_rows = lp.m_row_count_for(1, num_public_m_rows, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -75,8 +74,7 @@ where
     let ring_alpha_evals_y = scalar_powers(alpha, D);
     let alpha_evals_y = scalar_powers(alpha, D);
 
-    let claim_to_commitment_group = opening_batch.claim_to_commitment_group();
-    let claim_poly_in_commitment_group = opening_batch.claim_poly_indices();
+    let claim_poly_indices = opening_batch.claim_poly_indices();
     let challenges = &instance.challenges;
     if gamma.len() != instance.opening_batch().num_claims() {
         return Err(AkitaError::InvalidInput(
@@ -96,9 +94,8 @@ where
                 &ring_alpha_evals_y,
                 lp,
                 &tau1,
-                num_polys_per_commitment_group,
-                claim_to_commitment_group,
-                claim_poly_in_commitment_group,
+                num_polys,
+                claim_poly_indices,
                 gamma,
                 num_public_m_rows,
                 m_row_layout,
@@ -117,9 +114,8 @@ where
             &ring_alpha_evals_y,
             lp,
             &tau1,
-            num_polys_per_commitment_group,
-            claim_to_commitment_group,
-            claim_poly_in_commitment_group,
+            num_polys,
+            claim_poly_indices,
             gamma,
             num_public_m_rows,
             m_row_layout,

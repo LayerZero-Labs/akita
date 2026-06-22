@@ -172,8 +172,7 @@ mod tests {
             openings[0], openings[1],
             "witnesses must disagree at the point"
         );
-        let opening_batch =
-            OpeningBatch::from_commitment_groups(1, &[1, 1]).expect("two commitment groups");
+        let opening_batch = OpeningBatch::same_point(1, 2).expect("two polynomial slots");
 
         verify_zero_fold_openings_with_opening_batch(
             &witnesses,

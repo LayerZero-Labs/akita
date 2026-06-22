@@ -30,9 +30,9 @@ where
     let b_start = 1 + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
-    // `[group t_hat || group blinding]` for each commitment group. The
+    // `[group t_hat || group blinding]` for each commitment bundle. The
     // witness has one blinding segment per point; every segment reuses the
-    // same stored per-commitment zkB row view with fresh digits.
+    // same stored per-bundle zkB row view with fresh digits.
     let b_blinding_segment_len = prepared.b_blinding_segment_len;
     let b_zk_view = setup
         .zk_b_matrix()
@@ -167,7 +167,7 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let num_polys_per_commitment_group = vec![3usize];
+        let num_polys_per_segment = vec![3usize];
         let num_public_rows = 0usize;
         let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
@@ -191,7 +191,7 @@ mod tests {
         let max_zk_d_len = n_d * d_blinding_segment_len;
 
         let t_cols_per_claim = num_blocks * n_a * depth_open;
-        let max_b_local_col = num_polys_per_commitment_group
+        let max_b_local_col = num_polys_per_segment
             .iter()
             .map(|&count| count * t_cols_per_claim)
             .max()
@@ -225,7 +225,7 @@ mod tests {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: num_polys_per_commitment_group.iter().sum(),
+                max_num_batched_polys: num_polys_per_segment.iter().sum(),
                 gen_ring_dim: D,
                 max_setup_len,
                 max_zk_b_len,
@@ -245,7 +245,7 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
-            num_t_vectors: num_polys_per_commitment_group.iter().sum(),
+            num_t_vectors: num_polys_per_segment.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -264,7 +264,8 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            num_polys_per_commitment_group,
+            claim_poly_indices: vec![0, 1, 2],
+            num_polys: num_polys_per_segment.iter().sum(),
             witness_segment_layout,
         };
         ZkFixture {

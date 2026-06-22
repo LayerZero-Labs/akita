@@ -203,7 +203,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            1,
             opening_batch.num_polynomials(),
             opening_batch.num_claims(),
             1,
@@ -299,7 +298,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         // length.
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            1,
             opening_batch.num_polynomials(),
             opening_batch.num_claims(),
             1,
@@ -399,11 +397,11 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &prepared,
         (
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -438,10 +436,10 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -474,10 +472,10 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             &mut verifier_transcript,
             (
                 &point[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: &openings[..],
                     commitment: &commitments[0],
-                }],
+                },
             ),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -494,10 +492,10 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -513,10 +511,10 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         (
             &wrong_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -589,11 +587,11 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &prepared,
         (
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -625,10 +623,10 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -644,10 +642,10 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -721,11 +719,11 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &prepared,
         (
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -757,10 +755,10 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -830,11 +828,11 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &prepared,
         (
             &point_a[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -866,10 +864,10 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         (
             &point_a[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -885,10 +883,10 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         (
             &point_a[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

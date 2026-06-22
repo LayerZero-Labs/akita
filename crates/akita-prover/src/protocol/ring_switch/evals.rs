@@ -43,8 +43,7 @@ pub fn build_w_evals_compact(
 
 /// Unified M-table evaluation for the batched CWSS protocol.
 ///
-/// All claims share one ring-level opening point. Commitment-group routing may
-/// address multiple committed bundles.
+/// All claims share one ring-level opening point and one committed bundle.
 ///
 /// # Errors
 ///
@@ -61,9 +60,8 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     alpha_pows: &[E],
     lp: &LevelParams,
     tau1: &[E],
-    num_polys_per_commitment_group: &[usize],
-    claim_to_commitment_group: &[usize],
-    claim_poly_in_commitment_group: &[usize],
+    num_polys: usize,
+    claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
@@ -78,7 +76,7 @@ where
             actual: alpha_pows.len(),
         });
     }
-    let num_claims = claim_to_commitment_group.len();
+    let num_claims = claim_poly_indices.len();
     if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
         return Err(AkitaError::InvalidInput(
             "batched prover opening-point layout mismatch".to_string(),
@@ -91,22 +89,10 @@ where
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
         ));
     }
-    if claim_to_commitment_group.len() != num_claims
-        || claim_poly_in_commitment_group.len() != num_claims
-    {
-        return Err(AkitaError::InvalidInput(
-            "batched prover commitment routing lengths do not match".to_string(),
-        ));
-    }
-    let num_commitment_groups = num_polys_per_commitment_group.len();
-    for claim_idx in 0..num_claims {
-        let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_in_commitment_group[claim_idx]
-                >= num_polys_per_commitment_group[group_idx]
-        {
+    for &poly_idx in claim_poly_indices {
+        if poly_idx >= num_polys {
             return Err(AkitaError::InvalidInput(
-                "batched prover commitment routing index out of range".to_string(),
+                "batched prover polynomial index out of range".to_string(),
             ));
         }
     }
@@ -116,32 +102,8 @@ where
     let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
-    let num_t_vectors = num_polys_per_commitment_group
-        .iter()
-        .try_fold(0usize, |acc, &count| acc.checked_add(count))
-        .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
-    let t_vector_to_group: Vec<(usize, usize)> = num_polys_per_commitment_group
-        .iter()
-        .enumerate()
-        .flat_map(|(group_idx, &group_poly_count)| {
-            (0..group_poly_count).map(move |poly_idx| (group_idx, poly_idx))
-        })
-        .collect();
-    // Per-commitment-group t-vector starting indices; precomputed so the
-    // per-claim mapping below stays O(groups + claims).
-    let t_vector_offsets: Vec<usize> = num_polys_per_commitment_group
-        .iter()
-        .scan(0usize, |acc, &count| {
-            let offset = *acc;
-            *acc += count;
-            Some(offset)
-        })
-        .collect();
-    let claim_to_t_vector: Vec<usize> = claim_to_commitment_group
-        .iter()
-        .zip(claim_poly_in_commitment_group.iter())
-        .map(|(&group_idx, &poly_idx)| t_vector_offsets[group_idx] + poly_idx)
-        .collect();
+    let num_t_vectors = num_polys;
+    let claim_to_t_vector: Vec<usize> = claim_poly_indices.to_vec();
 
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -179,21 +141,18 @@ where
     let b_blinding_digit_planes_per_point =
         akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_commitment_groups
-        .checked_mul(b_blinding_digit_planes_per_point)
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
+    let b_blinding_segment_len = b_blinding_digit_planes_per_point;
     let inner_width = block_len * depth_commit;
     let z_base_len = inner_width;
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count_for(num_commitment_groups, num_public_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
     // Tiered `û_concat` segment column count (flat, after `t̂`); `0` single-tier.
     let u_seg_len = if lp.f_key.is_some() {
-        num_commitment_groups
-            .checked_mul(lp.tier_split)
-            .and_then(|w| w.checked_mul(n_b))
+        lp.tier_split
+            .checked_mul(n_b)
             .and_then(|w| w.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("tiered û segment overflow".to_string()))?
     } else {
@@ -253,11 +212,6 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
-    let max_group_poly_count = num_polys_per_commitment_group
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
     let d_message_width = total_blocks
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
@@ -266,7 +220,7 @@ where
         .checked_mul(depth_open)
         .and_then(|len| len.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B setup vector width overflow".to_string()))?;
-    let b_message_width = max_group_poly_count
+    let b_message_width = num_polys
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
     // Tiered: the stored first-tier matrix is `B'` of width `b_message_width /
@@ -318,8 +272,8 @@ where
     let public_weights = &eq_tau1[1..(1 + num_public_rows)];
     let d_start = 1 + num_public_rows;
     let f_start = d_start + n_d_active;
-    let b_inner_start = f_start + commit_rows_pg * num_commitment_groups;
-    let a_start = b_inner_start + b_inner_rows_pg * num_commitment_groups;
+    let b_inner_start = f_start + commit_rows_pg;
+    let a_start = b_inner_start + b_inner_rows_pg;
     // Non-tiered alias used by the single-tier B-block scan below.
     let b_start = f_start;
     let a_weights = &eq_tau1[a_start..rows];
@@ -428,10 +382,9 @@ where
             let digit_idx = compound_dig % depth_open;
             let t_vector_idx = blk / num_blocks;
             let block_idx = blk % num_blocks;
-            let (point_idx, poly_idx_within_group) = t_vector_to_group[t_vector_idx];
             let phys_claim_offset =
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
-            let local_col = poly_idx_within_group * t_cols_per_vector + phys_claim_offset;
+            let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
             if tiered {
                 // B_inner block: the stored B' is reused across `tier_split`
@@ -439,7 +392,7 @@ where
                 // stored-B' column.
                 let slice = local_col / b_width;
                 let within = local_col % b_width;
-                let base = b_inner_start + point_idx * (tier_split * n_b) + slice * n_b;
+                let base = b_inner_start + slice * n_b;
                 for row_idx in 0..n_b {
                     let eq_i = eq_tau1[base + row_idx];
                     if !eq_i.is_zero() {
@@ -447,8 +400,7 @@ where
                     }
                 }
             } else {
-                let commitment_weights =
-                    &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
+                let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
@@ -463,23 +415,21 @@ where
     // second-tier `F` commit-block image plus the `B_inner` `-recompose(û)`
     // term, per `û` column. Empty for single-tier.
     let u_segment: Vec<E> = if tiered {
-        let u_seg_len = num_commitment_groups * width_f;
+        let u_seg_len = width_f;
         cfg_into_iter!(0..u_seg_len)
             .map(|c| {
-                let group = c / width_f;
-                let c_in_group = c % width_f;
-                let slice_row = c_in_group / depth_open;
-                let digit = c_in_group % depth_open;
+                let slice_row = c / depth_open;
+                let digit = c % depth_open;
                 let mut acc = E::zero();
                 // F (commit) block: F·û_concat.
                 for f_row in 0..n_f {
-                    let eq_i = eq_tau1[f_start + group * n_f + f_row];
+                    let eq_i = eq_tau1[f_start + f_row];
                     if !eq_i.is_zero() {
-                        acc += eq_i * eval_ring_at_pows(&f_rows[f_row][c_in_group], alpha_pows);
+                        acc += eq_i * eval_ring_at_pows(&f_rows[f_row][c], alpha_pows);
                     }
                 }
                 // B_inner RHS: -recompose(û) = -Σ_digit base^digit · û[digit].
-                let b_inner_w = eq_tau1[b_inner_start + group * (tier_split * n_b) + slice_row];
+                let b_inner_w = eq_tau1[b_inner_start + slice_row];
                 acc -= b_inner_w * g1_open[digit];
                 acc
             })
@@ -492,9 +442,7 @@ where
     let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_point == 0 {
         Vec::new()
     } else {
-        // Each commitment group is committed independently with a group-local B
-        // input `[group t_hat || group blinding]`; witness segments are
-        // point-local but reuse the same stored per-commitment zkB row view.
+        // The single commitment's ZK B blinding segment reuses the stored B row view.
         let b_zk_view = setup
             .zk_b_matrix()
             .ring_view::<D>(n_b, b_blinding_digit_planes_per_point)?;
@@ -502,16 +450,12 @@ where
         let b_zk_stride = b_zk_view.num_cols();
         cfg_into_iter!(0..b_blinding_segment_len)
             .map(|idx| {
-                let group_stride = b_blinding_digit_planes_per_point;
-                let point_idx = idx / group_stride;
-                let local = idx % group_stride;
-                let commitment_weights =
-                    &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
+                let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + local], alpha_pows);
+                            * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + idx], alpha_pows);
                     }
                 }
                 acc

@@ -49,11 +49,11 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &prepared,
         (
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -155,10 +155,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &mut verifier_transcript,
         (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

@@ -21,7 +21,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     transcript: &mut T,
     shared_opening_point: &[E],
     openings: &[E],
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     opening_batch: OpeningBatch,
     basis: BasisMode,
     root_lp: &LevelParams,
@@ -50,18 +50,13 @@ where
     if openings.len() != num_claims || opening_batch.claim_poly_indices().len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitments.is_empty()
-        || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
-        || commitments
-            .iter()
-            .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())
-    {
+    if commitment.u.len() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
     }
-    let commitment_rows = flatten_batched_commitment_rows(commitments);
+    let commitment_rows = flatten_batched_commitment_rows(commitment);
 
     append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
+    append_batched_commitments_to_transcript(commitment, transcript);
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
@@ -168,7 +163,6 @@ where
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
         AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
             root_lp,
-            1,
             opening_batch.num_claims(),
             num_claims,
             1,

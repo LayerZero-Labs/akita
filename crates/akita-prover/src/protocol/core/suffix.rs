@@ -307,8 +307,8 @@ where
         alpha,
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
-        vec![typed_hint],
-        std::slice::from_ref(&recursive_commitment),
+        typed_hint,
+        &recursive_commitment,
         m_row_layout,
         current_state.commitment,
     )

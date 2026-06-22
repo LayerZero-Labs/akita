@@ -92,68 +92,6 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(e_hat)
 }
 
-fn flatten_commitment_hints_for_ring_relation<F, const D: usize>(
-    hints: Vec<AkitaCommitmentHint<F, D>>,
-    group_sizes: &[usize],
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<AkitaCommitmentHint<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if hints.len() != group_sizes.len() {
-        return Err(AkitaError::InvalidInput(
-            "prover hint group count does not match commitment groups".to_string(),
-        ));
-    }
-
-    let mut decomposed_inner_rows = Vec::new();
-    let mut t_rows_by_poly = Vec::new();
-    #[cfg(feature = "zk")]
-    let mut b_blinding_digits = Vec::new();
-    for (mut hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
-        if hint.decomposed_inner_rows.len() != group_size {
-            return Err(AkitaError::InvalidInput(
-                "prover hint group sizes do not match polynomial groups".to_string(),
-            ));
-        }
-        hint.ensure_recomposed_inner_rows(num_digits_open, log_basis)?;
-        #[cfg(feature = "zk")]
-        let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
-        #[cfg(not(feature = "zk"))]
-        let (digits_by_poly, rows_by_poly) = hint.into_parts();
-        #[cfg(feature = "zk")]
-        if blinding_by_group.len() != 1 {
-            return Err(AkitaError::InvalidInput(
-                "prover hint must carry exactly one blinding group per commitment".to_string(),
-            ));
-        }
-        decomposed_inner_rows.extend(digits_by_poly);
-        let rows_by_poly = rows_by_poly.ok_or_else(|| {
-            AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
-        })?;
-        t_rows_by_poly.extend(rows_by_poly);
-        #[cfg(feature = "zk")]
-        b_blinding_digits.append(&mut blinding_by_group);
-    }
-
-    #[cfg(feature = "zk")]
-    {
-        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-            decomposed_inner_rows,
-            t_rows_by_poly,
-            b_blinding_digits,
-        ))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-            decomposed_inner_rows,
-            t_rows_by_poly,
-        ))
-    }
-}
-
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -402,9 +340,9 @@ impl RingRelationProver {
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         opening_batch: OpeningBatch,
         lp: LevelParams,
-        hints: Vec<AkitaCommitmentHint<F, D>>,
+        mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
-        commitments: &[RingCommitment<F, D>],
+        commitment: &RingCommitment<F, D>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
@@ -443,19 +381,20 @@ impl RingRelationProver {
         if polys.len() != pre_folded_e_by_poly.len()
             || polys.len() != num_claims
             || opening_batch.claim_poly_indices().len() != num_claims
-            || hints.len() != opening_batch.num_polys_per_commitment_group().len()
-            || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
         }
-        for commitment in commitments {
-            if commitment.u.len() != lp.effective_commit_rows() {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
-            }
+        if commitment.u.len() != lp.effective_commit_rows() {
+            return Err(AkitaError::InvalidInput(
+                "batched prover received a commitment with the wrong length".to_string(),
+            ));
+        }
+        if hint.decomposed_inner_rows.len() != polys.len() {
+            return Err(AkitaError::InvalidInput(
+                "prover hint size does not match polynomial count".to_string(),
+            ));
         }
         if row_coefficient_rings.len() != num_claims {
             return Err(AkitaError::InvalidInput(
@@ -471,12 +410,7 @@ impl RingRelationProver {
             let _span = tracing::info_span!("decompose_batched_e_hat").entered();
             decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
         };
-        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
-            hints,
-            opening_batch.num_polys_per_commitment_group(),
-            lp.num_digits_open,
-            lp.log_basis,
-        )?;
+        hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
         // Terminal layout drops the D-block from the M-matrix entirely:
         // `v = D · e_hat` never travels on the wire, the verifier never
@@ -519,10 +453,7 @@ impl RingRelationProver {
                 transcript, polys, &lp, num_claims,
             )?;
 
-        let commitment_rows = commitments
-            .iter()
-            .flat_map(|commitment| commitment.u.iter().copied())
-            .collect::<Vec<_>>();
+        let commitment_rows = commitment.u.to_vec();
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
@@ -558,7 +489,7 @@ impl RingRelationProver {
             fold_grind_nonce,
             e_hat,
             e_folded,
-            hint: flattened_hint,
+            hint,
             #[cfg(feature = "zk")]
             d_blinding_digits,
         };

@@ -73,22 +73,21 @@ where
         P: AkitaPolyOps<F, D>,
         B: CommitmentComputeBackend<F>;
 
-    /// Commit the polynomial bundles used by a batched prove.
+    /// Commit the polynomial bundle used by a batched prove.
     ///
-    /// Each input bundle produces one commitment. All bundles share one public
-    /// opening point in the subsequent [`Self::batched_prove`] call.
+    /// All polynomials in `polys` are aggregated into one commitment and share
+    /// one public opening point in the subsequent [`Self::batched_prove`] call.
     ///
     /// # Errors
     ///
-    /// Returns an error if input validation, layout selection, or any
-    /// per-point commitment fails.
-    #[allow(clippy::type_complexity)]
+    /// Returns an error if input validation, layout selection, or commitment
+    /// execution fails.
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        polys_per_commitment_group: &[&[P]],
-    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+        polys: &[P],
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, D>,
         B: CommitmentComputeBackend<F>;

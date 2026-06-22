@@ -78,7 +78,7 @@ impl ExecutionSchedule {
 /// point index is out of range.
 pub fn validate_opening_points_for_claims<F: FieldCore>(
     opening_points: &[RingOpeningPoint<F>],
-    claim_to_commitment_group: &[usize],
+    claim_to_opening_point: &[usize],
     lp: &LevelParams,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
@@ -87,10 +87,10 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
             "ring switch requires at least one opening point".to_string(),
         ));
     }
-    if claim_to_commitment_group.len() != num_claims {
+    if claim_to_opening_point.len() != num_claims {
         return Err(AkitaError::InvalidSize {
             expected: num_claims,
-            actual: claim_to_commitment_group.len(),
+            actual: claim_to_opening_point.len(),
         });
     }
     for opening_point in opening_points {
@@ -100,7 +100,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
             ));
         }
     }
-    if claim_to_commitment_group
+    if claim_to_opening_point
         .iter()
         .any(|&point_idx| point_idx >= opening_points.len())
     {
@@ -117,7 +117,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// inputs that pick a root plan, not the resulting plan data.
 ///
 /// Opening batches use one shared evaluation point. The folded production path
-/// currently assumes one commitment group (one `CommittedOpenings` / one
+/// currently assumes one commitment bundle (one `CommittedOpenings` / one
 /// `CommittedPolynomials` entry bundling `N` polynomials).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
@@ -198,20 +198,18 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 ///
 /// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
+    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
 }
 
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts_for_layout::<F>(
         lp,
-        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -225,7 +223,6 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
-    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -236,7 +233,6 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -249,7 +245,6 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
 pub fn w_ring_element_count_with_counts_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -257,7 +252,6 @@ pub fn w_ring_element_count_with_counts_bits(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_commitment_groups,
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
@@ -271,7 +265,6 @@ pub fn w_ring_element_count_with_counts_bits(
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -286,18 +279,14 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    // Tiered levels carry the hidden decomposed concatenated slice images
-    // `û_concat` (one per commitment group); `0` for single-tier levels.
-    let u_concat_count = num_commitment_groups
-        .checked_mul(lp.u_concat_ring_len_per_group())
-        .ok_or_else(|| AkitaError::InvalidSetup("witness u-concat width overflow".to_string()))?;
+    let u_concat_count = lp.u_concat_ring_len_per_group();
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     // Public-output M rows bind via the fused trace term; omit from r width.
-    let r_rows = lp.m_row_count_for(num_commitment_groups, 0, layout)?;
+    let r_rows = lp.m_row_count_for(1, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -318,14 +307,12 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             ),
             crate::layout::MRowLayout::WithoutDBlock => 0,
         };
-        let b_blinding_count = num_commitment_groups
-            .checked_mul(crate::zk::blinding_column_count_from_bits(
-                lp.b_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-                field_bits as usize,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
+        let b_blinding_count = crate::zk::blinding_column_count_from_bits(
+            lp.b_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+            field_bits as usize,
+        );
         e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(u_concat_count))

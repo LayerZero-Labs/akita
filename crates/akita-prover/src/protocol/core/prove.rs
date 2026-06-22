@@ -5,7 +5,7 @@ use akita_types::schedule_terminal_direct_witness_shape;
 
 struct ProverPreparedOpeningBatch<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     point: &'a [E],
-    payloads: Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
+    payload: CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
     summary: OpeningBatch,
 }
 
@@ -18,33 +18,22 @@ where
     E: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
-    let (point, payloads) = claims;
-    let slots = payloads
+    let (point, payload) = claims;
+    let slots = payload
+        .polynomials
         .iter()
         .enumerate()
-        .flat_map(|(commitment_group, payload)| {
-            payload
-                .polynomials
-                .iter()
-                .enumerate()
-                .map(move |(poly_idx, poly)| OpeningClaimSlot {
-                    commitment_group,
-                    poly_idx,
-                    // Prover inputs do not contain claimed evaluations. The shared
-                    // validator ignores this field, so zero is only a structural
-                    // placeholder.
-                    claimed_eval: E::zero(),
-                    natural_num_vars: poly.num_vars(),
-                    kind: OpeningClaimKind::Polynomial,
-                })
+        .map(|(poly_idx, poly)| OpeningClaimSlot {
+            poly_idx,
+            // Prover inputs do not contain claimed evaluations. The shared
+            // validator ignores this field, so zero is only a structural
+            // placeholder.
+            claimed_eval: E::zero(),
+            natural_num_vars: poly.num_vars(),
+            kind: OpeningClaimKind::Polynomial,
         })
         .collect::<Vec<_>>();
-    let total_polys = payloads
-        .iter()
-        .try_fold(0usize, |acc, payload| acc.checked_add(payload.poly_count()))
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("batched_prove polynomial count overflow".to_string())
-        })?;
+    let total_polys = payload.poly_count();
     if slots.len() != total_polys {
         return Err(AkitaError::InvalidInput(
             "batched_prove polynomial slot count mismatch".to_string(),
@@ -59,7 +48,7 @@ where
 
     Ok(ProverPreparedOpeningBatch {
         point,
-        payloads,
+        payload,
         summary,
     })
 }
@@ -78,56 +67,37 @@ where
     E: ExtField<F>,
     P: AkitaPolyOps<F, D>,
 {
-    validate_batched_inputs(
-        expanded,
-        &claims,
-        |payloads| {
-            payloads
-                .iter()
-                .map(|payload| payload.polynomials.len())
-                .sum()
-        },
-        true,
-    )?;
+    validate_batched_inputs(expanded, &claims, |payload| payload.polynomials.len(), true)?;
 
     let prepared_batch = prover_claims_to_opening_batch(expanded, claims)?;
     let opening_point = prepared_batch.point;
-    let commitments = prepared_batch
-        .payloads
-        .iter()
-        .map(|payload| payload.commitment.clone())
-        .collect::<Vec<_>>();
+    let commitment = prepared_batch.payload.commitment.clone();
     let opening_batch = prepared_batch.summary;
     let flat_polys: Vec<&P> = opening_batch
-        .claim_to_commitment_group()
+        .claim_poly_indices()
         .iter()
-        .zip(opening_batch.claim_poly_indices().iter())
-        .map(|(&group_idx, &poly_idx)| &prepared_batch.payloads[group_idx].polynomials[poly_idx])
+        .map(|&poly_idx| &prepared_batch.payload.polynomials[poly_idx])
         .collect();
-    let commitment_hints = prepared_batch
-        .payloads
-        .into_iter()
-        .map(|payload| payload.hint)
-        .collect();
+    let commitment_hint = prepared_batch.payload.hint;
 
     Ok(PreparedBatchedProveInputs {
         opening_point,
-        commitments,
+        commitment,
         opening_batch,
         flat_polys,
-        commitment_hints,
+        commitment_hint,
     })
 }
 
 /// Build a root-direct batched proof from flattened polynomial references and
-/// their commitment-group hints.
+/// their commitment hint.
 ///
 /// # Errors
 ///
 /// Returns an error if any polynomial cannot produce a direct root witness.
 pub fn prove_root_direct<F, L, const D: usize, P>(
     polys: &[&P],
-    hints: &[AkitaCommitmentHint<F, D>],
+    hint: &AkitaCommitmentHint<F, D>,
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,
@@ -140,9 +110,8 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     #[cfg(feature = "zk")]
     {
-        let b_blinding_digits = hints
-            .iter()
-            .flat_map(|hint| hint.b_blinding_digits())
+        let b_blinding_digits = hint
+            .b_blinding_digits()
             .map(|digits| {
                 let mut flat_digits = Vec::with_capacity(digits.flat_digits().len() * D);
                 for plane in digits.flat_digits() {
@@ -159,7 +128,7 @@ where
     }
     #[cfg(not(feature = "zk"))]
     {
-        let _ = hints;
+        let _ = hint;
         Ok(AkitaBatchedProof {
             root: AkitaBatchedRootProof::new_zero_fold(witnesses),
             steps: Vec::new(),
@@ -260,7 +229,7 @@ where
     if schedule_is_root_direct(&schedule) {
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
             &prepared_claims.flat_polys,
-            &prepared_claims.commitment_hints,
+            &prepared_claims.commitment_hint,
         );
     }
 
@@ -333,11 +302,7 @@ where
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
 
-    if prepared_claims
-        .commitments
-        .iter()
-        .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
-    {
+    if prepared_claims.commitment.u.len() != root_scheduled.params.effective_commit_rows() {
         return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
         ));
@@ -373,8 +338,8 @@ where
                 &prepared_claims.flat_polys,
                 prepared_claims.opening_batch,
                 prepared_claims.opening_point,
-                &prepared_claims.commitments,
-                prepared_claims.commitment_hints,
+                &prepared_claims.commitment,
+                prepared_claims.commitment_hint,
                 &root_scheduled,
                 #[cfg(not(feature = "zk"))]
                 terminal_shape,
@@ -405,8 +370,8 @@ where
         &prepared_claims.flat_polys,
         prepared_claims.opening_batch,
         prepared_claims.opening_point,
-        &prepared_claims.commitments,
-        prepared_claims.commitment_hints,
+        &prepared_claims.commitment,
+        prepared_claims.commitment_hint,
         &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,

@@ -342,12 +342,7 @@ fn root_runtime_matrix_len_for_opening_batch(
     opening_batch: &OpeningBatch,
 ) -> Result<usize, AkitaError> {
     let num_claims = opening_batch.num_claims();
-    let max_group_poly_count = opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .copied()
-        .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
+    let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp
         .num_blocks
         .checked_mul(num_claims)

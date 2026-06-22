@@ -226,12 +226,7 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
 }
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatch) -> usize {
-    let max_group_poly_count = opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .copied()
-        .max()
-        .expect("nonempty opening_batch");
+    let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
@@ -276,7 +271,7 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
 fn setup_matrix_scan_uses_one_shared_opening_point() {
     let opening_batch =
         worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
-    assert_eq!(opening_batch.num_polys_per_commitment_group(), &[4]);
+    assert_eq!(opening_batch.num_polynomials(), 4);
 }
 
 #[test]
@@ -461,7 +456,6 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         let runtime_next_w_len =
             akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
                 &fold.params,
-                1,
                 num_t_vectors,
                 num_w_vectors,
                 num_public_rows,
@@ -479,9 +473,6 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 #[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        if entry.key.num_commitment_groups != 1 {
-            continue;
-        }
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
             entry.key.num_t_vectors,
@@ -558,9 +549,6 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        if entry.key.num_commitment_groups != 1 {
-            continue;
-        }
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
             entry.key.num_t_vectors,
@@ -581,7 +569,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.num_commitment_groups == 1 && entry.key.num_t_vectors > 1)
+        .filter(|entry| entry.key.num_t_vectors > 1)
     {
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
@@ -702,10 +690,9 @@ fn batched_root_plan_matches_runtime_next_w_len() {
         .entries
         .iter()
         .find(|entry| {
-            entry.key.num_commitment_groups == 1
-                && (entry.key.num_t_vectors > 1
-                    || entry.key.num_w_vectors > 1
-                    || entry.key.num_z_vectors > 1)
+            entry.key.num_t_vectors > 1
+                || entry.key.num_w_vectors > 1
+                || entry.key.num_z_vectors > 1
         })
         .expect("generated table should contain a non-singleton batched-root row");
     let key = AkitaScheduleLookupKey::new(

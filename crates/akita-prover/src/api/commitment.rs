@@ -570,42 +570,33 @@ where
 
 /// Validate a batched commitment request and derive its `OpeningBatch`.
 ///
-/// Each slice is one commitment group at the shared opening point. Polynomials
-/// may have smaller natural arity than the shared padded batch domain; the
-/// largest arity selects the root layout.
+/// All polynomials are bundled into one commitment at the shared opening point.
+/// Polynomials may have smaller natural arity than the shared padded batch
+/// domain; the largest arity selects the root layout.
 ///
 /// # Errors
 ///
-/// Returns an error if the groups are empty, exceed the prover setup capacity,
-/// or have a variable count exceeding the prover setup capacity.
+/// Returns an error if the bundle is empty, exceeds the prover setup capacity,
+/// or has a variable count exceeding the prover setup capacity.
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
-    polys_per_commitment_group: &[&[P]],
+    polys: &[P],
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningBatch, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
-    if polys_per_commitment_group.is_empty() {
+    if polys.is_empty() {
         return Err(AkitaError::InvalidInput(
-            "batched_commit requires at least one commitment group".to_string(),
+            "batched_commit requires at least one polynomial".to_string(),
         ));
     }
-    if polys_per_commitment_group
+    let padded_num_vars = polys
         .iter()
-        .any(|group| group.is_empty())
-    {
-        return Err(AkitaError::InvalidInput(
-            "batched_commit commitment groups must be nonempty".to_string(),
-        ));
-    }
-    let padded_num_vars = polys_per_commitment_group
-        .iter()
-        .flat_map(|group| group.iter())
         .map(AkitaPolyOps::num_vars)
         .max()
         .ok_or_else(|| {
-            AkitaError::InvalidInput("batched_commit bundles must be nonempty".to_string())
+            AkitaError::InvalidInput("batched_commit bundle must be nonempty".to_string())
         })?;
     if padded_num_vars > setup.seed.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
@@ -614,16 +605,7 @@ where
         )));
     }
 
-    let mut group_counts = Vec::with_capacity(polys_per_commitment_group.len());
-    let total_polys = polys_per_commitment_group
-        .iter()
-        .try_fold(0usize, |acc, group| {
-            group_counts.push(group.len());
-            acc.checked_add(group.len())
-        })
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("batched_commit total polynomial count overflow".to_string())
-        })?;
+    let total_polys = polys.len();
     if total_polys > setup.seed.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {total_polys} polynomials but setup supports at most {}",
@@ -631,7 +613,7 @@ where
         )));
     }
 
-    OpeningBatch::from_commitment_groups(padded_num_vars, &group_counts)
+    OpeningBatch::same_point(padded_num_vars, total_polys)
 }
 
 /// Commit one polynomial bundle under config `Cfg`.
@@ -646,15 +628,15 @@ where
 /// execution fails.
 #[allow(clippy::type_complexity)]
 pub fn batched_commit<Cfg, const D: usize, P, B>(
-    polys_per_commitment_group: &[&[P]],
+    polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
 ) -> Result<
-    Vec<(
+    (
         RingCommitment<Cfg::Field, D>,
         AkitaCommitmentHint<Cfg::Field, D>,
-    )>,
+    ),
     AkitaError,
 >
 where
@@ -667,46 +649,27 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    let opening_batch =
-        prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_commitment_group, expanded)?;
+    let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    for group in polys_per_commitment_group {
-        validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(group, &params)?;
-    }
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
     if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
-        let transformed: Vec<Vec<FoldInputPoly<'_, Cfg::Field, P, D>>> = polys_per_commitment_group
+        let transformed: Vec<FoldInputPoly<'_, Cfg::Field, P, D>> = polys
             .iter()
-            .map(|group| {
-                group
-                    .iter()
-                    .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
-                    .collect::<Result<Vec<_>, _>>()
-            })
+            .map(|poly| poly.tensor_packed_extension_fold_input::<Cfg::ExtField>())
             .collect::<Result<_, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return transformed
-            .iter()
-            .map(|group| {
-                commit_with_validated_params::<
-                    Cfg::Field,
-                    D,
-                    FoldInputPoly<'_, Cfg::Field, P, D>,
-                    B,
-                >(group, backend, prepared, &params)
-            })
-            .collect();
+        return commit_with_validated_params::<Cfg::Field, D, FoldInputPoly<'_, Cfg::Field, P, D>, B>(
+            &transformed,
+            backend,
+            prepared,
+            &params,
+        );
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    polys_per_commitment_group
-        .iter()
-        .map(|group| {
-            commit_with_validated_params::<Cfg::Field, D, P, B>(group, backend, prepared, &params)
-        })
-        .collect()
+    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
 }
 
-/// Commit one polynomial bundle per opening point using already-selected
-/// level parameters.
+/// Commit one polynomial bundle using already-selected level parameters.
 ///
 /// The caller has already resolved the shared root commitment layout (e.g.
 /// via [`batched_commit`]); this function owns only the prover-
@@ -714,31 +677,24 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if batched input validation fails or any per-point
-/// commitment fails.
-#[allow(clippy::type_complexity)]
+/// Returns an error if batched input validation or commitment execution fails.
 pub fn batched_commit_with_params<F, const D: usize, P, B>(
-    polys_per_commitment_group: &[&[P]],
+    polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
-) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    prepare_batched_commit_inputs::<F, D, P>(polys_per_commitment_group, expanded)?;
+    prepare_batched_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
-    for group in polys_per_commitment_group {
-        validate_batched_onehot_chunk_size_for_params::<F, D, P>(group, params)?;
-    }
-    polys_per_commitment_group
-        .iter()
-        .map(|group| commit_with_validated_params::<F, D, P, B>(group, backend, prepared, params))
-        .collect()
+    validate_batched_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
+    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
 }
 
 #[cfg(test)]

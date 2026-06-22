@@ -53,11 +53,11 @@ fn prover_claim_preparation_accepts_extension_points() {
     let hint = AkitaCommitmentHint::new(Vec::new());
     let claims = (
         &point[..],
-        vec![crate::CommittedPolynomials {
+        crate::CommittedPolynomials {
             polynomials: &polys[..],
             commitment: &commitment,
             hint,
-        }],
+        },
     );
 
     let prepared = prepare_batched_prove_inputs::<F, E, DensePoly<F, 2>, 2>(&setup(), claims)
@@ -65,11 +65,6 @@ fn prover_claim_preparation_accepts_extension_points() {
 
     assert_eq!(prepared.opening_point, &point[..]);
     assert_eq!(prepared.opening_batch.num_claims(), 2);
-    assert_eq!(
-        prepared.opening_batch.num_polys_per_commitment_group(),
-        &[2]
-    );
-    assert_eq!(prepared.opening_batch.claim_to_commitment_group(), &[0, 0]);
     assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
 }
 

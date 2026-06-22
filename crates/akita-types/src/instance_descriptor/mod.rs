@@ -260,8 +260,6 @@ pub fn digest_serializable<S: AkitaSerialize>(
 pub fn digest_opening_batch(summary: &OpeningBatch) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, summary.num_vars());
-    push_usize_vec(&mut bytes, summary.num_polys_per_commitment_group());
-    push_usize_vec(&mut bytes, summary.claim_to_commitment_group());
     push_usize_vec(&mut bytes, summary.claim_poly_indices());
     push_usize(&mut bytes, summary.public_rows().len());
     for row in summary.public_rows() {

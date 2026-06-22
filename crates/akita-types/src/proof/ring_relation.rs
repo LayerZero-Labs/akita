@@ -178,14 +178,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let total_blocks = num_blocks
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-        let num_t_vectors = self
-            .opening_batch
-            .num_polys_per_commitment_group()
-            .iter()
-            .try_fold(0usize, |acc, &count| {
-                acc.checked_add(count)
-                    .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
-            })?;
+        let num_t_vectors = self.opening_batch.num_polynomials();
         let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits())?;
         if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -226,7 +219,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         #[cfg(feature = "zk")]
         let b_blinding_segment_len = b_blinding_digit_planes_per_point;
 
-        // Tiered `û_concat` segment length (per the single commitment group);
+        // Tiered `û_concat` segment length (per the single commitment bundle);
         // `0` for single-tier levels.
         let u_len = lp.u_concat_ring_len_per_group();
         let z_first = ring_column_z_first(lp);
@@ -417,11 +410,7 @@ mod tests {
         let layout = instance.segment_layout(&lp).expect("layout");
         assert!(ring_column_z_first(&lp));
         assert_eq!(layout.offset_z, 0);
-        let num_t_vectors = instance
-            .opening_batch()
-            .num_polys_per_commitment_group()
-            .iter()
-            .sum::<usize>();
+        let num_t_vectors = instance.opening_batch().num_polynomials();
         let depth_fold = lp
             .num_digits_fold(num_t_vectors, F::modulus_bits())
             .unwrap();

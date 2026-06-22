@@ -106,11 +106,11 @@ fn batched_root_direct_fast_path_round_trip() {
         &prepared,
         (
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -147,10 +147,10 @@ fn batched_root_direct_fast_path_round_trip() {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -196,11 +196,11 @@ fn batched_root_direct_rejects_wrong_opening() {
         &prepared,
         (
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -218,10 +218,10 @@ fn batched_root_direct_rejects_wrong_opening() {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -264,11 +264,11 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &prepared,
         (
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -289,10 +289,10 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -309,10 +309,10 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: wrong_opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -344,10 +344,10 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: oversized_opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         ),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

@@ -262,27 +262,22 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
     })
 }
 
-/// Flatten commitment rows in commitment-group order.
+/// Flatten commitment rows for the one batch commitment.
 pub fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    commitments
-        .iter()
-        .flat_map(|commitment| commitment.u.iter().copied())
-        .collect()
+    commitment.u.to_vec()
 }
 
-/// Absorb batched commitments into the transcript in commitment-group order.
+/// Absorb the batch commitment into the transcript.
 pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     transcript: &mut T,
 ) where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    for commitment in commitments {
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-    }
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
 }
 
 /// Validate common batched prove/verify input shape constraints.

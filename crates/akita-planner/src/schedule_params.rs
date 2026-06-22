@@ -269,7 +269,6 @@ fn derive_candidate_level_params(
             1,
             1,
             1,
-            1,
             MRowLayout::WithDBlock,
         )?
         .checked_mul(policy.ring_dimension)
@@ -277,7 +276,6 @@ fn derive_candidate_level_params(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             1,
@@ -388,7 +386,7 @@ fn make_terminal_direct_step(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
     terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
     let witness_shape = terminal_direct_witness_shape(
@@ -399,7 +397,7 @@ fn make_terminal_direct_step(
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -418,7 +416,7 @@ fn terminal_direct_suffix_cost(
     terminal_fold_level: usize,
     terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
         terminal_fold_segment_counts(key, terminal_fold_level);
     let direct = make_terminal_direct_step(
         current_w_len,
@@ -427,7 +425,7 @@ fn terminal_direct_suffix_cost(
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
         terminal_log_basis,
     )?;
     let direct_bytes = direct.direct_bytes;
@@ -1032,7 +1030,6 @@ fn find_schedule_inner(
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    1,
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,

@@ -1,6 +1,6 @@
 //! End-to-end tests for **batched aggregated** commitments.
 //!
-//! All polynomials in a batch are placed into a single commitment group, so
+//! All polynomials in a batch are placed into a single commitment bundle, so
 //! `batched_commit` produces exactly one commitment that aggregates every
 //! polynomial.  The test exercises `batched_commit` → `batched_prove` →
 //! serialize/deserialize → `batched_verify`.
@@ -49,7 +49,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 mod non_zk_aggregated_cases {
     use super::*;
 
-    /// All one-hot polynomials are aggregated into a single commitment group.
+    /// All one-hot polynomials are aggregated into a single commitment bundle.
     fn run_aggregated_onehot(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
@@ -151,7 +151,7 @@ mod non_zk_aggregated_cases {
         });
     }
 
-    /// All dense polynomials are aggregated into a single commitment group.
+    /// All dense polynomials are aggregated into a single commitment bundle.
     fn run_aggregated_dense(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {

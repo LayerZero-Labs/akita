@@ -50,8 +50,8 @@ fn prepare_root<F, E, T, P, B, const D: usize>(
     polys: &[&P],
     opening_batch: OpeningBatch,
     shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitment: &RingCommitment<F, D>,
+    commitment_hint: AkitaCommitmentHint<F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
@@ -94,7 +94,7 @@ where
     } else {
         None
     };
-    let commitment_rows = flatten_batched_commitment_rows(commitments);
+    let commitment_rows = flatten_batched_commitment_rows(commitment);
     prepare_fold_inner::<F, E, T, P, P, _, B, D>(
         backend,
         prepared,
@@ -120,8 +120,8 @@ where
         alpha_bits,
         basis,
         BlockOrder::RowMajor,
-        commitment_hints,
-        commitments,
+        commitment_hint,
+        commitment,
         m_row_layout,
         FlatRingVec::from_ring_elems(&commitment_rows),
     )
@@ -149,8 +149,8 @@ pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
     polys: &[&P],
     opening_batch: OpeningBatch,
     shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitment: &RingCommitment<F, D>,
+    commitment_hint: AkitaCommitmentHint<F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
@@ -190,7 +190,7 @@ where
     }
 
     append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
+    append_batched_commitments_to_transcript(commitment, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
     let prepared_fold = prepare_root::<F, E, T, P, B, D>(
@@ -200,8 +200,8 @@ where
         polys,
         opening_batch,
         shared_opening_point,
-        commitments,
-        commitment_hints,
+        commitment,
+        commitment_hint,
         root_params,
         MRowLayout::WithDBlock,
         #[cfg(feature = "zk")]
@@ -248,8 +248,8 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     polys: &[&P],
     opening_batch: OpeningBatch,
     shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitment: &RingCommitment<F, D>,
+    commitment_hint: AkitaCommitmentHint<F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -290,7 +290,7 @@ where
     }
 
     append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
+    append_batched_commitments_to_transcript(commitment, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
     #[cfg(feature = "zk")]
@@ -302,8 +302,8 @@ where
         polys,
         opening_batch,
         shared_opening_point,
-        commitments,
-        commitment_hints,
+        commitment,
+        commitment_hint,
         root_params,
         MRowLayout::WithoutDBlock,
         #[cfg(feature = "zk")]

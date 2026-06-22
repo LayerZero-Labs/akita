@@ -358,7 +358,7 @@ where
 pub(crate) fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     opening_batch: &OpeningBatch,
     params: &LevelParams,
     #[cfg(feature = "zk")] b_blinding_digits: &[Vec<i8>],
@@ -367,10 +367,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
 {
     #[cfg(feature = "zk")]
-    if b_blinding_digits.len() != commitments.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    if commitments.len() != opening_batch.num_polys_per_commitment_group().len() {
+    if b_blinding_digits.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
     validate_root_direct_recommitment_shape::<F, D>(
@@ -380,26 +377,15 @@ where
         params,
     )?;
 
-    let mut claim_offset = 0usize;
-    for (group_idx, &group_size) in opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .enumerate()
-    {
-        let group_end = claim_offset
-            .checked_add(group_size)
-            .ok_or(AkitaError::InvalidProof)?;
-        let recomputed = recommit_direct_witness_group::<F, D>(
-            &witnesses[claim_offset..group_end],
-            setup,
-            params,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits[group_idx],
-        )?;
-        if recomputed != commitments[group_idx] {
-            return Err(AkitaError::InvalidProof);
-        }
-        claim_offset = group_end;
+    let recomputed = recommit_direct_witness_group::<F, D>(
+        witnesses,
+        setup,
+        params,
+        #[cfg(feature = "zk")]
+        &b_blinding_digits[0],
+    )?;
+    if &recomputed != commitment {
+        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())
@@ -548,7 +534,7 @@ where
             verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
-                &prepared_claims.commitments,
+                &prepared_claims.commitment,
                 &prepared_claims.opening_batch,
                 params,
                 #[cfg(feature = "zk")]
@@ -562,7 +548,7 @@ where
                 transcript,
                 prepared_claims.opening_point,
                 &prepared_claims.openings,
-                &prepared_claims.commitments,
+                &prepared_claims.commitment,
                 prepared_claims.opening_batch,
                 basis,
                 schedule,
@@ -592,7 +578,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     transcript: &mut T,
     opening_point: &[E],
     openings: &[E],
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     opening_batch: OpeningBatch,
     basis: BasisMode,
     schedule: &Schedule,
@@ -653,7 +639,7 @@ where
                 transcript,
                 opening_point,
                 openings,
-                commitments,
+                commitment,
                 opening_batch,
                 basis,
                 root_lp,
@@ -705,7 +691,7 @@ where
                 transcript,
                 opening_point,
                 openings,
-                commitments,
+                commitment,
                 opening_batch,
                 basis,
                 root_lp,

@@ -72,12 +72,11 @@ impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
     }
 }
 
-/// Batched prover input: one shared opening point plus commitment bundles.
+/// Batched prover input: one shared opening point plus one commitment bundle.
 ///
-/// Mirror of [`akita_types::VerifierClaims`]: `(shared_point, Vec<CommittedPolynomials>)`.
+/// Mirror of [`akita_types::VerifierClaims`]: `(shared_point, CommittedPolynomials)`.
 /// See `akita_types::proof::scheme` for the single-point batching contract.
-pub type ProverClaims<'a, F, P, C, H> =
-    (OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>);
+pub type ProverClaims<'a, F, P, C, H> = (OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>);
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]

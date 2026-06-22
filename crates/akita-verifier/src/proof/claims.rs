@@ -10,9 +10,9 @@ use akita_types::{
 pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
     /// Shared opening point.
     pub opening_point: &'a [E],
-    /// Commitments in commitment-group order.
-    pub commitments: Vec<C>,
-    /// Claimed openings flattened by opening point, then by polynomial index.
+    /// Batch commitment.
+    pub commitment: C,
+    /// Claimed openings in polynomial order.
     pub openings: Vec<E>,
     /// Normalized opening-batch summary that owns canonical root claim routing.
     pub opening_batch: OpeningBatch,
@@ -34,14 +34,9 @@ where
     E: FieldCore,
     C: Clone,
 {
-    validate_batched_inputs(
-        setup,
-        claims,
-        |payloads| payloads.iter().map(|payload| payload.openings.len()).sum(),
-        false,
-    )?;
+    validate_batched_inputs(setup, claims, |payload| payload.openings.len(), false)?;
 
-    let (opening_point, payloads) = claims;
+    let (opening_point, payload) = claims;
     let batch = verifier_claims_to_opening_batch(claims);
     let summary = batch
         .validate(OpeningBatchLimits {
@@ -50,18 +45,12 @@ where
         })
         .map_err(|_| AkitaError::InvalidProof)?;
 
-    let openings = payloads
-        .iter()
-        .flat_map(|payload| payload.openings.iter().copied())
-        .collect();
-    let commitments = payloads
-        .iter()
-        .map(|payload| (*payload.commitment).clone())
-        .collect();
+    let openings = payload.openings.to_vec();
+    let commitment = (*payload.commitment).clone();
 
     Ok(PreparedVerifierClaims {
         opening_point,
-        commitments,
+        commitment,
         openings,
         opening_batch: summary,
     })
@@ -110,10 +99,10 @@ mod tests {
         let commitment = 11usize;
         let claims = (
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            }],
+            },
         );
 
         let prepared = prepare_verifier_claims(&setup(), &claims)
@@ -121,7 +110,7 @@ mod tests {
 
         assert_eq!(prepared.opening_point, &point[..]);
         assert_eq!(prepared.openings, openings);
-        assert_eq!(prepared.commitments, vec![11usize]);
+        assert_eq!(prepared.commitment, 11usize);
         assert_eq!(prepared.opening_batch.num_claims(), 2);
     }
 }

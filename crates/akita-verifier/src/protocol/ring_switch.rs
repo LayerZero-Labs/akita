@@ -131,7 +131,8 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
-    pub(crate) num_polys_per_commitment_group: Vec<usize>,
+    pub(crate) claim_poly_indices: Vec<usize>,
+    pub(crate) num_polys: usize,
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
 
@@ -218,9 +219,8 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    let num_polys_per_commitment_group = opening_batch.num_polys_per_commitment_group();
-    let claim_to_commitment_group = opening_batch.claim_to_commitment_group();
-    let claim_poly_in_commitment_group = opening_batch.claim_poly_indices();
+    let num_polys = opening_batch.num_polynomials();
+    let claim_poly_indices = opening_batch.claim_poly_indices();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -236,21 +236,11 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    if claim_to_commitment_group.len() != num_claims
-        || claim_poly_in_commitment_group.len() != num_claims
-    {
+    if claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let num_commitment_groups = num_polys_per_commitment_group.len();
-    if num_commitment_groups == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    for claim_idx in 0..num_claims {
-        let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_in_commitment_group[claim_idx]
-                >= num_polys_per_commitment_group[group_idx]
-        {
+    for &poly_idx in claim_poly_indices {
+        if poly_idx >= num_polys {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -264,7 +254,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(num_commitment_groups, 0, m_row_layout)?;
+    let m_rows = lp.m_row_count_for(1, 0, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -329,8 +319,7 @@ where
         alpha,
         lp,
         tau1,
-        opening_batch.num_polys_per_commitment_group(),
-        opening_batch.claim_to_commitment_group(),
+        opening_batch.num_polynomials(),
         opening_batch.claim_poly_indices(),
         replay.row_coefficients,
         relation.m_row_layout(),
@@ -344,9 +333,8 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
-    num_polys_per_commitment_group: &[usize],
-    claim_to_commitment_group: &[usize],
-    claim_poly_in_commitment_group: &[usize],
+    num_polys: usize,
+    claim_poly_indices: &[usize],
     gamma: &[E],
     m_row_layout: MRowLayout,
     witness_segment_layout: RingRelationSegmentLayout,
@@ -358,18 +346,11 @@ where
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
-    if claim_to_commitment_group.len() != num_claims
-        || claim_poly_in_commitment_group.len() != num_claims
-    {
+    if claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let num_commitment_groups = num_polys_per_commitment_group.len();
-    for claim_idx in 0..num_claims {
-        let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_in_commitment_group[claim_idx]
-                >= num_polys_per_commitment_group[group_idx]
-        {
+    for &poly_idx in claim_poly_indices {
+        if poly_idx >= num_polys {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -404,10 +385,7 @@ where
     }
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
-    let num_t_vectors = num_polys_per_commitment_group
-        .iter()
-        .try_fold(0usize, |acc, &count| acc.checked_add(count))
-        .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
+    let num_t_vectors = num_polys;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
         MRowLayout::WithDBlock => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
@@ -416,9 +394,7 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_commitment_groups
-        .checked_mul(b_blinding_digit_planes_per_point)
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
+    let b_blinding_segment_len = b_blinding_digit_planes_per_point;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -451,12 +427,7 @@ where
     //         "D-key column width is too small for verifier layout".to_string(),
     //     ));
     // }
-    let max_point_poly_count = num_polys_per_commitment_group
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let expected_b_width = max_point_poly_count
+    let expected_b_width = num_polys
         .checked_mul(lp.a_key.row_len())
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_blocks))
@@ -473,7 +444,7 @@ where
             "B-key column width is too small for verifier layout".to_string(),
         ));
     }
-    let rows = lp.m_row_count_for(num_commitment_groups, 0, m_row_layout)?;
+    let rows = lp.m_row_count_for(1, 0, m_row_layout)?;
 
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
@@ -544,7 +515,8 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
-        num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
+        claim_poly_indices: claim_poly_indices.to_vec(),
+        num_polys,
         witness_segment_layout,
     })
 }
@@ -586,9 +558,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             n_d: self.n_d,
             m_row_layout: self.m_row_layout,
             n_b: self.n_b,
-            num_commitment_groups: 1,
+            num_segments: 1,
             rows: self.rows,
-            num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
+            num_polys_per_segment: vec![self.num_polys],
             num_public_rows: 0,
             tier_split: self.tier_split,
             n_f: self.n_f,
@@ -677,6 +649,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 block_offset_low,
                 self.num_blocks,
             )?;
+        let mut challenge_block_summaries_by_t_vector =
+            vec![[E::zero(), E::zero()]; self.num_t_vectors];
+        for (claim_idx, &t_vector_idx) in self.claim_poly_indices.iter().enumerate() {
+            let [carry0, carry1] = challenge_block_summaries[claim_idx];
+            challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
+            challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
+        }
 
         // ----- E-hat ---------------------------------------------------------
         let e_structured_contribution = {
