@@ -17,10 +17,10 @@ use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
-use crate::kernels::linear::decompose_commit_rows_i8_into;
+use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-    FlatDigitBlocks, FpExtEncoding,
+    FpExtEncoding,
 };
 use std::marker::PhantomData;
 
@@ -398,25 +398,11 @@ where
             },
         )?;
 
-        let block_sizes: Vec<usize> = t
-            .iter()
-            .map(|t_i| t_i.len() * plan.num_digits_open)
-            .collect();
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| {
-                decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis)
-            });
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-            decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis)
-        });
+        let decomposed_inner_rows =
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
+            decomposed_inner_rows,
         })
     }
 }

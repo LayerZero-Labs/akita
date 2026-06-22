@@ -2,12 +2,8 @@
 
 use super::poly::DensePoly;
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
-use crate::kernels::linear::decompose_commit_rows_i8_into;
 use akita_algebra::CyclotomicRing;
-#[cfg(feature = "parallel")]
-use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::FlatDigitBlocks;
 
 impl<F, const D: usize> DensePoly<F, D>
 where
@@ -66,30 +62,6 @@ where
             },
         )
     }
-}
-
-pub(super) fn decompose_commit_rows<F, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let block_sizes: Vec<usize> = rows.iter().map(|t_i| t_i.len() * num_digits_open).collect();
-    let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-    let dst_blocks = t_hat.split_blocks_mut();
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(rows))
-        .for_each(|(dst, t_i)| decompose_commit_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(rows.iter())
-        .for_each(|(dst, t_i)| decompose_commit_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-
-    Ok(t_hat)
 }
 
 pub(super) fn digit_block_slices<const D: usize>(

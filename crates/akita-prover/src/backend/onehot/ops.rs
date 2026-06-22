@@ -821,11 +821,6 @@ where
         B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(plan.block_len)?;
-        let zero_block_len = plan.n_a.checked_mul(plan.num_digits_open).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "one-hot inner commitment digit block count overflow".to_string(),
-            )
-        })?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
@@ -836,30 +831,15 @@ where
             },
         )?;
 
-        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| {
-                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
-                } else {
-                    debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
-                }
-            });
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_commit_rows_i8_into(t_i, dst, plan.num_digits_open, plan.log_basis);
-            } else {
-                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
-            }
-        });
+        let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
+            &t,
+            plan.num_digits_open,
+            plan.log_basis,
+        )?;
 
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
+            decomposed_inner_rows,
         })
     }
 }

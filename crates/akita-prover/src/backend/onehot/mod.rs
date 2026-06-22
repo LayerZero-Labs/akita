@@ -38,7 +38,7 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
 use akita_types::{
-    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, FpExtEncoding, RingMatrixView,
+    CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView,
 };
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -49,7 +49,6 @@ use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_a
 use crate::compute::{
     CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };
-use crate::kernels::linear::decompose_commit_rows_i8_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely

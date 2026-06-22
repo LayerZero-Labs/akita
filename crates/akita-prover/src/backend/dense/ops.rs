@@ -1,6 +1,5 @@
 //! Dense polynomial opening, tensor, and fold operations.
 
-use super::commit::decompose_commit_rows;
 use super::poly::{DenseColumnSource, DensePoly};
 use super::tensor_fold;
 use crate::backend::poly_helpers::{
@@ -10,6 +9,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
+use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -358,7 +358,7 @@ where
             plan.log_basis,
         )?;
         let decomposed_inner_rows =
-            decompose_commit_rows::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows,

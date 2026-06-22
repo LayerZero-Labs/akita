@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{embed_ring_subfield_vector, FlatDigitBlocks};
+use akita_types::{embed_ring_subfield_vector};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
@@ -18,7 +18,7 @@ use crate::compute::{
     CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource, FlatBlockTable,
     SparseRingCommitRowsPlan,
 };
-use crate::kernels::linear::decompose_commit_rows_i8_into;
+use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod ops;
@@ -433,7 +433,7 @@ where
             plan.num_digits_commit,
         )?;
         let decomposed_inner_rows =
-            decompose_commit_rows::<F, D>(&t, plan.n_a, plan.num_digits_open, plan.log_basis)?;
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
             decomposed_inner_rows,
@@ -802,44 +802,6 @@ where
         out.extend(thread_blocks);
     }
     out
-}
-
-fn decompose_commit_rows<F, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-    n_a: usize,
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
-        AkitaError::InvalidSetup("commit witness digit block length overflow".to_string())
-    })?;
-    let mut out = FlatDigitBlocks::zeroed(vec![zero_block_len; rows.len()])?;
-    let dst_blocks = out.split_blocks_mut();
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(rows))
-        .for_each(|(dst, row)| {
-            if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
-            } else {
-                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
-            }
-        });
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(rows.iter())
-        .for_each(|(dst, row)| {
-            if !row.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_commit_rows_i8_into(row, dst, num_digits_open, log_basis);
-            } else {
-                debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
-            }
-        });
-    Ok(out)
 }
 
 #[cfg(test)]
