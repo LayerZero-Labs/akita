@@ -15,3 +15,6 @@ pub use layout::{
 };
 pub use transcript::{absorb_jl_image, sample_jl_row_point};
 pub use wire::{embed_jl_image_coords, embed_signed_i32, field_modulus};
+
+#[cfg(feature = "jl-test-fixtures")]
+pub mod fixtures;

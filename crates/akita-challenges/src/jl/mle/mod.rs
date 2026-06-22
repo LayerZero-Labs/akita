@@ -45,7 +45,8 @@ use crate::jl::panel::byte_aligned_panel_cols;
 use crate::jl::panel::{panel_span, parallel_jl_enabled};
 use crate::jl::JlProjectionMatrix;
 use common::{
-    accumulate_row_weight_range, scatter_row_weight_range, validate_mle_points, JlMleLayout,
+    accumulate_row_weight_range, scatter_row_weight_range, validate_eq_tables,
+    validate_mle_points, JlMleLayout,
 };
 use lut::{accumulate_rows_from_byte_lut, build_sign_weight_lut_256};
 
@@ -80,8 +81,9 @@ pub fn eval_jl_mle_at_from_eq_tables<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     e_j: &[L],
     e_w: &[L],
-) -> L {
-    eval_jl_mle_at_from_eq_tables_impl(matrix, e_j, e_w)
+) -> Result<L, AkitaError> {
+    validate_eq_tables(matrix, e_j, e_w)?;
+    Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, e_j, e_w))
 }
 
 /// Row-weight table given a precomputed `eq(r_J, ·)` vector.
@@ -130,17 +132,18 @@ pub fn eval_jl_mle_at_scalar_from_eq_tables<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     e_j: &[L],
     e_w: &[L],
-) -> L {
+) -> Result<L, AkitaError> {
+    validate_eq_tables(matrix, e_j, e_w)?;
     let cols = matrix.cols();
     let e_w = &e_w[..cols];
     let n_rows = matrix.n_rows();
 
     #[cfg(feature = "parallel")]
     if parallel_jl_enabled(n_rows, cols) {
-        return (0..n_rows)
+        return Ok((0..n_rows)
             .into_par_iter()
             .map(|j| e_j[j] * accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w))
-            .reduce(L::zero, |a, b| a + b);
+            .reduce(L::zero, |a, b| a + b));
     }
 
     let mut total = L::zero();
@@ -148,7 +151,7 @@ pub fn eval_jl_mle_at_scalar_from_eq_tables<L: FieldCore>(
         let row_sum = accumulate_row_weight_range(matrix.row_slice(j), 0, cols, e_w);
         total += ej * row_sum;
     }
-    total
+    Ok(total)
 }
 
 /// Row-major scalar fused eval (`benches/jl_mle` baseline).
@@ -159,7 +162,7 @@ pub fn eval_jl_mle_at_scalar<L: FieldCore>(
     r_w: &[L],
 ) -> Result<L, AkitaError> {
     let (e_j, e_w) = prepare_eq_tables(matrix, r_J, r_w)?;
-    Ok(eval_jl_mle_at_scalar_from_eq_tables(matrix, &e_j, &e_w))
+    eval_jl_mle_at_scalar_from_eq_tables(matrix, &e_j, &e_w)
 }
 
 fn prepare_eq_tables<L: FieldCore>(

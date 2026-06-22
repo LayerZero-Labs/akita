@@ -39,7 +39,7 @@ The goal is to land reusable JL primitives, exercise the consistency-sumcheck me
 | Benches | `benches/jl_projection.rs`, `benches/jl_mle.rs` | yes |
 | Fusion D1–D8 | — | not started |
 
-Tests (local): 26 in `akita-challenges` (`jl` filter), 3 in `akita-types` (`jl`), 4 in `akita-prover` (`jl`), 7 in `akita-verifier` (`jl`). Nothing in `prove_batched` / `verify_batched` calls the new modules.
+Tests (local): 28 in `akita-challenges` (`jl` filter), 4 in `akita-types` (`jl`), 2 in `akita-prover` (`jl`), 6 in `akita-verifier` (`jl`). Shared consistency harness helpers live in `akita-types::jl::fixtures` (`jl-test-fixtures` feature, dev-deps only). Nothing in `prove_batched` / `verify_batched` calls the new modules.
 
 ## Motivation: why JL projection (and what it does *not* do)
 
@@ -166,7 +166,7 @@ Concretely the prototype introduces:
 
 - `akita-challenges::jl` (new module): the dense projection matrix `JlProjectionMatrix`, deterministic transcript-seeded expansion (`sample`), integer projection (`project`) over centered witness coefficients, signed-coordinate encoding checks, and Euclidean-norm helpers. The projection acts on the flat integer coefficient vector of base-field elements, so the public API takes a flat `&[F]` coefficient slice (`F: FieldCore + CanonicalField`) and the caller flattens any ring layout. Ring structure (`const D`) is irrelevant to the projection and reappears only in the consistency sumcheck (the `akita-prover` module below), so it is not a parameter of this crate; this keeps `akita-challenges` at its field + transcript dependency layer.
 - `akita-challenges::jl::mle` (new submodule, PR1b): optimized joint-matrix MLE evaluation `eval_jl_mle_at` and the prover-side row-weight builder `build_jl_row_weights`. This is the verifier-critical bottleneck and reuses the packed-ternary row format plus Dao–Thaler split-eq contraction (see **Joint MLE evaluation** below). Adds a dependency on `akita-algebra` for `SplitEqEvals` only in this submodule.
-- `akita-types::jl` (new module, PR2): shared consistency shapes — `JlWitnessLayout`, verifier-wire image embedding/norm checks, transcript absorb/sample helpers, and the batched image input claim. Mirrors the `trace_weight` split: layout and wire contracts live in `akita-types`, not in `akita-challenges`.
+- `akita-types::jl` (new module, PR2): shared consistency shapes — `JlWitnessLayout`, verifier-wire image embedding/norm checks, transcript absorb/sample helpers, and the batched image input claim. Optional `jl::fixtures` (`jl-test-fixtures` feature) holds dev-only sumcheck harness helpers shared by prover/verifier tests. Mirrors the `trace_weight` split: layout and wire contracts live in `akita-types`, not in `akita-challenges`.
 - `akita-prover::protocol::jl` (new module, PR2 prove side, not called by the flow): degree-2 product sumcheck prover (`prove_jl_consistency`, `JlConsistencyProver`). Builds padded witness/row-weight tables from `build_jl_row_weights`.
 - `akita-verifier::protocol::jl` (new module, PR2 verify side, not called by the flow): degree-2 product sumcheck verifier (`verify_jl_consistency`, `JlConsistencyVerifier`). Standalone tests use a `w_eval_hook` instead of a commitment opening; full cryptographic binding is deferred to fusion.
 - Cross-field, cross-dimension tests that exercise representative non-degenerate `(field, ring dim)` combinations the workspace ships.
@@ -181,7 +181,7 @@ Concretely the prototype introduces:
 - **Consistency claim has the intended fused-row form.** Rows are batched with `eq` weights on `row_bits = log2(n_rows)` variables (default `n_rows = 256`, `row_bits = 8`), matching the relation-sumcheck batching idiom rather than a Vandermonde `rho^j` fold. The public witness weight is `g(i) = sum_j eq(r_J, j) J[j, i]` on coefficient corners; equivalently `g_tilde(r_w) = J_tilde(r_J, r_w)` for the joint MLE `J_tilde` of the sparse-ternary matrix on the product hypercube `{0,1}^{row_bits} x {0,1}^{k_w}`. The proved identity is `sum_j eq(r_J, j) p[j] = sum_{x,y} g(x,y) w(x,y)`, a degree-2 product sumcheck `w_tilde * g_tilde` with input claim `sum_j eq(r_J, j) embed(p[j])`. This is the intended stage-2 fusion shape, but final drop-in compatibility still has to be checked against the current `w(x, y)` layout and stage-2 verifier API. Protected by a prove/verify round-trip test and a Schwartz-Zippel soundness-direction test (a wrong image fails except with the usual `r_J` / sumcheck collision probability).
 - **No-panic on verifier-reachable paths.** Every shape mismatch (matrix dimensions, image length, point dimension, coefficient overflow) returns `AkitaError`, never panics, matching the verifier no-panic contract because the consistency check is intended to become verifier-reachable. Protected by malformed-input tests.
 - **No protocol-flow regression.** Nothing in `prove_batched` / `verify_batched` calls the new modules, so all existing prover/verifier/integration tests pass unchanged and no serialized proof type changes. Protected by the full existing test suite.
-- **Joint MLE evaluation correctness.** `eval_jl_mle_at(J, r_J, r_w)` equals the naive double sum `sum_{j,i} eq(r_J,j) eq(r_w,i) J[j,i]` for every packed matrix and challenge point; `build_jl_row_weights(J, r_J)[i]` equals `sum_j eq(r_J,j) J[j,i]`. Protected by differential tests against a reference implementation and cross-checks that `eval_jl_mle_at` matches `eval_mle_from_weights(build_jl_row_weights(...), r_w)`.
+- **Joint MLE evaluation correctness.** `eval_jl_mle_at(J, r_J, r_w)` equals the naive double sum `sum_{j,i} eq(r_J,j) eq(r_w,i) J[j,i]` for every packed matrix and challenge point; `build_jl_row_weights(J, r_J)[i]` equals `sum_j eq(r_J,j) J[j,i]`. The `#[doc(hidden)]` bench hooks `eval_jl_mle_at_from_eq_tables` / `eval_jl_mle_at_scalar_from_eq_tables` validate `e_j` / `e_w` lengths against the padded hypercube before slicing (verifier-reachable once fused). Protected by differential tests against a reference implementation, cross-checks that `eval_jl_mle_at` matches `eval_mle_from_weights(build_jl_row_weights(...), r_w)`, and an image-claim vs row-weight-dot-witness identity test in `jl::mle`.
 
 ### Non-Goals
 
@@ -216,10 +216,10 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 New tests live alongside the new modules.
 
 - `akita-challenges`: unit tests for `sample` determinism, packed-matrix round-trip (`00 -> -1`, `01/10 -> 0`, `11 -> +1`), `project` correctness vs reference, signed-coordinate injectivity, checked integer norm computation, fp128 small-digit projection, and oversized non-digit rejection. Port the analogous implementation tests from `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`, but do not inherit its fixed row count or its dual `i64`/`i128` width split.
-- `akita-challenges::jl::mle`: differential tests of `eval_jl_mle_at` and `build_jl_row_weights` against a naive `Θ(n_rows · cols)` reference; identity `eval_jl_mle_at(J,r_J,r_w) == eval_mle_from_weights(build_jl_row_weights(J,r_J), r_w)`; SIMD vs scalar kernel parity; malformed shape errors return `AkitaError`.
-- `akita-types::jl`: layout pinning (`JlWitnessLayout`), wire validation (`embed_jl_image_coords`), layout/MLE geometry checks (`validate_layout_for_matrix_mle`).
+- `akita-challenges::jl::mle`: differential tests of `eval_jl_mle_at` and `build_jl_row_weights` against a naive `Θ(n_rows · cols)` reference; identity `eval_jl_mle_at(J,r_J,r_w) == eval_mle_from_weights(build_jl_row_weights(J,r_J), r_w)`; image-claim vs row-weight-dot-witness identity; short `eq` table rejection; SIMD vs scalar kernel parity; malformed shape errors return `AkitaError`.
+- `akita-types::jl`: layout pinning (`JlWitnessLayout`), wire validation (`embed_jl_image_coords`), layout/MLE geometry checks (`validate_layout_for_matrix_mle`). `jl::fixtures` (feature `jl-test-fixtures`) supplies shared witness-table helpers for downstream consistency tests.
 - `akita-prover`: prove-side rejection tests (image norm bound, malformed layout).
-- `akita-verifier`: round-trip, tampered-image, and malformed-layout tests across fp32/fp64/fp128 base fields; row-weight vs direct-projection identity check.
+- `akita-verifier`: round-trip, tampered-image, and malformed-layout tests across fp32/fp64/fp128 base fields.
 
 Feature combinations: tests pass with and without `parallel` if both feature sets compile in the touched crates. ZK is out of scope (the reveal leaks), so any reveal-path test that assumes public image data is gated to non-`zk` builds or clearly marked as a non-ZK mechanics test.
 
@@ -431,10 +431,11 @@ Both have the same asymptotic cost (`Θ(n_rows · cols)` matrix touches) but dif
 The shipped `eval_jl_mle_at` path (PR #191) does **not** use split-eq nesting; it matches the projection kernels' byte geometry:
 
 1. Precompute `eq(r_J, ·)` and `eq(r_w, ·)` once (`EqPolynomial::evals`).
-2. Partition witness columns into byte-aligned 4-column quad windows (same panel convention as PR1).
-3. For each quad: build a 256-entry sign-weight LUT from the four `eq(r_w, ·)` weights (81 canonical ternary patterns via axis extension, remapped through `BYTE_TO_TERNARY4` so `01`/`10` zero pairs collapse).
-4. Scan every matrix row: one LUT lookup + one field add per packed byte into per-row accumulators `row_acc[j]`.
-5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
+2. Validate table lengths against the padded row/column hypercube (`validate_eq_tables`); bench hooks return `AkitaError` on short buffers instead of silent truncation.
+3. Partition witness columns into byte-aligned 4-column quad windows (same panel convention as PR1).
+4. For each quad: build a 256-entry sign-weight LUT from the four `eq(r_w, ·)` weights (81 canonical ternary patterns via axis extension, remapped through `BYTE_TO_TERNARY4` so `01`/`10` zero pairs collapse).
+5. Scan every matrix row: one LUT lookup + one field add per packed byte into per-row accumulators `row_acc[j]`.
+6. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 
 On aarch64 fp128 at tail-scale column counts this LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`).
 

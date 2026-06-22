@@ -31,6 +31,7 @@ tracing = "0.1"
 
 [features]
 default = []
+jl-test-fixtures = []
 parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-sumcheck/zk"]
 

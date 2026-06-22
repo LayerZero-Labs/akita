@@ -53,6 +53,7 @@ dependencies = [
  "akita-algebra",
  "akita-field",
  "akita-transcript",
+ "akita-types",
  "criterion",
  "sha3 0.10.9",
  "tracing",

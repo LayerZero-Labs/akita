@@ -91,37 +91,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::EqPolynomial;
-    use akita_challenges::jl::mle::build_jl_row_weights;
     use akita_field::{
         CanonicalBytes, CanonicalField, FieldCore, FromPrimitiveInt, Prime128OffsetA7F7,
         Prime32Offset99, Prime64Offset59, TranscriptChallenge,
     };
     use akita_prover::protocol::jl::prove_jl_consistency;
     use akita_transcript::AkitaTranscript;
-    use akita_types::jl::{embed_signed_i32, field_modulus, padded_live_table};
-
-    fn eval_table_at<F: FieldCore>(table: &[F], point: &[F]) -> Result<F, AkitaError> {
-        let eq = EqPolynomial::evals(point)?;
-        if eq.len() != table.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: table.len(),
-                actual: eq.len(),
-            });
-        }
-        Ok(table
-            .iter()
-            .zip(eq.iter())
-            .fold(F::zero(), |acc, (&value, &weight)| acc + value * weight))
-    }
-
-    fn signed_field<F: FieldCore + CanonicalField>(value: i32) -> F {
-        embed_signed_i32::<F>(value, field_modulus::<F>() / 2).unwrap()
-    }
-
-    fn witness_evals<F: FieldCore + CanonicalField>(digits: &[i32]) -> Vec<F> {
-        digits.iter().copied().map(signed_field).collect()
-    }
+    use akita_types::jl::fixtures::{eval_padded_table_at, witness_evals_from_digits};
+    use akita_types::jl::padded_live_table;
 
     fn roundtrip_fixture<F>(seed: &[u8], n_rows: usize, live_x_cols: usize, ring_bits: usize)
     where
@@ -150,7 +127,7 @@ mod tests {
         .unwrap();
         let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, col_bits, ring_bits).unwrap();
         let witness_digits: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
-        let witness = witness_evals::<F>(&witness_digits);
+        let witness = witness_evals_from_digits::<F>(&witness_digits);
         let padded_witness = padded_live_table(layout, &witness).unwrap();
         let image = matrix.project_digits(&witness_digits).unwrap();
         let norm_bound = image.l2_norm_sq_checked().unwrap();
@@ -172,7 +149,7 @@ mod tests {
             image.coords(),
             Some(norm_bound),
             &proof,
-            |point| eval_table_at(&padded_witness, point),
+            |point| eval_padded_table_at(&padded_witness, point),
         )
         .unwrap();
 
@@ -206,7 +183,7 @@ mod tests {
         .unwrap();
         let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, col_bits, ring_bits).unwrap();
         let witness_digits: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
-        let witness = witness_evals::<F>(&witness_digits);
+        let witness = witness_evals_from_digits::<F>(&witness_digits);
         let padded_witness = padded_live_table(layout, &witness).unwrap();
         let image = matrix.project_digits(&witness_digits).unwrap();
         let norm_bound = image.l2_norm_sq_checked().unwrap() + 1;
@@ -229,43 +206,9 @@ mod tests {
             &tampered,
             Some(norm_bound + 100),
             &proof,
-            |point| eval_table_at(&padded_witness, point),
+            |point| eval_padded_table_at(&padded_witness, point),
         )
         .is_err());
-    }
-
-    #[test]
-    fn row_weights_match_direct_integer_projection_for_flat_layout() {
-        type F = Prime64Offset59;
-        let live_x_cols = 3;
-        let ring_bits = 2;
-        let ring_len = 1usize << ring_bits;
-        let mut transcript = AkitaTranscript::<F>::new(b"jl-verifier-row-weights");
-        let matrix =
-            JlProjectionMatrix::sample::<F, _>(&mut transcript, 8, live_x_cols * ring_len).unwrap();
-        let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, 2, ring_bits).unwrap();
-        let witness: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
-        let image = matrix.project_digits(&witness).unwrap();
-        let row_bits = matrix.n_rows().next_power_of_two().trailing_zeros() as usize;
-        let r_j: Vec<F> = (0..row_bits).map(|i| F::from_u64(7 + i as u64)).collect();
-        let eq_j = EqPolynomial::evals(&r_j).unwrap();
-        let image_claim =
-            image
-                .coords()
-                .iter()
-                .zip(eq_j.iter())
-                .fold(F::zero(), |acc, (&coord, &weight)| {
-                    acc + weight * embed_signed_i32::<F>(coord, field_modulus::<F>() / 2).unwrap()
-                });
-        let g = build_jl_row_weights(&matrix, &r_j).unwrap();
-        let flat_claim = witness
-            .iter()
-            .zip(g.iter())
-            .fold(F::zero(), |acc, (&w, &weight)| {
-                acc + weight * embed_signed_i32::<F>(w, field_modulus::<F>() / 2).unwrap()
-            });
-
-        assert_eq!(image_claim, flat_claim);
     }
 
     #[test]
@@ -309,7 +252,7 @@ mod tests {
             JlProjectionMatrix::sample::<F, _>(&mut transcript, 8, live_x_cols * ring_len).unwrap();
         let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, 2, ring_bits).unwrap();
         let witness_digits = vec![1i32; layout.live_len()];
-        let witness = witness_evals::<F>(&witness_digits);
+        let witness = witness_evals_from_digits::<F>(&witness_digits);
         let image = matrix.project_digits(&witness_digits).unwrap();
         let padded = padded_live_table(layout, &witness).unwrap();
         let empty_proof = SumcheckProof {
@@ -328,7 +271,7 @@ mod tests {
             image.coords(),
             None,
             &empty_proof,
-            |point| eval_table_at(&padded, point),
+            |point| eval_padded_table_at(&padded, point),
         )
         .is_err());
     }

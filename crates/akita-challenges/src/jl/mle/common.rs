@@ -36,6 +36,27 @@ pub(super) fn hypercube_bits(n: usize) -> usize {
     n.next_power_of_two().trailing_zeros() as usize
 }
 
+pub(super) fn validate_eq_tables<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+) -> Result<(), AkitaError> {
+    let layout = JlMleLayout::new(matrix)?;
+    if e_j.len() != layout.row_hyper {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.row_hyper,
+            actual: e_j.len(),
+        });
+    }
+    if e_w.len() < layout.col_hyper {
+        return Err(AkitaError::InvalidSize {
+            expected: layout.col_hyper,
+            actual: e_w.len(),
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn validate_mle_points<L: FieldCore>(
     layout: &JlMleLayout,
     r_J: &[L],

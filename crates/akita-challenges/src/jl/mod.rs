@@ -325,6 +325,9 @@ fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError>
 }
 
 /// Recover the field modulus `q` as a `u128` for a base prime field.
+///
+/// Wire embedding uses the canonical copy in `akita_types::jl::field_modulus`;
+/// this crate cannot depend on `akita-types`, so projection paths keep a local helper.
 #[inline]
 fn field_modulus<F: FieldCore + CanonicalField>() -> u128 {
     (-F::one()).to_canonical_u128() + 1

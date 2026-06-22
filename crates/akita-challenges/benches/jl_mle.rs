@@ -117,7 +117,8 @@ fn bench_eval_kernel<G: EvalField + 'static, B: SampleField + 'static>(
                     black_box(&matrix),
                     black_box(&e_j),
                     black_box(&e_w),
-                );
+                )
+                .expect("valid eq tables");
                 black_box(val)
             });
         });
@@ -127,7 +128,8 @@ fn bench_eval_kernel<G: EvalField + 'static, B: SampleField + 'static>(
                     black_box(&matrix),
                     black_box(&e_j),
                     black_box(&e_w),
-                );
+                )
+                .expect("valid eq tables");
                 black_box(val)
             });
         });

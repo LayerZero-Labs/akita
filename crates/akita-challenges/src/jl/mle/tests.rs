@@ -1,6 +1,7 @@
 use super::{
-    build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at, eval_jl_mle_at_reference,
-    eval_jl_mle_at_scalar, eval_mle_from_weights,
+    build_jl_row_weights, build_jl_row_weights_reference, eval_jl_mle_at,
+    eval_jl_mle_at_from_eq_tables, eval_jl_mle_at_reference, eval_jl_mle_at_scalar,
+    eval_mle_from_weights,
 };
 use crate::jl::{JlProjectionMatrix, DEFAULT_JL_ROWS};
 use akita_field::{FieldCore, Fp64, FromPrimitiveInt, Prime128Offset275, Prime32Offset99};
@@ -157,4 +158,53 @@ fn scatter_row_weight_range_matches_entrywise() {
         .map(|k| accum_sign_weight(F64::zero(), entry_sign(&matrix, 0, col0 + k), weight))
         .collect();
     assert_eq!(fast, slow);
+}
+
+#[test]
+fn eval_from_eq_tables_rejects_short_tables() {
+    let matrix = sample_sign_matrix(8, 12);
+    let layout_row_hyper = matrix.n_rows().next_power_of_two();
+    let layout_col_hyper = matrix.cols().next_power_of_two();
+    let e_j = vec![F64::one(); layout_row_hyper - 1];
+    let e_w = vec![F64::one(); layout_col_hyper];
+    let err = eval_jl_mle_at_from_eq_tables(&matrix, &e_j, &e_w).unwrap_err();
+    assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+
+    let e_j = vec![F64::one(); layout_row_hyper];
+    let e_w = vec![F64::one(); layout_col_hyper - 1];
+    let err = eval_jl_mle_at_from_eq_tables(&matrix, &e_j, &e_w).unwrap_err();
+    assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+}
+
+#[test]
+fn image_claim_matches_row_weight_dot_witness_for_flat_layout() {
+    use akita_algebra::EqPolynomial;
+    use akita_types::jl::{embed_signed_i32, field_modulus};
+
+    let live_x_cols = 3;
+    let ring_bits = 2;
+    let ring_len = 1usize << ring_bits;
+    let signs: Vec<Vec<i8>> = (0..8)
+        .map(|r| {
+            (0..live_x_cols * ring_len)
+                .map(|c| (((r * 17 + c * 31) % 3) as i8) - 1)
+                .collect()
+        })
+        .collect();
+    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let witness: Vec<i32> = (0..matrix.cols()).map(|i| (i as i32 % 5) - 2).collect();
+    let image = matrix.project_digits(&witness).unwrap();
+    let row_bits = matrix.n_rows().next_power_of_two().trailing_zeros() as usize;
+    let r_j: Vec<F64> = (0..row_bits).map(|i| F64::from_u64(7 + i as u64)).collect();
+    let half_q = field_modulus::<F64>() / 2;
+    let eq_j = EqPolynomial::evals(&r_j).unwrap();
+    let image_claim = image.coords().iter().zip(eq_j.iter()).fold(F64::zero(), |acc, (&coord, &weight)| {
+        acc + weight * embed_signed_i32::<F64>(coord, half_q).unwrap()
+    });
+    let g = build_jl_row_weights(&matrix, &r_j).unwrap();
+    let flat_claim = witness.iter().zip(g.iter()).fold(F64::zero(), |acc, (&w, &weight)| {
+        acc + weight * embed_signed_i32::<F64>(w, half_q).unwrap()
+    });
+
+    assert_eq!(image_claim, flat_claim);
 }
