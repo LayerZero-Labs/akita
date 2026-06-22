@@ -182,17 +182,29 @@ Since #154 (`specs/y-ring-trace-internalization.md`), `generate_y` zeros the pub
 Direct mode removes terminal stage 2, so it also removes that trace binding.
 Checking only `M_terminal * z_terminal == y_terminal` would therefore leave the public opening claim unbound, which is unsound.
 
-Direct mode replaces the stage-2 trace term with an explicit opening-consistency check:
-the verifier evaluates the revealed terminal witness multilinear at the bound opening point and compares it to the gamma-weighted public claim (`batched_eval_target_from_opening_batch`).
-This reuses the cleartext-opening evaluator already used by the zero-fold / root-direct path (`crates/akita-verifier/src/proof/direct.rs::cleartext_witness_opening_matches`).
+Direct mode replaces the stage-2 trace term with an explicit trace-opening check.
+The sumcheck terminal path binds the public claim probabilistically through the fused trace oracle `trace_coeff * w_eval * eval_trace_terms_closed(...)`, with `trace_coeff = trace_gamma^2` from `CHALLENGE_SUMCHECK_BATCH` after the witness remainder (`crates/akita-verifier/src/stages/stage2.rs:349-356`, `stage2_trace_coeff` at `crates/akita-types/src/trace_weight/stage2.rs:234-239`).
+Direct mode drops that sumcheck layer, so check 2 must enforce the same #154 trace identity explicitly at the prepared opening point:
+
+```text
+TraceOpen( sum_j b_j · e_folded_j ) == batched_eval_target_from_opening_batch(opening_batch, row_coefficients, openings)
+```
+
+Here `TraceOpen(Y) := recover_ring_subfield_inner_product(Y, packed_inner_point)` per `specs/y-ring-trace-internalization.md`, `e_folded_j` is recomposed from the decoded witness `e` segment (the same recomposition `generate_y` used before the public-output row was dropped from `M`), and `batched_eval_target_from_opening_batch` is the same `trace_eval_target` the sumcheck terminal path feeds into `trace_opening_claim`.
+The `trace_coeff` factor cancels on both sides in sumcheck mode; direct mode checks the unscaled identity.
+
+Segment-typed terminal witnesses decode through `witness.logical_i8_digits` / `expand_segment_typed_to_i8_digits`, the same path as `stage2_cleartext_oracle` (`crates/akita-verifier/src/stages/stage2.rs:144-180`).
+Do not reuse `cleartext_witness_opening_matches`, which only accepts `CleartextWitnessProof::FieldElements` and rejects `SegmentTyped` tails.
+
 So the direct terminal statement is two checks, not one:
 
 ```text
 1. M_terminal * z_terminal == y_terminal in F[X] / (X^D + 1)   (consistency, commitment, inner-B, A rows)
-2. eval(witness, opening_point) == sum_i gamma_i * claim_i      (public opening binding, replacing the stage-2 trace term)
+2. TraceOpen( sum_j b_j · e_folded_j ) == batched_eval_target_from_opening_batch(...)   (public opening binding, replacing the stage-2 trace term)
 ```
 
-Both checks bind the same revealed witness whose bytes were absorbed before any post-witness challenge, so the opening point and the gamma weights are transcript-fixed before the witness is read.
+Both checks bind the same revealed witness whose bytes were absorbed before any post-witness challenge.
+The opening point, incidence (`OpeningBatch`), row coefficients, and public claims are transcript-fixed before the witness is read.
 
 Direct mode therefore:
 
@@ -280,10 +292,11 @@ terminal stage-2 sumcheck round squeezes
 In `DirectRingRelations` mode, the continuation is:
 
 ```text
-direct reduced row checks
+direct reduced row checks (check 1: ring relation, check 2: trace opening)
 ```
 
-There is no terminal `CHALLENGE_RING_SWITCH`, terminal `CHALLENGE_TAU1`, or terminal `CHALLENGE_SUMCHECK_ROUND` in direct mode.
+There is no terminal `CHALLENGE_RING_SWITCH`, terminal `CHALLENGE_TAU1`, terminal `CHALLENGE_SUMCHECK_BATCH`, or terminal `CHALLENGE_SUMCHECK_ROUND` in direct mode.
+Direct mode has no `trace_gamma` squeeze because check 2 enforces the #154 trace identity explicitly instead of through the fused stage-2 oracle.
 There is still no terminal `CHALLENGE_TAU0` in either terminal mode.
 
 The mode must be bound in `AkitaInstanceDescriptor` because the transcript schedules diverge after the terminal witness remainder.
@@ -516,7 +529,7 @@ Its responsibilities:
 3. Decode `e` and `t` raw field segments.
 4. Reconstruct the row-local ring inputs in the same order as the prover's terminal relation builder (`compute_relation_quotient`, `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:518-587`, which is the authoritative reference for row roles and block routing).
 5. Evaluate every reduced row equation in `F[X] / (X^D + 1)` and compare to the relation target `y` (check 1 below).
-6. Evaluate the revealed witness multilinear at the opening point and compare to the gamma-weighted public claim (check 2 below).
+6. Recompose `e_folded` from the decoded witness, evaluate the #154 trace opening identity, and compare to `batched_eval_target_from_opening_batch` (check 2 below).
 
 The terminal statement is two checks:
 
@@ -530,11 +543,17 @@ check 1 (ring relation): M_terminal * z_terminal == y_terminal
   - public-output rows of y are zero (post-#154; bound by check 2, not by y),
   - D rows are absent.
 
-check 2 (public opening): eval(witness, opening_point) == sum_i gamma_i * claim_i
+check 2 (trace opening): TraceOpen( sum_j b_j · e_folded_j ) == batched_eval_target_from_opening_batch(opening_batch, row_coefficients, openings)
+  - decode `SegmentTyped` via `expand_segment_typed_to_i8_digits` / `logical_i8_digits`,
+  - recompose `e_folded` rings from the witness `e` segment,
+  - apply `recover_ring_subfield_inner_product` with the prepared `packed_inner_point`,
+  - compare to the same `trace_eval_target` the sumcheck terminal path uses in `trace_opening_claim`.
 ```
 
 There is no row-routing reuse from the current terminal path: terminal verification is sumcheck-only today (deferred row MLE via `RingSwitchDeferredRowEval::eval_at_point`, `crates/akita-verifier/src/protocol/ring_switch.rs:605-846`), so the all-row direct check is new code modeled on the prover's `compute_relation_quotient` loop.
-Reusable primitives are the root-direct cyclotomic helpers (`mat_vec_mul_i8_plain`, `direct_decomposed_inner_rows`, `crates/akita-verifier/src/protocol/core/verify.rs:178-348`) and the cleartext opening evaluator (`crates/akita-verifier/src/proof/direct.rs::cleartext_witness_opening_matches`) for check 2.
+Reusable primitives for check 1 are the root-direct cyclotomic helpers (`mat_vec_mul_i8_plain`, `direct_decomposed_inner_rows`, `crates/akita-verifier/src/protocol/core/verify.rs:178-348`).
+For check 2, reuse the segment-typed witness decode path from `stage2_cleartext_oracle` (`crates/akita-verifier/src/stages/stage2.rs:144-180`), the trace term builders (`trace_terms_recursive`, `trace_terms_root`, `eval_trace_terms_closed` in `crates/akita-types/src/trace_weight/`), and `batched_eval_target_from_opening_batch` (`crates/akita-types/src/proof/opening_batch.rs`).
+Do not route `SegmentTyped` tails through `cleartext_witness_opening_matches`; that helper is `FieldElements`-only.
 
 The checker must support suffix-terminal and terminal-root surfaces.
 It should use explicit incidence and row-count inputs rather than deriving special cases from `num_points == 1`.
@@ -624,7 +643,7 @@ A future ZK direct mode needs a separate masked direct-row relation argument.
 - [ ] Direct terminal prover does not call terminal ring-switch finalization.
 - [ ] Direct terminal transcript contains no terminal `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, or terminal sumcheck round challenge.
 - [ ] Direct terminal verifier checks every reduced terminal row.
-- [ ] Direct terminal verifier binds the public opening claim by evaluating the revealed witness at the opening point (replacing the removed stage-2 trace term); tampering the opening claim or the witness rejects.
+- [ ] Direct terminal verifier binds the public opening claim via the #154 trace-opening identity (replacing the removed stage-2 trace term); tampering the opening claim, `e_folded` recomposition, or the witness rejects.
 - [ ] Direct terminal verifier supports suffix-terminal and terminal-root surfaces.
 - [ ] Cross-mode descriptor or proof-shape mismatch rejects before row checking.
 - [ ] Direct mode under `feature = "zk"` rejects with `InvalidSetup`.
@@ -669,6 +688,7 @@ Add transcript tests:
 - Direct terminal event stream contains no terminal `CHALLENGE_RING_SWITCH`.
 - Direct terminal event stream contains no terminal `CHALLENGE_TAU1`.
 - Direct terminal event stream contains no terminal `CHALLENGE_SUMCHECK_ROUND`.
+- Direct terminal event stream contains no terminal `CHALLENGE_SUMCHECK_BATCH`.
 - Sumcheck terminal event order remains unchanged.
 
 Add ZK tests:
@@ -777,7 +797,7 @@ This slice should still be able to build sumcheck terminal witnesses unchanged.
 3. Decode `z`, `e`, and `t`.
 4. Reconstruct reduced terminal row inputs in the same order as the prover's `compute_relation_quotient`.
 5. Check 1: every reduced row in `F[X]/(X^D+1)` equals the relation target `y`.
-6. Check 2: evaluate the revealed witness at the opening point and compare to the gamma-weighted public claim (reuse `cleartext_witness_opening_matches`).
+6. Check 2: recompose `e_folded` from the decoded `SegmentTyped` witness and verify `TraceOpen( sum_j b_j · e_folded_j ) == batched_eval_target_from_opening_batch(...)` (reuse `stage2_cleartext_oracle` decode + trace primitives, not `cleartext_witness_opening_matches`).
 7. Wire suffix-terminal verification through it (`core/suffix.rs`).
 8. Wire terminal-root verification through it (`core/root_fold.rs`, `core/verify.rs`).
 9. Add tamper (`z`, `e`, `t`, commitment-row, opening-claim) and malformed-input no-panic tests.
@@ -848,6 +868,8 @@ The implementation should be fresh and based on current `SegmentTyped` surfaces.
 - `crates/akita-verifier/src/protocol/core/{verify,root_fold,suffix}.rs`, terminal verifier dispatch and expected-shape gating.
 - `crates/akita-verifier/src/protocol/ring_switch.rs`, `ring_switch_verifier_terminal`, `RingSwitchDeferredRowEval` (current sumcheck-only terminal replay).
 - `crates/akita-verifier/src/protocol/core/verify.rs`, `mat_vec_mul_i8_plain` / `direct_decomposed_inner_rows` (reusable cyclotomic primitives).
-- `crates/akita-verifier/src/proof/direct.rs`, `cleartext_witness_opening_matches` (reused for the direct-mode public opening check).
+- `crates/akita-verifier/src/stages/stage2.rs`, `stage2_cleartext_oracle` / `cleartext_source_eval` (segment-typed witness decode for check 2).
+- `crates/akita-types/src/trace_weight/`, `trace_terms_recursive`, `trace_terms_root`, `eval_trace_terms_closed`, and `batched_eval_target_from_opening_batch` (trace-opening check 2).
+- `crates/akita-types/src/field_reduction.rs`, `recover_ring_subfield_inner_product` (explicit `TraceOpen` evaluation).
 - `crates/akita-verifier/src/stages/stage2.rs`, current terminal stage-2 verifier over decoded direct witness.
 - `crates/akita-pcs/tests/transcript_hardening.rs`, terminal transcript and tamper coverage.
