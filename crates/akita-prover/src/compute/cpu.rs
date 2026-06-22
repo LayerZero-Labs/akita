@@ -1,24 +1,23 @@
-//! Prover compute backend boundary.
-//!
-//! The first backend is the existing CPU/Rayon implementation. The boundary is
-//! intentionally operation-shaped: migrated prover code asks the backend to run
-//! named commit/protocol kernels, and does not reach through prepared setup for
-//! raw CPU matrices or NTT slots.
-
 use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
-use crate::backend::sparse_ring::{column_sweep_sparse, SparseRingBlockEntry};
+use crate::backend::sparse_ring::column_sweep_sparse;
+use crate::compute::backend::{
+    CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
+    DigitRowsComputeBackend, RingSwitchComputeBackend,
+};
+use crate::compute::plans::{
+    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+};
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
-#[cfg(test)]
-use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
-#[cfg(any(test, feature = "zk"))]
+#[cfg(feature = "zk")]
 use crate::validation::MAX_I8_LOG_BASIS;
-use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
@@ -27,399 +26,6 @@ use std::array::from_fn;
 use std::sync::Arc;
 #[cfg(feature = "zk")]
 use std::sync::OnceLock;
-
-/// Flat block table handed to a compute backend.
-///
-/// `entries[offsets[i]..offsets[i + 1]]` is the entry slice for block `i`.
-/// This is the canonical compact representation for sparse per-block work:
-/// CPU code may recover per-block slices, while accelerator backends can upload
-/// one contiguous entry table plus one offsets table.
-#[derive(Debug, Clone, Copy)]
-pub struct FlatBlockTable<'a, E> {
-    entries: &'a [E],
-    offsets: &'a [u32],
-}
-
-impl<'a, E> FlatBlockTable<'a, E> {
-    /// Build a flat block table from validated storage.
-    #[inline]
-    pub(crate) fn new(entries: &'a [E], offsets: &'a [u32]) -> Self {
-        Self { entries, offsets }
-    }
-
-    /// Contiguous sparse entries.
-    #[inline]
-    pub fn entries(&self) -> &'a [E] {
-        self.entries
-    }
-
-    /// Block offsets into [`Self::entries`].
-    #[inline]
-    pub fn offsets(&self) -> &'a [u32] {
-        self.offsets
-    }
-
-    /// Number of logical blocks.
-    #[inline]
-    pub fn num_blocks(&self) -> usize {
-        self.offsets.len().saturating_sub(1)
-    }
-
-    /// Entry slice for one block.
-    pub fn block(&self, idx: usize) -> Result<&'a [E], AkitaError> {
-        let lo = self.offsets.get(idx).copied().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("flat block table missing offset {idx}"))
-        })? as usize;
-        let hi = self.offsets.get(idx + 1).copied().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("flat block table missing offset {}", idx + 1))
-        })? as usize;
-        if lo > hi || hi > self.entries.len() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "flat block table has malformed offsets for block {idx}: {lo}..{hi} over {} entries",
-                self.entries.len()
-            )));
-        }
-        Ok(&self.entries[lo..hi])
-    }
-
-    fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
-        (0..self.num_blocks()).map(|idx| self.block(idx)).collect()
-    }
-}
-
-/// Dense polynomial commit representation handed to the compute backend.
-pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
-    /// Balanced digit planes are already cached by the polynomial.
-    CachedDigits {
-        /// Per-block digit slices.
-        digit_block_slices: Vec<&'a [[i8; D]]>,
-        /// Logarithm of the gadget basis used to produce the cached digits.
-        log_basis: u32,
-    },
-    /// Ring coefficients need backend-side digit decomposition.
-    CoeffBlocks {
-        /// Per-block coefficient slices.
-        block_slices: Vec<&'a [CyclotomicRing<F, D>]>,
-        /// Number of balanced digits used for the A-side commit.
-        num_digits_commit: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
-}
-
-/// Dense commit operation plan.
-pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Dense polynomial input representation.
-    pub input: DenseCommitInput<'a, F, D>,
-}
-
-/// One-hot commit input representation.
-///
-/// The contained entry slices are read-only plan views. They are public so
-/// accelerator crates can implement [`CommitmentComputeBackend`] without
-/// depending on CPU-prepared storage, while construction remains owned by the
-/// polynomial representations.
-pub enum OneHotCommitBlocks<'a> {
-    /// One ring has at most one hot coefficient.
-    SingleChunk(FlatBlockTable<'a, SingleChunkEntry>),
-    /// One ring may contain several hot coefficients.
-    MultiChunk(FlatBlockTable<'a, MultiChunkEntry>),
-}
-
-/// One-hot commit operation plan.
-pub struct OneHotCommitRowsPlan<'a> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Per-block one-hot entries.
-    pub(crate) blocks: OneHotCommitBlocks<'a>,
-}
-
-impl<'a> OneHotCommitRowsPlan<'a> {
-    /// Per-block one-hot entries.
-    #[inline]
-    pub fn blocks(&self) -> &OneHotCommitBlocks<'a> {
-        &self.blocks
-    }
-}
-
-/// Sparse signed-ring commit operation plan.
-pub struct SparseRingCommitRowsPlan<'a> {
-    /// Number of A rows to produce.
-    pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Per-block sparse signed coefficients.
-    pub(crate) blocks: FlatBlockTable<'a, SparseRingBlockEntry>,
-}
-
-impl<'a> SparseRingCommitRowsPlan<'a> {
-    /// Per-block sparse signed coefficients.
-    #[inline]
-    pub fn blocks(&self) -> FlatBlockTable<'a, SparseRingBlockEntry> {
-        self.blocks
-    }
-}
-
-/// Recursive witness commit operation plan.
-pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
-    /// Recursive witness digit rows, chunked at `D`.
-    pub coeffs: &'a [[i8; D]],
-    /// Number of rows to produce.
-    pub n_rows: usize,
-    /// Recursive block length.
-    pub block_len: usize,
-    /// Number of logical blocks.
-    pub num_blocks: usize,
-    /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
-    /// Logarithm of the gadget basis.
-    pub log_basis: u32,
-}
-
-/// Shared prepared-setup contract for prover compute backends.
-pub trait ComputeBackendSetup<F>: Send + Sync
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Backend-prepared setup for a concrete ring dimension.
-    type PreparedSetup<const D: usize>: Send + Sync;
-
-    /// Prepare backend state from a prover setup wrapper.
-    fn prepare_setup<const D: usize>(
-        &self,
-        setup: &AkitaProverSetup<F, D>,
-    ) -> Result<Self::PreparedSetup<D>, AkitaError> {
-        self.prepare_expanded::<D>(setup.expanded.clone())
-    }
-
-    /// Prepare backend state from already-expanded setup data.
-    fn prepare_expanded<const D: usize>(
-        &self,
-        expanded: Arc<AkitaExpandedSetup<F>>,
-    ) -> Result<Self::PreparedSetup<D>, AkitaError>;
-
-    /// Expanded setup used to prepare this backend context.
-    fn prepared_expanded_setup<'a, const D: usize>(
-        &self,
-        prepared: &'a Self::PreparedSetup<D>,
-    ) -> &'a AkitaExpandedSetup<F>;
-
-    /// Ensure explicit setup metadata and backend-prepared state match.
-    fn validate_prepared_setup<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        expanded: &AkitaExpandedSetup<F>,
-    ) -> Result<(), AkitaError> {
-        let prepared_expanded = self.prepared_expanded_setup::<D>(prepared);
-        // Valid setup matrices are deterministic from the seed; compare the
-        // compact setup identity so independently materialized equivalent
-        // setups validate without re-hashing the matrix on every prover call.
-        if prepared_expanded.seed() != expanded.seed() {
-            return Err(AkitaError::InvalidSetup(
-                "prepared compute context was built for a different setup".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
-pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Negacyclic single-input digit mat-vec rows.
-    fn digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        digits: &[[i8; D]],
-        log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Negacyclic ZK B-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_b_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Negacyclic ZK D-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_d_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-}
-
-/// Cyclic digit mat-vec operations needed by ring-switch relation code.
-pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Cyclic single-input digit mat-vec rows.
-    fn cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        digits: &[[i8; D]],
-        log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Cyclic ZK B-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_b_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Cyclic ZK D-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_d_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-}
-
-/// Commitment row operations for migrated root/ring commitment work.
-pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Dense A-side commit rows.
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-
-    /// One-hot A-side commit rows.
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
-
-    /// Sparse signed-ring A-side commit rows.
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
-
-    /// Recursive witness A-side commit rows.
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-}
-
-/// Full ring-switch relation operation input.
-pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
-    /// Number of D-side cyclic rows to produce.
-    pub n_d: usize,
-    /// Number of B-side cyclic rows to produce.
-    pub n_b: usize,
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
-    /// Flat decomposed `e_hat` digits for the D-side relation rows.
-    pub e_hat: &'a [[i8; D]],
-    /// Flat decomposed inner-commitment digits for the B-side relation rows.
-    pub t_hat: &'a [[i8; D]],
-    /// One centered `z` segment contributing to A-side quotient rows.
-    pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_folded_centered_inf_norm: u32,
-    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
-    pub log_basis: u32,
-}
-
-/// Additional public-row quotient operation input.
-pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
-    /// One centered `z` segment contributing to A-side quotient rows.
-    pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_folded_centered_inf_norm: u32,
-}
-
-/// Named ring-switch relation rows returned by a backend.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {
-    /// D-side cyclic rows.
-    pub d_cyclic: Vec<CyclotomicRing<F, D>>,
-    /// B-side cyclic rows.
-    pub b_cyclic: Vec<CyclotomicRing<F, D>>,
-    /// A-side quotient rows.
-    pub a_quotients: Vec<CyclotomicRing<F, D>>,
-}
-
-/// Ring-switch relation operations for migrated proving work.
-pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Fused cyclic/quotient rows used by ring-switch finalization.
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField;
-
-    /// A-side quotient rows for an additional public-row segment.
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: HalvingField;
-}
-
-/// Full first-PR prover compute surface.
-pub trait ProverComputeBackend<F>:
-    CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
-where
-    F: FieldCore + CanonicalField,
-{
-}
-
-impl<F, B> ProverComputeBackend<F> for B
-where
-    F: FieldCore + CanonicalField,
-    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
-{
-}
 
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
@@ -974,10 +580,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::backend::{
+        ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
+        RingSwitchComputeBackend,
+    };
+    use crate::compute::plans::RingSwitchRelationRowsPlan;
+    use crate::kernels::linear::{
+        fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    };
+    use crate::validation::MAX_I8_LOG_BASIS;
+    use crate::AkitaProverSetup;
     use akita_field::Fp64;
     #[cfg(feature = "zk")]
     use akita_types::FlatMatrix;
     use akita_types::SetupMatrixEnvelope;
+    use std::sync::Arc;
 
     type F = Fp64<4294967197>;
     const D: usize = 32;

@@ -9,6 +9,39 @@ use std::sync::Arc;
 use crate::compute::CommitmentComputeBackend;
 use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
 
+/// Root polynomial obtained by tensor-projecting base-field evaluations into
+/// an extension-valued table.
+///
+/// Dense roots use the ordinary dense backend. Sparse one-hot roots use signed
+/// ring coefficients so the transformed commitment path preserves sparsity.
+#[derive(Debug, Clone)]
+pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
+    /// Dense transformed root polynomial.
+    Dense(DensePoly<F, D>),
+    /// Sparse signed-ring transformed root polynomial.
+    Sparse(Arc<SparseRingPoly<F, D>>),
+}
+
+impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectionPoly<F, D> {
+    fn from(poly: DensePoly<F, D>) -> Self {
+        Self::Dense(poly)
+    }
+}
+
+impl<F: FieldCore, const D: usize> From<SparseRingPoly<F, D>> for RootTensorProjectionPoly<F, D> {
+    fn from(poly: SparseRingPoly<F, D>) -> Self {
+        Self::Sparse(Arc::new(poly))
+    }
+}
+
+impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
+    for RootTensorProjectionPoly<F, D>
+{
+    fn from(poly: Arc<SparseRingPoly<F, D>>) -> Self {
+        Self::Sparse(poly)
+    }
+}
+
 /// Fold-facing polynomial wrapper for original roots and tensor-projected roots.
 ///
 /// Non-EOR paths borrow the caller's original polynomial. EOR paths own the
