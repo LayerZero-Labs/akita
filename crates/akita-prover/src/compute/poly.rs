@@ -5,7 +5,7 @@ use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
-use crate::backend::OwnedSuffixWitness;
+use crate::backend::RecursiveWitnessFlat;
 #[cfg(feature = "zk")]
 use crate::DensePoly;
 use crate::RootTensorProjectionPoly;
@@ -527,14 +527,14 @@ where
 ///
 /// Recursive proving dispatches the suffix witness over [`RECURSIVE_SUFFIX_RING_DIMENSIONS`]
 /// plus the config ring `D`, so prove entry points need [`ProveFlowBackendFor`] for
-/// the root polynomial `P` and [`OwnedSuffixWitness`] at every supported dimension.
+/// the root polynomial `P` and [`RecursiveWitnessFlat`] at every supported dimension.
 pub trait RecursiveProveBackend<F, P, E, const D: usize>:
     ProveFlowBackendFor<F, P, E, D>
-    + ProveFlowBackendFor<F, OwnedSuffixWitness<F, D>, E, D>
-    + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 32>, E, 32>
-    + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 64>, E, 64>
-    + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 128>, E, 128>
-    + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 256>, E, 256>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
+    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -550,11 +550,11 @@ where
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     B: ProveFlowBackendFor<F, P, E, D>
-        + ProveFlowBackendFor<F, OwnedSuffixWitness<F, D>, E, D>
-        + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 32>, E, 32>
-        + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 64>, E, 64>
-        + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 128>, E, 128>
-        + ProveFlowBackendFor<F, OwnedSuffixWitness<F, 256>, E, 256>,
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
 {
 }
 

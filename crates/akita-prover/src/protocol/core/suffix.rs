@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::OwnedSuffixWitness;
+use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     OpeningProveBackendFor, ProverComputeStack, RingSwitchComputeBackend, RootProveBackend,
@@ -86,11 +86,11 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: RootProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, D>, Cfg::ExtField, D>
-        + RootProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, 32>, Cfg::ExtField, 32>
-        + RootProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, 64>, Cfg::ExtField, 64>
-        + RootProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, 128>, Cfg::ExtField, 128>
-        + RootProveBackend<Cfg::Field, OwnedSuffixWitness<Cfg::Field, 256>, Cfg::ExtField, 256>
+    B: RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, D>
+        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 32>
+        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 64>
+        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 128>
+        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
         + CommitmentComputeBackend<Cfg::Field>
         + RingSwitchComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
@@ -271,64 +271,71 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    TS: TensorBackendFor<F, OwnedSuffixWitness<F, D>, L, D>,
+    TS: TensorBackendFor<F, RecursiveWitnessFlat, L, D>,
     O: DigitRowsComputeBackend<F>
-        + OpeningProveBackendFor<F, OwnedSuffixWitness<F, D>, D>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let witness_view = OwnedSuffixWitness::<F, D>::from_suffix(&current_state.w.view::<F, D>()?);
-    let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
-    let typed_hint = current_state.hint.to_typed::<D>()?;
-    let opening_point = &current_state.sumcheck_challenges;
-    #[cfg(feature = "zk")]
-    let zk_hiding = current_state.zk_hiding;
-
-    current_state
-        .commitment
-        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
-
-    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
-    let logical_view = OwnedSuffixWitness::<F, D>::from_suffix(&logical_w.view::<F, D>()?);
-    let logical_polys = [&logical_view];
-    let fold_polys = [&witness_view];
-    let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
-    let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
-    let recursive_commitment = RingCommitment {
-        u: commitment_u.to_vec(),
-    };
-    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
-        stack,
-        needs_extension_reduction,
-        &logical_polys,
-        &fold_polys,
-        &eor_opening_batch,
-        opening_batch.clone(),
-        &opening_batch,
-        opening_point,
+    let SuffixProverState {
+        w,
+        logical_w: optional_logical_w,
+        commitment,
+        hint,
+        sumcheck_challenges,
         #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        Some(current_state.opening_public),
-        true,
-        transcript,
+        opening_public,
         #[cfg(feature = "zk")]
         zk_hiding,
-        opening_point.to_vec(),
-        || Ok(()),
-        level_params,
-        alpha,
-        BasisMode::Lagrange,
-        BlockOrder::ColumnMajor,
-        vec![typed_hint],
-        std::slice::from_ref(&recursive_commitment),
-        m_row_layout,
-        current_state.commitment,
-    )
+        ..
+    } = current_state;
+        let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
+        let typed_hint = hint.to_typed::<D>()?;
+        let opening_point = &sumcheck_challenges;
+
+        commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+
+        let alpha = level_params.ring_dimension.trailing_zeros() as usize;
+        let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
+        let logical_polys = [logical_w];
+        let fold_polys = [&w];
+        let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+        let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+        let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
+        let commitment_u = commitment.as_ring_slice::<D>()?;
+        let recursive_commitment = RingCommitment {
+            u: commitment_u.to_vec(),
+        };
+        prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+            stack,
+            needs_extension_reduction,
+            &logical_polys,
+            &fold_polys,
+            &eor_opening_batch,
+            opening_batch.clone(),
+            &opening_batch,
+            opening_point,
+            #[cfg(feature = "zk")]
+            None,
+            #[cfg(feature = "zk")]
+            Some(opening_public),
+            true,
+            transcript,
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            opening_point.to_vec(),
+            || Ok(()),
+            level_params,
+            alpha,
+            BasisMode::Lagrange,
+            BlockOrder::ColumnMajor,
+            vec![typed_hint],
+            std::slice::from_ref(&recursive_commitment),
+            m_row_layout,
+            commitment,
+        )
+    }
 }
 
 #[cfg(all(test, not(feature = "zk")))]

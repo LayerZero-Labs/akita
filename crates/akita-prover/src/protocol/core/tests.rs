@@ -82,23 +82,14 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         E::new(F::from_u64(5), F::from_u64(7)),
         E::new(F::from_u64(11), F::from_u64(13)),
     ];
-    let logical_view = logical_w.view::<F, 2>().expect("valid suffix witness");
-    let logical_owned = crate::backend::OwnedSuffixWitness::<F, 2>::from_suffix(&logical_view);
+    let logical_polys = [&logical_w];
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
     #[cfg(feature = "zk")]
     let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
-    let logical_polys = [&logical_owned];
     let opening_batch = OpeningBatch::same_point(point.len(), 1).expect("opening batch");
-    let proved = prove_extension_opening_reduction::<
-        F,
-        E,
-        _,
-        crate::backend::OwnedSuffixWitness<F, 2>,
-        _,
-        2,
-    >(
+    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
         &crate::compute::CpuBackend,
         &logical_polys,
         &opening_batch,
