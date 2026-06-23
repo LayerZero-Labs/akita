@@ -471,7 +471,7 @@ fn build_zk_hiding_context<F, E, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + 'static,
     E: FpExtEncoding<F> + ExtField<F>,
-    B: crate::ProverComputeBackend<F> + ZkHidingCommitBackend<F, D>,
+    B: crate::compute::CommitmentComputeBackend<F> + ZkHidingCommitBackend<F, D>,
 {
     let mut rng = OsRng;
     let fold_steps = schedule

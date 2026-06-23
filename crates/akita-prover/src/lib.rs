@@ -27,13 +27,16 @@ pub use backend::{
     SuffixWitness,
 };
 pub use compute::{
-    BatchDecomposeFoldOutcome, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
-    CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
+    BatchDecomposeFoldOutcome, CommitBackendFor, CommitmentComputeBackend, ComputeBackendSetup,
+    CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, OperationCtx, PreparedCrtNttProfile, ProverComputeBackend,
-    ProverComputeStack, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan, TieredProveStacks, UniformProverStack,
+    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile,
+    ProveBackendFor, ProveFlowBackendFor, ProverComputeStack, RecursiveProveBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SparseRingCommitRowsPlan, TensorBackendFor, TieredProveStacks, UniformProverStack,
+    RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};

@@ -1,9 +1,9 @@
 use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    LevelProveStacks, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchComputeBackend, RootOpeningSource, RootProveFlowBackend, RootProvePoly,
-    UniformProverStack,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
+    ProverComputeStack, RingSwitchComputeBackend, RootOpeningSource, RootProvePoly,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -126,6 +126,7 @@ fn multiplier_ring_weights<F: FieldCore, const D: usize>(
 
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
+    prepared: Option<&B::PreparedSetup<D>>,
     poly: &Q,
     point: &RingMultiplierOpeningPoint<F, D>,
     block_len: usize,
@@ -133,7 +134,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     Q: RootOpeningSource<F, D>,
-    B: for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
     let plan = if let Some(base_point) = point.as_base() {
         OpeningFoldPlan::Base {
@@ -150,12 +151,13 @@ where
         }
     };
     let OpeningFoldOutput { eval, folded } =
-        OpeningFoldKernel::evaluate_and_fold(backend, None, poly.opening_view()?, plan)?;
+        OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
     Ok((eval, folded))
 }
 
 pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, const D: usize>(
     backend: &B,
+    prepared: Option<&B::PreparedSetup<D>>,
     polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, C, D>,
     block_len: usize,
@@ -164,7 +166,7 @@ where
     F: FieldCore + CanonicalField,
     C: FieldCore,
     Q: RootOpeningSource<F, D>,
-    B: for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
     let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
     let mut folded_rings = Vec::with_capacity(polys.len());
@@ -172,6 +174,7 @@ where
     for poly in polys {
         let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
             backend,
+            prepared,
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
@@ -258,8 +261,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, B, const D: usize>(
-    stack: &UniformProverStack<'_, F, B, D>,
+pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, C, O, TS, R, const D: usize>(
+    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
     eor_polys: &[&P],
     fold_polys: &[&P],
@@ -297,11 +300,16 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     P: RootProvePoly<F, D>,
     V: FnOnce() -> Result<(), AkitaError>,
-    B: RootProveFlowBackend<F, P, E, D>,
+    TS: TensorBackendFor<F, P, E, D>,
+    C: ComputeBackendSetup<F>,
+    O: DigitRowsComputeBackend<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+    R: DigitRowsComputeBackend<F>,
 {
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = prove_extension_opening_reduction::<F, E, T, P, B, D>(
+        let proved = prove_extension_opening_reduction::<F, E, T, P, TS, D>(
             tensor.backend(),
             eor_polys,
             opening_batch,
@@ -332,7 +340,7 @@ where
     if needs_extension_reduction {
         if pad_base_evals {
             let fold_refs = fold_polys.to_vec();
-            finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
+            finish_prepared_fold::<F, E, T, P, C, O, TS, R, D>(FinishFoldArgs {
                 stack,
                 fold_refs: &fold_refs,
                 protocol_point: &protocol_point,
@@ -362,7 +370,7 @@ where
                         .entered();
                 cfg_iter!(fold_polys)
                     .map(|poly| {
-                        tensor_root_projection::<F, P, E, B, D>(
+                        tensor_root_projection::<F, P, E, TS, D>(
                             tensor.backend(),
                             Some(tensor.prepared()),
                             *poly,
@@ -371,33 +379,35 @@ where
                     .collect::<Result<Vec<_>, _>>()?
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
-            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, B, D>(FinishFoldArgs {
-                stack,
-                fold_refs: &fold_refs,
-                protocol_point: &protocol_point,
-                reduction,
-                row_coefficients,
-                trace_opening_batch,
-                relation_opening_batch,
-                level_params,
-                alpha_bits,
-                basis,
-                block_order,
-                #[cfg(feature = "zk")]
-                no_eor_trace_eval_target_public,
-                pad_base_evals,
-                transcript,
-                #[cfg(feature = "zk")]
-                zk_hiding,
-                commitment_hints,
-                commitments,
-                m_row_layout,
-                commitment,
-            })
+            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, C, O, TS, R, D>(
+                FinishFoldArgs {
+                    stack,
+                    fold_refs: &fold_refs,
+                    protocol_point: &protocol_point,
+                    reduction,
+                    row_coefficients,
+                    trace_opening_batch,
+                    relation_opening_batch,
+                    level_params,
+                    alpha_bits,
+                    basis,
+                    block_order,
+                    #[cfg(feature = "zk")]
+                    no_eor_trace_eval_target_public,
+                    pad_base_evals,
+                    transcript,
+                    #[cfg(feature = "zk")]
+                    zk_hiding,
+                    commitment_hints,
+                    commitments,
+                    m_row_layout,
+                    commitment,
+                },
+            )
         }
     } else {
         let fold_refs = fold_polys.to_vec();
-        finish_prepared_fold::<F, E, T, P, B, D>(FinishFoldArgs {
+        finish_prepared_fold::<F, E, T, P, C, O, TS, R, D>(FinishFoldArgs {
             stack,
             fold_refs: &fold_refs,
             protocol_point: &protocol_point,
@@ -424,13 +434,16 @@ where
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
-struct FinishFoldArgs<'a, 'p, F, E, T, Q, B, const D: usize>
+struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R, const D: usize>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore,
-    B: ComputeBackendSetup<F>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
 {
-    stack: &'a UniformProverStack<'a, F, B, D>,
+    stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
@@ -456,8 +469,8 @@ where
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
 /// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
 #[allow(clippy::needless_lifetimes)]
-fn finish_prepared_fold<'a, 'p, F, E, T, Q, B, const D: usize>(
-    args: FinishFoldArgs<'a, 'p, F, E, T, Q, B, D>,
+fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R, const D: usize>(
+    args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R, D>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -471,9 +484,10 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     Q: RootOpeningSource<F, D>,
-    B: DigitRowsComputeBackend<F>
-        + for<'b> OpeningBatchKernel<Q::OpeningBatchView<'b>, F, D>
-        + for<'b> OpeningFoldKernel<Q::OpeningView<'b>, F, D>,
+    O: DigitRowsComputeBackend<F> + OpeningProveBackendFor<F, Q, D>,
+    R: DigitRowsComputeBackend<F>,
+    C: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
 {
     let FinishFoldArgs {
         stack,
@@ -508,6 +522,7 @@ where
     )?;
     let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
         opening.backend(),
+        Some(opening.prepared()),
         fold_refs,
         &prepared_point,
         level_params.block_len,
@@ -629,10 +644,10 @@ type BoundNextWitness<F> = (
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, B, Cfg, const D: usize>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    stacks: &'stack impl LevelProveStacks<'stack, F, B, D>,
+    stack: &'stack ProverComputeStack<'stack, F, D, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
@@ -657,17 +672,20 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    O: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
+    R: RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
-    <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
-    let stack = stacks.prove_stack_at_level(level);
     #[cfg(feature = "zk")]
     let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
-    let build_output = ring_switch_build_w::<F, B, D>(
+    let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
@@ -680,7 +698,7 @@ where
         None
     } else {
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        Some(crate::commit_next_w::<Cfg, B, D>(
+        Some(crate::commit_next_w::<Cfg, C, D>(
             &scheduled.next_params,
             expanded,
             stack.commit(),

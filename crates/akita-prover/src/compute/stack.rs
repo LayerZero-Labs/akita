@@ -421,6 +421,43 @@ mod tests {
     }
 
     #[test]
+    fn tiered_prove_stacks_rejects_empty_table() {
+        let result = TieredProveStacks::<F, CpuBackend, D>::new(&[], &[]);
+        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn tiered_prove_stacks_rejects_length_mismatch() {
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
+        let stacks = [stack];
+        let result = TieredProveStacks::new(&stacks, &[1, 2]);
+        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn tiered_prove_stacks_rejects_non_increasing_bounds() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup a");
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(8192))
+            .expect("setup b");
+        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
+        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
+        let stack_a =
+            UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
+                .expect("stack a");
+        let stack_b =
+            UniformProverStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
+                .expect("stack b");
+        let stacks = [stack_a, stack_b];
+        let result = TieredProveStacks::new(&stacks, &[2, 1]);
+        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+    }
+
+    #[test]
     fn tiered_prove_stacks_selects_by_fold_level() {
         let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");

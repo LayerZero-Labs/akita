@@ -1,6 +1,6 @@
 //! Shared one-line dispatch from root polynomial views to operation kernels.
 
-use super::backend::CommitmentComputeBackend;
+use super::backend::ComputeBackendSetup;
 use super::kernels::TensorProjectionKernel;
 use super::poly::RootTensorSource;
 use crate::RootTensorProjectionPoly;
@@ -16,7 +16,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F>,
     P: RootTensorSource<F, D>,
-    B: CommitmentComputeBackend<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
+    B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     TensorProjectionKernel::root_projection(backend, prepared, poly.tensor_view()?)
 }

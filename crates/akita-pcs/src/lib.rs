@@ -60,11 +60,14 @@ pub use akita_field::{
 pub use akita_prover::{
     CommitmentComputeBackend, CommitmentProver, CommittedPolynomials, ComputeBackendSetup,
     CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput,
-    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, MultiChunkEntry,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend,
+    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks,
+    MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningProveBackendFor,
+    OperationCtx, ProveBackendFor, ProverClaims, RecursiveProveBackend,
     RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SingleChunkEntry, SparseRingBlockEntry,
-    SparseRingCommitRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan, TensorBackendFor,
+    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

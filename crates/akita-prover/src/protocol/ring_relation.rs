@@ -210,6 +210,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     backend: &B,
+    prepared: Option<&B::PreparedSetup<D>>,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
@@ -218,7 +219,8 @@ pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
-    B: for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     match challenges {
@@ -248,7 +250,7 @@ where
             let batch_view = P::opening_batch(point_polys)?;
             match OpeningBatchKernel::decompose_fold_batch(
                 backend,
-                None,
+                prepared,
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
@@ -265,7 +267,7 @@ where
                         .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
                             OpeningFoldKernel::decompose_fold(
                                 backend,
-                                None,
+                                prepared,
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
@@ -296,7 +298,7 @@ where
             let batch_view = P::opening_batch(point_polys)?;
             match OpeningBatchKernel::decompose_fold_batch(
                 backend,
-                None,
+                prepared,
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
@@ -541,6 +543,7 @@ impl RingRelationProver {
         let (z_folded_rings, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
+                Some(opening_ctx.prepared()),
                 transcript,
                 polys,
                 &lp,

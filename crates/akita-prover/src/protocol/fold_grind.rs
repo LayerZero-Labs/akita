@@ -75,6 +75,7 @@ fn grind_probe_nonces(
 /// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
+    prepared: Option<&B::PreparedSetup<D>>,
     transcript: &mut T,
     polys: &[&P],
     lp: &LevelParams,
@@ -83,7 +84,8 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
-    B: for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
@@ -107,6 +109,7 @@ where
         )?;
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
+            prepared,
             &challenges,
             polys,
             &point_indices,

@@ -1,7 +1,9 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
+use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly, UniformProverStack,
+    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
+    UniformProverStack,
 };
 use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
@@ -118,7 +120,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
-        stack: &UniformProverStack<'_, F, B, D>,
+        stacks: &'a impl LevelProveStacks<'a, F, B, D>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -128,5 +130,6 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, D>;
+        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a;
 }

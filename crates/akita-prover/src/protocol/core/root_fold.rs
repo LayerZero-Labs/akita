@@ -1,7 +1,10 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, LevelProveStacks, RootProveFlowBackend, RootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchComputeBackend, RootProveBackend,
+    RootProvePoly, TensorBackendFor,
 };
+use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
@@ -48,8 +51,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_root<F, E, T, P, B, const D: usize>(
-    stack: &UniformProverStack<'_, F, B, D>,
+fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
+    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
     polys: &[&P],
     opening_batch: OpeningBatch,
@@ -79,7 +82,12 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D>,
+    TS: TensorBackendFor<F, P, E, D>,
+    O: DigitRowsComputeBackend<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+    C: ComputeBackendSetup<F>,
+    R: DigitRowsComputeBackend<F>,
 {
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
@@ -93,7 +101,7 @@ where
     }
 
     let commitment_rows = flatten_batched_commitment_rows(commitments);
-    prepare_fold_inner::<F, E, T, P, _, B, D>(
+    prepare_fold_inner::<F, E, T, P, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
         polys,
@@ -170,7 +178,11 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D> + ComputeBackendSetup<F> + 'stack,
+    B: RootProveBackend<F, P, E, D>
+        + CommitmentComputeBackend<F>
+        + RingSwitchComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
@@ -188,7 +200,7 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
 
-    let prepared_fold = prepare_root::<F, E, T, P, B, D>(
+    let prepared_fold = prepare_root::<F, E, T, P, B, B, B, B, D>(
         stack,
         transcript,
         polys,
@@ -203,10 +215,10 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, B, Cfg, D>(
+    prove_fold::<F, E, T, B, B, B, B, Cfg, D>(
         expanded,
         prefix_slots,
-        stacks,
+        stack,
         transcript,
         0,
         scheduled,
@@ -267,7 +279,11 @@ where
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProvePoly<F, D>,
-    B: RootProveFlowBackend<F, P, E, D> + ComputeBackendSetup<F> + 'stack,
+    B: RootProveBackend<F, P, E, D>
+        + CommitmentComputeBackend<F>
+        + RingSwitchComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
@@ -287,7 +303,7 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = prepare_root::<F, E, T, P, B, D>(
+    let prepared_fold = prepare_root::<F, E, T, P, B, B, B, B, D>(
         stack,
         transcript,
         polys,
@@ -302,10 +318,10 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, B, Cfg, D>(
+    let terminal_result = prove_fold::<F, E, T, B, B, B, B, Cfg, D>(
         expanded,
         &prefix_slots,
-        stacks,
+        stack,
         transcript,
         0,
         scheduled,
