@@ -44,10 +44,9 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
-    Cfg::ExtField: FpExtEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ExtField, Cfg::ExtField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),

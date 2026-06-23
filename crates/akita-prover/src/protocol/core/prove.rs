@@ -1,5 +1,13 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::compute::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
+    DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
+    RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixDispatchOpeningProveBackendFor,
+    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
+};
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -16,7 +24,7 @@ fn prover_claims_to_opening_batch<'a, F, E, P, const D: usize>(
 where
     F: FieldCore,
     E: FieldCore,
-    P: AkitaPolyOps<F, D>,
+    P: RootPolyShape<F, D>,
 {
     let (point, payloads) = claims;
     let slots = payloads
@@ -76,7 +84,7 @@ pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: RootPolyShape<F, D>,
 {
     validate_batched_inputs(
         expanded,
@@ -102,7 +110,7 @@ where
         .claim_to_commitment_group()
         .iter()
         .zip(opening_batch.claim_poly_indices().iter())
-        .map(|(&group_idx, &poly_idx)| &prepared_batch.payloads[group_idx].polynomials[poly_idx])
+        .map(|(&group_idx, &poly_idx)| prepared_batch.payloads[group_idx].polynomials[poly_idx])
         .collect();
     let commitment_hints = prepared_batch
         .payloads
@@ -132,7 +140,7 @@ pub fn prove_root_direct<F, L, const D: usize, P>(
 where
     F: FieldCore,
     L: ExtField<F>,
-    P: AkitaPolyOps<F, D>,
+    P: DirectRootWitnessSource<F, D>,
 {
     let witnesses = polys
         .iter()
@@ -180,11 +188,18 @@ where
 /// Returns an error if claim preparation, schedule selection, root-direct
 /// witness construction, transcript binding, or folded-root proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn batched_prove<'a, Cfg, T, P, B, const D: usize>(
+pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'a impl LevelProveStacks<
+        'a,
+        Cfg::Field,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     claims: ProverClaims<
         'a,
         Cfg::ExtField,
@@ -214,10 +229,33 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    Cfg::Field: FromPrimitiveInt + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    P: RootProvePoly<Cfg::Field, D>,
+    C: ComputeBackendSetup<Cfg::Field>
+        + CommitmentComputeBackend<Cfg::Field>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
+        + 'a,
+    O: ComputeBackendSetup<Cfg::Field>
+        + OpeningProveBackendFor<Cfg::Field, P, D>
+        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    TS: ComputeBackendSetup<Cfg::Field>
+        + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
+        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + 'a,
+    R: ComputeBackendSetup<Cfg::Field>
+        + SuffixRingSwitchProveBackend<Cfg::Field>
+        + RingSwitchProveBackend<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let prepared_claims = {
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
         prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
@@ -226,13 +264,12 @@ where
     let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
             std::slice::from_ref(&prepared_claims.opening_point),
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-            num_vars,
-        ) {
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
+        {
             let commit_params =
                 Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
@@ -269,11 +306,10 @@ where
             "root schedule does not start with a fold".to_string(),
         ));
     }
-    prove::<Cfg, T, P, B, D>(
+    prove::<Cfg, T, P, C, O, TS, R, D>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stacks,
         transcript,
         prepared_claims,
         &schedule,
@@ -297,11 +333,18 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove<'a, Cfg, T, P, B, const D: usize>(
+pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'a impl LevelProveStacks<
+        'a,
+        Cfg::Field,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
     schedule: &Schedule,
@@ -326,11 +369,33 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    P: AkitaPolyOps<Cfg::Field, D>,
-    B: ProverComputeBackend<Cfg::Field>,
+    Cfg::Field: FromPrimitiveInt + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    P: RootProvePoly<Cfg::Field, D>,
+    C: ComputeBackendSetup<Cfg::Field>
+        + CommitmentComputeBackend<Cfg::Field>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
+        + 'a,
+    O: ComputeBackendSetup<Cfg::Field>
+        + OpeningProveBackendFor<Cfg::Field, P, D>
+        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    TS: ComputeBackendSetup<Cfg::Field>
+        + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
+        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + 'a,
+    R: ComputeBackendSetup<Cfg::Field>
+        + SuffixRingSwitchProveBackend<Cfg::Field>
+        + RingSwitchProveBackend<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
-
     let root_scheduled = schedule.get_execution_schedule(0)?;
 
     if prepared_claims
@@ -347,10 +412,11 @@ where
     root_scheduled.validate_current_w_len(root_packed_w_len)?;
 
     #[cfg(feature = "zk")]
+    let root_stack = stacks.prove_stack_at_level(0);
+    #[cfg(feature = "zk")]
     let (zk_hiding_commitment, mut zk_hiding_state) =
-        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, B, D>(
-            backend,
-            prepared,
+        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, C, D>(
+            root_stack.commit(),
             schedule,
             &root_scheduled.params,
             prepared_claims.opening_batch.num_vars(),
@@ -364,25 +430,34 @@ where
         // Root is itself the terminal fold: no recursive suffix.
         #[cfg(not(feature = "zk"))]
         let terminal_shape = schedule_terminal_direct_witness_shape(schedule)?;
-        let terminal =
-            prove_terminal_root_fold_with_params::<Cfg, Cfg::Field, Cfg::ExtField, T, P, B, D>(
-                expanded,
-                backend,
-                prepared,
-                transcript,
-                &prepared_claims.flat_polys,
-                prepared_claims.opening_batch,
-                prepared_claims.opening_point,
-                &prepared_claims.commitments,
-                prepared_claims.commitment_hints,
-                &root_scheduled,
-                #[cfg(not(feature = "zk"))]
-                terminal_shape,
-                basis,
-                setup_contribution_mode,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding_state,
-            )?;
+        let terminal = prove_terminal_root_fold_with_params::<
+            Cfg,
+            Cfg::Field,
+            Cfg::ExtField,
+            T,
+            P,
+            C,
+            O,
+            TS,
+            R,
+            D,
+        >(
+            expanded,
+            stacks,
+            transcript,
+            &prepared_claims.flat_polys,
+            prepared_claims.opening_batch,
+            prepared_claims.opening_point,
+            &prepared_claims.commitments,
+            prepared_claims.commitment_hints,
+            &root_scheduled,
+            #[cfg(not(feature = "zk"))]
+            terminal_shape,
+            basis,
+            setup_contribution_mode,
+            #[cfg(feature = "zk")]
+            &mut zk_hiding_state,
+        )?;
         #[cfg(feature = "zk")]
         let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
@@ -396,11 +471,10 @@ where
         ));
     }
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, B, Cfg, D>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg, D>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stacks,
         transcript,
         &prepared_claims.flat_polys,
         prepared_claims.opening_batch,
@@ -416,11 +490,10 @@ where
     let next_state = root.next_state;
     let root = AkitaBatchedRootProof::new(root.level_proof);
 
-    let suffix = crate::prove_suffix::<Cfg, T, B, D>(
+    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R, D>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stacks,
         transcript,
         next_state,
         schedule,

@@ -83,13 +83,12 @@ where
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
+        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
             std::slice::from_ref(&opening_point),
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, Cfg::ExtField, D>(
-            num_vars,
-        ) {
+        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
+        {
             let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }

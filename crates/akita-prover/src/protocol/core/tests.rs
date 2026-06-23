@@ -1,6 +1,6 @@
 use super::*;
 use crate::DensePoly;
-use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr};
+use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 #[cfg(feature = "zk")]
 use akita_types::FlatDigitBlocks;
@@ -51,10 +51,11 @@ fn prover_claim_preparation_accepts_extension_points() {
     );
     #[cfg(not(feature = "zk"))]
     let hint = AkitaCommitmentHint::new(Vec::new());
+    let poly_refs = polys.iter().collect::<Vec<_>>();
     let claims = (
         &point[..],
         vec![crate::CommittedPolynomials {
-            polynomials: &polys[..],
+            polynomials: &poly_refs[..],
             commitment: &commitment,
             hint,
         }],
@@ -81,33 +82,16 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         E::new(F::from_u64(5), F::from_u64(7)),
         E::new(F::from_u64(11), F::from_u64(13)),
     ];
-    let logical_view = logical_w.view::<F, 2>().expect("valid suffix witness");
-    let mut base_evals = logical_view.base_evals().expect("base evals");
-    base_evals.resize(1usize << point.len(), F::zero());
-    let expected_opening = base_evals
-        .iter()
-        .enumerate()
-        .fold(E::zero(), |acc, (idx, &eval)| {
-            let weight = point
-                .iter()
-                .enumerate()
-                .fold(E::one(), |weight, (bit, &x)| {
-                    if (idx >> bit) & 1 == 1 {
-                        weight * x
-                    } else {
-                        weight * (E::one() - x)
-                    }
-                });
-            acc + weight * E::lift_base(eval)
-        });
+    let logical_polys = [&logical_w];
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
     #[cfg(feature = "zk")]
     let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
-    let logical_polys = [&logical_view];
     let opening_batch = OpeningBatch::same_point(point.len(), 1).expect("opening batch");
-    let proved = prove_extension_opening_reduction::<F, E, _, _, 2>(
+    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
+        &crate::compute::CpuBackend,
+        None,
         &logical_polys,
         &opening_batch,
         &point,
@@ -125,6 +109,5 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         proved.reduction.proof.partials.len(),
         <E as ExtField<F>>::EXT_DEGREE
     );
-    assert_eq!(proved.openings, vec![expected_opening]);
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
 }

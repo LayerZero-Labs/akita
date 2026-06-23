@@ -4,18 +4,17 @@
 |-------------|-----------------------|
 | Author(s)   | @quangvdao, Codex     |
 | Created     | 2026-05-24            |
-| Status      | current PR            |
-| PR          | #105                  |
+| Status      | active (Metal track); CPU/`AkitaPolyOps` cutover landed in [#206](https://github.com/LayerZero-Labs/akita/pull/206) |
+| PR          | #105 (spec), CPU slice implemented in #206 |
 
 ## Summary
 
-Akita's prover currently has CPU-specific compute state wired through public
-prover APIs, polynomial backends, setup construction, and protocol flow. The
-most visible symptom is `NttSlotCache<D>`: it lives inside
-`AkitaProverSetup`, appears as the default `AkitaPolyOps::CommitCache`, is
-threaded through `akita-scheme`, and is lazily rebuilt by dynamic-D dispatch
-macros. Adding Metal beside this shape would create a second execution layer
-without replacing the CPU-shaped one.
+Akita's prover had CPU-specific compute state wired through public prover APIs,
+polynomial backends, setup construction, and protocol flow. **The CPU cutover
+described here landed in PR #206** (`AkitaPolyOps` deleted; `CpuBackend` +
+`ProverComputeStack` + source-typed kernels). The symptom below was the
+pre-cutover shape; Metal and true hybrid scheduling remain this spec's active
+track.
 
 This spec defines the first clean rearchitecture slice: make prover compute an
 explicit host-prepared boundary, move the existing ring/commit CPU path behind

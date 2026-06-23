@@ -662,28 +662,28 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;
@@ -734,10 +734,10 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog tiered ($feat, $family_name, $table));
         }
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;
@@ -788,10 +788,10 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;

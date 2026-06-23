@@ -9,6 +9,7 @@ use std::arch::aarch64::*;
 use std::sync::OnceLock;
 
 use super::butterfly::NttTwiddles;
+use super::forward_dif_tail_policy::forward_dif_tail_eligible;
 use super::prime::{MontCoeff, NttPrime};
 
 /// Whether the NEON NTT path is active. Cached on first call.
@@ -190,7 +191,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     // Final two stages (len = 2, 1). The vectorized tail already normalizes its
     // outputs to [0, p), so the closing reduce_range pass is only needed on the
     // scalar fallback (D not a multiple of 16).
-    if D.is_multiple_of(16) {
+    if forward_dif_tail_eligible::<D>() {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {
@@ -310,7 +311,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if D.is_multiple_of(16) {
+    if forward_dif_tail_eligible::<D>() {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {
         while len > 0 {

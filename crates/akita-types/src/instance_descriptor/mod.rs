@@ -102,32 +102,28 @@ pub struct AlgebraSection {
     pub ring_dimension_d: u32,
     /// Extension degree of the message field over the base prime field.
     pub field_extension_degree: u8,
-    /// Extension degree of the claim field over the base prime field.
-    pub claim_extension_degree: u8,
-    /// Extension degree of the challenge field over the base prime field.
-    pub challenge_extension_degree: u8,
+    /// Extension degree of the protocol extension field over the base prime field.
+    pub extension_degree: u8,
 }
 
 impl AlgebraSection {
-    /// Build the algebra section for base field `F`, claim field `L`, and
-    /// challenge field `C` in cyclotomic ring dimension `D`.
+    /// Build the algebra section for base field `F` and extension field `E` in
+    /// cyclotomic ring dimension `D`.
     ///
     /// # Errors
     ///
     /// Returns an error if `D` or an extension degree does not fit the
     /// descriptor's fixed-width integer fields.
-    pub fn for_fields<F, L, C, const D: usize>() -> Result<Self, AkitaError>
+    pub fn for_fields<F, E, const D: usize>() -> Result<Self, AkitaError>
     where
         F: CanonicalField,
-        L: ExtField<F>,
-        C: ExtField<F>,
+        E: ExtField<F>,
     {
         Ok(Self {
             prime_modulus_be: modulus_be_32::<F>(),
             ring_dimension_d: usize_to_u32(D, "ring dimension")?,
             field_extension_degree: usize_to_u8(1, "field extension degree")?,
-            claim_extension_degree: usize_to_u8(L::EXT_DEGREE, "claim extension degree")?,
-            challenge_extension_degree: usize_to_u8(C::EXT_DEGREE, "challenge extension degree")?,
+            extension_degree: usize_to_u8(E::EXT_DEGREE, "extension degree")?,
         })
     }
 }
@@ -357,10 +353,7 @@ impl Valid for AlgebraSection {
                 "descriptor ring dimension must be non-zero".to_string(),
             ));
         }
-        if self.field_extension_degree == 0
-            || self.claim_extension_degree == 0
-            || self.challenge_extension_degree == 0
-        {
+        if self.field_extension_degree == 0 || self.extension_degree == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor extension degrees must be non-zero".to_string(),
             ));
@@ -380,9 +373,7 @@ impl AkitaSerialize for AlgebraSection {
             .serialize_with_mode(&mut writer, compress)?;
         self.field_extension_degree
             .serialize_with_mode(&mut writer, compress)?;
-        self.claim_extension_degree
-            .serialize_with_mode(&mut writer, compress)?;
-        self.challenge_extension_degree
+        self.extension_degree
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -390,8 +381,7 @@ impl AkitaSerialize for AlgebraSection {
     fn serialized_size(&self, compress: Compress) -> usize {
         32 + self.ring_dimension_d.serialized_size(compress)
             + self.field_extension_degree.serialized_size(compress)
-            + self.claim_extension_degree.serialized_size(compress)
-            + self.challenge_extension_degree.serialized_size(compress)
+            + self.extension_degree.serialized_size(compress)
     }
 }
 
@@ -415,18 +405,7 @@ impl AkitaDeserialize for AlgebraSection {
                 validate,
                 &(),
             )?,
-            claim_extension_degree: u8::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
-            challenge_extension_degree: u8::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
+            extension_degree: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
