@@ -2,8 +2,7 @@ use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
-    ProverComputeStack, RingSwitchComputeBackend, RootOpeningSource, RootProvePoly,
-    TensorBackendFor,
+    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -676,7 +675,7 @@ where
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
-    R: RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,

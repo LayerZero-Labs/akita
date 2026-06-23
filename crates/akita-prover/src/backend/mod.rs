@@ -26,4 +26,5 @@ pub use onehot::{
 };
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
+pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};

@@ -1,7 +1,7 @@
 use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchComputeBackend, RootProvePoly,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootProvePoly,
     TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
@@ -196,7 +196,7 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
@@ -314,7 +314,7 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,

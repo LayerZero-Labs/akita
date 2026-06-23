@@ -4,7 +4,8 @@ use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
-    RingSwitchComputeBackend, RootPolyShape, RootProvePoly, TensorBackendFor,
+    RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixRingSwitchProveBackend,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -265,7 +266,8 @@ where
         + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
-        + RingSwitchComputeBackend<Cfg::Field>
+        + SuffixRingSwitchProveBackend<Cfg::Field>
+        + RingSwitchProveBackend<Cfg::Field, D>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
@@ -422,7 +424,8 @@ where
         + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
-        + RingSwitchComputeBackend<Cfg::Field>
+        + SuffixRingSwitchProveBackend<Cfg::Field>
+        + RingSwitchProveBackend<Cfg::Field, D>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,

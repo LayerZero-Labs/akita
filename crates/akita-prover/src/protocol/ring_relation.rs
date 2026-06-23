@@ -9,10 +9,7 @@ use crate::compute::{
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
-    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRowsPlan,
-};
+use crate::{CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, IntegerChallenge, SparseChallenge};

@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::OperationCtx;
+use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]
@@ -56,10 +56,8 @@ where
         + FromPrimitiveInt
         + HalvingField
         + AkitaSerialize,
-    B: RingSwitchComputeBackend<F>,
+    B: RingSwitchProveBackend<F, D>,
 {
-    let backend = ring_switch_ctx.backend();
-    let prepared = ring_switch_ctx.prepared();
     let num_claims = instance.opening_batch().num_claims();
     let RingRelationWitness {
         z_folded_rings,
@@ -82,8 +80,7 @@ where
     let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
-        backend,
-        prepared,
+        ring_switch_ctx,
         lp,
         &instance.challenges,
         e_hat.flat_digits(),

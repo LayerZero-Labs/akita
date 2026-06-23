@@ -3,10 +3,10 @@ use super::backend::{
     RingSwitchComputeBackend,
 };
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
+    RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use crate::backend::RecursiveWitnessFlat;
+use crate::backend::{RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView};
 #[cfg(feature = "zk")]
 use crate::DensePoly;
 use crate::RootTensorProjectionPoly;
@@ -227,6 +227,46 @@ where
     P: RootCommitSource<F, D>,
     B: CommitmentComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+/// Ring-switch cluster capability: row mat-vecs plus source-typed relation/quotient kernels.
+pub trait RingSwitchProveBackend<F, const D: usize>:
+    RingSwitchComputeBackend<F>
+    + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
+    + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+}
+
+impl<F, const D: usize, B> RingSwitchProveBackend<F, D> for B
+where
+    F: FieldCore + CanonicalField,
+    B: RingSwitchComputeBackend<F>
+        + for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
+        + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>,
+{
+}
+
+/// Ring-switch kernels at every suffix fold ring dimension.
+pub trait SuffixRingSwitchProveBackend<F>:
+    RingSwitchProveBackend<F, 32>
+    + RingSwitchProveBackend<F, 64>
+    + RingSwitchProveBackend<F, 128>
+    + RingSwitchProveBackend<F, 256>
+where
+    F: FieldCore + CanonicalField,
+{
+}
+
+impl<F, B> SuffixRingSwitchProveBackend<F> for B
+where
+    F: FieldCore + CanonicalField,
+    B: RingSwitchProveBackend<F, 32>
+        + RingSwitchProveBackend<F, 64>
+        + RingSwitchProveBackend<F, 128>
+        + RingSwitchProveBackend<F, 256>,
 {
 }
 
@@ -480,7 +520,7 @@ pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 /// prove kernels plus ring-switch, commitment rows, and ZK hiding commit.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
     RootProveBackend<F, P, E, RING_D>
-    + RingSwitchComputeBackend<F>
+    + RingSwitchProveBackend<F, RING_D>
     + CommitmentComputeBackend<F>
     + ZkHidingCommitBackend<F, RING_D>
 where
@@ -498,7 +538,7 @@ where
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
     B: RootProveBackend<F, P, E, RING_D>
-        + RingSwitchComputeBackend<F>
+        + RingSwitchProveBackend<F, RING_D>
         + CommitmentComputeBackend<F>
         + ZkHidingCommitBackend<F, RING_D>,
 {
@@ -610,7 +650,10 @@ where
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
-    R: ComputeBackendSetup<F> + RingSwitchComputeBackend<F> + DigitRowsComputeBackend<F>,
+    R: ComputeBackendSetup<F>
+        + SuffixRingSwitchProveBackend<F>
+        + RingSwitchProveBackend<F, D>
+        + DigitRowsComputeBackend<F>,
 {
 }
 
@@ -647,7 +690,10 @@ where
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
-    R: ComputeBackendSetup<F> + RingSwitchComputeBackend<F> + DigitRowsComputeBackend<F>,
+    R: ComputeBackendSetup<F>
+        + SuffixRingSwitchProveBackend<F>
+        + RingSwitchProveBackend<F, D>
+        + DigitRowsComputeBackend<F>,
 {
 }
 

@@ -37,7 +37,7 @@ pub struct RingSwitchQuotientView<'a, const D: usize> {
 
 impl<F, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: FieldCore + CanonicalField,
 {
     fn relation_rows(
         &self,
@@ -66,7 +66,7 @@ where
 
 impl<F, const D: usize> RingSwitchQuotientKernel<RingSwitchQuotientView<'_, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: FieldCore + CanonicalField,
 {
     fn quotient_rows(
         &self,
