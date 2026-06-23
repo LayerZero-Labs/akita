@@ -1,16 +1,26 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
+use crate::compute::ComputeBackendSetup;
+use crate::compute::{
+    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
+    UniformProverStack,
+};
+use crate::ProverClaims;
 use crate::ProverTranscriptGrind;
-use crate::{AkitaPolyOps, ProverClaims};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    RandomSampling,
+};
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, SetupContributionMode};
+use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over base field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
+/// Caller-provided root polynomials are source-typed and must satisfy the
+/// prover-facing root polynomial traits (`RootProvePoly` and related capability
+/// traits).
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize>
@@ -65,13 +75,15 @@ where
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         polys: &[P],
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>;
 
     /// Commit the polynomial bundles used by a batched prove.
     ///
@@ -85,13 +97,15 @@ where
     #[allow(clippy::type_complexity)]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         polys_per_commitment_group: &[&[P]],
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>;
 
     /// Produce a fused batched opening proof for one shared opening point.
     ///
@@ -105,15 +119,17 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
+        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D>,
-        B: ProverComputeBackend<F>;
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        P: RootProvePoly<F, D>,
+        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a;
 }
