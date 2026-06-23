@@ -61,7 +61,6 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
-    claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
@@ -76,7 +75,7 @@ where
             actual: alpha_pows.len(),
         });
     }
-    let num_claims = claim_poly_indices.len();
+    let num_claims = gamma.len();
     if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
         return Err(AkitaError::InvalidInput(
             "batched prover opening-point layout mismatch".to_string(),
@@ -89,12 +88,10 @@ where
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
         ));
     }
-    for &poly_idx in claim_poly_indices {
-        if poly_idx >= num_polys {
-            return Err(AkitaError::InvalidInput(
-                "batched prover polynomial index out of range".to_string(),
-            ));
-        }
+    if num_polys != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "ring switch currently requires dense single-group claims".to_string(),
+        ));
     }
 
     let depth_commit = lp.num_digits_commit;
@@ -103,7 +100,6 @@ where
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
     let num_t_vectors = num_polys;
-    let claim_to_t_vector: Vec<usize> = claim_poly_indices.to_vec();
 
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -367,8 +363,8 @@ where
     };
 
     let mut challenge_sums_by_t_block = vec![E::zero(); t_total_blocks];
-    for (claim_idx, &t_vector_idx) in claim_to_t_vector.iter().enumerate() {
-        let dst_offset = t_vector_idx * num_blocks;
+    for claim_idx in 0..num_claims {
+        let dst_offset = claim_idx * num_blocks;
         let src_offset = claim_idx * num_blocks;
         for block_idx in 0..num_blocks {
             challenge_sums_by_t_block[dst_offset + block_idx] += c_alphas[src_offset + block_idx];

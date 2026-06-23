@@ -19,32 +19,26 @@ where
     P: AkitaPolyOps<F, D>,
 {
     let (point, payload) = claims;
-    let slots = payload
-        .polynomials
-        .iter()
-        .enumerate()
-        .map(|(poly_idx, poly)| OpeningClaimSlot {
-            poly_idx,
-            // Prover inputs do not contain claimed evaluations. The shared
-            // validator ignores this field, so zero is only a structural
-            // placeholder.
-            claimed_eval: E::zero(),
-            natural_num_vars: poly.num_vars(),
-            kind: OpeningClaimKind::Polynomial,
-        })
-        .collect::<Vec<_>>();
     let total_polys = payload.poly_count();
-    if slots.len() != total_polys {
+    if payload.polynomials.len() != total_polys {
         return Err(AkitaError::InvalidInput(
             "batched_prove polynomial slot count mismatch".to_string(),
         ));
     }
+    if point.len() > expanded.seed.max_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: expanded.seed.max_num_vars,
+            actual: point.len(),
+        });
+    }
+    if total_polys > expanded.seed.max_num_batched_polys {
+        return Err(AkitaError::InvalidSize {
+            expected: expanded.seed.max_num_batched_polys,
+            actual: total_polys,
+        });
+    }
 
-    let batch = OpeningBatchInput { point, slots };
-    let summary = batch.validate(OpeningBatchLimits {
-        max_num_vars: expanded.seed.max_num_vars,
-        max_num_claims: expanded.seed.max_num_batched_polys,
-    })?;
+    let summary = OpeningBatch::same_point(point.len(), total_polys)?;
 
     Ok(ProverPreparedOpeningBatch {
         point,
@@ -73,11 +67,7 @@ where
     let opening_point = prepared_batch.point;
     let commitment = prepared_batch.payload.commitment.clone();
     let opening_batch = prepared_batch.summary;
-    let flat_polys: Vec<&P> = opening_batch
-        .claim_poly_indices()
-        .iter()
-        .map(|&poly_idx| &prepared_batch.payload.polynomials[poly_idx])
-        .collect();
+    let flat_polys: Vec<&P> = prepared_batch.payload.polynomials.iter().collect();
     let commitment_hint = prepared_batch.payload.hint;
 
     Ok(PreparedBatchedProveInputs {
@@ -87,6 +77,43 @@ where
         flat_polys,
         commitment_hint,
     })
+}
+
+fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
+    opening_batch: &OpeningBatch,
+    polys: &[&P],
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    if opening_batch.num_commitment_groups() <= 1 {
+        return Ok(());
+    }
+    if Cfg::TIERED_COMMITMENT {
+        return Err(AkitaError::InvalidSetup(
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    if setup_contribution_mode == SetupContributionMode::Recursive {
+        return Err(AkitaError::InvalidSetup(
+            "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
+        return Err(AkitaError::InvalidInput(
+            "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    Err(AkitaError::InvalidInput(
+        "multi-group root batching is not supported yet; see specs/multi-group-batching.md"
+            .to_string(),
+    ))
 }
 
 /// Build a root-direct batched proof from flattened polynomial references and
@@ -112,6 +139,7 @@ where
     {
         let b_blinding_digits = hint
             .b_blinding_digits()
+            .iter()
             .map(|digits| {
                 let mut flat_digits = Vec::with_capacity(digits.flat_digits().len() * D);
                 for plane in digits.flat_digits() {
@@ -191,6 +219,11 @@ where
         let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
         prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
     };
+    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
+        &prepared_claims.opening_batch,
+        &prepared_claims.flat_polys,
+        setup_contribution_mode,
+    )?;
     let num_vars = prepared_claims.opening_batch.num_vars();
     let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {

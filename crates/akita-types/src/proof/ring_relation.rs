@@ -111,10 +111,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.ring_multiplier_point
     }
 
-    pub fn claim_poly_indices(&self) -> &[usize] {
-        self.opening_batch.claim_poly_indices()
-    }
-
     pub fn gamma(&self) -> &[F] {
         &self.gamma
     }

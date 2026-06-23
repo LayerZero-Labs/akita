@@ -49,7 +49,6 @@ pub(crate) struct SetupContributionShape {
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
-    pub claim_poly_indices: Vec<usize>,
     /// Tiered split factor `f` (`1` = single-tier).
     pub tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
@@ -73,7 +72,6 @@ impl SetupContributionShape {
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_poly_indices: vec![0],
             tier_split: 1,
             n_f: 0,
         }
@@ -107,7 +105,6 @@ impl SetupContributionShape {
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
-            claim_poly_indices: vec![0, 1, 2],
             tier_split: 1,
             n_f: 0,
         }
@@ -130,7 +127,7 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
-        shape.claim_poly_indices = vec![0, 0, 0, 0];
+        shape.num_polys_per_segment = vec![4];
         shape
     }
 
@@ -279,7 +276,6 @@ impl SetupContributionFixture {
             tier_split: shape.tier_split,
             n_f: shape.n_f,
             rows,
-            claim_poly_indices: shape.claim_poly_indices.clone(),
             num_polys: shape.num_polys_per_segment.iter().sum(),
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,

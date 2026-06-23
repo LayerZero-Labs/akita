@@ -853,18 +853,14 @@ fn find_schedule_inner(
     };
 
     let t_vectors = key.num_t_vectors;
-    let w_vectors = key.num_w_vectors;
     let z_vectors = key.num_z_vectors;
-    if t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    if policy.tiered && z_vectors != 1 {
         return Err(AkitaError::InvalidSetup(
-            "schedule key planner dimensions must be at least 1".into(),
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
         ));
     }
-    if z_vectors != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "schedule key must describe one shared opening point and one public row".into(),
-        ));
-    }
+    key.validate_scalar_root_batch()?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)

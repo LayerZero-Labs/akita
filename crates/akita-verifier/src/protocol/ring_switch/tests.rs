@@ -38,7 +38,6 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         &[],
         0,
         &[],
-        &[],
         MRowLayout::WithDBlock,
         dummy_witness_segment_layout(),
     ) {
@@ -58,7 +57,6 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         &lp,
         &[],
         0,
-        &[],
         &[],
         MRowLayout::WithDBlock,
         dummy_witness_segment_layout(),

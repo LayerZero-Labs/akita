@@ -1,5 +1,7 @@
 use super::*;
-use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
+use crate::{
+    CleartextWitnessShape, CommitmentGroup, FoldStep, LevelParams, PointVariableSelection, Step,
+};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -75,11 +77,11 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            223,
             [
-                0xbf, 0x9b, 0x3d, 0xb6, 0x7d, 0x3f, 0xbd, 0xa6, 0xa6, 0x42, 0xd5, 0x59, 0xa9, 0xc5,
-                0x52, 0x68, 0xcd, 0xd0, 0x9e, 0xf3, 0xf7, 0xae, 0x7e, 0x08, 0xef, 0x7f, 0x8b, 0x52,
-                0x2c, 0xe5, 0xc3, 0x5f,
+                0x1f, 0xcf, 0xac, 0x42, 0x62, 0x1a, 0xe7, 0x41, 0xc7, 0xd8, 0x1c, 0x5d, 0x33, 0xb7,
+                0x3c, 0x34, 0xec, 0x03, 0x8c, 0xaf, 0x8a, 0x72, 0x3d, 0x4f, 0xe0, 0x3f, 0x4f, 0x16,
+                0x9f, 0x65, 0x1f, 0x09,
             ]
         )
     );
@@ -94,11 +96,11 @@ fn fold_linf_descriptor_canonical_digest_pinned_zk() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            223,
             [
-                0x0e, 0x62, 0xc6, 0x82, 0xf2, 0xa6, 0x5d, 0xe1, 0xdb, 0x34, 0xba, 0x86, 0x71, 0x00,
-                0x30, 0x85, 0xc6, 0x40, 0xd5, 0x2c, 0x8b, 0xb5, 0x5b, 0xd1, 0x45, 0xbe, 0xa8, 0xed,
-                0x15, 0x02, 0x88, 0xa7,
+                0xb5, 0x5a, 0x3e, 0xae, 0xec, 0x51, 0x7f, 0x57, 0x21, 0xfb, 0x07, 0x95, 0x17, 0x4f,
+                0xd0, 0x60, 0xd5, 0x3d, 0x86, 0x30, 0xc0, 0xb0, 0xc9, 0xdf, 0x1c, 0x6c, 0x4d, 0x85,
+                0x21, 0xe0, 0x01, 0xb6,
             ]
         ),
         "update pinned zk digest after changing descriptor layout"
@@ -287,6 +289,54 @@ fn opening_batch_digest_binds_claim_count() {
     let right = OpeningBatch::same_point(4, 3).expect("right");
 
     assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+}
+
+#[test]
+fn opening_batch_digest_binds_group_partition() {
+    let grouped = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningBatch::same_point(4, 3).expect("scalar");
+
+    assert_ne!(
+        digest_opening_batch(&grouped),
+        digest_opening_batch(&scalar)
+    );
+}
+
+#[test]
+fn opening_batch_digest_binds_point_variable_selection_order() {
+    let forward = OpeningBatch::new(
+        vec![(), ()],
+        vec![CommitmentGroup {
+            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
+            claims: vec![()],
+        }],
+    )
+    .expect("forward");
+    let swapped = OpeningBatch::new(
+        vec![(), ()],
+        vec![CommitmentGroup {
+            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
+            claims: vec![()],
+        }],
+    )
+    .expect("swapped");
+
+    assert_ne!(
+        digest_opening_batch(&forward),
+        digest_opening_batch(&swapped)
+    );
+}
+
+#[test]
+fn call_section_exposes_group_partition() {
+    let opening_batch = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+
+    assert_eq!(call.num_polys, 3);
+    assert_eq!(call.num_claims, 3);
+    assert_eq!(call.num_commitment_groups, 2);
+    assert_eq!(call.num_polys_per_commitment_group, vec![1, 2]);
+    assert_eq!(call.point_variable_selections, vec![vec![0, 1, 2, 3]; 2]);
 }
 
 #[test]

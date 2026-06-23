@@ -25,10 +25,11 @@ use akita_serialization::{
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -214,6 +215,12 @@ pub struct CallSection {
     pub num_polys: u32,
     /// Total number of claimed openings addressed by the call.
     pub num_claims: u32,
+    /// Number of commitment groups opened by the call.
+    pub num_commitment_groups: u32,
+    /// Per-group polynomial counts in descriptor/transcript order.
+    pub num_polys_per_commitment_group: Vec<u32>,
+    /// Per-group ordered coordinate selections into the shared opening point.
+    pub point_variable_selections: Vec<Vec<u32>>,
     /// Public basis mode for opening-point weights.
     pub basis_mode: BasisMode,
     /// Common opening-point arity.
@@ -233,9 +240,32 @@ impl CallSection {
         opening_batch: &OpeningBatch,
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
+        let num_polys_per_commitment_group = opening_batch
+            .groups
+            .iter()
+            .map(|group| usize_to_u32(group.num_claims(), "num_polys_per_commitment_group"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let point_variable_selections = opening_batch
+            .groups
+            .iter()
+            .map(|group| {
+                group
+                    .point_vars
+                    .indices()
+                    .iter()
+                    .map(|&index| usize_to_u32(index, "point_variable_selection"))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             num_polys: usize_to_u32(opening_batch.num_polynomials(), "num_polys")?,
             num_claims: usize_to_u32(opening_batch.num_claims(), "num_claims")?,
+            num_commitment_groups: usize_to_u32(
+                opening_batch.num_commitment_groups(),
+                "num_commitment_groups",
+            )?,
+            num_polys_per_commitment_group,
+            point_variable_selections,
             basis_mode,
             opening_point_arity: usize_to_u32(opening_batch.num_vars(), "opening_point_arity")?,
             opening_batch_digest: digest_opening_batch(opening_batch),
@@ -260,11 +290,11 @@ pub fn digest_serializable<S: AkitaSerialize>(
 pub fn digest_opening_batch(summary: &OpeningBatch) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, summary.num_vars());
-    push_usize_vec(&mut bytes, summary.claim_poly_indices());
-    push_usize(&mut bytes, summary.public_rows().len());
-    for row in summary.public_rows() {
-        push_usize(&mut bytes, row.point_idx());
-        push_usize_vec(&mut bytes, row.claim_indices());
+    push_usize(&mut bytes, summary.num_claims());
+    push_usize(&mut bytes, summary.num_commitment_groups());
+    for group in &summary.groups {
+        push_usize(&mut bytes, group.num_claims());
+        push_usize_vec(&mut bytes, group.point_vars.indices());
     }
     blake2b_256(&bytes)
 }
@@ -585,10 +615,50 @@ impl AkitaDeserialize for PlanSection {
 
 impl Valid for CallSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.num_polys == 0 || self.num_claims == 0 {
+        if self.num_polys == 0 || self.num_claims == 0 || self.num_commitment_groups == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor call counts must be non-zero".to_string(),
             ));
+        }
+        if self.num_polys_per_commitment_group.len() != self.num_commitment_groups as usize {
+            return Err(SerializationError::InvalidData(
+                "descriptor commitment-group count mismatch".to_string(),
+            ));
+        }
+        if self.point_variable_selections.len() != self.num_commitment_groups as usize {
+            return Err(SerializationError::InvalidData(
+                "descriptor point-variable selection count mismatch".to_string(),
+            ));
+        }
+        if self.num_polys_per_commitment_group.contains(&0) {
+            return Err(SerializationError::InvalidData(
+                "descriptor commitment groups must be non-empty".to_string(),
+            ));
+        }
+        let total_group_polys =
+            self.num_polys_per_commitment_group
+                .iter()
+                .try_fold(0u32, |acc, &group_size| {
+                    acc.checked_add(group_size).ok_or_else(|| {
+                        SerializationError::InvalidData(
+                            "descriptor group polynomial count overflow".to_string(),
+                        )
+                    })
+                })?;
+        if total_group_polys != self.num_polys || total_group_polys != self.num_claims {
+            return Err(SerializationError::InvalidData(
+                "descriptor group sizes do not match call counts".to_string(),
+            ));
+        }
+        for selection in &self.point_variable_selections {
+            let mut seen = BTreeSet::new();
+            for &index in selection {
+                if index >= self.opening_point_arity || !seen.insert(index) {
+                    return Err(SerializationError::InvalidData(
+                        "descriptor point-variable selection is malformed".to_string(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -602,6 +672,37 @@ impl AkitaSerialize for CallSection {
     ) -> Result<(), SerializationError> {
         self.num_polys.serialize_with_mode(&mut writer, compress)?;
         self.num_claims.serialize_with_mode(&mut writer, compress)?;
+        self.num_commitment_groups
+            .serialize_with_mode(&mut writer, compress)?;
+        let group_count =
+            u32::try_from(self.num_polys_per_commitment_group.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor commitment-group vector length does not fit u32".to_string(),
+                )
+            })?;
+        group_count.serialize_with_mode(&mut writer, compress)?;
+        for &group_size in &self.num_polys_per_commitment_group {
+            group_size.serialize_with_mode(&mut writer, compress)?;
+        }
+        let selection_count =
+            u32::try_from(self.point_variable_selections.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor point-variable selection vector length does not fit u32"
+                        .to_string(),
+                )
+            })?;
+        selection_count.serialize_with_mode(&mut writer, compress)?;
+        for selection in &self.point_variable_selections {
+            let selection_len = u32::try_from(selection.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor point-variable selection length does not fit u32".to_string(),
+                )
+            })?;
+            selection_len.serialize_with_mode(&mut writer, compress)?;
+            for &index in selection {
+                index.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         encode_basis_mode(self.basis_mode, &mut writer, compress)?;
         self.opening_point_arity
             .serialize_with_mode(&mut writer, compress)?;
@@ -612,6 +713,25 @@ impl AkitaSerialize for CallSection {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.num_polys.serialized_size(compress)
             + self.num_claims.serialized_size(compress)
+            + self.num_commitment_groups.serialized_size(compress)
+            + 0u32.serialized_size(compress)
+            + self
+                .num_polys_per_commitment_group
+                .iter()
+                .map(|group_size| group_size.serialized_size(compress))
+                .sum::<usize>()
+            + 0u32.serialized_size(compress)
+            + self
+                .point_variable_selections
+                .iter()
+                .map(|selection| {
+                    0u32.serialized_size(compress)
+                        + selection
+                            .iter()
+                            .map(|index| index.serialized_size(compress))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
             + basis_mode_size(compress)
             + self.opening_point_arity.serialized_size(compress)
             + 32
@@ -627,9 +747,41 @@ impl AkitaDeserialize for CallSection {
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
+        let num_polys = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let num_claims = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let num_commitment_groups =
+            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let mut num_polys_per_commitment_group = Vec::with_capacity(group_count as usize);
+        for _ in 0..group_count {
+            num_polys_per_commitment_group.push(u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
+        let selection_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let mut point_variable_selections = Vec::with_capacity(selection_count as usize);
+        for _ in 0..selection_count {
+            let selection_len = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let mut selection = Vec::with_capacity(selection_len as usize);
+            for _ in 0..selection_len {
+                selection.push(u32::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            point_variable_selections.push(selection);
+        }
         let out = Self {
-            num_polys: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            num_claims: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_polys,
+            num_claims,
+            num_commitment_groups,
+            num_polys_per_commitment_group,
+            point_variable_selections,
             basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
             opening_point_arity: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             opening_batch_digest: read_digest(&mut reader)?,

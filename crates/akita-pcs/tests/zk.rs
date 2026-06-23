@@ -105,9 +105,9 @@ fn plain_root_d_image<const D: usize>(
         vec![e_folded],
         single_point_group_opening_batch(point.len()),
         layout.clone(),
-        vec![hint],
+        hint,
         &mut transcript,
-        std::slice::from_ref(commitment),
+        commitment,
         vec![CyclotomicRing::<F, D>::one()],
         MRowLayout::WithDBlock,
     )

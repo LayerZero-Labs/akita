@@ -98,6 +98,31 @@ where
     Ok(schedule)
 }
 
+fn reject_unsupported_grouped_root<Cfg>(
+    opening_batch: &OpeningBatch,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    if opening_batch.num_commitment_groups() <= 1 {
+        return Ok(());
+    }
+    if Cfg::TIERED_COMMITMENT {
+        return Err(AkitaError::InvalidSetup(
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    if setup_contribution_mode == SetupContributionMode::Recursive {
+        return Err(AkitaError::InvalidSetup(
+            "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    Err(AkitaError::InvalidProof)
+}
+
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
@@ -450,6 +475,10 @@ where
     check_batched_proof_step_shape(proof)?;
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
+    reject_unsupported_grouped_root::<Cfg>(
+        &prepared_claims.opening_batch,
+        setup_contribution_mode,
+    )?;
     let schedule = effective_batched_schedule::<Cfg, D>(
         &prepared_claims.opening_batch,
         prepared_claims.opening_point,

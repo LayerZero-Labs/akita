@@ -87,7 +87,7 @@ commitments, witness shapes, and descriptors must return `AkitaError`.
 ## Non-Goals
 
 - Multipoint openings. The batch still has one shared opening point.
-- Dense polynomial support for multi-group root batching in phase 1.
+- Dense polynomial support for the initial multi-group root batching rollout.
 - Heterogeneous `num_vars`.
 - Tiered multi-group commitments. Existing tiered paths may keep rejecting
 `G > 1`.
@@ -148,12 +148,13 @@ groups.
 
 Already useful:
 
-- `OpeningBatch` already carries commitment-group routing for single-point
-batches.
-- `OpeningBatch::from_commitment_groups` already builds dense group-indexed
-claim routing.
-- `VerifierClaims` and `ProverClaims` already carry one committed-opening or
-committed-polynomial entry per group.
+- `OpeningBatch` has been cleaned up around the new commitment-group design:
+  one shared point plus an ordered list of `CommitmentGroup` records.
+- `CommitmentGroup` carries the point-coordinate selection for that group and
+  dense claimed evaluations for the group's committed polynomials.
+- `OpeningBatch::from_commitment_groups` already builds the shape-only grouped
+  batch for group sizes such as `[1, 3]`, and descriptor bytes bind the group
+  partition and point-variable selections.
 - `batched_commit` and its input preparation can commit several group slices
 with one shared scalar root layout.
 - `LevelParams` has row-offset helpers such as `m_row_count_for`,
@@ -183,50 +184,62 @@ This spec describes the target state and the staged path to get there.
 ## Opening Batch Shape
 
 Do not introduce a separate root-only incidence type. `OpeningBatch` is the
-canonical normalized shape for one shared opening point. Phase 1 uses its
-group-aware routing fields to account for several commitment groups:
+canonical normalized shape for one shared opening point. The old flattened
+slot/routing vocabulary has been removed in favor of explicit commitment
+groups:
 
 ```rust
-pub struct OpeningBatch {
-    padded_num_vars: usize,
-    slots: Vec<OpeningClaimSlotShape>,
-    claim_to_commitment_group: Vec<usize>,
-    claim_poly_indices: Vec<usize>,
-    num_polys_per_commitment_group: Vec<usize>,
-    public_row: OpeningBatchRow,
+pub struct PointVariableSelection {
+    indices: Vec<usize>,
+}
+
+pub struct CommitmentGroup<F> {
+    pub point_vars: PointVariableSelection,
+    pub claims: Vec<F>,
+}
+
+pub struct OpeningBatch<F = ()> {
+    pub point: Vec<F>,
+    pub groups: Vec<CommitmentGroup<F>>,
 }
 ```
 
 Required constructors and accessors:
 
 ```rust
-impl OpeningBatch {
-    pub fn same_point(padded_num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
+impl OpeningBatch<()> {
+    pub fn same_point(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
 
     pub fn from_commitment_groups(
-        padded_num_vars: usize,
+        num_vars: usize,
         num_polys_per_commitment_group: &[usize],
     ) -> Result<Self, AkitaError>;
+}
 
+impl<F> OpeningBatch<F> {
+    pub fn new(point: Vec<F>, groups: Vec<CommitmentGroup<F>>) -> Result<Self, AkitaError>;
+    pub fn same_point_with_claims(point: Vec<F>, claims: Vec<F>) -> Result<Self, AkitaError>;
+    pub fn to_shape(&self) -> OpeningBatch<()>;
+
+    pub fn num_vars(&self) -> usize;
+    pub fn num_claims(&self) -> usize;
     pub fn num_commitment_groups(&self) -> usize;
-    pub fn num_polys_per_commitment_group(&self) -> &[usize];
-    pub fn claim_to_commitment_group(&self) -> &[usize];
-    pub fn claim_poly_indices(&self) -> &[usize];
+    pub fn num_polys_per_commitment_group(&self) -> Vec<usize>;
 }
 ```
 
-Phase 1 requires:
+The first supported grouped shape requires:
 
 ```text
-all groups have the same num_vars
 all claims use one shared opening point
 all groups are nonempty
 group sizes K_g may differ
-claim routing is dense and group-indexed
+each group's point_vars is ordered, duplicate-free, and indexes into the shared point
 ```
 
 `[K, K]` and `[2K]` must remain distinct at the schedule, descriptor, and
-transcript layers.
+transcript layers. Descriptor bytes must also distinguish groups that use
+different `PointVariableSelection` orders.
 
 ## Protocol Shape
 
@@ -253,7 +266,7 @@ column width large enough for the full concatenated witness:
 width_D >= sum_g width(w_hat_g)
 ```
 
-Phase 1 uses this concatenated D relation. It does not use per-group `v_g`
+The grouped root design uses this concatenated D relation. It does not use per-group `v_g`
 commitments. A future per-group D design must show that the extra D blocks and
 extra `v_g` payloads are cheaper for a concrete workload, and it must give a
 separate binding argument for the group-wise D outputs.
@@ -305,7 +318,7 @@ pub struct AkitaScheduleLookupKey {
 }
 ```
 
-For phase 1, each group entry is:
+For scheduler adoption, each group entry is:
 
 ```text
 num_vars      = shared padded opening arity
@@ -335,7 +348,7 @@ pub struct CommitmentGroupLayout {
 
 `CommitmentGroupLayout` records the root layout that was used to create the
 group commitment. The final planner must use the same `t_hat_g` shape for that
-group. In phase 1, every precommitted group must verify against the frozen
+group. In the `commit_final`/opening phase, every precommitted group must verify against the frozen
 `conservative_n_b`. The final group may use a non-conservative B rank because it
 is committed after the full grouped root shape is known.
 
@@ -397,7 +410,7 @@ must never collapse a multi-group key into a single scalar key such as
 A table miss is safe because runtime DP can derive a schedule. A false table hit
 is not safe.
 
-Phase 1 may use DP fallback for grouped keys. Once the shape stabilizes, table
+Initial scheduler adoption may use DP fallback for grouped keys. Once the shape stabilizes, table
 generation should add a small grid:
 
 ```text
@@ -420,7 +433,7 @@ It should mirror `proof_optimized` naming and presets, for example:
 conservative_rank::fp128::D64OneHot
 ```
 
-Conservative-rank presets are one-hot-only in phase 1. Dense backends and tiered
+Conservative-rank presets are one-hot-only for the initial grouped rollout. Dense backends and tiered
 multi-group roots should return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
@@ -440,7 +453,7 @@ For a group committed before the final grouped proof is known:
    ```
    The planner keeps its normal proof-size and weak-binding-aware objective; it
    does not switch to a separate "minimize `t_hat_g`" objective.
-3. Require a one-hot root layout in phase 1.
+3. Require a one-hot root layout in the initial standalone `commit_group` API.
 4. Freeze the fields that determine the committed `t_hat_g` shape:
    ```text
    key, m_vars, r_vars, log_basis = l_g, n_a, b_width
@@ -602,7 +615,7 @@ pub struct GroupRootWitnessSegment {
 }
 ```
 
-Phase 1 uses:
+The grouped opening layout uses:
 
 ```text
 z_hat_segments = G
@@ -615,7 +628,7 @@ grouped root schedule and group metadata.
 
 ## Root M-Row Layout
 
-For non-tiered phase 1, the M rows are:
+For the initial non-tiered grouped opening, the M rows are:
 
 ```text
 consistency rows
@@ -656,7 +669,7 @@ added into one aggregate A quotient.
 
 ## Setup Contribution
 
-Phase 1 should reject:
+The initial grouped opening should reject:
 
 ```text
 G > 1 && SetupContributionMode::Recursive
@@ -769,10 +782,11 @@ existing `digest_opening_batch` encoding over:
 
 ```text
 num_vars
-num_polys_per_commitment_group[]
-claim_to_commitment_group[]
-claim_poly_indices[]
-public row count and claim indices
+num_claims
+num_commitment_groups
+for each group:
+    group.num_claims
+    group.point_vars.indices[]
 ```
 
 Descriptor digest domain labels:
@@ -783,7 +797,7 @@ effective_schedule_digest = Blake2b-256(schedule.append_descriptor_bytes(...))
 commit_section_digest     = Blake2b-256("akita/commit_section" || CommitSection bytes)
 ```
 
-Phase 1 does not add new proof-body fields beyond the version 2 descriptor and
+The `commit_final`/opening phase does not add new proof-body fields beyond the version 2 descriptor and
 the existing batched proof containers. Grouped proof metadata lives in the
 descriptor and transcript, not in prover-supplied side channels.
 
@@ -804,7 +818,7 @@ scalar [4] descriptor bytes presented as grouped [1,3] -> reject at descriptor p
 ### Verifier Boundary
 
 `CommitmentGroupLayout` values are not a separate prover-supplied side channel
-in phase 1. They are serialized inside `CommitSection` in the instance
+in the `commit_final`/opening phase. They are serialized inside `CommitSection` in the instance
 descriptor.
 The verifier must follow this order:
 
@@ -835,7 +849,7 @@ max_commitment_groups
 max_polys_per_group
 ```
 
-Phase 1 may derive `max_commitment_groups` from `max_total_polys`, but setup
+The initial grouped setup may derive `max_commitment_groups` from `max_total_polys`, but setup
 envelope scans must include partitions, not only total polynomial counts:
 
 ```text
@@ -859,7 +873,7 @@ polynomials are known up front. The grouped root pays for:
 - one `z_hat_g` segment per group;
 - one public output row per group;
 - one COMMIT block per group;
-- one A block per group in the phase 1 relation;
+- one A block per group in the initial grouped relation;
 - repeated B traversal and padding for unequal `K_g`;
 - conservative B ranks for precommitted groups.
 
@@ -944,10 +958,18 @@ At verify time:
 
 ## Rollout Plan
 
-### Phase 0: Spec and Guards
+### Phase 0: OpeningBatch Cleanup and Guards
 
-- Land this spec.
-- Add explicit rejects for:
+- Clean up the old flattened commitment-group routing from `OpeningBatch`.
+- Make `OpeningBatch` follow the new group design:
+  - one shared `point`;
+  - ordered `groups`;
+  - each `CommitmentGroup` has `PointVariableSelection` plus dense `claims`.
+- Keep `OpeningBatch::same_point` as the scalar same-bundle constructor.
+- Add `OpeningBatch::from_commitment_groups` for shape-only grouped batches.
+- Bind group partition and point-variable selections in the instance descriptor.
+- Add explicit rejects for unsupported proof paths while the grouped proof is not
+implemented:
   - tiered + `G > 1`;
   - recursive setup contribution + `G > 1`;
   - dense polynomial multi-group root batching;
@@ -955,72 +977,66 @@ At verify time:
 - Update docs that say multi-commitment same-point folded recursion is "not yet"
 to point here.
 
-Phase 0 done means: spec landed, explicit rejects exist for unsupported grouped
-shapes, and docs point here.
+Phase 0 done means: the old slot/routing vocabulary is gone from
+`OpeningBatch`, grouped batch shape and descriptor binding exist, scalar paths
+still work, and unsupported grouped proof paths fail explicitly.
 
-### Phase 1: Group Shape and Conservative-Rank Commit Metadata
+### Phase 1: Scheduler and commit_group
 
-- Keep `OpeningBatch` as the normalized group-routing boundary.
-- Add tests and descriptor binding for `OpeningBatch::from_commitment_groups`.
-- Add `CommitSection` and descriptor version bump.
+- Add `GroupBatchAkitaScheduleLookupKey`.
+- Add generated/DP schedule resolution for grouped keys without collapsing
+`[K_0, K_1, ...]` into `[sum_g K_g]`.
+- Thread grouped root counts through planner and proof-size formulas:
+  - `G`;
+  - `num_t_vectors_total = sum_g K_g`;
+  - `num_w_vectors_root = G`;
+  - `num_z_vectors_root = G`;
+  - `num_public_rows = G`.
+- Add `CommitmentGroupLayout`.
 - Add `CommittedGroupScheduleMeta` and `CommittedGroupHandle`.
-- Add `CommitmentGroupLayout` and bind it through grouped commit metadata.
-- Add standalone `commit_group` and final `commit_final`.
+- Add standalone `commit_group`.
 - Add `conservative_rank` one-hot presets.
 - Implement conservative B rank selection for standalone groups.
-- Keep root prove support guarded or limited to root-direct while metadata and
-descriptors are stabilized.
+- Keep `commit_final`, grouped opening, and folded grouped root prove guarded
+until Phase 2.
 
-Phase 1 done means: `commit_group` and `commit_final` return
-`CommitmentGroupLayout` metadata, version 2 descriptor bytes bind
-`CommitSection`, conservative B rank selection works, and grouped descriptor
-negative tests pass. Folded grouped root prove is not required in phase 1.
+Phase 1 done means: standalone `commit_group` returns commitment metadata with a
+frozen `CommitmentGroupLayout`, grouped scheduler lookup/DP fallback is available
+for final planning, conservative B rank selection works, and grouped schedule
+negative tests pass. No grouped opening proof is required yet.
 
-### Phase 2: Grouped Root Proof
+### Phase 2: commit_final and Opening
 
-- Add generated group-batch schedule keys matching
-`GroupBatchAkitaScheduleLookupKey`.
-- Add grouped root schedule derivation from precommitted group keys and the final
-group key.
-- Thread `G`, `num_w_vectors_root = G`, `num_z_vectors_root = G`, and
-`num_public_rows = G` through root witness sizing.
+- Add `commit_final(new_group, precommitteds)`.
+- Bind `CommitSection`, precommitted group metadata, final group metadata, and
+the final grouped root schedule in descriptor version 2+ bytes.
+- Reconstruct and validate the full `GroupBatchAkitaScheduleLookupKey` from
+`commit_final` metadata and public opening claims.
+- Commit the final group with the final grouped plan.
 - Implement grouped root witness layout with `concat(w_hat_g)`.
 - Route prover root B rows through per-group B computation for `G > 1`.
 - Generalize root verifier row counts and terminal witness shapes.
 - Support unequal `K_g`.
 - Support `SetupContributionMode::Direct`.
-- Add folded non-tiered two-group one-hot E2E.
+- Add folded non-tiered two-group one-hot same-point E2E.
 
-This phase supports one-hot groups at one shared point, including unequal group
-sizes.
+Phase 2 done means: `commit_final` can combine precommitted one-hot groups with a
+new final group, produce a folded grouped same-point opening proof, and verify it
+for unequal `K_g`, with recursive suffix folds remaining singleton.
 
-Phase 2 done means: folded non-tiered two-group one-hot same-point prove and
-verify round trip, including unequal `K_g`, with singleton suffix unchanged.
-
-### Phase 3: Per-Group Root Layouts
-
-- Allow each group to have its own `m`, `r`, `log_basis`, `n_a`, and `n_b`.
-- Replace shared scalar offsets with a true grouped root relation layout.
-- Define per-group A/B row blocks and group-local quotient evaluation.
-- Keep one global concatenated D witness unless a separate spec replaces it with
-per-group `v_g` after a concrete cost and security review.
-- Extend planner and proof-size formulas to the direct sum of per-group layouts.
-- Keep suffix schedules singleton.
-
-Phase 3 done means: per-group `m`, `r`, `log_basis`, `n_a`, and `n_b` are
-supported in the grouped root relation layout and proof-size formulas.
-
-### Phase 4: Tables, Performance, and Broader Shapes
+### Phase 3: Tables, Performance, and Broader Shapes
 
 - Add generated table grids for common grouped one-hot shapes, including unequal
 `K_g`.
 - Add profile modes for grouped roots.
 - Add fused B kernels if repeated per-group B traversal is too slow.
+- Consider per-group D commitments only in a separate spec update with a concrete
+cost model and security argument.
 - Consider tiered multi-group support in a separate spec update.
 
-Phase 4 done means: generated grouped tables exist for the phase 1 grid,
-profile modes report grouped vs scalar costs, and fused B kernels land if B-row
-time is a bottleneck.
+Phase 3 done means: generated grouped tables exist for the supported grouped
+grid, profile modes report grouped vs scalar costs, and fused B kernels land if
+B-row time is a bottleneck.
 
 ## Test Matrix
 
@@ -1161,15 +1177,15 @@ Groups with identical dimensions could share one A block and use a fresh
 group-batching challenge to combine their A equations. This could reduce the
 `G * n_a` A-row cost in symmetric workloads.
 
-This is not part of phase 1. It needs a separate soundness argument because the
-current phase 1 design isolates each group with its own A relation.
+This is not part of the initial grouped opening. It needs a separate soundness
+argument because the current design isolates each group with its own A relation.
 
 ### Per-group D outputs
 
 The design could replace `D * concat(w_hat_g) = v` with one `D_g * w_hat_g = v_g` per group. This can make each D relation narrower, but it also sends more D
 outputs and adds more relation rows.
 
-Phase 1 keeps one concatenated D relation. A per-group D design should only be
+The initial grouped opening keeps one concatenated D relation. A per-group D design should only be
 adopted if a later cost model shows a win for a supported workload.
 
 ### Two-phase prove and link
@@ -1187,16 +1203,18 @@ proof and one recursive suffix.
 The following choices close the open questions from the first draft:
 
 1. **Public API shape:** expose `commit_final` directly. Do not add a separate
-  `finalize_group_batch` sugar layer in phase 1.
+  `finalize_group_batch` sugar layer in the initial API rollout.
 2. **Setup capacity:** derive `max_commitment_groups` from `max_total_polys` in
-  phase 1. Add an explicit setup API field only if envelope scans show a need.
+  the initial grouped setup. Add an explicit setup API field only if envelope
+  scans show a need.
 3. **Recursive setup contribution:** explicitly delay generalization until
-  per-group root layouts land in phase 3. Phase 2 keeps the existing reject.
+  a later root-layout generalization. The `commit_final`/opening phase keeps the
+  existing reject.
 4. **Planner key exposure:** keep `GroupBatchAkitaScheduleLookupKey` as an
   internal planner input behind `commit_group` / `commit_final`. Public callers
    use `CommittedGroupScheduleMeta` and grouped claim vectors.
 
 ## Open Questions
 
-None for phase 1 implementation. Revisit only if tiered multi-group or
+None for the initial grouped implementation. Revisit only if tiered multi-group or
 known-final-schedule precommit become active follow-up specs.

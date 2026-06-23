@@ -2,15 +2,13 @@
 //!
 //! # Protocol contract
 //!
-//! A batched prove/verify call uses exactly **one shared opening point** for all
-//! claims. Multipoint incidence (different evaluation points within one batch)
-//! is removed; callers must issue separate proofs or batch at a single point.
+//! A batched prove/verify call uses exactly **one shared opening point**. Each
+//! commitment group chooses an ordered subset of coordinates from that point and
+//! carries dense claimed evaluations for the polynomials in that commitment.
 //!
-//! Each claimed polynomial opening is an [`OpeningClaimSlot`]. Slots at that
-//! point are gamma-batched via [`sample_public_row_coefficients`]. A batch has
-//! exactly one commitment object bundling `N` polynomials.
-//!
-//! Layout preparation may pad the shared point to the root fold arity.
+//! The current folded-root protocol constructs one full-point commitment group.
+//! The type also records the future multi-group shape directly, without the old
+//! flattened slot/routing vocabulary.
 
 use super::VerifierClaims;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -18,100 +16,82 @@ use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
 
-/// Kind of public opening claim represented by a batch slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpeningClaimKind {
-    /// A claimed evaluation of a committed polynomial.
-    Polynomial,
+/// Ordered coordinate selection into an [`OpeningBatch`]'s shared point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointVariableSelection {
+    indices: Vec<usize>,
 }
 
-impl OpeningClaimKind {
-    fn transcript_tag(self) -> u8 {
-        match self {
-            Self::Polynomial => 0,
+impl PointVariableSelection {
+    /// Build an ordered, duplicate-free selection into a point of length `point_len`.
+    pub fn new(indices: Vec<usize>, point_len: usize) -> Result<Self, AkitaError> {
+        let mut seen = BTreeSet::new();
+        for &index in &indices {
+            if index >= point_len || !seen.insert(index) {
+                return Err(AkitaError::InvalidInput(
+                    "opening batch point-variable selection is malformed".to_string(),
+                ));
+            }
         }
-    }
-}
-
-/// One claimed opening at the shared opening point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OpeningClaimSlot<F> {
-    /// Polynomial index within the commitment bundle.
-    pub poly_idx: usize,
-    /// Claimed evaluation at the shared point.
-    pub claimed_eval: F,
-    /// Natural arity of the polynomial before embedding into the padded batch point.
-    pub natural_num_vars: usize,
-    /// Slot flavor.
-    pub kind: OpeningClaimKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OpeningClaimSlotShape {
-    poly_idx: usize,
-    natural_num_vars: usize,
-    kind: OpeningClaimKind,
-}
-
-impl OpeningClaimSlotShape {
-    /// Polynomial index within the commitment bundle.
-    pub fn poly_idx(&self) -> usize {
-        self.poly_idx
+        Ok(Self { indices })
     }
 
-    /// Natural arity of the polynomial before padding.
-    pub fn natural_num_vars(&self) -> usize {
-        self.natural_num_vars
-    }
-
-    /// Slot flavor.
-    pub fn kind(&self) -> OpeningClaimKind {
-        self.kind
-    }
-}
-
-impl<F> From<&OpeningClaimSlot<F>> for OpeningClaimSlotShape {
-    fn from(slot: &OpeningClaimSlot<F>) -> Self {
-        Self {
-            poly_idx: slot.poly_idx,
-            natural_num_vars: slot.natural_num_vars,
-            kind: slot.kind,
+    /// Select the first `num_vars` coordinates of the shared point.
+    pub fn prefix(num_vars: usize, point_len: usize) -> Result<Self, AkitaError> {
+        if num_vars > point_len {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: point_len,
+                actual: num_vars,
+            });
         }
-    }
-}
-
-/// Public verifier/prover batch input before validation.
-#[derive(Debug, Clone)]
-pub struct OpeningBatchInput<'a, F> {
-    /// Shared opening point. Layout preparation pads this to the root arity.
-    pub point: &'a [F],
-    /// Claimed openings at `point`.
-    pub slots: Vec<OpeningClaimSlot<F>>,
-}
-
-/// Normalize the public verifier-claim input shape into a single-point batch.
-pub fn verifier_claims_to_opening_batch<'a, F, C>(
-    claims: &VerifierClaims<'a, F, C>,
-) -> OpeningBatchInput<'a, F>
-where
-    F: Copy,
-{
-    let (point, openings) = claims;
-    let slots = openings
-        .openings
-        .iter()
-        .enumerate()
-        .map(|(poly_idx, &claimed_eval)| OpeningClaimSlot {
-            poly_idx,
-            claimed_eval,
-            natural_num_vars: point.len(),
-            kind: OpeningClaimKind::Polynomial,
+        Ok(Self {
+            indices: (0..num_vars).collect(),
         })
-        .collect();
-    OpeningBatchInput { point, slots }
+    }
+
+    /// Selected point-coordinate indices, in evaluation order.
+    pub fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    /// Number of variables selected for this group.
+    pub fn num_vars(&self) -> usize {
+        self.indices.len()
+    }
+
+    fn check(&self, point_len: usize) -> Result<(), AkitaError> {
+        let mut seen = BTreeSet::new();
+        for &index in &self.indices {
+            if index >= point_len || !seen.insert(index) {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        Ok(())
+    }
 }
 
-/// Capacity and dimension limits for opening-batch validation.
+/// One commitment group opened at an ordered subset of the shared point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitmentGroup<F> {
+    /// Coordinates of [`OpeningBatch::point`] used by every polynomial in this group.
+    pub point_vars: PointVariableSelection,
+    /// Claimed evaluations, one per committed polynomial, in commitment order.
+    pub claims: Vec<F>,
+}
+
+impl<F> CommitmentGroup<F> {
+    /// Number of variables used by the polynomials in this group.
+    pub fn num_vars(&self) -> usize {
+        self.point_vars.num_vars()
+    }
+
+    /// Number of claimed polynomial openings in this group.
+    pub fn num_claims(&self) -> usize {
+        self.claims.len()
+    }
+}
+
+/// Derived count limits for opening-batch validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpeningBatchLimits {
     /// Maximum supported number of variables in the shared opening point.
@@ -120,193 +100,157 @@ pub struct OpeningBatchLimits {
     pub max_num_claims: usize,
 }
 
-/// The one public gamma-batching row for all slots at the shared point.
+/// Shared opening point plus commitment groups opened at ordered point subsets.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningBatchRow {
-    claim_indices: Vec<usize>,
+pub struct OpeningBatch<F = ()> {
+    /// Padded/shared opening point.
+    pub point: Vec<F>,
+    /// Commitment groups in transcript order.
+    pub groups: Vec<CommitmentGroup<F>>,
 }
 
-impl OpeningBatchRow {
-    /// Shared opening-point index. Always zero for single-point batches.
-    pub fn point_idx(&self) -> usize {
-        0
-    }
-
-    /// Flattened claim indices combined into this row, in slot order.
-    pub fn claim_indices(&self) -> &[usize] {
-        &self.claim_indices
+/// Normalize public verifier claims into a one-group full-point batch.
+pub fn verifier_claims_to_opening_batch<'a, F, C>(
+    claims: &VerifierClaims<'a, F, C>,
+) -> OpeningBatch<F>
+where
+    F: Copy,
+{
+    let (point, openings) = claims;
+    OpeningBatch {
+        point: point.to_vec(),
+        groups: vec![CommitmentGroup {
+            point_vars: PointVariableSelection {
+                indices: (0..point.len()).collect(),
+            },
+            claims: openings.openings.to_vec(),
+        }],
     }
 }
 
-/// Derived routing and count data for a validated single-point opening batch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningBatch {
-    padded_num_vars: usize,
-    slots: Vec<OpeningClaimSlotShape>,
-    claim_poly_indices: Vec<usize>,
-    public_row: OpeningBatchRow,
-}
-
-impl OpeningBatch {
-    /// Validate that routing and count tables are internally consistent.
-    pub fn check(&self) -> Result<(), AkitaError> {
-        let num_claims = self.num_claims();
-        if num_claims == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        if self.slots.len() != num_claims
-            || self.claim_poly_indices.len() != num_claims
-            || self.public_row.claim_indices.len() != num_claims
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut seen_polys = BTreeSet::new();
-        let mut seen_claims = BTreeSet::new();
-        for claim_idx in 0..num_claims {
-            let slot = self.slots[claim_idx];
-            if self.claim_poly_indices[claim_idx] != slot.poly_idx
-                || slot.poly_idx >= num_claims
-                || slot.natural_num_vars > self.padded_num_vars
-                || !seen_polys.insert(slot.poly_idx)
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        for &claim_idx in self.public_row.claim_indices() {
-            if claim_idx >= num_claims || !seen_claims.insert(claim_idx) {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        if seen_claims.len() != num_claims {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
+impl OpeningBatch<()> {
+    /// Build a one-group shape for `num_polys` polynomials opened at a point of `num_vars`.
+    pub fn same_point(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError> {
+        Self::from_commitment_groups(num_vars, &[num_polys])
     }
 
-    /// Build a batch for one commitment opened at one shared point.
-    pub fn same_point(padded_num_vars: usize, num_polys: usize) -> Result<Self, AkitaError> {
-        if num_polys == 0 {
-            return Err(AkitaError::InvalidInput(
-                "opening batch requires at least one claim".to_string(),
-            ));
-        }
-        let slots = (0..num_polys)
-            .map(|poly_idx| OpeningClaimSlotShape {
-                poly_idx,
-                natural_num_vars: padded_num_vars,
-                kind: OpeningClaimKind::Polynomial,
-            })
-            .collect::<Vec<_>>();
-        Self::from_slot_shapes(padded_num_vars, slots)
-    }
-
-    /// Build a batch from explicit slot shapes.
-    pub fn from_slot_shapes(
-        padded_num_vars: usize,
-        slots: Vec<OpeningClaimSlotShape>,
+    /// Build a shape from commitment-group sizes.
+    pub fn from_commitment_groups(
+        num_vars: usize,
+        num_polys_per_commitment_group: &[usize],
     ) -> Result<Self, AkitaError> {
-        if slots.is_empty() {
+        if num_polys_per_commitment_group.is_empty() {
             return Err(AkitaError::InvalidInput(
-                "opening batch requires at least one claim".to_string(),
+                "opening batch requires at least one commitment group".to_string(),
             ));
         }
-        if slots
-            .iter()
-            .any(|slot| slot.natural_num_vars > padded_num_vars)
-        {
-            return Err(AkitaError::InvalidInput(
-                "opening batch slots must fit the shared point".to_string(),
-            ));
-        }
-        let mut seen_polys = BTreeSet::new();
-        for slot in &slots {
-            if !seen_polys.insert(slot.poly_idx) {
+        let point = vec![(); num_vars];
+        let mut groups = Vec::with_capacity(num_polys_per_commitment_group.len());
+        for &group_size in num_polys_per_commitment_group {
+            if group_size == 0 {
                 return Err(AkitaError::InvalidInput(
-                    "opening batch contains duplicate polynomial slot".to_string(),
+                    "opening batch commitment groups must be nonempty".to_string(),
                 ));
             }
+            groups.push(CommitmentGroup {
+                point_vars: PointVariableSelection::prefix(num_vars, num_vars)?,
+                claims: vec![(); group_size],
+            });
         }
-        if seen_polys.len() != slots.len() || !seen_polys.iter().copied().eq(0..slots.len()) {
-            return Err(AkitaError::InvalidInput(
-                "opening batch polynomial slots must be dense".to_string(),
-            ));
-        }
-        let claim_poly_indices = slots.iter().map(|slot| slot.poly_idx).collect::<Vec<_>>();
-        let public_row = OpeningBatchRow {
-            claim_indices: (0..slots.len()).collect(),
-        };
-        let batch = Self {
-            padded_num_vars,
-            slots,
-            claim_poly_indices,
-            public_row,
-        };
+        OpeningBatch::new(point, groups)
+    }
+}
+
+impl<F> OpeningBatch<F> {
+    /// Build a validated opening batch from a shared point and commitment groups.
+    pub fn new(point: Vec<F>, groups: Vec<CommitmentGroup<F>>) -> Result<Self, AkitaError> {
+        let batch = Self { point, groups };
         batch.check()?;
         Ok(batch)
     }
 
-    /// Number of variables in the shared padded opening point.
-    pub fn num_vars(&self) -> usize {
-        self.padded_num_vars
+    /// Build one full-point commitment group with explicit claimed evaluations.
+    pub fn same_point_with_claims(point: Vec<F>, claims: Vec<F>) -> Result<Self, AkitaError> {
+        let point_vars = PointVariableSelection::prefix(point.len(), point.len())?;
+        Self::new(point, vec![CommitmentGroup { point_vars, claims }])
     }
 
-    /// Number of individual claimed openings.
-    pub fn num_claims(&self) -> usize {
-        self.slots.len()
-    }
-
-    /// Slot shape records.
-    pub fn slots(&self) -> &[OpeningClaimSlotShape] {
-        &self.slots
-    }
-
-    /// Polynomial index within the commitment for each flattened claim.
-    pub fn claim_poly_indices(&self) -> &[usize] {
-        &self.claim_poly_indices
-    }
-
-    /// The one public gamma row.
-    pub fn public_rows(&self) -> &[OpeningBatchRow] {
-        std::slice::from_ref(&self.public_row)
-    }
-
-    /// Total number of committed polynomials addressed by the batch.
-    pub fn num_polynomials(&self) -> usize {
-        self.num_claims()
-    }
-}
-
-impl<'a, F> OpeningBatchInput<'a, F> {
-    /// Validate the single-point batch and derive its routing summary.
-    pub fn validate(&self, limits: OpeningBatchLimits) -> Result<OpeningBatch, AkitaError> {
-        if self.point.is_empty() && self.slots.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "opening batch requires one shared opening point".to_string(),
-            ));
+    /// Erase field values and retain only the normalized shape.
+    pub fn to_shape(&self) -> OpeningBatch<()> {
+        OpeningBatch {
+            point: vec![(); self.point.len()],
+            groups: self
+                .groups
+                .iter()
+                .map(|group| CommitmentGroup {
+                    point_vars: group.point_vars.clone(),
+                    claims: vec![(); group.claims.len()],
+                })
+                .collect(),
         }
-        if self.slots.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "opening batch requires at least one claim".to_string(),
-            ));
-        }
+    }
+
+    /// Validate public limits and return the shape-only summary used by schedules.
+    pub fn validate(&self, limits: OpeningBatchLimits) -> Result<OpeningBatch<()>, AkitaError> {
         if self.point.len() > limits.max_num_vars {
             return Err(AkitaError::InvalidPointDimension {
                 expected: limits.max_num_vars,
                 actual: self.point.len(),
             });
         }
-        if self.slots.len() > limits.max_num_claims {
+        let num_claims = self.num_claims();
+        if num_claims > limits.max_num_claims {
             return Err(AkitaError::InvalidSize {
                 expected: limits.max_num_claims,
-                actual: self.slots.len(),
+                actual: num_claims,
             });
         }
-        let slot_shapes = self
-            .slots
+        self.check()?;
+        Ok(self.to_shape())
+    }
+}
+
+impl<F> OpeningBatch<F> {
+    /// Validate that routing and count tables are internally consistent.
+    pub fn check(&self) -> Result<(), AkitaError> {
+        if self.groups.is_empty() || self.num_claims() == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        for group in &self.groups {
+            if group.claims.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+            group.point_vars.check(self.point.len())?;
+        }
+        Ok(())
+    }
+
+    /// Number of variables in the shared padded opening point.
+    pub fn num_vars(&self) -> usize {
+        self.point.len()
+    }
+
+    /// Number of individual claimed openings.
+    pub fn num_claims(&self) -> usize {
+        self.groups.iter().map(CommitmentGroup::num_claims).sum()
+    }
+
+    /// Number of commitment groups represented by the batch.
+    pub fn num_commitment_groups(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// Number of polynomials committed in each commitment group.
+    pub fn num_polys_per_commitment_group(&self) -> Vec<usize> {
+        self.groups
             .iter()
-            .map(OpeningClaimSlotShape::from)
-            .collect::<Vec<_>>();
-        OpeningBatch::from_slot_shapes(self.point.len(), slot_shapes)
+            .map(CommitmentGroup::num_claims)
+            .collect()
+    }
+
+    /// Total number of committed polynomials addressed by the batch.
+    pub fn num_polynomials(&self) -> usize {
+        self.num_claims()
     }
 }
 
@@ -323,10 +267,13 @@ where
 
     transcript.append_serde(ABSORB_BATCH_SHAPE, &batch.num_vars());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &batch.num_claims());
-    for slot in batch.slots() {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &slot.poly_idx());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &slot.natural_num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &slot.kind().transcript_tag());
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &batch.num_commitment_groups());
+    for group in &batch.groups {
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_claims());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars.num_vars());
+        for &index in group.point_vars.indices() {
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
+        }
     }
     Ok(())
 }
@@ -395,32 +342,53 @@ mod tests {
     }
 
     #[test]
-    fn opening_batch_tracks_single_point_slots() {
-        let p0 = [1u64, 2];
-        let batch = OpeningBatchInput {
-            point: &p0,
-            slots: vec![
-                OpeningClaimSlot {
-                    poly_idx: 0,
-                    claimed_eval: 10u64,
-                    natural_num_vars: 2,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-                OpeningClaimSlot {
-                    poly_idx: 1,
-                    claimed_eval: 11u64,
-                    natural_num_vars: 1,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-            ],
-        };
+    fn opening_batch_tracks_single_point_group() {
+        let batch = OpeningBatch::same_point_with_claims(vec![1u64, 2], vec![10u64, 11])
+            .expect("valid batch");
 
-        let summary = batch.validate(generous_limits()).expect("valid batch");
+        let summary = batch.validate(generous_limits()).expect("valid shape");
 
         assert_eq!(summary.num_vars(), 2);
         assert_eq!(summary.num_claims(), 2);
-        assert_eq!(summary.claim_poly_indices(), &[0, 1]);
-        assert_eq!(summary.slots()[1].natural_num_vars(), 1);
+        assert_eq!(summary.num_commitment_groups(), 1);
+        assert_eq!(summary.num_polys_per_commitment_group(), vec![2]);
+        assert_eq!(summary.groups[0].point_vars.indices(), &[0, 1]);
+    }
+
+    #[test]
+    fn opening_batch_represents_multi_commitment_groups() {
+        let batch = OpeningBatch::from_commitment_groups(3, &[1, 2])
+            .expect("multi-group batches have a direct shape");
+
+        assert_eq!(batch.num_commitment_groups(), 2);
+        assert_eq!(batch.num_polys_per_commitment_group(), vec![1, 2]);
+        assert_eq!(batch.groups[0].num_claims(), 1);
+        assert_eq!(batch.groups[1].num_claims(), 2);
+    }
+
+    #[test]
+    fn opening_batch_single_group_normalizes_to_same_point() {
+        let batch = OpeningBatch::from_commitment_groups(3, &[2]).expect("single group");
+
+        assert_eq!(batch.num_commitment_groups(), 1);
+        assert_eq!(batch.num_polys_per_commitment_group(), vec![2]);
+        assert_eq!(batch.groups[0].num_claims(), 2);
+    }
+
+    #[test]
+    fn point_variable_selection_preserves_custom_order() {
+        let selection = PointVariableSelection::new(vec![2, 0], 3).expect("custom order");
+        let batch = OpeningBatch::new(
+            vec![1u64, 2, 3],
+            vec![CommitmentGroup {
+                point_vars: selection,
+                claims: vec![7u64],
+            }],
+        )
+        .expect("valid custom point subset");
+
+        assert_eq!(batch.groups[0].num_vars(), 2);
+        assert_eq!(batch.groups[0].point_vars.indices(), &[2, 0]);
     }
 
     #[test]
@@ -439,39 +407,25 @@ mod tests {
     }
 
     #[test]
-    fn transcript_binds_slot_order() {
-        let forward = OpeningBatch::from_slot_shapes(
-            1,
-            vec![
-                OpeningClaimSlotShape {
-                    poly_idx: 0,
-                    natural_num_vars: 1,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-                OpeningClaimSlotShape {
-                    poly_idx: 1,
-                    natural_num_vars: 1,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-            ],
+    fn transcript_binds_point_variable_order() {
+        let forward = OpeningBatch::new(
+            vec![1u64, 2],
+            vec![CommitmentGroup {
+                point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward vars"),
+                claims: vec![10u64],
+            }],
         )
-        .expect("forward batch");
-        let swapped = OpeningBatch::from_slot_shapes(
-            1,
-            vec![
-                OpeningClaimSlotShape {
-                    poly_idx: 1,
-                    natural_num_vars: 1,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-                OpeningClaimSlotShape {
-                    poly_idx: 0,
-                    natural_num_vars: 1,
-                    kind: OpeningClaimKind::Polynomial,
-                },
-            ],
+        .expect("forward batch")
+        .to_shape();
+        let swapped = OpeningBatch::new(
+            vec![1u64, 2],
+            vec![CommitmentGroup {
+                point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped vars"),
+                claims: vec![10u64],
+            }],
         )
-        .expect("swapped batch");
+        .expect("swapped batch")
+        .to_shape();
         let mut t1 = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
 

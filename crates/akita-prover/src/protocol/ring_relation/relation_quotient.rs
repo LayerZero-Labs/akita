@@ -216,7 +216,6 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
-    claim_poly_indices: &[usize],
     row_coefficient_rings: &[CyclotomicRing<F, D>],
     z_folded_centered: &[[i32; D]],
     z_folded_centered_inf_norm: u32,
@@ -234,17 +233,11 @@ where
     if num_polys == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_claims = claim_poly_indices.len();
-    let mut poly_slot_for_claim = Vec::with_capacity(num_claims);
-    for &poly_idx in claim_poly_indices {
-        if poly_idx >= num_polys {
-            return Err(AkitaError::InvalidProof);
-        }
-        poly_slot_for_claim.push(poly_idx);
+    let num_claims = row_coefficient_rings.len();
+    if num_polys != num_claims {
+        return Err(AkitaError::InvalidProof);
     }
-    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len())
-        || row_coefficient_rings.len() != num_claims
-    {
+    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len()) {
         return Err(AkitaError::InvalidProof);
     }
     let expected_inner_rows = num_polys
@@ -532,18 +525,14 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
 
-            // Iterate `(claim, block)` over the challenge space and route
-            // each cell to its polynomial-slot in `recomposed_inner_rows`
-            // (`poly_slot * num_blocks + block_idx`). Iterating over the
-            // raw `recomposed_inner_rows.len()` would conflate poly slots
-            // with claims and overrun `challenges` whenever a group has
-            // more polynomial slots than opened claims.
+            // In a dense single commitment group, claim order is polynomial
+            // order. Iterate `(claim, block)` over the challenge space and
+            // read the matching committed polynomial block directly.
             let mut quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
                     let claim_idx = i / blocks_per_claim;
                     let block_idx = i % blocks_per_claim;
-                    let poly_slot = poly_slot_for_claim[claim_idx];
-                    let inner_idx = poly_slot * blocks_per_claim + block_idx;
+                    let inner_idx = claim_idx * blocks_per_claim + block_idx;
                     recomposed_inner_rows[inner_idx].get(a_idx).copied()
                 })?;
 

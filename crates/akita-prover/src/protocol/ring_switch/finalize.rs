@@ -74,7 +74,6 @@ where
     let ring_alpha_evals_y = scalar_powers(alpha, D);
     let alpha_evals_y = scalar_powers(alpha, D);
 
-    let claim_poly_indices = opening_batch.claim_poly_indices();
     let challenges = &instance.challenges;
     if gamma.len() != instance.opening_batch().num_claims() {
         return Err(AkitaError::InvalidInput(
@@ -95,7 +94,6 @@ where
                 lp,
                 &tau1,
                 num_polys,
-                claim_poly_indices,
                 gamma,
                 num_public_m_rows,
                 m_row_layout,
@@ -115,7 +113,6 @@ where
             lp,
             &tau1,
             num_polys,
-            claim_poly_indices,
             gamma,
             num_public_m_rows,
             m_row_layout,

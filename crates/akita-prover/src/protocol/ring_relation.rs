@@ -378,10 +378,7 @@ impl RingRelationProver {
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if polys.len() != pre_folded_e_by_poly.len()
-            || polys.len() != num_claims
-            || opening_batch.claim_poly_indices().len() != num_claims
-        {
+        if polys.len() != pre_folded_e_by_poly.len() || polys.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));

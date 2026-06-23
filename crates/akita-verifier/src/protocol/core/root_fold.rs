@@ -47,7 +47,7 @@ where
     };
     let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
     let num_claims = opening_batch.num_claims();
-    if openings.len() != num_claims || opening_batch.claim_poly_indices().len() != num_claims {
+    if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
     if commitment.u.len() != root_lp.effective_commit_rows() {

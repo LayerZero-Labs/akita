@@ -100,7 +100,6 @@ where
         &recomposed_inner_rows,
         &e_folded,
         instance.ring_multiplier_point(),
-        opening_batch.claim_poly_indices(),
         instance.row_coefficient_rings(),
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,

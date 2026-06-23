@@ -484,7 +484,6 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            claim_poly_indices: vec![0, 1, 2],
             num_polys: num_claims,
             witness_segment_layout,
         };

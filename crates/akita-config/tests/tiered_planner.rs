@@ -72,6 +72,16 @@ fn tiered_preset_tiers_a_batched_root() {
 }
 
 #[test]
+fn tiered_preset_rejects_grouped_root_key() {
+    let key = AkitaScheduleLookupKey::new(22, 3, 2, 2);
+
+    let err =
+        fp128::D64OneHotTiered::runtime_schedule(key).expect_err("grouped tiered key must reject");
+
+    assert!(matches!(err, akita_field::AkitaError::InvalidSetup(_)));
+}
+
+#[test]
 fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
     // For the same batched opening_batch, the tiered preset's shared-matrix
     // envelope must never exceed the non-tiered sibling's, and must be strictly

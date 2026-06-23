@@ -625,9 +625,11 @@ The current `family_keys` helper hardcodes `[1, 4]`. This refactor moves that li
 onto `GeneratedFamily` so Akita and downstream catalogs can enumerate different batch
 widths without changing planner code.
 
-This replaces the stale incidence generalization plan. If multi-commitment same-point
-(`OpeningBatch::from_commitment_groups`) is enabled on the folded path in a future
-PR, key derivation may extend `new_from_opening_batch` without reviving multipoint.
+This replaces the stale incidence generalization plan for scalar same-bundle
+batching. Multi-commitment same-point batching is tracked separately in
+[`multi-group-batching.md`](multi-group-batching.md); until its grouped key and
+descriptor shape land, scalar lookup must not collapse grouped inputs through
+`new_from_opening_batch`.
 
 ### `akita-schedules` crate
 

@@ -167,7 +167,7 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let num_polys_per_segment = vec![3usize];
+        let num_polys_per_segment = [3usize];
         let num_public_rows = 0usize;
         let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
@@ -264,7 +264,6 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            claim_poly_indices: vec![0, 1, 2],
             num_polys: num_polys_per_segment.iter().sum(),
             witness_segment_layout,
         };

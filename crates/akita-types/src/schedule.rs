@@ -161,7 +161,7 @@ impl AkitaScheduleLookupKey {
     ///
     /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
     /// `num_claims`. Assumes the batch was already validated at the claims
-    /// boundary (`OpeningBatchInput::validate` or an infallible constructor).
+    /// boundary (`OpeningBatch::validate` or an infallible constructor).
     ///
     /// Folded schedule lookup currently treats every batch as one commitment
     /// group; see `akita_planner::generated_schedule_lookup_key`.
@@ -170,6 +170,11 @@ impl AkitaScheduleLookupKey {
     ///
     /// Returns an error if a projected count does not fit the lookup key.
     pub fn new_from_opening_batch(opening_batch: &OpeningBatch) -> Result<Self, AkitaError> {
+        if opening_batch.num_commitment_groups() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "scalar schedule lookup cannot collapse a multi-commitment batch; use the grouped schedule key from specs/multi-group-batching.md".to_string(),
+            ));
+        }
         let num_t_vectors = opening_batch.num_polynomials();
         Ok(Self::new(
             opening_batch.num_vars(),
@@ -177,6 +182,22 @@ impl AkitaScheduleLookupKey {
             opening_batch.num_claims(),
             1,
         ))
+    }
+
+    /// Validate that this key is a scalar same-point batch key, not a grouped
+    /// root key that would need the multi-group schedule shape.
+    pub fn validate_scalar_root_batch(self) -> Result<(), AkitaError> {
+        if self.num_t_vectors == 0 || self.num_w_vectors == 0 || self.num_z_vectors == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "schedule key planner dimensions must be at least 1".to_string(),
+            ));
+        }
+        if self.num_z_vectors != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "multi-group root schedule keys are not supported by scalar schedule lookup; see specs/multi-group-batching.md".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 

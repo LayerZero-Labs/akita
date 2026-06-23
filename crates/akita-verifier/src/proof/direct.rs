@@ -69,10 +69,7 @@ where
 {
     let num_claims = opening_batch.num_claims();
     let num_polynomials = opening_batch.num_polynomials();
-    if witnesses.len() != num_polynomials
-        || openings.len() != num_claims
-        || opening_batch.claim_poly_indices().len() != num_claims
-    {
+    if witnesses.len() != num_polynomials || openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
 

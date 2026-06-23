@@ -131,7 +131,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
-    pub(crate) claim_poly_indices: Vec<usize>,
     pub(crate) num_polys: usize,
     pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
@@ -220,7 +219,6 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     let num_polys = opening_batch.num_polynomials();
-    let claim_poly_indices = opening_batch.claim_poly_indices();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -236,13 +234,8 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    if claim_poly_indices.len() != num_claims {
+    if num_polys != num_claims {
         return Err(AkitaError::InvalidProof);
-    }
-    for &poly_idx in claim_poly_indices {
-        if poly_idx >= num_polys {
-            return Err(AkitaError::InvalidProof);
-        }
     }
 
     if w_len == 0 || !w_len.is_multiple_of(D) {
@@ -320,7 +313,6 @@ where
         lp,
         tau1,
         opening_batch.num_polynomials(),
-        opening_batch.claim_poly_indices(),
         replay.row_coefficients,
         relation.m_row_layout(),
         witness_segment_layout,
@@ -334,7 +326,6 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
-    claim_poly_indices: &[usize],
     gamma: &[E],
     m_row_layout: MRowLayout,
     witness_segment_layout: RingRelationSegmentLayout,
@@ -346,20 +337,8 @@ where
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
-    if claim_poly_indices.len() != num_claims {
+    if num_polys != num_claims {
         return Err(AkitaError::InvalidProof);
-    }
-    for &poly_idx in claim_poly_indices {
-        if poly_idx >= num_polys {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
-
-    if gamma.len() != num_claims {
-        return Err(AkitaError::InvalidSize {
-            expected: num_claims,
-            actual: gamma.len(),
-        });
     }
 
     let log_basis = lp.log_basis;
@@ -515,7 +494,6 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
-        claim_poly_indices: claim_poly_indices.to_vec(),
         num_polys,
         witness_segment_layout,
     })
@@ -649,12 +627,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 block_offset_low,
                 self.num_blocks,
             )?;
-        let mut challenge_block_summaries_by_t_vector =
-            vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        for (claim_idx, &t_vector_idx) in self.claim_poly_indices.iter().enumerate() {
-            let [carry0, carry1] = challenge_block_summaries[claim_idx];
-            challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
-            challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
+        if self.num_t_vectors != self.num_claims {
+            return Err(AkitaError::InvalidProof);
         }
 
         // ----- E-hat ---------------------------------------------------------

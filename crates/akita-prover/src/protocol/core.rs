@@ -60,8 +60,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
     BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FlatRingVec, LevelParams, MRowLayout, OpeningBatch, OpeningBatchInput, OpeningBatchLimits,
-    OpeningClaimKind, OpeningClaimSlot, PreparedOpeningPoint, RingCommitment,
+    FlatRingVec, LevelParams, MRowLayout, OpeningBatch, PreparedOpeningPoint, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };

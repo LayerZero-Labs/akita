@@ -42,6 +42,13 @@ pub fn resolve_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
+    if policy.tiered && key.num_z_vectors != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
+    key.validate_scalar_root_batch()?;
     let Some(table) = catalog else {
         return find_schedule(
             key,
@@ -385,5 +392,16 @@ mod tests {
         let via_find =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
+    }
+
+    #[test]
+    fn resolve_schedule_rejects_grouped_key_before_scalar_lookup() {
+        let key = AkitaScheduleLookupKey::new(20, 4, 2, 2);
+        let policy = flat_policy();
+
+        let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
+            .expect_err("grouped root key must not use scalar lookup");
+
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }
