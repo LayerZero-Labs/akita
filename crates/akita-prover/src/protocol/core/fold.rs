@@ -311,6 +311,7 @@ where
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, P, TS, D>(
             tensor.backend(),
+            Some(tensor.prepared()),
             eor_polys,
             opening_batch,
             opening_point,

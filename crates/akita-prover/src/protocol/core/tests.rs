@@ -91,6 +91,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     let opening_batch = OpeningBatch::same_point(point.len(), 1).expect("opening batch");
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
         &crate::compute::CpuBackend,
+        None,
         &logical_polys,
         &opening_batch,
         &point,
