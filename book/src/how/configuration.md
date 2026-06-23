@@ -45,4 +45,4 @@ owns shipped table data. The verifier-reachable proof-size formula.
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-config/src/generated_families.rs`, `crates/akita-schedules/src/generated/`, `crates/akita-planner/src/resolve.rs` (`resolve_schedule`).
-- `AGENTS.md` (Profiling), `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.
+- `book/src/usage/profiling.md`, `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.
