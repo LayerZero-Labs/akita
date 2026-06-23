@@ -631,8 +631,10 @@ mod tests {
                 acc_im += coeff * table.base_sin[idx];
             }
             let (abs_re, abs_im) = (acc_re.abs(), acc_im.abs());
-            if decide_frequency(abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold)
-                .unwrap()
+            if decide_frequency(
+                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
+            )
+            .unwrap()
             {
                 return Decision::Reject;
             }

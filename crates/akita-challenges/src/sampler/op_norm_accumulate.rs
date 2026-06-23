@@ -351,5 +351,4 @@ mod tests {
             assert_eq!(scalar, avx2);
         }
     }
-
 }
