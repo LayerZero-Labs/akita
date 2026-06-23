@@ -667,8 +667,7 @@ mod tests {
         const D: usize = 16;
         let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
         let witness = RecursiveWitnessFlat::from_i8_digits(digits.clone());
-        let opening: SuffixWitnessView<'_, F, D> =
-            witness.opening_view().expect("opening view");
+        let opening: SuffixWitnessView<'_, F, D> = witness.opening_view().expect("opening view");
         let tensor: SuffixWitnessView<'_, F, D> = witness.tensor_view().expect("tensor view");
         assert_eq!(
             opening.num_ring_elems(),
@@ -680,9 +679,8 @@ mod tests {
         );
 
         let polys = [&witness];
-        let batch =
-            <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&polys)
-                .expect("opening batch");
+        let batch = <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&polys)
+            .expect("opening batch");
         assert_eq!(batch.polys.len(), 1);
     }
 

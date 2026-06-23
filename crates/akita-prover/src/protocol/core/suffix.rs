@@ -2,8 +2,7 @@ use super::*;
 use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchComputeBackend, RootProveBackend,
-    TensorBackendFor, UniformProverStack,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchComputeBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -57,10 +56,18 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, B, const D: usize>(
+pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    stacks: &'stack impl LevelProveStacks<'stack, Cfg::Field, B, D>,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        Cfg::Field,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
@@ -86,16 +93,40 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, D>
-        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 32>
-        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 64>
-        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 128>
-        + RootProveBackend<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
-        + CommitmentComputeBackend<Cfg::Field>
-        + RingSwitchComputeBackend<Cfg::Field>
+    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    O: OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, D>
+        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 32>
+        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 64>
+        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 128>
+        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 256>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 32>, 32>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 64>, 64>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 128>, 128>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 256>, 256>
+        + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    TS: TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 32>
+        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 64>
+        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 128>
+        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 32>, Cfg::ExtField, 32>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 64>, Cfg::ExtField, 64>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 128>, Cfg::ExtField, 128>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 256>, Cfg::ExtField, 256>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    R: RingSwitchComputeBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -122,7 +153,7 @@ where
         };
         let out = if level_d == D {
             let stack = stacks.prove_stack_at_level(level);
-            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, B, B, B, D>(
+            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, D>(
                 stack,
                 transcript,
                 current_state,
@@ -133,7 +164,7 @@ where
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
             })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, B, B, B, Cfg, D>(
+            prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, D>(
                 expanded,
                 prefix_slots,
                 stack,
@@ -156,13 +187,28 @@ where
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                 let tier_stack = stacks.prove_stack_at_level(level);
-                let backend = tier_stack.commit().backend();
-                let level_prepared = backend.prepare_expanded::<D_LEVEL>(Arc::clone(expanded))?;
-                let level_stack =
-                    UniformProverStack::uniform(backend, &level_prepared, expanded.as_ref())?;
+                let expanded_cloned = Arc::clone(expanded);
+                let commit_backend = tier_stack.commit().backend();
+                let opening_backend = tier_stack.opening().backend();
+                let tensor_backend = tier_stack.tensor().backend();
+                let ring_backend = tier_stack.ring_switch().backend();
+                let commit_prepared =
+                    commit_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let opening_prepared =
+                    opening_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let tensor_prepared =
+                    tensor_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let ring_prepared = ring_backend.prepare_expanded::<D_LEVEL>(expanded_cloned)?;
+                let level_stack = ProverComputeStack::<Cfg::Field, D_LEVEL, C, O, TS, R>::new(
+                    (commit_backend, &commit_prepared),
+                    (opening_backend, &opening_prepared),
+                    (tensor_backend, &tensor_prepared),
+                    (ring_backend, &ring_prepared),
+                    expanded.as_ref(),
+                )?;
                 let level_prefix_slots = SetupPrefixProverRegistry::new();
                 let prepared_fold =
-                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, B, B, B, { D_LEVEL }>(
+                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                         &level_stack,
                         transcript,
                         current_state,
@@ -175,7 +221,7 @@ where
                             "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
                         ))
                     })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, B, B, B, B, Cfg, { D_LEVEL }>(
+                prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
                     expanded,
                     &level_prefix_slots,
                     &level_stack,
@@ -290,52 +336,51 @@ where
         zk_hiding,
         ..
     } = current_state;
-        let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
-        let typed_hint = hint.to_typed::<D>()?;
-        let opening_point = &sumcheck_challenges;
+    let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
+    let typed_hint = hint.to_typed::<D>()?;
+    let opening_point = &sumcheck_challenges;
 
-        commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
 
-        let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-        let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
-        let logical_polys = [logical_w];
-        let fold_polys = [&w];
-        let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
-        let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-        let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
-        let commitment_u = commitment.as_ring_slice::<D>()?;
-        let recursive_commitment = RingCommitment {
-            u: commitment_u.to_vec(),
-        };
-        prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
-            stack,
-            needs_extension_reduction,
-            &logical_polys,
-            &fold_polys,
-            &eor_opening_batch,
-            opening_batch.clone(),
-            &opening_batch,
-            opening_point,
-            #[cfg(feature = "zk")]
-            None,
-            #[cfg(feature = "zk")]
-            Some(opening_public),
-            true,
-            transcript,
-            #[cfg(feature = "zk")]
-            zk_hiding,
-            opening_point.to_vec(),
-            || Ok(()),
-            level_params,
-            alpha,
-            BasisMode::Lagrange,
-            BlockOrder::ColumnMajor,
-            vec![typed_hint],
-            std::slice::from_ref(&recursive_commitment),
-            m_row_layout,
-            commitment,
-        )
-    }
+    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
+    let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
+    let logical_polys = [logical_w];
+    let fold_polys = [&w];
+    let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+    let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
+    let commitment_u = commitment.as_ring_slice::<D>()?;
+    let recursive_commitment = RingCommitment {
+        u: commitment_u.to_vec(),
+    };
+    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+        stack,
+        needs_extension_reduction,
+        &logical_polys,
+        &fold_polys,
+        &eor_opening_batch,
+        opening_batch.clone(),
+        &opening_batch,
+        opening_point,
+        #[cfg(feature = "zk")]
+        None,
+        #[cfg(feature = "zk")]
+        Some(opening_public),
+        true,
+        transcript,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        opening_point.to_vec(),
+        || Ok(()),
+        level_params,
+        alpha,
+        BasisMode::Lagrange,
+        BlockOrder::ColumnMajor,
+        vec![typed_hint],
+        std::slice::from_ref(&recursive_commitment),
+        m_row_layout,
+        commitment,
+    )
 }
 
 #[cfg(all(test, not(feature = "zk")))]

@@ -2,7 +2,7 @@
 //!
 //! Two orthogonal axes:
 //!
-//! 1. **Per-fold stack** ([`LevelProveStacks`]): which [`UniformProverStack`]
+//! 1. **Per-fold stack** ([`LevelProveStacks`]): which [`ProverComputeStack`]
 //!    runs fold `level`. `batched_prove` / `prove` take `&impl LevelProveStacks`;
 //!    passing `&stack` is the degenerate case (same stack at every level).
 //!    Tiered hardware provers use [`TieredProveStacks`] or a custom impl.
@@ -147,48 +147,80 @@ where
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
 pub type UniformProverStack<'a, F, B, const D: usize> = ProverComputeStack<'a, F, D, B, B, B, B>;
 
-/// Per-fold selection of a [`UniformProverStack`] during proving.
+/// Per-fold selection of a [`ProverComputeStack`] during proving.
 ///
 /// `prove_fold` and suffix preparation call `prove_stack_at_level(level)` before
 /// routing work to commit / opening / tensor / ring-switch clusters on that
 /// stack.
 ///
-/// **Uniform case:** `UniformProverStack` returns `self` for every level (what
-/// `batched_prove(..., &stack, ...)` uses today).
+/// **Uniform case:** [`UniformProverStack`] fixes all four associated cluster
+/// types to one backend `B` (what `batched_prove(..., &stack, ...)` uses today).
+///
+/// **Heterogeneous case:** each associated type may differ; protocol internals
+/// route kernels through the matching cluster on the returned stack.
 ///
 /// **Tiered case:** [`TieredProveStacks`] maps fold ranges to distinct stacks
-/// (for example multi-GPU folds 0–1, single-GPU 2–3, CPU thereafter). Each tier
-/// may itself be a heterogeneous [`ProverComputeStack::new`] stack.
+/// (for example multi-GPU folds 0–1, single-GPU 2–3, CPU thereafter). Every
+/// tier must share the same `(Commit, Opening, Tensor, RingSwitch)` type tuple;
+/// tiers differ only in backend handles and prepared setups.
 ///
 /// **Facade alternative:** a single backend type that dispatches on `level`
 /// internally also works; this trait is not required when the backend owns tier
 /// selection.
-pub trait LevelProveStacks<'a, F, B, const D: usize>
+pub trait LevelProveStacks<'a, F, const D: usize>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
 {
+    /// Commit cluster backend for stacks returned by this selector.
+    type Commit: ComputeBackendSetup<F>;
+    /// Opening cluster backend for stacks returned by this selector.
+    type Opening: ComputeBackendSetup<F>;
+    /// Tensor cluster backend for stacks returned by this selector.
+    type Tensor: ComputeBackendSetup<F>;
+    /// Ring-switch cluster backend for stacks returned by this selector.
+    type RingSwitch: ComputeBackendSetup<F>;
+
     /// Stack whose operation clusters should execute fold `level`.
-    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D>;
+    fn prove_stack_at_level(
+        &self,
+        level: usize,
+    ) -> &ProverComputeStack<'a, F, D, Self::Commit, Self::Opening, Self::Tensor, Self::RingSwitch>;
 }
 
-impl<'a, F, B, const D: usize> LevelProveStacks<'a, F, B, D> for UniformProverStack<'a, F, B, D>
+impl<'a, F, const D: usize, C, O, T, R> LevelProveStacks<'a, F, D>
+    for ProverComputeStack<'a, F, D, C, O, T, R>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
 {
+    type Commit = C;
+    type Opening = O;
+    type Tensor = T;
+    type RingSwitch = R;
+
     fn prove_stack_at_level(&self, _level: usize) -> &Self {
         self
     }
 }
 
-impl<'a, F, B, const D: usize, S> LevelProveStacks<'a, F, B, D> for &S
+impl<'a, F, const D: usize, C, O, T, R, S> LevelProveStacks<'a, F, D> for &S
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
-    S: LevelProveStacks<'a, F, B, D> + ?Sized,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
+    S: LevelProveStacks<'a, F, D, Commit = C, Opening = O, Tensor = T, RingSwitch = R> + ?Sized,
 {
-    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D> {
+    type Commit = C;
+    type Opening = O;
+    type Tensor = T;
+    type RingSwitch = R;
+
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, D, C, O, T, R> {
         (*self).prove_stack_at_level(level)
     }
 }
@@ -207,19 +239,25 @@ where
 /// let tiered = TieredProveStacks::new(&stacks, &[1, 3, usize::MAX])?;
 /// batched_prove(..., &tiered, ...)?;
 /// ```
-pub struct TieredProveStacks<'a, F, B, const D: usize>
+pub struct TieredProveStacks<'a, F, const D: usize, C, O, T, R>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
 {
-    stacks: &'a [UniformProverStack<'a, F, B, D>],
+    stacks: &'a [ProverComputeStack<'a, F, D, C, O, T, R>],
     tier_max_level: &'a [usize],
 }
 
-impl<'a, F, B, const D: usize> TieredProveStacks<'a, F, B, D>
+impl<'a, F, const D: usize, C, O, T, R> TieredProveStacks<'a, F, D, C, O, T, R>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
 {
     /// Build a tier table. `stacks.len()` must equal `tier_max_level.len()`.
     ///
@@ -228,7 +266,7 @@ where
     /// Returns an error if the tier table is empty or `tier_max_level` is not
     /// strictly increasing.
     pub fn new(
-        stacks: &'a [UniformProverStack<'a, F, B, D>],
+        stacks: &'a [ProverComputeStack<'a, F, D, C, O, T, R>],
         tier_max_level: &'a [usize],
     ) -> Result<Self, AkitaError> {
         if stacks.is_empty() {
@@ -262,12 +300,21 @@ where
     }
 }
 
-impl<'a, F, B, const D: usize> LevelProveStacks<'a, F, B, D> for TieredProveStacks<'a, F, B, D>
+impl<'a, F, const D: usize, C, O, T, R> LevelProveStacks<'a, F, D>
+    for TieredProveStacks<'a, F, D, C, O, T, R>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    T: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
 {
-    fn prove_stack_at_level(&self, level: usize) -> &UniformProverStack<'a, F, B, D> {
+    type Commit = C;
+    type Opening = O;
+    type Tensor = T;
+    type RingSwitch = R;
+
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, D, C, O, T, R> {
         &self.stacks[self.tier_index_for_level(level)]
     }
 }
@@ -421,8 +468,41 @@ mod tests {
     }
 
     #[test]
+    fn heterogeneous_stack_implements_level_prove_stacks() {
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let commit_backend = CommitClusterBackend;
+        let ring_backend = RingSwitchClusterBackend;
+        let stack = ProverComputeStack::new(
+            (&commit_backend, &prepared),
+            (&CpuBackend, &prepared),
+            (&CpuBackend, &prepared),
+            (&ring_backend, &prepared),
+            setup.expanded.as_ref(),
+        )
+        .expect("heterogeneous stack");
+        let selected: &ProverComputeStack<
+            '_,
+            F,
+            D,
+            CommitClusterBackend,
+            CpuBackend,
+            CpuBackend,
+            RingSwitchClusterBackend,
+        > = LevelProveStacks::prove_stack_at_level(&stack, 0);
+        assert_eq!(
+            selected.commit().backend() as *const _,
+            stack.commit().backend() as *const _
+        );
+    }
+
+    #[test]
     fn tiered_prove_stacks_rejects_empty_table() {
-        let result = TieredProveStacks::<F, CpuBackend, D>::new(&[], &[]);
+        let result = TieredProveStacks::<F, D, CpuBackend, CpuBackend, CpuBackend, CpuBackend>::new(
+            &[],
+            &[],
+        );
         assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
     }
 

@@ -120,7 +120,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
-        stacks: &'a impl LevelProveStacks<'a, F, B, D>,
+        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,

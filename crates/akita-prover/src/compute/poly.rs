@@ -1,6 +1,7 @@
-#[cfg(feature = "zk")]
-use super::backend::DigitRowsComputeBackend;
-use super::backend::{CommitmentComputeBackend, ComputeBackendSetup, RingSwitchComputeBackend};
+use super::backend::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
+    RingSwitchComputeBackend,
+};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RootCommitKernel, TensorProjectionBatchKernel,
     TensorProjectionKernel,
@@ -555,6 +556,98 @@ where
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
+{
+}
+
+/// Cluster capability bundle for [`batched_prove`] with a heterogeneous
+/// [`ProverComputeStack`].
+///
+/// The uniform case `C = O = TS = R = B` is satisfied automatically when
+/// `B: RecursiveProveBackend<F, P, E, D>`.
+pub trait ProveStackFor<F, P, E, const D: usize, C, O, TS, R>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
+{
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F, P, E, const D: usize, C, O, TS, R> ProveStackFor<F, P, E, D, C, O, TS, R> for ()
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
+    O: ComputeBackendSetup<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + DigitRowsComputeBackend<F>,
+    TS: ComputeBackendSetup<F>
+        + TensorBackendFor<F, P, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, D>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
+    R: ComputeBackendSetup<F> + RingSwitchComputeBackend<F> + DigitRowsComputeBackend<F>,
+{
+}
+
+#[cfg(feature = "zk")]
+impl<F, P, E, const D: usize, C, O, TS, R> ProveStackFor<F, P, E, D, C, O, TS, R> for ()
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootProvePoly<F, D>,
+    C: ComputeBackendSetup<F> + CommitmentComputeBackend<F> + ZkHidingCommitBackend<F, D>,
+    O: ComputeBackendSetup<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + DigitRowsComputeBackend<F>,
+    TS: ComputeBackendSetup<F>
+        + TensorBackendFor<F, P, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, D>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
+    R: ComputeBackendSetup<F> + RingSwitchComputeBackend<F> + DigitRowsComputeBackend<F>,
 {
 }
 

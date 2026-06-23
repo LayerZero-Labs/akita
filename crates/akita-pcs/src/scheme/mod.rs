@@ -119,7 +119,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
-        stacks: &'a impl LevelProveStacks<'a, F, B, D>,
+        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -134,7 +134,7 @@ where
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        let proof = akita_prover::batched_prove::<Cfg, T, P, B, D>(
+        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
             stacks,

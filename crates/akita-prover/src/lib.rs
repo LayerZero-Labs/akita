@@ -31,7 +31,7 @@ pub use compute::{
     CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, OneHotCommitBlocks,
     OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile,
-    ProveBackendFor, ProveFlowBackendFor, ProverComputeStack, RecursiveProveBackend,
+    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
     RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
     RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
