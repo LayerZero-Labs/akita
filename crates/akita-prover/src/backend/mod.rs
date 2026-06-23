@@ -7,8 +7,7 @@ pub(crate) mod onehot;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
-mod recursive_hint;
-mod recursive_witness;
+mod recursive;
 mod ring_switch;
 pub(crate) mod sparse_ring;
 mod tensor_fold;
@@ -24,7 +23,8 @@ pub use multilinear_polynomial::{
 pub use onehot::{
     MultiChunkEntry, OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView, SingleChunkEntry,
 };
-pub use recursive_hint::RecursiveCommitmentHintCache;
-pub use recursive_witness::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
+pub use recursive::{
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
+};
 pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
