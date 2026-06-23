@@ -3,6 +3,7 @@ use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend,
+    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
     SuffixRingSwitchProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
@@ -95,29 +96,11 @@ where
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
-    O: OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 32>
-        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 64>
-        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 128>
-        + OpeningProveBackendFor<Cfg::Field, RecursiveWitnessFlat, 256>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 32>, 32>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 64>, 64>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 128>, 128>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 256>, 256>
+    O: SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    TS: TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 32>
-        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 64>
-        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 128>
-        + TensorBackendFor<Cfg::Field, RecursiveWitnessFlat, Cfg::ExtField, 256>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 32>, Cfg::ExtField, 32>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 64>, Cfg::ExtField, 64>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 128>, Cfg::ExtField, 128>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, 256>, Cfg::ExtField, 256>
+    TS: SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     R: SuffixRingSwitchProveBackend<Cfg::Field>

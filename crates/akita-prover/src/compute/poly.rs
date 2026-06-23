@@ -270,6 +270,146 @@ where
 {
 }
 
+/// Opening kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
+pub trait SuffixRootTensorOpeningProveBackendFor<F, const D: usize>:
+    OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+{
+}
+
+impl<F, const D: usize, B> SuffixRootTensorOpeningProveBackendFor<F, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    B: OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>,
+{
+}
+
+/// Tensor kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
+pub trait SuffixRootTensorTensorProveBackendFor<F, E, const D: usize>:
+    TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+}
+
+impl<F, E, const D: usize, B> SuffixRootTensorTensorProveBackendFor<F, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    B: TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>,
+{
+}
+
+/// Opening kernels for [`RecursiveWitnessFlat`] at config ring `D` and every suffix fold dimension.
+pub trait SuffixWitnessOpeningProveBackendFor<F, const D: usize>:
+    OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
+    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
+    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
+    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+{
+}
+
+impl<F, const D: usize, B> SuffixWitnessOpeningProveBackendFor<F, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    B: OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>,
+{
+}
+
+/// Tensor kernels for [`RecursiveWitnessFlat`] at config ring `D` and every suffix fold dimension.
+pub trait SuffixWitnessTensorProveBackendFor<F, E, const D: usize>:
+    TensorBackendFor<F, RecursiveWitnessFlat, E, D>
+    + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+    + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
+    + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
+    + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+}
+
+impl<F, E, const D: usize, B> SuffixWitnessTensorProveBackendFor<F, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    B: TensorBackendFor<F, RecursiveWitnessFlat, E, D>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
+{
+}
+
+/// Opening-cluster suffix dispatch: witness plus internal [`RootTensorProjectionPoly`].
+pub trait SuffixDispatchOpeningProveBackendFor<F, const D: usize>:
+    SuffixWitnessOpeningProveBackendFor<F, D> + SuffixRootTensorOpeningProveBackendFor<F, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+{
+}
+
+impl<F, const D: usize, B> SuffixDispatchOpeningProveBackendFor<F, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    B: SuffixWitnessOpeningProveBackendFor<F, D> + SuffixRootTensorOpeningProveBackendFor<F, D>,
+{
+}
+
+/// Tensor-cluster suffix dispatch: witness plus internal [`RootTensorProjectionPoly`].
+pub trait SuffixDispatchTensorProveBackendFor<F, E, const D: usize>:
+    SuffixWitnessTensorProveBackendFor<F, E, D> + SuffixRootTensorTensorProveBackendFor<F, E, D>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+}
+
+impl<F, E, const D: usize, B> SuffixDispatchTensorProveBackendFor<F, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    B: SuffixWitnessTensorProveBackendFor<F, E, D> + SuffixRootTensorTensorProveBackendFor<F, E, D>,
+{
+}
+
 /// Capability: this backend can run **opening fold** kernels over a single
 /// source `P` (evaluate/fold and batched decompose-fold).
 pub trait OpeningProveBackendFor<F, P, const D: usize>: ComputeBackendSetup<F>
@@ -627,29 +767,11 @@ where
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
     O: ComputeBackendSetup<F>
         + OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + SuffixDispatchOpeningProveBackendFor<F, D>
         + DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>
         + TensorBackendFor<F, P, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, D>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
+        + SuffixDispatchTensorProveBackendFor<F, E, D>,
     R: ComputeBackendSetup<F>
         + SuffixRingSwitchProveBackend<F>
         + RingSwitchProveBackend<F, D>
@@ -667,29 +789,11 @@ where
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F> + ZkHidingCommitBackend<F, D>,
     O: ComputeBackendSetup<F>
         + OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + SuffixDispatchOpeningProveBackendFor<F, D>
         + DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>
         + TensorBackendFor<F, P, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, D>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
+        + SuffixDispatchTensorProveBackendFor<F, E, D>,
     R: ComputeBackendSetup<F>
         + SuffixRingSwitchProveBackend<F>
         + RingSwitchProveBackend<F, D>

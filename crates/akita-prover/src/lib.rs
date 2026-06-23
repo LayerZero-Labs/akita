@@ -36,8 +36,9 @@ pub use compute::{
     RingSwitchComputeBackend, RingSwitchProveBackend, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
     RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SparseRingCommitRowsPlan, SuffixRingSwitchProveBackend, TensorBackendFor, TensorCluster,
-    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    SparseRingCommitRowsPlan, SuffixDispatchOpeningProveBackendFor,
+    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
+    TensorCluster, TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
