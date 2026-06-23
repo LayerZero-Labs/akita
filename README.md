@@ -30,12 +30,14 @@ pulls in prover-facing APIs.
 The [Akita Book](book/README.md) is the **canonical target** for narrative
 documentation (how the scheme works, how to use it, and the foundations). Most
 chapters are still stubs that cite source paths and specs to fold; until prose
-lands, integrators should also read [`AGENTS.md`](AGENTS.md),
+lands, integrators should read the [Akita Book](book/README.md) (start with
+[`book/src/how/architecture.md`](book/src/how/architecture.md)),
 [`specs/single-point-opening-batch.md`](specs/single-point-opening-batch.md),
 and [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
 Build the book locally with `./scripts/serve-book.sh` (see
 [`book/README.md`](book/README.md) for the toolchain). `AGENTS.md` is the
-maintainer/agent runbook, and `specs/` holds the design records (lifecycle in
+agent command runbook; `docs/` holds maintainer contracts (crate graph,
+verifier contract, CI timing). `specs/` holds design records (lifecycle in
 [`specs/PRUNING.md`](specs/PRUNING.md)). Documentation guardrails (CI + PR
 comments) are in [`docs/documentation.md`](docs/documentation.md).
 
