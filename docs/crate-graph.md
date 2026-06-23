@@ -4,10 +4,31 @@ Akita is split into small workspace crates so verifier-oriented consumers can
 depend on public proof replay without pulling prover-only polynomial backends,
 setup expansion, examples, or benchmark harnesses. This graph is derived from the
 `crates/*/Cargo.toml` path dependencies; keep it in sync when edges change.
-`AGENTS.md` is the authoritative prose description of crate ownership.
+Narrative crate index: [`book/src/how/architecture.md`](../book/src/how/architecture.md).
 
 There is **no** `akita-scheme` crate: the end-to-end `AkitaCommitmentScheme`
 orchestration lives in `akita-pcs`.
+
+## Crate index
+
+| Crate | Role |
+|-------|------|
+| `akita-field` | Field traits, prime/extension fields, FFT, parallel macros |
+| `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
+| `akita-serialization` | Serialization, validation, compression traits |
+| `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
+| `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
+| `akita-challenges` | Challenge sampling helpers |
+| `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
+| `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-planner` | `Cfg`-free schedule engine and offline DP |
+| `akita-schedules` | Shipped schedule table data |
+| `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
+| `akita-setup` | Setup construction and optional cache |
+| `akita-verifier` | Verifier replay (no prover polynomial backends) |
+| `akita-prover` | Commitment, proving, witnesses, polynomial backends |
+| `akita-r1cs` | Deferred R1CS for `zk` only |
+| `akita-pcs` | Umbrella orchestration, examples, integration tests |
 
 ## Dependency Layers
 
@@ -100,8 +121,8 @@ Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
 - `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
   (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
   It depends only on `akita-field`. At the time of this graph, it is a workspace
-  member without downstream `Cargo.toml` edges; cite it from `AGENTS.md` and the
-  polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
+  member without downstream `Cargo.toml` edges; cite it from the architecture
+  chapter and polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types,
   on-demand compact→`LevelParams` expansion, catalog identity validation, and
   the schedule-search DP. It sits **below** `akita-config` and names no
@@ -118,7 +139,7 @@ Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
   expansion) and is directly `<Cfg>`-generic: it depends on `akita-config` and
   therefore reaches `akita-planner` **transitively**. The schedule-search DP is
   consequently verifier-reachable and must reject malformed input with
-  `AkitaError`, never panic (see the Verifier No-Panic Contract in `AGENTS.md`).
+  `AkitaError`, never panic (see [`docs/verifier-contract.md`](verifier-contract.md)).
 - `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
   kernels, the explicit compute-backend operation traits, recursive and
   ring-switch witness construction, proving orchestration, and the

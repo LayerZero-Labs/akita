@@ -1,16 +1,17 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
+    AdditiveGroup, AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, PseudoMersenneField, RandomSampling,
+};
+use akita_prover::compute::{
+    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RootCommitBackend,
+    RootCommitPoly, RootProvePoly, UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
-    ProverComputeBackend,
-};
+use akita_prover::{AkitaProverSetup, CommitmentProver, ProverClaims};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
@@ -80,59 +81,63 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     fn commit<P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         polys: &[P],
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
-        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), backend, prepared)
+        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         polys_per_commitment_group: &[&[P]],
+        stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
-        P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        Self::ExtField: FpExtEncoding<F>,
+        P: RootCommitPoly<F, D>,
+        B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
         akita_prover::batched_commit::<Cfg, D, P, B>(
             polys_per_commitment_group,
             setup.expanded.as_ref(),
-            backend,
-            prepared,
+            stack,
         )
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        backend: &B,
-        prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
+        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: AkitaPolyOps<F, D>,
-        B: ProverComputeBackend<F>,
+        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        P: RootProvePoly<F, D>,
+        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a,
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        let proof = akita_prover::batched_prove::<Cfg, T, P, B, D>(
+        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
-            backend,
-            prepared,
+            stacks,
             claims,
             transcript,
             basis,

@@ -41,8 +41,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     };
 
     AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, Prime32Offset99, 32>()
-            .expect("algebra"),
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 32>().expect("algebra"),
         SetupSection {
             decomposition: DecompositionParams {
                 log_basis: 3,
@@ -75,11 +74,11 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            182,
             [
-                0x10, 0x0d, 0x7e, 0xbb, 0x66, 0xd7, 0xf7, 0xbb, 0x99, 0x57, 0xbe, 0x86, 0x14, 0x19,
-                0x6d, 0x9e, 0x88, 0xdc, 0x7a, 0x39, 0xed, 0xb3, 0xe6, 0x69, 0x61, 0x27, 0x6b, 0x38,
-                0x11, 0xe4, 0xfc, 0xa7,
+                0x8c, 0xab, 0xbf, 0x27, 0x01, 0x9a, 0xaa, 0xfd, 0xc9, 0x75, 0xc4, 0x35, 0x8a, 0xcc,
+                0x85, 0xf6, 0xf8, 0x58, 0x50, 0x84, 0x3e, 0x60, 0x3b, 0x99, 0x23, 0xe6, 0x98, 0x7b,
+                0x79, 0x8f, 0x42, 0x0c,
             ]
         )
     );
@@ -94,14 +93,14 @@ fn fold_linf_descriptor_canonical_digest_pinned_zk() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            182,
             [
-                0x0e, 0x62, 0xc6, 0x82, 0xf2, 0xa6, 0x5d, 0xe1, 0xdb, 0x34, 0xba, 0x86, 0x71, 0x00,
-                0x30, 0x85, 0xc6, 0x40, 0xd5, 0x2c, 0x8b, 0xb5, 0x5b, 0xd1, 0x45, 0xbe, 0xa8, 0xed,
-                0x15, 0x02, 0x88, 0xa7,
+                0x11, 0xe2, 0x56, 0x90, 0x0b, 0xb2, 0x88, 0xec, 0xd4, 0xb2, 0x25, 0x74, 0xbb, 0xb6,
+                0x75, 0x0d, 0xf5, 0x62, 0xbb, 0x0f, 0x52, 0xed, 0x4c, 0x20, 0xbd, 0xf0, 0x9d, 0x4e,
+                0x99, 0xa6, 0xb8, 0x54,
             ]
         ),
-        "update pinned zk digest after changing descriptor layout"
+        "update pinned zk digest after collapsing descriptor extension degrees"
     );
 }
 
@@ -268,17 +267,14 @@ fn descriptor_rejects_stale_schema_version() {
 #[test]
 fn algebra_section_binds_prime_and_extension_shape() {
     let fp32 =
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, Prime32Offset99, 32>()
-            .expect("fp32 algebra");
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 32>().expect("fp32 algebra");
     let fp64 =
-        AlgebraSection::for_fields::<Prime64Offset59, Prime64Offset59, Prime64Offset59, 32>()
-            .expect("fp64 algebra");
+        AlgebraSection::for_fields::<Prime64Offset59, Prime64Offset59, 32>().expect("fp64 algebra");
 
     assert_ne!(fp32.prime_modulus_be, fp64.prime_modulus_be);
     assert_eq!(fp32.ring_dimension_d, 32);
     assert_eq!(fp32.field_extension_degree, 1);
-    assert_eq!(fp32.claim_extension_degree, 1);
-    assert_eq!(fp32.challenge_extension_degree, 1);
+    assert_eq!(fp32.extension_degree, 1);
 }
 
 #[test]

@@ -41,21 +41,25 @@ fn zk_tail_bound_with_grind_onehot_roundtrip() {
         let setup =
             <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("commit");
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/zk-onehot");
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &[&poly], &commitment, hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

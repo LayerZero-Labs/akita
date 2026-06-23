@@ -3,7 +3,8 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
-pub(super) use akita_prover::AkitaPolyOps;
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
+use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
@@ -62,7 +63,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 
 pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     point: &'a [FF],
-    polynomials: &'a [P],
+    polynomials: &'a [&'a P],
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
@@ -90,20 +91,28 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     )
 }
 
-pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
-    poly: &P,
+pub(super) fn opening_from_poly<'a, const D: usize, P>(
+    poly: &'a P,
     point: &[F],
     layout: &LevelParams,
-) -> F {
-    opening_from_poly_with_basis(poly, point, layout, BasisMode::Lagrange)
+) -> F
+where
+    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
+    opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
 }
 
-pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>>(
-    poly: &P,
+pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
+    poly: &'a P,
     point: &[F],
     layout: &LevelParams,
     basis_mode: BasisMode,
-) -> F {
+) -> F
+where
+    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
     assert!(
@@ -126,11 +135,18 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     )
     .expect("opening point shape should match layout");
 
-    let (folded_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::<P::OpeningView<'a>, F, D>::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let folded_ring = opening.eval;
     let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]

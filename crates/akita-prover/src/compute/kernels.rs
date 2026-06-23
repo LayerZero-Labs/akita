@@ -12,7 +12,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
-use akita_types::{FlatDigitBlocks, FpExtEncoding};
+use akita_types::FpExtEncoding;
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///
@@ -27,6 +27,17 @@ pub enum TensorPackedWitness<E: FieldCore> {
     Sparse(SparseExtensionOpeningWitness<E>),
 }
 
+/// Outcome of a batched decompose-fold kernel invocation.
+#[derive(Debug)]
+pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
+    /// Fused batched witness produced by the kernel.
+    Fused(DecomposeFoldWitness<F, D>),
+    /// No fused path; caller should decompose-fold each polynomial and aggregate.
+    FallbackPerPoly,
+    /// Batch shape or challenge plan is not supported.
+    Unsupported,
+}
+
 /// Inner Ajtai commit kernel over a borrowed commit source view `S`.
 ///
 /// `S` is the extensibility hook: a downstream crate defines its own commit
@@ -37,16 +48,8 @@ pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
-    /// Decomposed inner commitment blocks for `source`.
+    /// Inner commitment that preserves the recomposed inner rows.
     fn commit_inner(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: S,
-        plan: CommitInnerPlan,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
-
-    /// Inner commitment that also preserves the recomposed inner rows.
-    fn commit_inner_witness(
         &self,
         prepared: &Self::PreparedSetup<D>,
         source: S,
@@ -117,16 +120,12 @@ where
     F: FieldCore + CanonicalField,
 {
     /// Fused batched decompose-fold at one opening point.
-    ///
-    /// Returns `Ok(None)` when the backend/source has no fused batched path,
-    /// `Ok(Some(_))` for the fused witness, and `Err(_)` when a batched fold was
-    /// attempted but the input was rejected.
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup<D>>,
         source: S,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>;
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError>;
 }
 
 /// Tensor projection kernel over a borrowed tensor view `S` for opening at an

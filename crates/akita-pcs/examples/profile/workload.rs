@@ -3,15 +3,19 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
+    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
+    FromPrimitiveInt, LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::compute::{
+    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootCommitBackend, RootCommitPoly,
+    RootPolyShape, RootProvePoly,
+};
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
-    FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, FoldGrindObserverGuard,
+    OneHotIndex, OneHotPoly,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -292,14 +296,16 @@ where
         .fold(E::zero(), |acc, weight| acc + weight)
 }
 
-fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
-    poly: &P,
+fn opening_from_poly<'a, FF, const D: usize, P>(
+    poly: &'a P,
     point: &[FF],
     layout: &LevelParams,
     basis: BasisMode,
 ) -> FF
 where
     FF: CanonicalField,
+    P: RootProvePoly<FF, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
@@ -323,20 +329,32 @@ where
     )
     .expect("opening point shape should match layout");
 
-    let (folded_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::<P::OpeningView<'a>, FF, D>::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let folded_ring = opening.eval;
     let packed_inner = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
+fn run_prove<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF>,
+    P: RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
+>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
-    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
+    stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend, D>,
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
@@ -367,17 +385,18 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         + HasWide
         + AkitaSerialize
         + 'static,
+    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
-    Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
+    CpuBackend:
+        RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
         setup,
-        &CpuBackend,
-        prepared,
         std::slice::from_ref(poly),
+        stack,
     )
     .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -399,8 +418,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     let _grind_observer = FoldGrindObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
-        &CpuBackend,
-        prepared,
         (
             pt,
             vec![CommittedPolynomials {
@@ -409,6 +426,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
                 hint,
             }],
         ),
+        stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -562,16 +580,21 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             FF,
             D,
-        >>::setup_prover(poly.num_vars(), 1),
-        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            FF,
-            D,
-        >>::setup_prover_recursion(poly.num_vars(), 1),
+        >>::setup_prover(RootPolyShape::num_vars(&poly), 1),
+        SetupContributionMode::Recursive => {
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(
+                RootPolyShape::num_vars(&poly),
+                1,
+            )
+        }
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -584,7 +607,15 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
+    run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
+        label,
+        &setup,
+        &stack,
+        &poly,
+        &original_pt,
+        opening,
+        plan,
+    );
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -663,6 +694,9 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -675,7 +709,15 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     report_crt_profile(label, prepared.shared_ntt_profile());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
+    run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
+        label,
+        &setup,
+        &stack,
+        &onehot_poly,
+        &pt,
+        opening,
+        plan,
+    );
 }
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -774,6 +816,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -787,13 +832,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_crt_profile(label, prepared.shared_ntt_profile());
 
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        &poly_refs,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -809,8 +849,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let _grind_observer = FoldGrindObserverGuard::install();
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         (
             &pt[..],
             vec![CommittedPolynomials {
@@ -819,6 +857,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 hint: hints.into_iter().next().unwrap(),
             }],
         ),
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

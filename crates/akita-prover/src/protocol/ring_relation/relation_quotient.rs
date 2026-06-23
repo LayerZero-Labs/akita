@@ -2,6 +2,11 @@ use super::repeated_b::repeated_b_commitment_rows;
 #[cfg(feature = "zk")]
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
+use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
+use crate::compute::{
+    OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
+    RingSwitchRelationKernel, RingSwitchRelationPlan,
+};
 use crate::validation::validate_i8_setup_log_basis;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
@@ -205,8 +210,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ring_switch_ctx: &OperationCtx<'_, F, B, D>,
     lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
@@ -229,8 +233,10 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
-    B: RingSwitchComputeBackend<F>,
+    B: RingSwitchProveBackend<F, D>,
 {
+    let backend = ring_switch_ctx.backend();
+    let prepared = ring_switch_ctx.prepared();
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     if num_polys_per_commitment_group.is_empty() || num_polys_per_commitment_group.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -350,16 +356,19 @@ where
     } else {
         &[]
     };
-    let relation_rows = backend.ring_switch_relation_rows::<D>(
+    let relation_rows = RingSwitchRelationKernel::relation_rows(
+        backend,
         prepared,
-        RingSwitchRelationRowsPlan {
-            n_d: n_d_active,
-            n_b: relation_n_b,
-            n_a,
+        RingSwitchRelationView {
             e_hat: e_hat_flat,
             t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_folded_centered_inf_norm,
+        },
+        RingSwitchRelationPlan {
+            n_d: n_d_active,
+            n_b: relation_n_b,
+            n_a,
             log_basis: lp.log_basis,
         },
     )?;
@@ -384,13 +393,14 @@ where
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {
-        let segment_rows = backend.ring_switch_quotient_rows::<D>(
+        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
+            backend,
             prepared,
-            RingSwitchQuotientRowsPlan {
-                n_a,
+            RingSwitchQuotientView {
                 z_segment,
                 z_folded_centered_inf_norm,
             },
+            RingSwitchQuotientPlan { n_a },
         )?;
         if segment_rows.len() != n_a {
             return Err(AkitaError::InvalidProof);

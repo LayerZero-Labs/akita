@@ -1,6 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::FieldCore;
+use akita_types::LevelParams;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -25,7 +26,7 @@ use akita_field::FieldCore;
 //
 // PO1 establishes this surface additively: the kernel traits are skeletons with
 // no Akita impls yet (the six representation nodes implement them in their own
-// backend files), and the monolithic `ProverComputeBackend`/`AkitaPolyOps`
+// backend files), and the monolithic `ProverComputeBackend` ladder
 // boundary is intentionally left in place for PO4 to remove.
 // ===========================================================================
 
@@ -47,26 +48,17 @@ pub struct CommitInnerPlan {
     pub log_basis: u32,
 }
 
-/// Base-multiplier fold parameters for a fused evaluate-and-fold opening.
-#[derive(Debug, Clone, Copy)]
-pub struct OpeningFoldBasePlan<'a, F: FieldCore> {
-    /// Outer evaluation scalars applied to the folded blocks.
-    pub eval_outer_scalars: &'a [F],
-    /// Per-block fold scalars.
-    pub fold_scalars: &'a [F],
-    /// Block length in ring elements.
-    pub block_len: usize,
-}
-
-/// Ring-multiplier fold parameters for a fused evaluate-and-fold opening.
-#[derive(Debug, Clone, Copy)]
-pub struct OpeningFoldRingPlan<'a, F: FieldCore, const D: usize> {
-    /// Outer evaluation ring multipliers applied to the folded blocks.
-    pub eval_outer_scalars: &'a [CyclotomicRing<F, D>],
-    /// Per-block fold ring multipliers.
-    pub fold_scalars: &'a [CyclotomicRing<F, D>],
-    /// Block length in ring elements.
-    pub block_len: usize,
+impl CommitInnerPlan {
+    /// Build inner-commit parameters from a validated commitment layout.
+    pub fn from_level(params: &LevelParams) -> Self {
+        Self {
+            n_a: params.a_key.row_len(),
+            block_len: params.block_len,
+            num_digits_commit: params.num_digits_commit,
+            num_digits_open: params.num_digits_open,
+            log_basis: params.log_basis,
+        }
+    }
 }
 
 /// Fold parameters for a fused evaluate-and-fold opening.
@@ -77,9 +69,23 @@ pub struct OpeningFoldRingPlan<'a, F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, Copy)]
 pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     /// Base multiplier point: scalar fold weights.
-    Base(OpeningFoldBasePlan<'a, F>),
+    Base {
+        /// Outer evaluation scalars applied to the folded blocks.
+        eval_outer_scalars: &'a [F],
+        /// Per-block fold scalars.
+        fold_scalars: &'a [F],
+        /// Block length in ring elements.
+        block_len: usize,
+    },
     /// Ring multiplier point: ring-element fold weights.
-    Ring(OpeningFoldRingPlan<'a, F, D>),
+    Ring {
+        /// Outer evaluation ring multipliers applied to the folded blocks.
+        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+        /// Per-block fold ring multipliers.
+        fold_scalars: &'a [CyclotomicRing<F, D>],
+        /// Block length in ring elements.
+        block_len: usize,
+    },
 }
 
 /// Fused evaluate-and-fold output.
@@ -104,19 +110,6 @@ pub struct DecomposeFoldPlan<'a> {
     pub log_basis: u32,
 }
 
-/// Tensor-shaped batched decompose + fold parameters at one opening point.
-#[derive(Debug, Clone, Copy)]
-pub struct DecomposeFoldTensorBatchPlan<'a> {
-    /// Tensor-structured fold challenges.
-    pub tensor: &'a TensorChallenges,
-    /// Block length in ring elements.
-    pub block_len: usize,
-    /// Number of balanced digits.
-    pub num_digits: usize,
-    /// Logarithm of the gadget basis.
-    pub log_basis: u32,
-}
-
 /// Batched decompose + fold parameters at one opening point.
 ///
 /// Both the sparse-challenge and tensor-shaped fused batched paths are exposed
@@ -125,9 +118,27 @@ pub struct DecomposeFoldTensorBatchPlan<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum DecomposeFoldBatchPlan<'a> {
     /// Sparse-challenge batched fold.
-    Sparse(DecomposeFoldPlan<'a>),
+    Sparse {
+        /// Sparse fold challenges, outermost first.
+        challenges: &'a [SparseChallenge],
+        /// Block length in ring elements.
+        block_len: usize,
+        /// Number of balanced digits.
+        num_digits: usize,
+        /// Logarithm of the gadget basis.
+        log_basis: u32,
+    },
     /// Tensor-shaped batched fold.
-    Tensor(DecomposeFoldTensorBatchPlan<'a>),
+    Tensor {
+        /// Tensor-structured fold challenges.
+        tensor: &'a TensorChallenges,
+        /// Block length in ring elements.
+        block_len: usize,
+        /// Number of balanced digits.
+        num_digits: usize,
+        /// Logarithm of the gadget basis.
+        log_basis: u32,
+    },
 }
 
 /// Scalar operation parameters for the fused ring-switch relation rows.

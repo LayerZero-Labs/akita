@@ -2,7 +2,7 @@
 //!
 //! Contains balanced-digit decomposition, sparse multiply-accumulate kernels,
 //! position-partitioned accumulation strategies, and the final witness
-//! construction used by all three [`AkitaPolyOps`](crate::AkitaPolyOps)
+//! construction used by dense, one-hot, and sparse-ring backends.
 //! implementations.
 
 mod decompose_fold_partitioned;
@@ -18,7 +18,7 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::CanonicalField;
+use akita_field::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -414,6 +414,40 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         centered_coeffs,
         centered_inf_norm,
     }
+}
+
+/// Fused base-field fold + evaluation shared by backends that do not specialize it.
+pub(crate) fn fused_evaluate_and_fold_base<F, const D: usize>(
+    folded: Vec<CyclotomicRing<F, D>>,
+    eval_outer_scalars: &[F],
+) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
+where
+    F: CanonicalField,
+{
+    let eval = folded
+        .iter()
+        .zip(eval_outer_scalars.iter())
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+            acc + f_i.scale(s_i)
+        });
+    (eval, folded)
+}
+
+/// Fused ring-multiplier fold + evaluation shared by backends that do not specialize it.
+pub(crate) fn fused_evaluate_and_fold_ring<F, const D: usize>(
+    folded: Vec<CyclotomicRing<F, D>>,
+    eval_outer_scalars: &[CyclotomicRing<F, D>],
+) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
+where
+    F: FieldCore,
+{
+    let eval = folded
+        .iter()
+        .zip(eval_outer_scalars.iter())
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+            acc + (*f_i * *s_i)
+        });
+    (eval, folded)
 }
 
 #[cfg(test)]
