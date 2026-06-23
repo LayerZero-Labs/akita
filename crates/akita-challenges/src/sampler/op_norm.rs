@@ -72,9 +72,11 @@ pub(crate) enum Decision {
 pub(crate) struct OpNormTable {
     d: usize,
     q: u32,
-    /// `base_cos[t] ~= 2^q cos(pi t / D)` for `t in 0..2D`.
+    /// Certified `2^q cos/sin(pi t / D)` source tables, retained only for the
+    /// accuracy/reference unit tests; production reads `freq_*_at`.
+    #[cfg(test)]
     base_cos: Vec<i128>,
-    /// `base_sin[t] ~= 2^q sin(pi t / D)` for `t in 0..2D`.
+    #[cfg(test)]
     base_sin: Vec<i128>,
     /// Sound bound `|base_*[t] - 2^q trig(pi t / D)| <= eps_root`.
     eps_root: i128,
@@ -82,13 +84,8 @@ pub(crate) struct OpNormTable {
     max_l1: i128,
     /// Largest threshold `t` the overflow validation covered.
     max_t: i128,
-    /// `base_cos[t]` and `base_sin[t]` downcast for `i64` inner accumulation.
-    /// `i64` mirrors of `base_cos` / `base_sin` (parity checks in unit tests).
-    #[allow(dead_code)]
-    base_cos_i64: Vec<i64>,
-    #[allow(dead_code)]
-    base_sin_i64: Vec<i64>,
-    /// Transposed rows `freq_cos_at[pos * half_d + k]` for fast accumulation.
+    /// Transposed rows `freq_cos_at[pos * half_d + k]` for fast accumulation,
+    /// the `i64` downcast of the certified `base_*` tables (`|entry| <= 2^q`).
     freq_cos_at: Vec<i64>,
     freq_sin_at: Vec<i64>,
 }
@@ -123,54 +120,50 @@ impl OpNormTable {
         validate_no_overflow(q, eps_root, max_l1, max_t)?;
         validate_i64_accumulators(q, max_l1)?;
 
-        let base_cos_i64: Vec<i64> = base_cos
-            .iter()
-            .map(|&v| {
-                i64::try_from(v).map_err(|_| {
-                    AkitaError::InvalidSetup(
-                        "OpNormTable: base_cos entry does not fit i64 accumulator path".to_string(),
-                    )
+        let downcast = |table: &[i128], name: &str| -> Result<Vec<i64>, AkitaError> {
+            table
+                .iter()
+                .map(|&v| {
+                    i64::try_from(v).map_err(|_| {
+                        AkitaError::InvalidSetup(format!(
+                            "OpNormTable: {name} entry does not fit i64 accumulator path"
+                        ))
+                    })
                 })
-            })
-            .collect::<Result<_, _>>()?;
-        let base_sin_i64: Vec<i64> = base_sin
-            .iter()
-            .map(|&v| {
-                i64::try_from(v).map_err(|_| {
-                    AkitaError::InvalidSetup(
-                        "OpNormTable: base_sin entry does not fit i64 accumulator path".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()?;
+                .collect()
+        };
+        let base_cos_i64 = downcast(&base_cos, "base_cos")?;
+        let base_sin_i64 = downcast(&base_sin, "base_sin")?;
         let (freq_cos_at, freq_sin_at) =
             op_norm_accumulate::build_freq_at_tables(d, &base_cos_i64, &base_sin_i64);
 
         Ok(Self {
             d,
             q,
+            #[cfg(test)]
             base_cos,
+            #[cfg(test)]
             base_sin,
             eps_root,
             max_l1,
             max_t,
-            base_cos_i64,
-            base_sin_i64,
             freq_cos_at,
             freq_sin_at,
         })
     }
 
+    /// `i64` downcast of `base_cos[idx]` (certified entry, `|entry| <= 2^q`).
     #[cfg(test)]
     #[inline]
     pub(super) fn base_cos_i64(&self, idx: usize) -> i64 {
-        self.base_cos_i64[idx]
+        self.base_cos[idx] as i64
     }
 
+    /// `i64` downcast of `base_sin[idx]`.
     #[cfg(test)]
     #[inline]
     pub(super) fn base_sin_i64(&self, idx: usize) -> i64 {
-        self.base_sin_i64[idx]
+        self.base_sin[idx] as i64
     }
 
     #[inline]
@@ -182,45 +175,14 @@ impl OpNormTable {
         )
     }
 
-    /// Production predicate on stack-buffered `(positions, coeffs)` slices.
+    /// Certified operator-norm predicate on stack-buffered `(positions, coeffs)`
+    /// slices, scanning the `D/2` distinct frequencies (`zeta_{D-1-k} =
+    /// conj(zeta_k)`) with the transposed `i64` accumulators.
     pub(crate) fn decide_parts(
         &self,
         positions: &[u32],
         coeffs: &[i8],
         t: u64,
-        num_freqs: usize,
-    ) -> Result<Decision, AkitaError> {
-        self.decide_parts_inner(positions, coeffs, t, num_freqs, DecideAccum::TransposedI64)
-    }
-
-    /// Legacy `k`-outer nested loop with `i128` accumulators (A/B benchmark baseline).
-    pub(crate) fn decide_parts_legacy_nested_i128(
-        &self,
-        positions: &[u32],
-        coeffs: &[i8],
-        t: u64,
-        num_freqs: usize,
-    ) -> Result<Decision, AkitaError> {
-        self.decide_parts_inner(positions, coeffs, t, num_freqs, DecideAccum::NestedI128)
-    }
-
-    /// Slice form of the production (strict) predicate for stack-buffered rejection draws.
-    pub(crate) fn accept_strict_parts(
-        &self,
-        positions: &[u32],
-        coeffs: &[i8],
-        t: u64,
-    ) -> Result<bool, AkitaError> {
-        Ok(self.decide_parts(positions, coeffs, t, self.d / 2)? == Decision::Accept)
-    }
-
-    fn decide_parts_inner(
-        &self,
-        positions: &[u32],
-        coeffs: &[i8],
-        t: u64,
-        num_freqs: usize,
-        accum: DecideAccum,
     ) -> Result<Decision, AkitaError> {
         if positions.len() != coeffs.len() {
             return Err(AkitaError::InvalidInput(
@@ -254,63 +216,22 @@ impl OpNormTable {
             )));
         }
 
-        // Angle index math stays in `usize` for the legacy nested path. The
-        // transposed path precomputes indices at table-build time.
-        let two_d = 2 * self.d;
         let r = l1 * self.eps_root;
         let two_r = 2 * r;
         let two_r_sq = 2 * r * r;
         let threshold = (i128::from(t) * i128::from(t)) << (2 * self.q);
-
-        let mut indeterminate = false;
-        let accum = match (accum, num_freqs == self.d / 2) {
-            (DecideAccum::TransposedI64, true) => DecideAccum::TransposedI64,
-            (DecideAccum::TransposedI64, false) => DecideAccum::NestedI128,
-            (DecideAccum::NestedI128, _) => DecideAccum::NestedI128,
-        };
-        match accum {
-            DecideAccum::TransposedI64 => {
-                return decide_transposed_fused(
-                    self, positions, coeffs, r, two_r, two_r_sq, threshold, num_freqs,
-                );
-            }
-            DecideAccum::NestedI128 => {
-                for k in 0..num_freqs {
-                    let mult = (2 * k + 1) % two_d;
-                    let mut acc_re: i128 = 0;
-                    let mut acc_im: i128 = 0;
-                    for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
-                        let idx = (mult * pos as usize) % two_d;
-                        let coeff = i128::from(coeff);
-                        acc_re += coeff * self.base_cos[idx];
-                        acc_im += coeff * self.base_sin[idx];
-                    }
-                    let abs_re = acc_re.abs();
-                    let abs_im = acc_im.abs();
-                    if decide_frequency(
-                        abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-                    )? {
-                        return Ok(Decision::Reject);
-                    }
-                    if !frequency_accepts_upper(
-                        abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-                    ) {
-                        indeterminate = true;
-                    }
-                }
-            }
-        }
-        if indeterminate {
-            Ok(Decision::Indeterminate)
-        } else {
-            Ok(Decision::Accept)
-        }
+        decide_transposed_fused(self, positions, coeffs, r, two_r, two_r_sq, threshold)
     }
-}
 
-enum DecideAccum {
-    TransposedI64,
-    NestedI128,
+    /// Slice form of the production (strict) predicate for stack-buffered rejection draws.
+    pub(crate) fn accept_strict_parts(
+        &self,
+        positions: &[u32],
+        coeffs: &[i8],
+        t: u64,
+    ) -> Result<bool, AkitaError> {
+        Ok(self.decide_parts(positions, coeffs, t)? == Decision::Accept)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,9 +243,8 @@ fn decide_transposed_fused(
     two_r: i128,
     two_r_sq: i128,
     threshold: i128,
-    num_freqs: usize,
 ) -> Result<Decision, AkitaError> {
-    debug_assert_eq!(num_freqs, table.d / 2);
+    let num_freqs = table.d / 2;
     let mut indeterminate = false;
     let mut start_k = 0;
     while start_k < num_freqs {
@@ -680,26 +600,53 @@ mod tests {
         challenge: &SparseChallenge,
         threshold: u64,
     ) -> Result<Decision, AkitaError> {
-        table.decide_parts(
-            &challenge.positions,
-            &challenge.coeffs,
-            threshold,
-            table.d / 2,
-        )
+        table.decide_parts(&challenge.positions, &challenge.coeffs, threshold)
     }
 
-    fn decide_with_freqs(
+    /// Test-only naive `k`-outer nested-`i128` reference over `num_freqs`
+    /// frequencies, mirroring the production conservative-interval decision but
+    /// without the transposed accumulation. Cross-checks the production `D/2`
+    /// scan and confirms it equals the full `D`-frequency spectrum.
+    fn decide_reference_nested(
         table: &OpNormTable,
-        challenge: &SparseChallenge,
-        threshold: u64,
+        ch: &SparseChallenge,
+        t: u64,
         num_freqs: usize,
-    ) -> Result<Decision, AkitaError> {
-        table.decide_parts(
-            &challenge.positions,
-            &challenge.coeffs,
-            threshold,
-            num_freqs,
-        )
+    ) -> Decision {
+        let two_d = 2 * table.d;
+        let l1: i128 = ch.coeffs.iter().map(|c| i128::from(c.unsigned_abs())).sum();
+        let r = l1 * table.eps_root;
+        let two_r = 2 * r;
+        let two_r_sq = 2 * r * r;
+        let threshold = (i128::from(t) * i128::from(t)) << (2 * table.q);
+        let mut indeterminate = false;
+        for k in 0..num_freqs {
+            let mult = (2 * k + 1) % two_d;
+            let mut acc_re: i128 = 0;
+            let mut acc_im: i128 = 0;
+            for (&pos, &coeff) in ch.positions.iter().zip(ch.coeffs.iter()) {
+                let idx = (mult * pos as usize) % two_d;
+                let coeff = i128::from(coeff);
+                acc_re += coeff * table.base_cos[idx];
+                acc_im += coeff * table.base_sin[idx];
+            }
+            let (abs_re, abs_im) = (acc_re.abs(), acc_im.abs());
+            if decide_frequency(abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold)
+                .unwrap()
+            {
+                return Decision::Reject;
+            }
+            if !frequency_accepts_upper(
+                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
+            ) {
+                indeterminate = true;
+            }
+        }
+        if indeterminate {
+            Decision::Indeterminate
+        } else {
+            Decision::Accept
+        }
     }
 
     /// f64 reference, used ONLY to sanity-check the certified integer path.
@@ -832,14 +779,18 @@ mod tests {
     }
 
     #[test]
-    fn reduced_scan_matches_full_spectrum() {
+    fn production_matches_reference_and_reduced_scan_matches_full_spectrum() {
         let d = 64;
         let t = table(d);
         let mut state = 0x1234_5678_9abc_def0u64;
         for _ in 0..2000 {
             let ch = random_shell(&mut state, d, 31, 11);
-            let reduced = decide_with_freqs(&t, &ch, 16, d / 2).unwrap();
-            let full = decide_with_freqs(&t, &ch, 16, d).unwrap();
+            // Production transposed `D/2` scan equals the naive `D/2` reference,
+            // which in turn equals the full `D`-frequency spectrum.
+            let production = decide_ch(&t, &ch, 16).unwrap();
+            let reduced = decide_reference_nested(&t, &ch, 16, d / 2);
+            let full = decide_reference_nested(&t, &ch, 16, d);
+            assert_eq!(production, reduced, "challenge {ch:?}");
             assert_eq!(reduced, full, "challenge {ch:?}");
         }
     }
@@ -913,313 +864,7 @@ mod tests {
     }
 }
 
-/// Microbenchmark (ignored by default) for the operator-norm predicate and
-/// `D=64` exact-shell sampling, including the verifier-side rejection-sampling
-/// replay cost. Not a correctness test; prints a timing report.
-///
-/// ```text
-/// cargo test -p akita-challenges --release op_norm::perf -- --ignored --nocapture
-/// ```
+/// Ignored measurement harness for the operator-norm predicate and `D=64`
+/// exact-shell rejection sampling. See [`perf`] for the runnable studies.
 #[cfg(all(test, not(feature = "zk")))]
-mod perf {
-    use super::{Decision, OpNormTable};
-    use crate::sampler::exact_shell::sample_exact_shell_challenge;
-    use crate::sampler::xof::XofCursor;
-    use crate::{SparseChallenge, SparseChallengeConfig};
-    use akita_field::AkitaError;
-    use akita_field::Prime128OffsetA7F7;
-    use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
-    use akita_transcript::{AkitaTranscript, Transcript};
-    use std::hint::black_box;
-    use std::time::Instant;
-
-    type F = Prime128OffsetA7F7;
-
-    const D: usize = 64;
-    const Q: u32 = 48;
-    const T: u64 = 16;
-    const C1: usize = 31;
-    const C2: usize = 11;
-
-    fn build_table() -> OpNormTable {
-        OpNormTable::new(D, Q, (2 * D) as u64, 64).unwrap()
-    }
-
-    fn decide_ch(
-        table: &OpNormTable,
-        challenge: &SparseChallenge,
-        threshold: u64,
-    ) -> Result<Decision, AkitaError> {
-        table.decide_parts(
-            &challenge.positions,
-            &challenge.coeffs,
-            threshold,
-            table.d / 2,
-        )
-    }
-
-    fn decide_with_freqs(
-        table: &OpNormTable,
-        challenge: &SparseChallenge,
-        threshold: u64,
-        num_freqs: usize,
-    ) -> Result<Decision, AkitaError> {
-        table.decide_parts(
-            &challenge.positions,
-            &challenge.coeffs,
-            threshold,
-            num_freqs,
-        )
-    }
-
-    /// Float reference for the operator norm `gamma(c) = max_k |c(zeta_k)|`,
-    /// used ONLY to study the acceptance-probability vs threshold tradeoff (not
-    /// the protocol predicate, which stays integer-certified).
-    fn gamma_f64(ch: &SparseChallenge) -> f64 {
-        use std::f64::consts::PI;
-        let mut maxsq = 0.0f64;
-        for k in 0..D / 2 {
-            let base = (2 * k + 1) as f64 * PI / D as f64;
-            let (mut re, mut im) = (0.0f64, 0.0f64);
-            for (&pos, &coeff) in ch.positions.iter().zip(ch.coeffs.iter()) {
-                let theta = base * pos as f64;
-                re += coeff as f64 * theta.cos();
-                im += coeff as f64 * theta.sin();
-            }
-            let s = re * re + im * im;
-            if s > maxsq {
-                maxsq = s;
-            }
-        }
-        maxsq.sqrt()
-    }
-
-    #[test]
-    #[ignore = "measurement: run with --release --ignored --nocapture"]
-    fn perf_gamma_distribution() {
-        let mut cur = warm_cursor();
-        let n: usize = 4_000_000;
-        let mut gammas: Vec<f64> = Vec::with_capacity(n);
-        for _ in 0..n {
-            let ch = sample_exact_shell_challenge(&mut cur, D, C1, C2);
-            gammas.push(gamma_f64(&ch));
-        }
-        gammas.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let pct = |q: f64| gammas[((n as f64 * q) as usize).min(n - 1)];
-        let mean: f64 = gammas.iter().sum::<f64>() / n as f64;
-        println!("\n=== gamma(c) distribution, D={D} shell=({C1},{C2}), N={n} ===");
-        println!("mean   = {mean:.3}");
-        println!("p50    = {:.3}", pct(0.50));
-        println!("p90    = {:.3}", pct(0.90));
-        println!("p99    = {:.3}", pct(0.99));
-        println!("p99.9  = {:.3}", pct(0.999));
-        println!("p99.99 = {:.3}", pct(0.9999));
-        println!("max    = {:.3}", gammas[n - 1]);
-        println!(
-            "(||c||_1 = {} is the trivial deterministic bound)",
-            C1 + 2 * C2
-        );
-        println!("--- acceptance p(T) = Pr[gamma <= T] and avg candidates 1/p ---");
-        for t in 14..=30u32 {
-            let acc = gammas.partition_point(|&g| g <= t as f64);
-            let p = acc as f64 / n as f64;
-            let cand = if p > 0.0 { 1.0 / p } else { f64::INFINITY };
-            println!("T={t:>2}: p={p:.5}  candidates/accept={cand:>7.3}");
-        }
-        println!();
-    }
-
-    fn warm_cursor() -> XofCursor {
-        XofCursor::from_seed(&[0x42u8; 32])
-    }
-
-    fn time_ns(iters: u64, mut f: impl FnMut()) -> f64 {
-        let start = Instant::now();
-        for _ in 0..iters {
-            f();
-        }
-        start.elapsed().as_nanos() as f64 / iters as f64
-    }
-
-    /// Reference variant showing the remaining headroom past production: on top
-    /// of the `usize` index (now in production), accumulators are also `i64`
-    /// (`|R_k|, |I_k| <= ||c||_1 2^q < 2^55` for `q <= 48`), with `i128` used
-    /// only for the `O(d/2)` squarings. Not adopted: it recouples the accumulator
-    /// budget to `(q, ||c||_1)` for a gain the verifier-side cost does not need.
-    fn decide_opt(tbl: &OpNormTable, ch: &SparseChallenge, t: u64) -> Decision {
-        let two_d = 2 * tbl.d;
-        let mut l1: i128 = 0;
-        for &c in &ch.coeffs {
-            l1 += i128::from(c.unsigned_abs());
-        }
-        let r = l1 * tbl.eps_root;
-        let two_r = 2 * r;
-        let two_r_sq = 2 * r * r;
-        let threshold = (i128::from(t) * i128::from(t)) << (2 * tbl.q);
-        let mut indeterminate = false;
-        for k in 0..tbl.d / 2 {
-            let mult = 2 * k + 1;
-            let mut acc_re: i64 = 0;
-            let mut acc_im: i64 = 0;
-            for (&pos, &coeff) in ch.positions.iter().zip(ch.coeffs.iter()) {
-                let idx = (mult * pos as usize) % two_d;
-                acc_re += coeff as i64 * tbl.base_cos[idx] as i64;
-                acc_im += coeff as i64 * tbl.base_sin[idx] as i64;
-            }
-            let abs_re = i128::from(acc_re.abs());
-            let abs_im = i128::from(acc_im.abs());
-            let re = i128::from(acc_re);
-            let im = i128::from(acc_im);
-            let center = re * re + im * im;
-            let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
-            if upper <= threshold {
-                continue;
-            }
-            let low_re = (abs_re - r).max(0);
-            let low_im = (abs_im - r).max(0);
-            if low_re * low_re + low_im * low_im > threshold {
-                return Decision::Reject;
-            }
-            indeterminate = true;
-        }
-        if indeterminate {
-            Decision::Indeterminate
-        } else {
-            Decision::Accept
-        }
-    }
-
-    #[test]
-    #[ignore = "microbenchmark: run with --release --ignored --nocapture"]
-    fn perf_op_norm_d64() {
-        let tbl = build_table();
-        let mut cur = warm_cursor();
-
-        // (E) one-time certified table construction.
-        let build_ns = time_ns(2_000, || {
-            black_box(OpNormTable::new(D, Q, (2 * D) as u64, 64).unwrap());
-        });
-
-        // (A) per-candidate sampling: decode one (31,11) shell from a warm XOF.
-        for _ in 0..50_000 {
-            black_box(sample_exact_shell_challenge(&mut cur, D, C1, C2));
-        }
-        let sample_ns = time_ns(1_000_000, || {
-            black_box(sample_exact_shell_challenge(&mut cur, D, C1, C2));
-        });
-
-        // Pool of sampled challenges for decide-only timing (realistic mix of
-        // accept / reject / indeterminate).
-        let pool: Vec<SparseChallenge> = (0..4096)
-            .map(|_| sample_exact_shell_challenge(&mut cur, D, C1, C2))
-            .collect();
-        let accepted: SparseChallenge = pool
-            .iter()
-            .find(|ch| {
-                tbl.accept_strict_parts(&ch.positions, &ch.coeffs, T)
-                    .unwrap()
-            })
-            .cloned()
-            .expect("some (31,11) shell accepts at T=16");
-        // The reference variant must agree with production on every challenge.
-        for ch in &pool {
-            assert_eq!(decide_opt(&tbl, ch, T), decide_ch(&tbl, ch, T).unwrap());
-        }
-
-        // (B) op-norm check, production d/2 scan, averaged over the pool.
-        for ch in &pool {
-            black_box(decide_ch(&tbl, ch, T).unwrap());
-        }
-        let mut i = 0usize;
-        let decide_ns = time_ns(1_000_000, || {
-            let ch = &pool[i & (pool.len() - 1)];
-            i += 1;
-            black_box(decide_ch(&tbl, ch, T).unwrap());
-        });
-
-        // (B-opt) reference: inner loop also moved to i64 accumulators.
-        let mut io = 0usize;
-        let decide_opt_ns = time_ns(1_000_000, || {
-            let ch = &pool[io & (pool.len() - 1)];
-            io += 1;
-            black_box(decide_opt(&tbl, ch, T));
-        });
-
-        // (B') worst case: an accepted challenge always scans all d/2 frequencies.
-        let decide_worst_ns = time_ns(1_000_000, || {
-            black_box(decide_ch(&tbl, &accepted, T).unwrap());
-        });
-
-        // (B'') full-spectrum scan (all d frequencies) for the symmetry saving.
-        let mut j = 0usize;
-        let decide_full_ns = time_ns(1_000_000, || {
-            let ch = &pool[j & (pool.len() - 1)];
-            j += 1;
-            black_box(decide_with_freqs(&tbl, ch, T, D).unwrap());
-        });
-
-        // (D) rejection sampling end-to-end (the verifier-side replay): draw and
-        // check candidates until one is accepted.
-        let n_accepted = 100_000u64;
-        let (mut attempts, mut accepts, mut rejects, mut indet) = (0u64, 0u64, 0u64, 0u64);
-        let start = Instant::now();
-        while accepts < n_accepted {
-            attempts += 1;
-            let ch = sample_exact_shell_challenge(&mut cur, D, C1, C2);
-            match decide_ch(&tbl, &ch, T).unwrap() {
-                Decision::Accept => accepts += 1,
-                Decision::Reject => rejects += 1,
-                Decision::Indeterminate => indet += 1,
-            }
-        }
-        let per_accepted_ns = start.elapsed().as_nanos() as f64 / n_accepted as f64;
-        let p = n_accepted as f64 / attempts as f64;
-
-        // Full public sampling path (transcript absorb + SHAKE seed + decode),
-        // amortized per challenge, for n=1 and n=1024 batches.
-        let cfg = SparseChallengeConfig::ExactShell {
-            count_mag1: C1,
-            count_mag2: C2,
-            operator_norm_threshold: T as u32,
-        };
-        let batch_ns = |n: usize, iters: u64| -> f64 {
-            time_ns(iters, || {
-                let mut tr = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-                tr.append_field(b"perf-seed", &F::from_u64(0xC0FFEE));
-                let chs =
-                    crate::sample_sparse_challenges::<F, _, D>(&mut tr, b"perf", n, &cfg, 0, false)
-                        .unwrap();
-                black_box(chs);
-            }) / n as f64
-        };
-        let cold1_ns = batch_ns(1, 20_000);
-        let amort1024_ns = batch_ns(1024, 2_000);
-
-        println!("\n=== operator-norm microbench (D={D}, q={Q}, T={T}, shell=({C1},{C2})) ===");
-        println!(
-            "certified table build (one-time) : {build_ns:>10.0} ns  ({:.2} us)",
-            build_ns / 1e3
-        );
-        println!("sample 1 candidate (warm XOF)    : {sample_ns:>10.2} ns");
-        println!("  full path, n=1 (cold + SHAKE)  : {cold1_ns:>10.2} ns");
-        println!("  full path, per chal. @ n=1024  : {amort1024_ns:>10.2} ns");
-        println!("op-norm check, pool avg (d/2)    : {decide_ns:>10.2} ns  (production: usize idx, i128 accum)");
-        println!(
-            "op-norm check, +i64 accumulators : {decide_opt_ns:>10.2} ns  (reference; not adopted)"
-        );
-        println!("op-norm check, accepted (d/2)    : {decide_worst_ns:>10.2} ns");
-        println!("op-norm check, full d scan       : {decide_full_ns:>10.2} ns");
-        println!(
-            "sample + check, one candidate    : {:>10.2} ns",
-            sample_ns + decide_ns
-        );
-        println!("--- rejection sampling (verifier replay) ---");
-        println!("empirical accept prob p          : {p:.4}  ({accepts} acc / {rejects} rej / {indet} indet, {attempts} attempts)");
-        println!("avg attempts / accepted          : {:.3}", 1.0 / p);
-        println!(
-            "time / accepted challenge        : {per_accepted_ns:>10.2} ns  ({:.3} us)",
-            per_accepted_ns / 1e3
-        );
-        println!();
-    }
-}
+mod perf;

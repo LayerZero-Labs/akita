@@ -1,18 +1,15 @@
 //! Microbenchmarks for D=64 exact-shell operator-norm rejection sampling.
 //!
-//! Includes an **A/B predicate baseline**: legacy `k`-outer / `i128` accumulation vs
-//! production transposed / `i64` accumulation on the same challenge pool.
-//!
 //! Run all groups:
 //!
 //! ```text
 //! cargo bench -p akita-challenges --bench op_norm_rejection
 //! ```
 //!
-//! Predicate A/B only (fast sanity check):
+//! Predicate only (fast sanity check):
 //!
 //! ```text
-//! cargo bench -p akita-challenges --bench op_norm_rejection -- decide_ab
+//! cargo bench -p akita-challenges --bench op_norm_rejection -- decide
 //! ```
 //!
 //! Production XOF replay at `n = 2^16`:
@@ -119,29 +116,15 @@ fn configure_group(group: &mut criterion::BenchmarkGroup<'_, WallTime>, n: usize
     }
 }
 
-/// Predicate-only A/B: same `(31,11)` pool, `T=18`, legacy nested `i128` vs transposed `i64`.
-fn bench_decide_ab(c: &mut Criterion) {
+/// Predicate-only: production transposed `i64` decide on the `(31,11)` pool at `T=18`.
+fn bench_decide(c: &mut Criterion) {
     let case = &CASES[1];
     let table = op_norm_table();
     let pool = shell_pool(case);
     let t = u64::from(case.operator_norm_threshold);
-    let half_d = D / 2;
 
-    let mut group = c.benchmark_group("decide_ab");
+    let mut group = c.benchmark_group("decide");
     group.throughput(Throughput::Elements(POOL as u64));
-
-    group.bench_function("legacy_nested_i128", |b| {
-        let mut i = 0usize;
-        b.iter(|| {
-            let ch = &pool[i & (pool.len() - 1)];
-            i += 1;
-            black_box(
-                table
-                    .decide_legacy_nested_i128(&ch.positions, &ch.coeffs, t, half_d)
-                    .expect("legacy decide"),
-            );
-        });
-    });
 
     group.bench_function("transposed_i64_production", |b| {
         let mut i = 0usize;
@@ -150,7 +133,7 @@ fn bench_decide_ab(c: &mut Criterion) {
             i += 1;
             black_box(
                 table
-                    .decide_production(&ch.positions, &ch.coeffs, t, half_d)
+                    .decide_production(&ch.positions, &ch.coeffs, t)
                     .expect("production decide"),
             );
         });
@@ -223,6 +206,6 @@ fn bench_xof_batch(c: &mut Criterion) {
 criterion_group! {
     name = op_norm_rejection;
     config = Criterion::default().with_measurement::<WallTime>(WallTime);
-    targets = bench_decide_ab, bench_table_build, bench_transcript_batch, bench_xof_batch
+    targets = bench_decide, bench_table_build, bench_transcript_batch, bench_xof_batch
 }
 criterion_main!(op_norm_rejection);

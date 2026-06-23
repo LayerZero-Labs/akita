@@ -67,24 +67,9 @@ pub mod op_norm_bench {
             positions: &[u32],
             coeffs: &[i8],
             t: u64,
-            num_freqs: usize,
         ) -> Result<bool, AkitaError> {
             Ok(matches!(
-                self.0.decide_parts(positions, coeffs, t, num_freqs)?,
-                Decision::Accept
-            ))
-        }
-
-        pub fn decide_legacy_nested_i128(
-            &self,
-            positions: &[u32],
-            coeffs: &[i8],
-            t: u64,
-            num_freqs: usize,
-        ) -> Result<bool, AkitaError> {
-            Ok(matches!(
-                self.0
-                    .decide_parts_legacy_nested_i128(positions, coeffs, t, num_freqs)?,
+                self.0.decide_parts(positions, coeffs, t)?,
                 Decision::Accept
             ))
         }

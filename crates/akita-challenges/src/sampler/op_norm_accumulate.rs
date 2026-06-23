@@ -352,25 +352,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn transposed_decision_matches_legacy_on_shell_pool() {
-        use crate::sampler::exact_shell::sample_exact_shell_challenge;
-        use crate::sampler::xof::XofCursor;
-
-        let d = 64;
-        let t = table(d);
-        let mut cur = XofCursor::from_seed(&[0x42u8; 32]);
-        for threshold in [14u64, 16, 18, 22, 30] {
-            for _ in 0..200 {
-                let ch = sample_exact_shell_challenge(&mut cur, d, 31, 11);
-                let legacy = t
-                    .decide_parts_legacy_nested_i128(&ch.positions, &ch.coeffs, threshold, d / 2)
-                    .unwrap();
-                let via_parts = t
-                    .decide_parts(&ch.positions, &ch.coeffs, threshold, d / 2)
-                    .unwrap();
-                assert_eq!(legacy, via_parts, "threshold {threshold}");
-            }
-        }
-    }
 }
