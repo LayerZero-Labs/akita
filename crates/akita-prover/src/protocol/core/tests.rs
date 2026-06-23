@@ -1,6 +1,7 @@
 use super::*;
-use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr};
+use akita_field::{AkitaError, Fp32, FpExt2, LiftBase, NegOneNr};
 use akita_transcript::AkitaTranscript;
+use akita_types::{AkitaScheduleLookupKey, OpeningBatch};
 
 type F = Fp32<251>;
 type E = FpExt2<F, NegOneNr>;
@@ -59,4 +60,14 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     );
     assert_eq!(proved.openings, vec![expected_opening]);
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
+}
+
+#[test]
+fn batched_prove_opening_batch_rejects_multi_group_shape() {
+    let batch = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
+    assert_eq!(batch.num_commitment_groups(), 2);
+    assert!(matches!(
+        AkitaScheduleLookupKey::new_from_opening_batch(&batch),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 }

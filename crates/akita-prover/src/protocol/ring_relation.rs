@@ -2,6 +2,7 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
+use crate::protocol::core::opening_batch_shape_for_prove;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
@@ -370,7 +371,8 @@ impl RingRelationProver {
             );
         }
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        let opening_batch = fold_claims.to_opening_batch()?;
+        let opening_batch =
+            opening_batch_shape_for_prove::<_, F, P, _, _, D>(&fold_claims, "ring_relation")?;
         let polys = fold_claims.flat_polys();
         let (_, commitment_rows, mut hint) = fold_claims.into_single_fold_parts()?;
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {

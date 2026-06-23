@@ -17,7 +17,8 @@ the shapes of the inputs and proof objects.
 - `crates/akita-pcs/src/scheme/mod.rs`.
 - `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
-- `crates/akita-types/src/proof/opening_batch.rs` (`OpeningBatch`, `OpeningBatchInput`).
+- `crates/akita-types/src/proof/opening_batch.rs` (`OpeningBatch`, `ProverOpeningBatch` in `akita-prover`).
+- `crates/akita-prover/src/lib.rs` (`ProverCommitmentGroup`).
 - `specs/single-point-opening-batch.md`.
 - `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 

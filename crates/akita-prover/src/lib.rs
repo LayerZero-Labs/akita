@@ -124,10 +124,10 @@ impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
     }
 
     /// Shape-only opening batch used by schedules, descriptors, and transcripts.
-    pub fn to_opening_batch(&self) -> Result<OpeningBatch<'static>, AkitaError> {
+    pub fn to_opening_batch(&self, num_vars: usize) -> Result<OpeningBatch<'static>, AkitaError> {
         let group_sizes = self.group_sizes();
         OpeningBatch::from_groups(
-            vec![(); self.point().len()],
+            vec![(); num_vars],
             self.groups
                 .iter()
                 .zip(group_sizes.iter().copied())

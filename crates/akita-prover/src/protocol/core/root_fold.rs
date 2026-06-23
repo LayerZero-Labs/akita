@@ -53,7 +53,7 @@ where
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
 {
-    let opening_batch = claims.to_opening_batch()?;
+    let opening_batch = opening_batch_shape_for_prove::<_, F, P, _, _, D>(&claims, "root_fold")?;
     let num_claims = opening_batch.num_claims();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
@@ -150,7 +150,7 @@ where
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let opening_batch = claims.to_opening_batch()?;
+    let opening_batch = opening_batch_shape_for_prove::<_, F, P, _, _, D>(&claims, "root_fold")?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
     append_opening_batch_to_transcript::<F, E, _, T>(
@@ -239,7 +239,7 @@ where
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let opening_batch = claims.to_opening_batch()?;
+    let opening_batch = opening_batch_shape_for_prove::<_, F, P, _, _, D>(&claims, "root_fold")?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
     append_opening_batch_to_transcript::<F, E, _, T>(

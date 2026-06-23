@@ -1044,4 +1044,21 @@ mod tests {
             "planned root EOR bytes should match the headerless serialized payload"
         );
     }
+
+    #[test]
+    fn new_from_opening_batch_rejects_multi_group() {
+        let batch = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
+        let err = AkitaScheduleLookupKey::new_from_opening_batch(&batch)
+            .expect_err("scalar lookup must reject grouped batches");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn validate_scalar_root_batch_rejects_grouped_key() {
+        let key = AkitaScheduleLookupKey::new(20, 4, 2, 2);
+        let err = key
+            .validate_scalar_root_batch()
+            .expect_err("grouped schedule key must reject scalar lookup");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
 }

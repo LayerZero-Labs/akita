@@ -727,10 +727,11 @@ suffix messages
 Changing the group partition or commitment vector order must change the
 descriptor and transcript.
 
-Descriptor version must be bumped to `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`.
-The grouped `CommitSection` is a new top-level descriptor field serialized
-after `CallSection`. Proofs and descriptors from version 1 are not
-cross-verifiable with grouped proofs.
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at `1` until the codebase is frozen for
+audit. Pre-audit wire-format extensions (for example grouped `CallSection` fields)
+land without bumping this constant. After audit freeze, incompatible layout
+changes must increment it. The grouped `CommitSection` is a new top-level
+descriptor field serialized after `CallSection` when Phase 2 lands.
 
 ### Canonical Encoding
 
@@ -797,16 +798,17 @@ effective_schedule_digest = Blake2b-256(schedule.append_descriptor_bytes(...))
 commit_section_digest     = Blake2b-256("akita/commit_section" || CommitSection bytes)
 ```
 
-The `commit_final`/opening phase does not add new proof-body fields beyond the version 2 descriptor and
-the existing batched proof containers. Grouped proof metadata lives in the
-descriptor and transcript, not in prover-supplied side channels.
+The `commit_final`/opening phase does not add new proof-body fields beyond the
+extended descriptor and the existing batched proof containers. Grouped proof
+metadata lives in the descriptor and transcript, not in prover-supplied side
+channels.
 
 Malformed grouped descriptor bytes must reject before any verifier-reachable
 schedule lookup, matrix prefix selection, or ring-switch replay. Exact rejection
 cases:
 
 ```text
-descriptor version != 2 for a grouped proof          -> SerializationError
+descriptor version < AKITA_INSTANCE_DESCRIPTOR_VERSION for a grouped proof -> SerializationError
 precommitteds.len() == 0 && grouped proof claims G>1 -> AkitaError::InvalidProof
 precommitteds.len() + 1 != G                         -> AkitaError::InvalidProof
 any CommitmentGroupLayout field overflow or zero where forbidden -> AkitaError::InvalidProof
@@ -822,7 +824,7 @@ in the `commit_final`/opening phase. They are serialized inside `CommitSection` 
 descriptor.
 The verifier must follow this order:
 
-1. Parse and validate the version 2 instance descriptor bytes.
+1. Parse and validate the instance descriptor bytes at the current schema version.
 2. Reject malformed `CommitSection` bytes before Fiat-Shamir replay continues.
 3. Reconstruct `GroupBatchAkitaScheduleLookupKey` from `CommitSection`.
 4. Recompute each `CommitmentGroupLayout` deterministically from setup, config
@@ -1009,7 +1011,7 @@ negative tests pass. No grouped opening proof is required yet.
 
 - Add `commit_final(new_group, precommitteds)`.
 - Bind `CommitSection`, precommitted group metadata, final group metadata, and
-the final grouped root schedule in descriptor version 2+ bytes.
+the final grouped root schedule in descriptor bytes at the current schema version.
 - Reconstruct and validate the full `GroupBatchAkitaScheduleLookupKey` from
 `commit_final` metadata and public opening claims.
 - Commit the final group with the final grouped plan.
@@ -1073,7 +1075,7 @@ B-row time is a bottleneck.
 - Folded non-tiered two-group one-hot same-point round trip.
 - Folded non-tiered unequal group sizes, for example `[1, 3]`.
 - Suffix remains singleton after a grouped root.
-- Serialize/deserialize grouped proofs round trip with version 2 descriptor.
+- Serialize/deserialize grouped proofs round trip with the current descriptor schema.
 - Non-canonical `CommitSection` length prefix rejects.
 - Reordered precommitted group vector rejects.
 - Duplicate or missing precommitted metadata rejects.

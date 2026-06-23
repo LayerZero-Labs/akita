@@ -2,6 +2,10 @@ use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+use akita_types::{
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+};
 
 fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
     opening_batch: &OpeningBatch,
@@ -18,25 +22,21 @@ where
     }
     if Cfg::TIERED_COMMITMENT {
         return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
+            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
         ));
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidSetup(
-            "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md"
-                .to_string(),
+            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
         ));
     }
     if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
         return Err(AkitaError::InvalidInput(
-            "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
+            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
         ));
     }
     Err(AkitaError::InvalidInput(
-        "multi-group root batching is not supported yet; see specs/multi-group-batching.md"
-            .to_string(),
+        GROUPED_ROOT_UNSUPPORTED.to_string(),
     ))
 }
 
@@ -141,7 +141,8 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let group_sizes = claims.group_sizes();
     validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
-    let opening_batch = claims.to_opening_batch()?;
+    let opening_batch =
+        opening_batch_shape_for_prove::<_, Cfg::Field, P, _, _, D>(&claims, "batched_prove")?;
     let flat_polys = claims.flat_polys();
     reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
         &opening_batch,
@@ -264,7 +265,8 @@ where
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     #[cfg(feature = "zk")]
-    let opening_batch = claims.to_opening_batch()?;
+    let opening_batch =
+        opening_batch_shape_for_prove::<_, Cfg::Field, P, _, _, D>(&claims, "batched_prove")?;
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
 

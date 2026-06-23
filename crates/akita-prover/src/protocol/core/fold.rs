@@ -285,7 +285,8 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     B: ProverComputeBackend<F>,
 {
-    let opening_batch = fold_claims.to_opening_batch()?;
+    let opening_batch =
+        opening_batch_shape_for_prove::<_, F, FoldP, _, _, D>(&fold_claims, "fold_prove")?;
     let fold_polys = fold_claims.flat_polys();
     let commitment_rows = fold_claims.single_fold_commitment_rows()?;
     let commitment = FlatRingVec::from_ring_elems(commitment_rows);

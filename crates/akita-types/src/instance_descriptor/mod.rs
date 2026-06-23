@@ -4,6 +4,13 @@
 //! large structured inputs are represented by Blake2b digests of canonical
 //! Akita encodings. The top-level descriptor remains self-describing and
 //! round-trippable so both prover and verifier can compare preamble bytes.
+//!
+//! ## Descriptor version policy
+//!
+//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` remains at `1` until the codebase is
+//! frozen for audit. Pre-audit wire-format changes (for example extended
+//! `CallSection` fields) land without bumping this constant. After audit freeze,
+//! any incompatible descriptor layout change must increment it.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -29,7 +36,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -240,6 +247,7 @@ impl CallSection {
         opening_batch: &OpeningBatch,
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
+        opening_batch.check()?;
         let num_polys_per_commitment_group = opening_batch
             .groups
             .iter()

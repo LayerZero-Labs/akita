@@ -19,7 +19,8 @@ use akita_types::{
     schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
     FpExtEncoding, LevelParams, OpeningBatch, OpeningBatchLimits, RingCommitment, Schedule,
-    SetupContributionMode, Step,
+    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -109,16 +110,15 @@ where
     }
     if Cfg::TIERED_COMMITMENT {
         return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
+            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
         ));
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidSetup(
-            "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md"
-                .to_string(),
+            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
         ));
     }
+    // Unsupported grouped claims: `InvalidProof` (unit variant). See `GROUPED_ROOT_UNSUPPORTED`.
     Err(AkitaError::InvalidProof)
 }
 
@@ -860,6 +860,19 @@ mod tests {
             &params,
         )
         .expect_err("num_vars=6 requires 64 direct witness elements");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
+        use akita_config::proof_optimized::fp128;
+
+        let batch = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped batch");
+        let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
+            &batch,
+            SetupContributionMode::Direct,
+        )
+        .expect_err("multi-group verify must reject before schedule lookup");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

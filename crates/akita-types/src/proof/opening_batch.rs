@@ -19,6 +19,22 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
 
+/// Tiered presets cannot open multi-group root batches yet.
+pub const GROUPED_ROOT_TIERED_UNSUPPORTED: &str =
+    "tiered multi-group root batching is not supported; see specs/multi-group-batching.md";
+
+/// Recursive setup contribution cannot open multi-group root batches yet.
+pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
+    "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md";
+
+/// Dense polynomials cannot open multi-group root batches yet.
+pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
+    "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
+
+/// Grouped root prove/verify is not implemented yet.
+pub const GROUPED_ROOT_UNSUPPORTED: &str =
+    "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
+
 /// Ordered coordinate selection into an [`OpeningBatch`]'s shared point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointVariableSelection {

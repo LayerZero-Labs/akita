@@ -30,9 +30,10 @@ mod wire;
 
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    checked_total_claims, folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    checked_total_claims, folded_root_supports_opening_shape, padded_scalar_batch_num_vars,
+    prepare_opening_point, ring_subfield_packed_extension_opening_point,
+    root_tensor_projection_enabled, validate_batched_inputs,
+    validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
@@ -53,7 +54,9 @@ pub use levels::{
 pub use opening_batch::{
     append_opening_batch_shape_to_transcript, append_opening_batch_to_transcript,
     batched_eval_target_from_opening_batch, sample_public_row_coefficients, CommitmentGroup,
-    OpeningBatch, OpeningBatchLimits, PointVariableSelection,
+    OpeningBatch, OpeningBatchLimits, PointVariableSelection, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

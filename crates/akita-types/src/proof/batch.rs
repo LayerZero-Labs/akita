@@ -273,6 +273,42 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
     commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
 }
 
+/// Largest natural arity across polynomials in a scalar batched commit/prove call.
+///
+/// Matches `prepare_batched_commit_inputs`, which selects the root layout from
+/// the maximum `num_vars` across the bundled polynomials.
+///
+/// # Errors
+///
+/// Returns an error if `poly_num_vars` is empty.
+pub fn padded_scalar_batch_num_vars(
+    poly_num_vars: impl IntoIterator<Item = usize>,
+) -> Result<usize, AkitaError> {
+    poly_num_vars.into_iter().max().ok_or_else(|| {
+        AkitaError::InvalidInput(
+            "batched opening batch requires at least one polynomial".to_string(),
+        )
+    })
+}
+
+/// Opening point length must match the padded batch domain selected at commit time.
+///
+/// # Errors
+///
+/// Returns an error when `point_len` and `padded_num_vars` differ.
+pub fn validate_scalar_point_matches_poly_arity(
+    point_len: usize,
+    padded_num_vars: usize,
+    label: &str,
+) -> Result<(), AkitaError> {
+    if point_len != padded_num_vars {
+        return Err(AkitaError::InvalidInput(format!(
+            "{label} opening point length {point_len} does not match padded batch domain {padded_num_vars}"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate common batched prove/verify input shape constraints.
 ///
 /// # Errors
@@ -322,7 +358,7 @@ where
     let num_claims = checked_total_claims(group_sizes, label)?;
     if num_claims == 0 {
         return Err(shape_error(format!(
-            "{label} shared point must have at least one item",
+            "{label} requires at least one claimed opening",
         )));
     }
     if num_claims > setup.seed().max_num_batched_polys {
@@ -692,5 +728,26 @@ mod tests {
         assert!(root_tensor_projection_enabled::<F, L, L, 8>(3));
         assert!(!root_tensor_projection_enabled::<F, L, L, 4>(2));
         assert!(!root_tensor_projection_enabled::<F, E, L, 8>(3));
+    }
+
+    #[test]
+    fn padded_scalar_batch_num_vars_uses_max_poly_arity() {
+        assert_eq!(
+            padded_scalar_batch_num_vars([12, 20, 18]).expect("nonempty"),
+            20
+        );
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_rejects_shorter_point() {
+        let err = validate_scalar_point_matches_poly_arity(18, 20, "batched_prove")
+            .expect_err("shorter point must reject");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_accepts_match() {
+        validate_scalar_point_matches_poly_arity(20, 20, "batched_prove")
+            .expect("matching point length should validate");
     }
 }

@@ -562,7 +562,7 @@ where
 ///
 /// All polynomials are bundled into one commitment at the shared opening point.
 /// Polynomials may have smaller natural arity than the shared padded batch
-/// domain; the largest arity selects the root layout.
+/// domain; the largest arity selects the root layout (`padded_scalar_batch_num_vars`).
 ///
 /// # Errors
 ///
