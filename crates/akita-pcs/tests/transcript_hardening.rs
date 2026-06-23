@@ -54,12 +54,17 @@ fn event_stream_equality_small() {
 
         let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("commit");
 
@@ -72,14 +77,13 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -307,12 +311,17 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
 
         let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("commit");
 
@@ -324,14 +333,13 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         let mut proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -414,11 +422,16 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
 
         let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
-            &setup,
+        let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("commit");
 
@@ -426,9 +439,8 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &poly_refs, &commitment, hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

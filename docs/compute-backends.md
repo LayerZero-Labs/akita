@@ -53,14 +53,25 @@ let (commitment, hint) =
 
 ## Current Scope
 
-The current CPU cutover covers root commit/ring-switch work that was previously
-wired through setup-owned CPU caches:
+The CPU cutover (PR #206) routes root commit, prove, and ring-switch work through
+`CpuBackend`, `ProverComputeStack`, and source-typed kernels. Setup-owned CPU
+NTT caches live in `CpuPreparedSetup` only.
+
+Covered operation families:
 
 - dense coefficient and pre-decomposed digit commit rows;
 - one-hot and sparse-ring commit rows without dense materialization;
 - recursive witness commit rows;
+- opening fold / decompose-fold / tensor projection (single + batch);
 - single-row cyclic and negacyclic digit rows;
-- cyclic and quotient relation rows for ring switch.
+- ring-switch relation and quotient rows via `RingSwitchRelationKernel` /
+  `RingSwitchQuotientKernel`.
+
+**Prove routing:** `batched_prove` takes `&impl LevelProveStacks`. Each fold
+selects a `ProverComputeStack<C, O, TS, R>`; commit / opening / tensor /
+ring-switch call the matching `OperationCtx`. `TieredProveStacks` supports
+per-fold backend tiers; `UniformProverStack::uniform(cpu)` is the degenerate
+single-backend case.
 
 ## Deferred Work
 

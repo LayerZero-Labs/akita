@@ -111,15 +111,17 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
 
     group.bench_function("commit", |b| {
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     black_box(std::slice::from_ref(&poly)),
+                    &stack,
                 )
                 .unwrap(),
             )
@@ -128,9 +130,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
-        &CpuBackend,
-        &prepared,
         std::slice::from_ref(&poly),
+        &stack,
     )
     .unwrap();
 
@@ -151,8 +152,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     black_box(
                         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                             &setup,
-                            &CpuBackend,
-                            &prepared,
                             (
                                 &pt[..],
                                 vec![CommittedPolynomials {
@@ -161,6 +160,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                                     hint: h.into_iter().next().unwrap(),
                                 }],
                             ),
+                            &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -175,8 +175,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             (
                 &pt[..],
                 vec![CommittedPolynomials {
@@ -185,6 +183,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     hint: hint.clone(),
                 }],
             ),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -216,17 +215,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             b.iter(|| {
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     std::slice::from_ref(&poly),
+                    &stack,
                 )
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     (
                         &pt[..],
                         vec![CommittedPolynomials {
@@ -235,6 +231,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                             hint: h,
                         }],
                     ),
+                    &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,
@@ -316,6 +313,9 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
@@ -325,9 +325,8 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     black_box(std::slice::from_ref(&onehot_poly)),
+                    &stack,
                 )
                 .unwrap(),
             )
@@ -336,9 +335,8 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &setup,
-        &CpuBackend,
-        &prepared,
         std::slice::from_ref(&onehot_poly),
+        &stack,
     )
     .unwrap();
 
@@ -359,8 +357,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     black_box(
                         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                             &setup,
-                            &CpuBackend,
-                            &prepared,
                             (
                                 &pt[..],
                                 vec![CommittedPolynomials {
@@ -369,6 +365,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                                     hint: h.into_iter().next().unwrap(),
                                 }],
                             ),
+                            &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
                             mode,
@@ -383,8 +380,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             (
                 &pt[..],
                 vec![CommittedPolynomials {
@@ -393,6 +388,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     hint: hint.clone(),
                 }],
             ),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             mode,
@@ -424,17 +420,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             b.iter(|| {
                 let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     std::slice::from_ref(&onehot_poly),
+                    &stack,
                 )
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
                 let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                     &setup,
-                    &CpuBackend,
-                    &prepared,
                     (
                         &pt[..],
                         vec![CommittedPolynomials {
@@ -443,6 +436,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                             hint: h,
                         }],
                     ),
+                    &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
                     mode,

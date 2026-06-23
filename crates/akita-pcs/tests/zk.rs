@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "zk")]
 
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
 mod common;
@@ -84,11 +85,18 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (_, e_folded) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let e_folded = opening.folded;
 
     let mut transcript = AkitaTranscript::<F>::new(label);
     commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
@@ -96,9 +104,13 @@ fn plain_root_d_image<const D: usize>(
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
     }
 
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-        &CpuBackend,
-        prepared,
+    let expanded = CpuBackend.prepared_expanded_setup::<D>(prepared);
+    let op_ctx =
+        akita_prover::OperationCtx::new(&CpuBackend, prepared, expanded).expect("operation ctx");
+
+    let (instance, witness) = RingRelationProver::new::<F, D, _, DensePoly<F, D>, _, _>(
+        &op_ctx,
+        &op_ctx,
         ring_opening_point,
         ring_multiplier_point,
         &[poly],
@@ -295,22 +307,26 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
         let setup = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_prover(NV, 1)
             .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("zk fp32 commit");
 
         let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(label);
         let proof = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
-            prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
+            prove_input(&point, &[&poly], &commitment, hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -424,23 +440,27 @@ where
         let setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             commit_input,
+            &stack,
         )
         .expect("first zk commit");
         let (rerandomized_commitment, _) =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
                 &setup,
-                &CpuBackend,
-                &prepared,
                 commit_input,
+                &stack,
             )
             .expect("second zk commit");
         assert_ne!(
@@ -455,9 +475,8 @@ where
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -535,12 +554,17 @@ fn run_zk_dense_cursor_binding_negatives() {
         let setup =
             <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             std::slice::from_ref(&poly),
+            &stack,
         )
         .expect("zk commit");
 
@@ -550,9 +574,8 @@ fn run_zk_dense_cursor_binding_negatives() {
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -708,15 +731,20 @@ where
         let setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
             &setup,
-            &CpuBackend,
-            &prepared,
             commit_input,
+            &stack,
         )
         .expect("first zk commit");
 
@@ -737,9 +765,8 @@ where
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -749,9 +776,8 @@ where
         let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
+            &stack,
             &mut second_prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -832,26 +858,27 @@ fn run_zk_dense_batched_shape_cases() {
         let same_point = random_point(NV, 0xaaaa_8000);
         let same_point_openings: Vec<F> = same_point_polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &same_point, &same_point_layout))
+            .map(|poly| opening_from_poly::<D, _>(poly, &same_point, &same_point_layout))
             .collect();
         let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, SAME_POINT_POLYS)
             .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
-        let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
+        let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
-            &same_point_polys,
+            setup.expanded.as_ref(),
         )
-        .expect("same-point zk batched commit");
+        .expect("stack");
+        let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &same_point_polys, &stack)
+                .expect("same-point zk batched commit");
         let same_point_poly_refs: Vec<&DensePoly<F, D>> = same_point_polys.iter().collect();
         let mut prover_transcript = AkitaTranscript::<F>::new(b"zk/batched-shape/same-point");
         let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&same_point, &same_point_poly_refs, &commitment, hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

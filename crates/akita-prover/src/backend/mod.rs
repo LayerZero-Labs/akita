@@ -7,15 +7,24 @@ pub(crate) mod onehot;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
-mod recursive_hint;
-mod recursive_witness;
+mod recursive;
+mod ring_switch;
 pub(crate) mod sparse_ring;
 mod tensor_fold;
 
-pub use dense::DensePoly;
-pub use field_reduction::{tensor_pack_recursive_witness, FoldInputPoly, RootTensorProjectionPoly};
-pub use multilinear_polynomial::MultilinearPolynomial;
-pub use onehot::{MultiChunkEntry, OneHotIndex, OneHotPoly, SingleChunkEntry};
-pub use recursive_hint::RecursiveCommitmentHintCache;
-pub use recursive_witness::{RecursiveWitnessFlat, SuffixWitness};
-pub use sparse_ring::{SparseRingBlockEntry, SparseRingPoly};
+pub use dense::{DenseBatchView, DensePoly, DenseView};
+pub use field_reduction::{
+    tensor_pack_recursive_witness, RootTensorProjectionBatchView, RootTensorProjectionPoly,
+    RootTensorProjectionView,
+};
+pub use multilinear_polynomial::{
+    MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
+};
+pub use onehot::{
+    MultiChunkEntry, OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView, SingleChunkEntry,
+};
+pub use recursive::{
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
+};
+pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
+pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};

@@ -12,8 +12,8 @@ This records the design review that narrowed
 
 - Spec: `specs/akita-compute-backend-metal.md`
 - Spec commit: `324d14b7` (`docs(compute): add backend cutover spec`)
-- Current implementation target: CPU compute backend cutover
-- Deferred target: accelerator and integration stack
+- CPU / `AkitaPolyOps` cutover: **landed** in PR [#206](https://github.com/LayerZero-Labs/akita/pull/206)
+- Deferred target: accelerator and integration stack (Metal)
 
 ## Review Outcome
 
