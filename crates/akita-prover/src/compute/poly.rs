@@ -559,8 +559,8 @@ where
 {
 }
 
-/// Cluster capability bundle for [`batched_prove`] with a heterogeneous
-/// [`ProverComputeStack`].
+/// Cluster capability bundle for [`crate::batched_prove`] with a heterogeneous
+/// [`crate::ProverComputeStack`].
 ///
 /// The uniform case `C = O = TS = R = B` is satisfied automatically when
 /// `B: RecursiveProveBackend<F, P, E, D>`.

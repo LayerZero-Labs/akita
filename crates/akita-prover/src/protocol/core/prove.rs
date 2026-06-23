@@ -233,7 +233,10 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + CommitmentComputeBackend<Cfg::Field>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
         + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
@@ -387,7 +390,10 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + CommitmentComputeBackend<Cfg::Field>
+        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
         + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
