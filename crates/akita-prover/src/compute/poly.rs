@@ -199,83 +199,100 @@ where
 {
 }
 
-/// Kernel bounds on [`RootTensorProjectionPoly`] commit views (extension-reduction path).
-pub trait RootTensorProjectionCommitKernels<F, const D: usize>:
-    CommitmentComputeBackend<F>
+/// Capability: this backend can **commit** a single source `P`.
+///
+/// This is the uniform "source-typed capability" vocabulary: a bound of the form
+/// "backend `Self` can commit source `P`", rather than a hard-coded per-type
+/// kernel bundle. It folds together the row-commit surface
+/// ([`CommitmentComputeBackend`], which also supplies [`super::DigitRowsComputeBackend`])
+/// and the inner-commit kernel over `P`'s borrowed commit view.
+///
+/// The same alias is applied to the generic input poly and to the internal
+/// [`RootTensorProjectionPoly`] (the extension-reduction projection), so both
+/// source types are expressed through one symmetric concept.
+pub trait CommitBackendFor<F, P, const D: usize>: CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    Self: for<'a> RootCommitKernel<
-        <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
-        F,
-        D,
-    >,
+    P: RootCommitSource<F, D>,
+    Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
 }
 
-impl<F, const D: usize, B> RootTensorProjectionCommitKernels<F, D> for B
+impl<F, P, const D: usize, B> CommitBackendFor<F, P, D> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootCommitSource<F, D>,
     B: CommitmentComputeBackend<F>
-        + for<'a> RootCommitKernel<
-            <RootTensorProjectionPoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>,
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
+{
+}
+
+/// Capability: this backend can **tensor-project** a single source `P` at an
+/// extension-field opening point of type `E`.
+///
+/// Names the tensor-projection kernel over `P`'s borrowed tensor view as a
+/// source-typed capability. `E` is not bounded `'static`.
+pub trait ProjectBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootTensorSource<F, D>,
+    Self: for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+{
+}
+
+impl<F, P, E, const D: usize, B> ProjectBackendFor<F, P, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootTensorSource<F, D>,
+    B: ComputeBackendSetup<F>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+{
+}
+
+/// Capability: this backend can run the full **opening/prove** kernel set over a
+/// single source `P` at an extension-field opening point of type `E`.
+///
+/// Bundles the four opening/tensor kernels over `P`'s borrowed views
+/// ([`OpeningFoldKernel`], [`OpeningBatchKernel`], [`TensorProjectionKernel`],
+/// [`TensorProjectionBatchKernel`]). Like [`CommitBackendFor`], the same alias is
+/// applied to both the generic input poly and the internal
+/// [`RootTensorProjectionPoly`].
+pub trait ProveBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
+    Self: for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
+        + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
             F,
+            E,
             D,
         >,
 {
 }
 
-/// Kernel bounds on [`RootTensorProjectionPoly`] opening/tensor views (extension-reduction path).
-pub trait RootTensorProjectionProveKernels<F, E, const D: usize>:
-    CommitmentComputeBackend<F>
+impl<F, P, E, const D: usize, B> ProveBackendFor<F, P, E, D> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    Self: for<'a> OpeningFoldKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
-            F,
-            D,
-        > + for<'a> OpeningBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
-            F,
-            D,
-        > + for<'a> TensorProjectionKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            E,
-            D,
-        > + for<'a> TensorProjectionBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            E,
-            D,
-        >,
-{
-}
-
-impl<F, E, const D: usize, B> RootTensorProjectionProveKernels<F, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    B: CommitmentComputeBackend<F>
-        + for<'a> OpeningFoldKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>,
-            F,
-            D,
-        > + for<'a> OpeningBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
-            F,
-            D,
-        > + for<'a> TensorProjectionKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            E,
-            D,
-        > + for<'a> TensorProjectionBatchKernel<
-            <RootTensorProjectionPoly<F, D> as RootTensorSource<F, D>>::TensorBatchView<'a>,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
+    B: ComputeBackendSetup<F>
+        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
+        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
+        + for<'a> TensorProjectionBatchKernel<
+            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
             F,
             E,
             D,
@@ -286,20 +303,37 @@ where
 /// Backend capability bundle for scheme-level commit with optional tensor transform.
 ///
 /// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
-/// Do **not** write `CpuBackend: RootCommitBackend<F, P, E, D>` while `P` is still a type
-/// parameter; that fails for the same reason as a bare HRTB on a fixed backend.
+///
+/// Composed from the uniform source-typed capabilities: the backend must
+/// [`CommitBackendFor`] the input poly `P`, [`ProjectBackendFor`] it (tensor projection),
+/// and [`CommitBackendFor`] the internal [`RootTensorProjectionPoly`] produced by the
+/// extension-reduction transform. Read it as "commit `P`, project `P`, commit the
+/// projection". A blanket impl covers every backend satisfying those three, so a
+/// downstream backend opts in structurally (no explicit marker impl required).
 ///
 /// `F: 'static` is required for the same GAT + `for<'a>` view-kernel reason documented on
 /// [`RootProveBackend`]. `E` (tensor extension field) is not bounded `'static` here.
-pub trait RootCommitBackend<F, P, E, const D: usize>: CommitmentComputeBackend<F>
+pub trait RootCommitBackend<F, P, E, const D: usize>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootCommitPoly<F, D>,
-    Self: RootTensorProjectionCommitKernels<F, D>
-        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
+    Self: CommitBackendFor<F, P, D>
+        + ProjectBackendFor<F, P, E, D>
+        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+{
+}
+
+impl<F, P, E, const D: usize, B> RootCommitBackend<F, P, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootCommitPoly<F, D>,
+    B: CommitBackendFor<F, P, D>
+        + ProjectBackendFor<F, P, E, D>
+        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
 {
 }
 
@@ -336,22 +370,17 @@ where
 ///
 /// `E` does **not** need `'static`; preset extension fields satisfy it vacuously, but the
 /// trait does not require it.
+///
+/// Composed from the uniform [`ProveBackendFor`] capability applied to both the input
+/// poly `P` and the internal [`RootTensorProjectionPoly`] (the extension-reduction
+/// projection), so both source types are expressed through one symmetric concept.
 pub trait RootProveBackend<F, P, E, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
-    Self: RootTensorProjectionProveKernels<F, E, D>
-        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
-        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
-        + for<'a> TensorProjectionBatchKernel<
-            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            E,
-            D,
-        >,
+    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
 {
 }
 
@@ -362,16 +391,8 @@ where
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     B: ComputeBackendSetup<F>
-        + RootTensorProjectionProveKernels<F, E, D>
-        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
-        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>
-        + for<'a> TensorProjectionBatchKernel<
-            <P as RootTensorSource<F, D>>::TensorBatchView<'a>,
-            F,
-            E,
-            D,
-        >,
+        + ProveBackendFor<F, P, E, D>
+        + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
 {
 }
 

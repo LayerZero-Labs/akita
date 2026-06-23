@@ -577,25 +577,6 @@ where
     }
 }
 
-impl<F, P, E, const D: usize> crate::compute::RootCommitBackend<F, P, E, D> for CpuBackend
-where
-    F: FieldCore + CanonicalField + akita_field::FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    E: akita_field::ExtField<F>,
-    P: crate::compute::RootCommitPoly<F, D>,
-    Self: for<'a> crate::compute::RootCommitKernel<
-            <P as crate::compute::RootCommitSource<F, D>>::CommitView<'a>,
-            F,
-            D,
-        > + for<'a> crate::compute::TensorProjectionKernel<
-            <P as crate::compute::RootTensorSource<F, D>>::TensorView<'a>,
-            F,
-            E,
-            D,
-        >,
-{
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
