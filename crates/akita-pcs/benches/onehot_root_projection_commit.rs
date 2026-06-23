@@ -120,8 +120,7 @@ where
     let setup =
         <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let opening_batch =
-        OpeningBatch::same_point(num_vars, num_polys).expect("benchmark opening_batch");
+    let opening_batch = OpeningBatch::new(num_vars, num_polys).expect("benchmark opening_batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("benchmark commitment params");
 

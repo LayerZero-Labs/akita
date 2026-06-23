@@ -347,7 +347,7 @@ mod tests {
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
         let level_params = prefix_level_params(D);
-        let opening_batch = OpeningBatch::same_point(4, 1).expect("opening_batch");
+        let opening_batch = OpeningBatch::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
             .num_blocks
             .checked_mul(level_params.block_len)

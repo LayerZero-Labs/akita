@@ -10,8 +10,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly,
-    FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObserverGuard,
+    OneHotIndex, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -20,15 +20,50 @@ use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
     AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
-    FpExtEncoding, LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode,
-    Step,
+    CommitmentGroup, FpExtEncoding, LevelParams, OpeningBatch, PointVariableSelection,
+    RingCommitment, Schedule, SetupContributionMode, Step,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
+
+fn prover_claims<'a, E: Clone, P, C, H>(
+    point: &'a [E],
+    polynomials: &'a [P],
+    commitment: &'a C,
+    hint: H,
+) -> ProverOpeningBatch<'a, E, P, C, H> {
+    ProverOpeningBatch {
+        point: point.into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
+            polynomials,
+            commitment,
+            hint,
+        }],
+    }
+}
+
+fn verifier_claims<'a, E: FieldCore, C>(
+    point: &[E],
+    openings: &[E],
+    commitment: &'a C,
+) -> OpeningBatch<'static, E, &'a C> {
+    OpeningBatch::from_groups(
+        point.to_vec(),
+        vec![CommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point verifier group"),
+            claims: openings.to_vec(),
+            commitment,
+        }],
+    )
+    .expect("valid verifier claims")
+}
 
 pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -385,7 +420,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     let poly_refs: [&P; 1] = [poly];
     let commitments = [commitment];
     let openings = [opening];
-    let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
@@ -401,14 +435,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         setup,
         &CpuBackend,
         prepared,
-        (
-            pt,
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        ),
+        prover_claims(pt, &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -450,8 +477,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             Cfg::decomposition().field_bits(),
         );
     } else {
-        let opening_batch =
-            OpeningBatch::same_point(pt.len(), 1).expect("same-point opening batch");
+        let opening_batch = OpeningBatch::new(pt.len(), 1).expect("same-point opening batch");
         let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
         report_proof_size_against_planner(
             label,
@@ -477,13 +503,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            pt,
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(pt, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {
@@ -758,7 +778,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 .collect()
         };
     let poly_refs: Vec<&OneHotPoly<FF, D, u8>> = polys.iter().collect();
-    let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
     let setup_contribution_mode = profile_setup_contribution_mode();
@@ -811,13 +830,11 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &setup,
         &CpuBackend,
         &prepared,
-        (
+        prover_claims(
             &pt[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -828,7 +845,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
-    let opening_batch = OpeningBatch::same_point(nv, num_polys).expect("same-point opening batch");
+    let opening_batch = OpeningBatch::new(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {
         report_proof_size_against_planner(
@@ -906,13 +923,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &pt[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&pt[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {

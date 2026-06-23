@@ -26,7 +26,7 @@ fn zk_tail_bound_with_grind_onehot_roundtrip() {
 
         let num_vars = 28usize;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         assert_eq!(

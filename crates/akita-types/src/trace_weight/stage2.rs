@@ -173,9 +173,9 @@ where
     Ok(weights.iter().map(|&weight| weight * scale).collect())
 }
 
-struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
+struct RootTraceClaimInputs<'a, 'batch, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
-    opening_batch: &'a OpeningBatch,
+    opening_batch: &'a OpeningBatch<'batch>,
     prepared_point: &'a PreparedOpeningPoint<F, E, D>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
@@ -188,7 +188,7 @@ struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
 }
 
 fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
-    inputs: &RootTraceClaimInputs<'_, F, E, D>,
+    inputs: &RootTraceClaimInputs<'_, '_, F, E, D>,
 ) -> Result<(), AkitaError> {
     if inputs.row_coefficients.len() != inputs.opening_batch.num_claims() {
         return Err(AkitaError::InvalidSize {
@@ -207,8 +207,8 @@ fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
     Ok(())
 }
 
-fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize>(
-    inputs: &'a RootTraceClaimInputs<'a, F, E, D>,
+fn collect_root_trace_claim_items<'a, 'batch, F: FieldCore, E: FieldCore, const D: usize>(
+    inputs: &'a RootTraceClaimInputs<'a, 'batch, F, E, D>,
 ) -> Result<Vec<RootTraceClaimItem<'a, F, E, D>>, AkitaError> {
     validate_root_trace_claim_inputs(inputs)?;
     let mut items = Vec::with_capacity(inputs.opening_batch.num_claims());

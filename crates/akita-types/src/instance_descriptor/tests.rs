@@ -23,7 +23,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatch::same_point(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningBatch::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -285,8 +285,8 @@ fn algebra_section_binds_prime_and_extension_shape() {
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatch::same_point(4, 2).expect("left");
-    let right = OpeningBatch::same_point(4, 3).expect("right");
+    let left = OpeningBatch::new(4, 2).expect("left");
+    let right = OpeningBatch::new(4, 3).expect("right");
 
     assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
 }
@@ -294,7 +294,7 @@ fn opening_batch_digest_binds_claim_count() {
 #[test]
 fn opening_batch_digest_binds_group_partition() {
     let grouped = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let scalar = OpeningBatch::same_point(4, 3).expect("scalar");
+    let scalar = OpeningBatch::new(4, 3).expect("scalar");
 
     assert_ne!(
         digest_opening_batch(&grouped),
@@ -304,19 +304,21 @@ fn opening_batch_digest_binds_group_partition() {
 
 #[test]
 fn opening_batch_digest_binds_point_variable_selection_order() {
-    let forward = OpeningBatch::new(
+    let forward = OpeningBatch::from_groups(
         vec![(), ()],
         vec![CommitmentGroup {
             point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
             claims: vec![()],
+            commitment: (),
         }],
     )
     .expect("forward");
-    let swapped = OpeningBatch::new(
+    let swapped = OpeningBatch::from_groups(
         vec![(), ()],
         vec![CommitmentGroup {
             point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
             claims: vec![()],
+            commitment: (),
         }],
     )
     .expect("swapped");

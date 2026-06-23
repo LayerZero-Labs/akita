@@ -97,15 +97,16 @@ mod tests {
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
+        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, ProverCommitmentGroup,
+        ProverOpeningBatch, RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, BasisMode, BlockOrder, MRowLayout, OpeningBatch,
-        RingMultiplierOpeningPoint,
+        ring_opening_point_from_field, BasisMode, BlockOrder, MRowLayout, PointVariableSelection,
+        RingCommitment, RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -114,9 +115,22 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn single_point_group_opening_batch(num_vars: usize, group_poly_count: usize) -> OpeningBatch {
-        OpeningBatch::same_point(num_vars, group_poly_count)
-            .expect("valid single-point opening_batch")
+    fn prover_fold_claims<'a, F: FieldCore + Clone, P, H, const D: usize>(
+        point: &'a [F],
+        polynomials: &'a [P],
+        commitment: &'a RingCommitment<F, D>,
+        hint: H,
+    ) -> ProverOpeningBatch<'a, F, P, [CyclotomicRing<F, D>], H> {
+        ProverOpeningBatch {
+            point: point.into(),
+            groups: vec![ProverCommitmentGroup {
+                point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                    .expect("full-point prover group"),
+                polynomials,
+                commitment: commitment.u.as_slice(),
+                hint,
+            }],
+        }
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -265,7 +279,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -315,20 +329,21 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let opening_batch = single_point_group_opening_batch(NV, 1);
-
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let fold_claims = prover_fold_claims(
+            &point,
+            std::slice::from_ref(&poly),
+            &commitment,
+            batched_hint,
+        );
+        let (instance, witness) = RingRelationProver::new::<F, F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,
             ring_multiplier_point.clone(),
-            &[&poly],
+            fold_claims,
             vec![e_folded],
-            opening_batch,
             lp.clone(),
-            batched_hint,
             &mut transcript,
-            &commitment,
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -393,7 +408,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -437,20 +452,21 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let opening_batch = single_point_group_opening_batch(NV, 1);
-
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let fold_claims = prover_fold_claims(
+            &point,
+            std::slice::from_ref(&poly),
+            &commitment,
+            batched_hint,
+        );
+        let (instance, witness) = RingRelationProver::new::<F, F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,
             ring_multiplier_point.clone(),
-            &[&poly],
+            fold_claims,
             vec![e_folded],
-            opening_batch,
             lp.clone(),
-            batched_hint,
             &mut transcript,
-            &commitment,
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -550,7 +566,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 
@@ -597,20 +613,21 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let opening_batch = single_point_group_opening_batch(NV, 1);
-
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let fold_claims = prover_fold_claims(
+            &point,
+            std::slice::from_ref(&poly),
+            &commitment,
+            batched_hint,
+        );
+        let (instance, witness) = RingRelationProver::new::<F, F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point.clone(),
             ring_multiplier_point.clone(),
-            &[&poly],
+            fold_claims,
             vec![e_folded],
-            opening_batch,
             level_params.clone(),
-            batched_hint,
             &mut transcript,
-            &commitment,
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
@@ -695,7 +712,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 
@@ -742,20 +759,21 @@ mod tests {
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let opening_batch = single_point_group_opening_batch(NV, 1);
-
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+        let fold_claims = prover_fold_claims(
+            &point,
+            std::slice::from_ref(&poly),
+            &commitment,
+            batched_hint,
+        );
+        let (instance, witness) = RingRelationProver::new::<F, F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_point,
             ring_multiplier_point,
-            &[&poly],
+            fold_claims,
             vec![e_folded],
-            opening_batch,
             level_params.clone(),
-            batched_hint,
             &mut transcript,
-            &commitment,
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithoutDBlock,
         )

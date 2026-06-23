@@ -89,7 +89,7 @@ fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
     let nv = 22;
     let mut saw_strict_shrink = false;
     for batch in [64usize, 128, 256, 512, 1024] {
-        let opening_batch = OpeningBatch::same_point(nv, batch).expect("opening_batch");
+        let opening_batch = OpeningBatch::new(nv, batch).expect("opening_batch");
         let tiered_sched =
             fp128::D64OneHotTiered::get_params_for_prove(&opening_batch).expect("tiered schedule");
         let plain_sched =

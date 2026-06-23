@@ -12,7 +12,7 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, FoldInputPoly, ProverClaims, ProverComputeBackend,
+    AkitaPolyOps, FoldInputPoly, ProverCommitmentGroup, ProverComputeBackend, ProverOpeningBatch,
     ProverTranscriptGrind, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
     RingRelationInstance, RingRelationWitness,
 };
@@ -42,17 +42,15 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    append_opening_batch_shape_to_transcript, basis_weights,
+    append_claim_values_to_transcript, append_opening_batch_to_transcript, basis_weights,
     batched_eval_target_from_opening_batch, build_trace_table_scaled,
     check_extension_opening_reduction_output, derive_tensor_extension_opening_claim,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, ensure_trace_stage2_supported, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_opening_point, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_current_w_len, root_direct_schedule,
-    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, folded_root_supports_opening_shape,
+    prepare_opening_point, recover_ring_subfield_inner_product, relation_claim_from_rows_extension,
+    reorder_stage1_coords, ring_subfield_packed_extension_opening_point, root_current_w_len,
+    root_direct_schedule, root_tensor_projection_enabled, sample_public_row_coefficients,
+    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, trace_public_weights_recursive,
@@ -91,7 +89,7 @@ mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
-pub use prove::{batched_prove, prepare_batched_prove_inputs, prove, prove_root_direct};
+pub use prove::{batched_prove, prove, prove_root_direct};
 pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 pub use suffix::{prove_suffix, SuffixProverState};
 
@@ -366,20 +364,6 @@ where
             )
         })
         .collect()
-}
-
-/// Config-free flattened view of batched prover claims.
-pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
-    /// Shared opening point.
-    pub opening_point: &'a [E],
-    /// Batch commitment.
-    pub commitment: RingCommitment<F, D>,
-    /// Normalized opening-batch summary that owns canonical root claim routing.
-    pub opening_batch: OpeningBatch,
-    /// Polynomials flattened in claim order.
-    pub flat_polys: Vec<&'a P>,
-    /// Prover-side hint for the batch commitment.
-    pub commitment_hint: AkitaCommitmentHint<F, D>,
 }
 
 #[cfg(feature = "zk")]

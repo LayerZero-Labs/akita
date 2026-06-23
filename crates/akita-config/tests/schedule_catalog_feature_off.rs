@@ -19,7 +19,7 @@ fn schedule_catalog_none_without_feature_uses_dp() {
     );
 
     let key = AkitaScheduleLookupKey::new_from_opening_batch(
-        &akita_types::OpeningBatch::same_point(28, 1).expect("opening batch"),
+        &akita_types::OpeningBatch::new(28, 1).expect("opening batch"),
     )
     .expect("lookup key");
 

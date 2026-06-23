@@ -99,8 +99,7 @@ mod tests {
         )];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
-        let opening_batch =
-            OpeningBatch::same_point(1, 1).expect("valid single-point opening_batch");
+        let opening_batch = OpeningBatch::new(1, 1).expect("valid single-point opening_batch");
 
         verify_zero_fold_openings_with_opening_batch(
             &witnesses,
@@ -124,7 +123,7 @@ mod tests {
             E::new(F::from_u64(4), F::from_u64(4)),
             E::new(F::from_u64(4), F::from_u64(4)),
         ];
-        let opening_batch = OpeningBatch::same_point(1, 2).expect("valid single-point batch");
+        let opening_batch = OpeningBatch::new(1, 2).expect("valid single-point batch");
 
         verify_zero_fold_openings_with_opening_batch(
             &witnesses,
@@ -169,7 +168,7 @@ mod tests {
             openings[0], openings[1],
             "witnesses must disagree at the point"
         );
-        let opening_batch = OpeningBatch::same_point(1, 2).expect("two polynomial slots");
+        let opening_batch = OpeningBatch::new(1, 2).expect("two polynomial slots");
 
         verify_zero_fold_openings_with_opening_batch(
             &witnesses,

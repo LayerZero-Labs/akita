@@ -539,7 +539,7 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatch::same_point(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatch::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {

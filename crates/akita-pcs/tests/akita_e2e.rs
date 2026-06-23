@@ -11,7 +11,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
+use akita_prover::{CommitmentProver, ProverCommitmentGroup, ProverOpeningBatch};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
@@ -21,9 +21,10 @@ use akita_types::{
     schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
+    OpeningBatch, PointVariableSelection, RingCommitment,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -43,7 +44,7 @@ const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
     let opening_batch =
-        akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+        akita_types::OpeningBatch::new(num_vars, 1).expect("singleton opening batch");
     Cfg::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
@@ -134,34 +135,39 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, FF: FieldCore, P, C, H>(
+fn prove_input<'a, FF: FieldCore + Clone, P, C, H>(
     point: &'a [FF],
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    (
-        point,
-        CommittedPolynomials {
+) -> ProverOpeningBatch<'a, FF, P, C, H> {
+    ProverOpeningBatch {
+        point: point.into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
             polynomials,
             commitment,
             hint,
-        },
-    )
+        }],
+    }
 }
 
 fn verify_input<'a, FF: FieldCore, C>(
-    point: &'a [FF],
-    openings: &'a [FF],
+    point: &[FF],
+    openings: &[FF],
     commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    (
-        point,
-        CommittedOpenings {
-            openings,
+) -> OpeningBatch<'static, FF, &'a C> {
+    OpeningBatch::from_groups(
+        point.to_vec(),
+        vec![CommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point verifier group"),
+            claims: openings.to_vec(),
             commitment,
-        },
+        }],
     )
+    .expect("valid verifier input")
 }
 
 type DenseFixture<FField, E, L, const D: usize> = (
@@ -540,7 +546,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
-        let opening_batch = akita_types::OpeningBatch::same_point(NV, 2).expect("opening_batch");
+        let opening_batch = akita_types::OpeningBatch::new(NV, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
@@ -1124,7 +1130,7 @@ fn batched_onehot_same_point_round_trip() {
         const NV: usize = 20;
 
         let nv = NV;
-        let opening_batch = akita_types::OpeningBatch::same_point(nv, 2).expect("opening_batch");
+        let opening_batch = akita_types::OpeningBatch::new(nv, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)

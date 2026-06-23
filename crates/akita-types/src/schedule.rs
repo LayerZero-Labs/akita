@@ -117,8 +117,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// inputs that pick a root plan, not the resulting plan data.
 ///
 /// Opening batches use one shared evaluation point. The folded production path
-/// currently assumes one commitment bundle (one `CommittedOpenings` / one
-/// `CommittedPolynomials` entry bundling `N` polynomials).
+/// currently assumes one commitment group bundling `N` polynomials.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.

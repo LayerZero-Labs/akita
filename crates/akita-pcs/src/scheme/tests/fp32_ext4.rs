@@ -395,14 +395,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
-            &point[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -434,13 +427,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -470,13 +457,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             &malformed_stage2,
             &verifier_setup,
             &mut verifier_transcript,
-            (
-                &point[..],
-                CommittedOpenings {
-                    openings: &openings[..],
-                    commitment: &commitments[0],
-                },
-            ),
+            verifier_claims(&point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
@@ -490,13 +471,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -509,13 +484,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &wrong_point[..],
-            CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&wrong_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -585,14 +554,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
-            &point[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -621,13 +583,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -640,13 +596,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -717,14 +667,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
-            &point[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -753,13 +696,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -826,14 +763,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
-            &point_a[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        ),
+        prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -862,13 +792,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point_a[..],
-            CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point_a[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -881,13 +805,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point_a[..],
-            CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point_a[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );

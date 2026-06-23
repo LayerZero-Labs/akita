@@ -67,7 +67,7 @@ where
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(num_vars, num_claims)?;
+    let opening_batch = OpeningBatch::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![L::one()];
     #[cfg(feature = "zk")]

@@ -204,8 +204,8 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,
     num_claims: usize,
-) -> Result<OpeningBatch, AkitaError> {
-    OpeningBatch::same_point(num_vars, num_claims)
+) -> Result<OpeningBatch<'static>, AkitaError> {
+    OpeningBatch::new(num_vars, num_claims)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(

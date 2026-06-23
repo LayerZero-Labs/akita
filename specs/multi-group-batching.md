@@ -208,7 +208,7 @@ Required constructors and accessors:
 
 ```rust
 impl OpeningBatch<()> {
-    pub fn same_point(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
+    pub fn new(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
 
     pub fn from_commitment_groups(
         num_vars: usize,
@@ -218,7 +218,7 @@ impl OpeningBatch<()> {
 
 impl<F> OpeningBatch<F> {
     pub fn new(point: Vec<F>, groups: Vec<CommitmentGroup<F>>) -> Result<Self, AkitaError>;
-    pub fn same_point_with_claims(point: Vec<F>, claims: Vec<F>) -> Result<Self, AkitaError>;
+    pub fn with_claims(point: Vec<F>, claims: Vec<F>) -> Result<Self, AkitaError>;
     pub fn to_shape(&self) -> OpeningBatch<()>;
 
     pub fn num_vars(&self) -> usize;
@@ -965,7 +965,7 @@ At verify time:
   - one shared `point`;
   - ordered `groups`;
   - each `CommitmentGroup` has `PointVariableSelection` plus dense `claims`.
-- Keep `OpeningBatch::same_point` as the scalar same-bundle constructor.
+- Keep `OpeningBatch::new` as the scalar same-bundle constructor.
 - Add `OpeningBatch::from_commitment_groups` for shape-only grouped batches.
 - Bind group partition and point-variable selections in the instance descriptor.
 - Add explicit rejects for unsupported proof paths while the grouped proof is not

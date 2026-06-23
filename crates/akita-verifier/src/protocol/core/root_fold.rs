@@ -22,7 +22,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     shared_opening_point: &[E],
     openings: &[E],
     commitment: &RingCommitment<F, D>,
-    opening_batch: OpeningBatch,
+    opening_batch: OpeningBatch<'static>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -53,13 +53,14 @@ where
     if commitment.u.len() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
     }
-    let commitment_rows = flatten_batched_commitment_rows(commitment);
+    let commitment_rows = commitment.u.as_slice();
 
-    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitment, transcript);
-    for coord in shared_opening_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-    }
+    append_opening_batch_to_transcript::<F, E, _, T>(
+        &opening_batch,
+        &[commitment],
+        shared_opening_point,
+        transcript,
+    )?;
     if extension_opening_reduction.is_none() {
         let prepared_point = prepare_opening_point::<F, E, D>(
             shared_opening_point,
@@ -199,7 +200,7 @@ where
         m_row_layout,
         fold_grind_nonce,
         v: v_typed.to_vec(),
-        commitment_rows: &commitment_rows,
+        commitment_rows,
         row_coefficients,
         opening_batch,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

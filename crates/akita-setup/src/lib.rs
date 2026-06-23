@@ -730,8 +730,7 @@ mod tests {
                 let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
-                    &akita_types::OpeningBatch::same_point(MAX_VARS, 1)
-                        .expect("singleton opening batch"),
+                    &akita_types::OpeningBatch::new(MAX_VARS, 1).expect("singleton opening batch"),
                 )
                 .unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;

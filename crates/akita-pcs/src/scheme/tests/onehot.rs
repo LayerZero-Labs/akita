@@ -47,13 +47,11 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
+        prover_claims(
             &point[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -147,19 +145,12 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             .expect("deserialize batched proof with derived shape");
     assert_eq!(decoded, proof);
 
-    let opening_groups = [&openings[..]];
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )

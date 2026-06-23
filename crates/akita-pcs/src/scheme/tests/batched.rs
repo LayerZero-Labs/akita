@@ -104,13 +104,11 @@ fn batched_root_direct_fast_path_round_trip() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
+        prover_claims(
             &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_group[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
+            &poly_group[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -140,18 +138,11 @@ fn batched_root_direct_fast_path_round_trip() {
     assert_eq!(round_trip, proof);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
-    let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &round_trip,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -194,13 +185,11 @@ fn batched_root_direct_rejects_wrong_opening() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
+        prover_claims(
             &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_group[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
+            &poly_group[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -211,18 +200,11 @@ fn batched_root_direct_rejects_wrong_opening() {
 
     let mut verifier_transcript =
         AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
-    let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -262,13 +244,11 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &setup,
         &CpuBackend,
         &prepared,
-        (
+        prover_claims(
             &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_group[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            },
+            &poly_group[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -282,18 +262,11 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -301,19 +274,12 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
 
     let mut wrong_openings = openings;
     wrong_openings[1] += F::one();
-    let wrong_opening_groups = [&wrong_openings[..]];
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let wrong_opening_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            CommittedOpenings {
-                openings: wrong_opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -335,20 +301,12 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
 
     let mut oversized_openings = openings.to_vec();
     oversized_openings.push(F::zero());
-    let oversized_opening_groups = [&oversized_openings[..]];
-
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let oversized_result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            CommittedOpenings {
-                openings: oversized_opening_groups[0],
-                commitment: &commitments[0],
-            },
-        ),
+        verifier_claims(&opening_point[..], &oversized_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );

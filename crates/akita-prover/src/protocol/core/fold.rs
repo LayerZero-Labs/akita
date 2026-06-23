@@ -88,7 +88,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: FlatRingVec<F>,
-    pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
+    pub(in crate::protocol::core) instance: RingRelationInstance<'static, F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
@@ -247,12 +247,15 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     needs_extension_reduction: bool,
+    fold_claims: ProverOpeningBatch<
+        'a,
+        E,
+        FoldP,
+        [CyclotomicRing<F, D>],
+        AkitaCommitmentHint<F, D>,
+    >,
     eor_polys: &[&EorP],
-    fold_polys: &[&'a FoldP],
-    opening_batch: &OpeningBatch,
-    relation_opening_batch: OpeningBatch,
-    trace_opening_batch: &OpeningBatch,
-    opening_point: &[E],
+    eor_opening_batch: &OpeningBatch<'_, E>,
     #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     #[cfg(feature = "zk")] no_eor_trace_eval_target_public: Option<E>,
     pad_base_evals: bool,
@@ -265,10 +268,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     alpha_bits: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-    commitment_hint: AkitaCommitmentHint<F, D>,
-    ring_commitment: &RingCommitment<F, D>,
     m_row_layout: MRowLayout,
-    commitment: FlatRingVec<F>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -285,11 +285,15 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     B: ProverComputeBackend<F>,
 {
+    let opening_batch = fold_claims.to_opening_batch()?;
+    let fold_polys = fold_claims.flat_polys();
+    let commitment_rows = fold_claims.single_fold_commitment_rows()?;
+    let commitment = FlatRingVec::from_ring_elems(commitment_rows);
+
     let (fold_inputs, protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
             eor_polys,
-            opening_batch,
-            opening_point,
+            eor_opening_batch,
             #[cfg(feature = "zk")]
             public_openings,
             pad_base_evals,
@@ -352,7 +356,7 @@ where
         &protocol_point,
         alpha_bits,
         basis,
-        trace_opening_batch,
+        &opening_batch,
         row_coefficients,
         transcript,
     )?;
@@ -365,18 +369,43 @@ where
         }
     }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+    let ProverOpeningBatch { point, groups } = fold_claims;
+    let mut input_offset = 0usize;
+    let mut transformed_groups = Vec::with_capacity(groups.len());
+    for group in groups {
+        let group_len = group.polynomials.len();
+        let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
+            AkitaError::InvalidInput("fold input group offset overflow".to_string())
+        })?;
+        let polynomials = fold_inputs.get(input_offset..input_end).ok_or_else(|| {
+            AkitaError::InvalidInput("fold input group shape mismatch".to_string())
+        })?;
+        transformed_groups.push(ProverCommitmentGroup {
+            point_vars: group.point_vars,
+            polynomials,
+            commitment: group.commitment,
+            hint: group.hint,
+        });
+        input_offset = input_end;
+    }
+    if input_offset != fold_inputs.len() {
+        return Err(AkitaError::InvalidInput(
+            "fold input group coverage mismatch".to_string(),
+        ));
+    }
+    let transformed_fold_claims = ProverOpeningBatch {
+        point,
+        groups: transformed_groups,
+    };
+    let (instance, witness) = RingRelationProver::new(
         backend,
         prepared,
         prepared_point.ring_opening_point.clone(),
         prepared_point.ring_multiplier_point.clone(),
-        &fold_refs,
+        transformed_fold_claims,
         e_folded_by_claim,
-        relation_opening_batch,
         level_params.clone(),
-        commitment_hint,
         transcript,
-        ring_commitment,
         row_coefficient_rings,
         m_row_layout,
     )?;
@@ -524,7 +553,9 @@ where
         transcript,
         is_terminal_fold,
         lp,
+        #[cfg(feature = "zk")]
         &prepared_fold.instance,
+        #[cfg(feature = "zk")]
         &logical_w,
         next_commitment,
         if is_terminal_fold {
@@ -767,8 +798,8 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
-    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] instance: &RingRelationInstance<F, D>,
-    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] logical_w: &RecursiveWitnessFlat,
+    #[cfg(feature = "zk")] instance: &RingRelationInstance<F, D>,
+    #[cfg(feature = "zk")] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
     #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,

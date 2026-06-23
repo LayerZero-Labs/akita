@@ -273,25 +273,25 @@ where
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
     let logical_view = logical_w.view::<F, D>()?;
     let logical_polys = [&logical_view];
-    let fold_polys = [&witness_view];
-    let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+    let eor_opening_batch = OpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let expected_openings = needs_extension_reduction.then(|| vec![current_state.opening]);
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
-    let recursive_commitment = RingCommitment {
-        u: commitment_u.to_vec(),
-    };
+    let fold_polys = [witness_view];
+    let fold_claims = ProverOpeningBatch::new_suffix(
+        opening_point,
+        recursive_num_vars,
+        &fold_polys,
+        commitment_u,
+        typed_hint,
+    )?;
     prepare_fold_inner::<F, L, T, _, _, _, B, D>(
         backend,
         prepared,
         needs_extension_reduction,
-        &logical_polys,
-        &fold_polys,
+        fold_claims,
+        &logical_polys[..],
         &eor_opening_batch,
-        opening_batch.clone(),
-        &opening_batch,
-        opening_point,
         #[cfg(feature = "zk")]
         None,
         #[cfg(feature = "zk")]
@@ -307,10 +307,7 @@ where
         alpha,
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
-        typed_hint,
-        &recursive_commitment,
         m_row_layout,
-        current_state.commitment,
     )
 }
 
@@ -351,7 +348,7 @@ mod tests {
             final_factor: TestF::one(),
         });
 
-        let opening_batch = OpeningBatch::same_point(0, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatch::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,

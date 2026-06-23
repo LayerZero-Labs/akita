@@ -2,7 +2,7 @@
 
 use crate::compute::{CommitmentComputeBackend, ProverComputeBackend};
 use crate::ProverTranscriptGrind;
-use crate::{AkitaPolyOps, ProverClaims};
+use crate::{AkitaPolyOps, ProverOpeningBatch};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, SetupContributionMode};
@@ -106,7 +106,7 @@ where
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverOpeningBatch<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,

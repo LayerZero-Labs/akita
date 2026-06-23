@@ -6,12 +6,12 @@ pub(super) use akita_field::{CanonicalField, FieldCore};
 pub(super) use akita_prover::AkitaPolyOps;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
+pub(super) use akita_prover::{ProverCommitmentGroup, ProverOpeningBatch};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    CommitmentGroup, OpeningBatch, PointVariableSelection,
 };
-pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -60,34 +60,39 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
+pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, C: ?Sized, H>(
     point: &'a [FF],
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    (
-        point,
-        CommittedPolynomials {
+) -> ProverOpeningBatch<'a, FF, P, C, H> {
+    ProverOpeningBatch {
+        point: point.into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
             polynomials,
             commitment,
             hint,
-        },
-    )
+        }],
+    }
 }
 
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    (
-        point,
-        CommittedOpenings {
-            openings,
+) -> OpeningBatch<'static, FF, &'a C> {
+    OpeningBatch::from_groups(
+        point.to_vec(),
+        vec![CommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point verifier group"),
+            claims: openings.to_vec(),
             commitment,
-        },
+        }],
     )
+    .expect("valid verifier input")
 }
 
 pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(

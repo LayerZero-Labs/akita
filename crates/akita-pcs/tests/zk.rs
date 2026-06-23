@@ -60,10 +60,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     }
 }
 
-fn single_point_group_opening_batch(num_vars: usize) -> OpeningBatch {
-    OpeningBatch::same_point(num_vars, 1).expect("valid single-point opening_batch")
-}
-
 fn plain_root_d_image<const D: usize>(
     prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>,
     poly: &DensePoly<F, D>,
@@ -96,18 +92,21 @@ fn plain_root_d_image<const D: usize>(
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
     }
 
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
+    let fold_claims = prove_input(
+        point,
+        std::slice::from_ref(poly),
+        commitment.u.as_slice(),
+        hint,
+    );
+    let (instance, witness) = RingRelationProver::new::<F, F, D, _, _, _>(
         &CpuBackend,
         prepared,
         ring_opening_point,
         ring_multiplier_point,
-        &[poly],
+        fold_claims,
         vec![e_folded],
-        single_point_group_opening_batch(point.len()),
         layout.clone(),
-        hint,
         &mut transcript,
-        commitment,
         vec![CyclotomicRing::<F, D>::one()],
         MRowLayout::WithDBlock,
     )
@@ -410,7 +409,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -521,7 +520,7 @@ fn run_zk_dense_cursor_binding_negatives() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::get_params_for_batched_commitment(
-            &OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+            &OpeningBatch::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_c0de_0001);
@@ -694,7 +693,7 @@ where
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatch::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
@@ -823,7 +822,7 @@ fn run_zk_dense_batched_shape_cases() {
 
         const SAME_POINT_POLYS: usize = 3;
         let same_point_opening_batch =
-            OpeningBatch::same_point(NV, SAME_POINT_POLYS).expect("valid opening batch");
+            OpeningBatch::new(NV, SAME_POINT_POLYS).expect("valid opening batch");
         let same_point_layout = Cfg::get_params_for_batched_commitment(&same_point_opening_batch)
             .expect("same-point batched layout");
         let same_point_polys: Vec<DensePoly<F, D>> = (0..SAME_POINT_POLYS)

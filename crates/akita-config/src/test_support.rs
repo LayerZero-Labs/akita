@@ -63,5 +63,5 @@ where
     // Size the fallback for the requested batch (`num_claims`), not a
     // singleton — otherwise the per-poly inputs would be smaller than the
     // batched commit layout `Scheme::commit` actually uses.
-    Cfg::get_params_for_batched_commitment(&OpeningBatch::same_point(num_vars, num_claims)?)
+    Cfg::get_params_for_batched_commitment(&OpeningBatch::new(num_vars, num_claims)?)
 }

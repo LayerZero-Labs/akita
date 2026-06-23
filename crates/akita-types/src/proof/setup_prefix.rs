@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
-        let opening_batch = OpeningBatch::same_point(5, 3).expect("opening batch");
+        let opening_batch = OpeningBatch::new(5, 3).expect("opening batch");
         let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &opening_batch).expect("widths");
         let expected_ring_slots = lp
             .a_key

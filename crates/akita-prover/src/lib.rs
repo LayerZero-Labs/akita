@@ -18,8 +18,8 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::{
-    embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, FpExtEncoding,
-    OpeningPoints,
+    embed_ring_subfield_vector, CleartextWitnessProof, CommitmentGroup, FlatDigitBlocks,
+    FpExtEncoding, OpeningBatch, OpeningPoints, PointVariableSelection, RingCommitment,
 };
 
 pub use api::{
@@ -44,19 +44,19 @@ pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, commit_next_w, prepare_batched_prove_inputs, prove, prove_root,
-    prove_root_direct, prove_suffix, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveSuffixOutcome, RingSwitchOutput,
-    SuffixProverState,
+    batched_prove, commit_next_w, prove, prove_root, prove_root_direct, prove_suffix,
+    prove_terminal_root_fold_with_params, ProveLevelOutput, RecursiveSuffixOutcome,
+    RingSwitchOutput, SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
-/// One PCS commitment and the polynomials it bundles, all opened at the batch's
-/// shared opening point.
+/// One prover commitment group and the polynomials it bundles.
 ///
 /// `polynomials` is the exact bundle committed by the prover commitment API;
 /// `commitment` and `hint` are the corresponding outputs for that bundle.
 #[derive(Debug, Clone)]
-pub struct CommittedPolynomials<'a, P, C, H> {
+pub struct ProverCommitmentGroup<'a, P, C: ?Sized, H> {
+    /// Coordinates of [`ProverOpeningBatch::point`] used by every polynomial in this group.
+    pub point_vars: PointVariableSelection,
     /// Polynomials addressable by claim `poly_idx` values at this point.
     pub polynomials: &'a [P],
     /// Commitment for `polynomials`.
@@ -65,18 +65,198 @@ pub struct CommittedPolynomials<'a, P, C, H> {
     pub hint: H,
 }
 
-impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
+/// Batched prover input: one shared opening point plus prover commitment groups.
+#[derive(Debug, Clone)]
+pub struct ProverOpeningBatch<'a, F: Clone, P, C: ?Sized, H> {
+    /// Padded/shared opening point.
+    pub point: OpeningPoints<'a, F>,
+    /// Commitment groups in transcript order.
+    pub groups: Vec<ProverCommitmentGroup<'a, P, C, H>>,
+}
+
+type SingleFoldParts<'a, P, CommitF, const D: usize, H> =
+    (&'a [P], &'a [CyclotomicRing<CommitF, D>], H);
+
+pub(crate) trait ProverCommitmentRows<CommitF: FieldCore, const D: usize> {
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
+}
+
+impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+    for RingCommitment<CommitF, D>
+{
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
+        &self.u
+    }
+}
+
+impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+    for [CyclotomicRing<CommitF, D>]
+{
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
+        self
+    }
+}
+
+impl<'a, P, C: ?Sized, H> ProverCommitmentGroup<'a, P, C, H> {
     /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
 }
 
-/// Batched prover input: one shared opening point plus one commitment bundle.
-///
-/// Mirror of [`akita_types::VerifierClaims`]: `(shared_point, CommittedPolynomials)`.
-/// See `akita_types::proof::scheme` for the single-point batching contract.
-pub type ProverClaims<'a, F, P, C, H> = (OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>);
+impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
+    /// Shared opening point.
+    pub fn point(&self) -> &[F] {
+        self.point.as_ref()
+    }
+
+    /// Commitment groups in transcript order.
+    pub fn groups(&self) -> &[ProverCommitmentGroup<'a, P, C, H>] {
+        &self.groups
+    }
+
+    /// Number of polynomials in each commitment group.
+    pub fn group_sizes(&self) -> Vec<usize> {
+        self.groups
+            .iter()
+            .map(ProverCommitmentGroup::poly_count)
+            .collect()
+    }
+
+    /// Shape-only opening batch used by schedules, descriptors, and transcripts.
+    pub fn to_opening_batch(&self) -> Result<OpeningBatch<'static>, AkitaError> {
+        let group_sizes = self.group_sizes();
+        OpeningBatch::from_groups(
+            vec![(); self.point().len()],
+            self.groups
+                .iter()
+                .zip(group_sizes.iter().copied())
+                .map(|(group, group_size)| CommitmentGroup {
+                    point_vars: group.point_vars.clone(),
+                    claims: vec![(); group_size],
+                    commitment: (),
+                })
+                .collect(),
+        )
+    }
+
+    /// Polynomials flattened in canonical claim order.
+    pub fn flat_polys(&self) -> Vec<&'a P> {
+        self.groups
+            .iter()
+            .flat_map(|group| group.polynomials.iter())
+            .collect()
+    }
+
+    /// Commitments in commitment-group order.
+    pub fn commitments(&self) -> Vec<&C> {
+        self.groups.iter().map(|group| group.commitment).collect()
+    }
+
+    /// Return the only group when the current implementation's single-group path applies.
+    pub fn single_group(&self) -> Option<&ProverCommitmentGroup<'a, P, C, H>> {
+        self.groups.first().filter(|_| self.groups.len() == 1)
+    }
+
+    /// Consume the batch and return its only group when the current single-group path applies.
+    pub fn into_single_group(
+        self,
+    ) -> Option<(OpeningPoints<'a, F>, ProverCommitmentGroup<'a, P, C, H>)> {
+        let Self { point, mut groups } = self;
+        if groups.len() != 1 {
+            return None;
+        }
+        groups.pop().map(|group| (point, group))
+    }
+
+    /// Reborrow commitment payloads as raw commitment rows for fold preparation.
+    pub(crate) fn into_commitment_rows<CommitF, const D: usize>(
+        self,
+    ) -> ProverOpeningBatch<'a, F, P, [CyclotomicRing<CommitF, D>], H>
+    where
+        CommitF: FieldCore,
+        C: ProverCommitmentRows<CommitF, D>,
+    {
+        ProverOpeningBatch {
+            point: self.point,
+            groups: self
+                .groups
+                .into_iter()
+                .map(|group| ProverCommitmentGroup {
+                    point_vars: group.point_vars,
+                    polynomials: group.polynomials,
+                    commitment: group.commitment.commitment_rows(),
+                    hint: group.hint,
+                })
+                .collect(),
+        }
+    }
+
+    /// Consume the current single-group fold batch into the pieces needed by fold preparation.
+    pub(crate) fn into_single_fold_parts<CommitF, const D: usize>(
+        self,
+    ) -> Result<SingleFoldParts<'a, P, CommitF, D, H>, AkitaError>
+    where
+        CommitF: FieldCore,
+        C: ProverCommitmentRows<CommitF, D>,
+    {
+        let (_, group) = self.into_single_group().ok_or_else(|| {
+            AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
+        })?;
+        Ok((
+            group.polynomials,
+            group.commitment.commitment_rows(),
+            group.hint,
+        ))
+    }
+
+    /// Borrow the current single-group fold batch's commitment rows.
+    pub(crate) fn single_fold_commitment_rows<CommitF, const D: usize>(
+        &self,
+    ) -> Result<&'a [CyclotomicRing<CommitF, D>], AkitaError>
+    where
+        CommitF: FieldCore,
+        C: ProverCommitmentRows<CommitF, D>,
+    {
+        let group = self.single_group().ok_or_else(|| {
+            AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
+        })?;
+        Ok(group.commitment.commitment_rows())
+    }
+
+    /// Build the single-claim batch used by recursive suffix fold levels.
+    pub(crate) fn new_suffix(
+        opening_point: &[F],
+        recursive_num_vars: usize,
+        polynomials: &'a [P],
+        commitment: &'a C,
+        hint: H,
+    ) -> Result<Self, AkitaError>
+    where
+        F: FieldCore,
+    {
+        let opening_batch = OpeningBatch::new(recursive_num_vars, 1)?;
+        let point_vars = opening_batch
+            .groups()
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("recursive opening batch requires one group".to_string())
+            })?
+            .point_vars
+            .clone();
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(recursive_num_vars, F::zero());
+        Ok(Self {
+            point: padded_point.into(),
+            groups: vec![ProverCommitmentGroup {
+                point_vars,
+                polynomials,
+                commitment,
+                hint,
+            }],
+        })
+    }
+}
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]

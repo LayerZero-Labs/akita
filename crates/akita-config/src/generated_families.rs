@@ -82,7 +82,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
     );
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
-            let opening_batch = OpeningBatch::same_point(nv, num_polys)?;
+            let opening_batch = OpeningBatch::new(nv, num_polys)?;
             keys.push(AkitaScheduleLookupKey::new_from_opening_batch(
                 &opening_batch,
             )?);

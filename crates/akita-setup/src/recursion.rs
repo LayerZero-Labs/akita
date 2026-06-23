@@ -68,9 +68,9 @@ where
         return Ok(());
     }
 
-    let root_opening_batch = OpeningBatch::same_point(max_num_vars, max_num_batched_polys)?;
+    let root_opening_batch = OpeningBatch::new(max_num_vars, max_num_batched_polys)?;
     let schedule = Cfg::get_params_for_prove(&root_opening_batch)?;
-    let recursive_opening_batch = OpeningBatch::same_point(0, 1)?;
+    let recursive_opening_batch = OpeningBatch::new(0, 1)?;
     let available_field_len = setup
         .expanded
         .shared_matrix()

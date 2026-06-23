@@ -344,7 +344,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
     pub(in crate::protocol::core) commitment_rows: &'a [CyclotomicRing<F, D>],
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
-    pub(in crate::protocol::core) opening_batch: OpeningBatch,
+    pub(in crate::protocol::core) opening_batch: OpeningBatch<'static>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
     pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     pub(in crate::protocol::core) w_len: usize,

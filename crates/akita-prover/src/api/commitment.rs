@@ -199,7 +199,7 @@ pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<OpeningBatch, AkitaError>
+) -> Result<OpeningBatch<'static>, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -229,7 +229,7 @@ where
         )));
     }
 
-    OpeningBatch::same_point(num_vars, polys.len())
+    OpeningBatch::new(num_vars, polys.len())
 }
 
 pub(crate) fn validate_onehot_chunk_size_for_params<F, const D: usize, P>(
@@ -571,7 +571,7 @@ where
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<OpeningBatch, AkitaError>
+) -> Result<OpeningBatch<'static>, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -603,7 +603,7 @@ where
         )));
     }
 
-    OpeningBatch::same_point(padded_num_vars, total_polys)
+    OpeningBatch::new(padded_num_vars, total_polys)
 }
 
 /// Commit one polynomial bundle under config `Cfg`.

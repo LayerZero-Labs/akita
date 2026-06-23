@@ -148,7 +148,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
     }
 
-    let opening_batch = OpeningBatch::same_point(10, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatch::new(10, 1).expect("singleton opening batch");
     let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
         .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
@@ -176,11 +176,10 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // against batched ones.
     use akita_types::{digest_effective_schedule, root_direct_schedule};
     type Cfg = fp128::D128Full;
-    let real_opening_batch =
-        OpeningBatch::same_point(30, 4).expect("batched same-point opening batch");
+    let real_opening_batch = OpeningBatch::new(30, 4).expect("batched same-point opening batch");
     let real_params =
         Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
-    let singleton_opening_batch = OpeningBatch::same_point(30, 1).expect("singleton opening batch");
+    let singleton_opening_batch = OpeningBatch::new(30, 1).expect("singleton opening batch");
     let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
         .expect("singleton commit params");
 
@@ -215,7 +214,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("grouped same-point opening_batch");
+    let opening_batch = OpeningBatch::new(30, 4).expect("grouped same-point opening_batch");
     let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
@@ -236,7 +235,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatc
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("batched same-point opening_batch");
+    let opening_batch = OpeningBatch::new(30, 4).expect("batched same-point opening_batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
@@ -256,7 +255,7 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     use akita_types::root_direct_schedule;
 
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("supported batched opening_batch");
+    let opening_batch = OpeningBatch::new(30, 4).expect("supported batched opening_batch");
     let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("supported batched commit params");
     let schedule = root_direct_schedule(opening_batch.num_vars(), root_params.clone())
@@ -375,7 +374,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(26, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatch::new(26, 1).expect("singleton opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()

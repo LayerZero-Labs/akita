@@ -4,7 +4,6 @@ use super::*;
 use akita_r1cs::zk_ext_mask_lc_at;
 // Top-level batched verifier orchestration once a schedule is selected.
 
-use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
@@ -17,10 +16,10 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, OpeningBatch, RingCommitment, Schedule, SetupContributionMode, Step,
-    VerifierClaims,
+    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    FpExtEncoding, LevelParams, OpeningBatch, OpeningBatchLimits, RingCommitment, Schedule,
+    SetupContributionMode, Step,
 };
 use std::array::from_fn;
 
@@ -452,11 +451,11 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
-pub fn batched_verify<'a, Cfg, T, const D: usize>(
+pub fn batched_verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    claims: OpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -474,21 +473,26 @@ where
     // would silently skip past.
     check_batched_proof_step_shape(proof)?;
 
-    let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    reject_unsupported_grouped_root::<Cfg>(
-        &prepared_claims.opening_batch,
-        setup_contribution_mode,
-    )?;
-    let schedule = effective_batched_schedule::<Cfg, D>(
-        &prepared_claims.opening_batch,
-        prepared_claims.opening_point,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    let group_sizes = claims
+        .groups()
+        .iter()
+        .map(|group| group.claims.len())
+        .collect::<Vec<_>>();
+    validate_batched_inputs(&setup.expanded, claims.point(), &group_sizes, false)?;
+    let opening_batch = claims
+        .validate(OpeningBatchLimits {
+            max_num_vars: setup.expanded.seed().max_num_vars,
+            max_num_claims: setup.expanded.seed().max_num_batched_polys,
+        })
+        .map_err(|_| AkitaError::InvalidProof)?;
+    reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
+    let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
+        .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         &setup.expanded,
-        &prepared_claims.opening_batch,
+        &opening_batch,
         &schedule,
         basis,
         transcript,
@@ -498,7 +502,7 @@ where
         proof,
         setup,
         transcript,
-        prepared_claims,
+        claims,
         &schedule,
         basis,
         setup_contribution_mode,
@@ -519,11 +523,11 @@ where
 /// replay rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn verify<'a, Cfg, T, const D: usize>(
+pub(crate) fn verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    prepared_claims: PreparedVerifierClaims<'a, Cfg::ExtField, RingCommitment<Cfg::Field, D>>,
+    claims: OpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -538,6 +542,12 @@ where
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
+    let commitment = claims
+        .single_group_commitment()
+        .copied()
+        .ok_or(AkitaError::InvalidProof)?;
+    let openings = claims.claims();
+    let opening_batch = claims.to_shape();
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             #[cfg(feature = "zk")]
@@ -550,9 +560,9 @@ where
             let params = direct.params.as_ref().ok_or(AkitaError::InvalidProof)?;
             verify_zero_fold_openings_with_opening_batch(
                 witnesses,
-                prepared_claims.opening_point,
-                &prepared_claims.openings,
-                &prepared_claims.opening_batch,
+                claims.point(),
+                &openings,
+                &opening_batch,
                 basis,
             )?;
             #[cfg(feature = "zk")]
@@ -563,8 +573,8 @@ where
             verify_root_direct_commitments_with_params::<Cfg::Field, D>(
                 witnesses,
                 setup,
-                &prepared_claims.commitment,
-                &prepared_claims.opening_batch,
+                commitment,
+                &opening_batch,
                 params,
                 #[cfg(feature = "zk")]
                 direct_commitment_payload,
@@ -575,10 +585,10 @@ where
                 proof,
                 setup,
                 transcript,
-                prepared_claims.opening_point,
-                &prepared_claims.openings,
-                &prepared_claims.commitment,
-                prepared_claims.opening_batch,
+                claims.point(),
+                &openings,
+                commitment,
+                opening_batch,
                 basis,
                 schedule,
                 setup_contribution_mode,
@@ -608,7 +618,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     opening_point: &[E],
     openings: &[E],
     commitment: &RingCommitment<F, D>,
-    opening_batch: OpeningBatch,
+    opening_batch: OpeningBatch<'static>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -794,8 +804,8 @@ mod tests {
         }
     }
 
-    fn opening_batch(num_vars: usize) -> OpeningBatch {
-        OpeningBatch::same_point(num_vars, 1).expect("valid opening batch summary")
+    fn opening_batch(num_vars: usize) -> OpeningBatch<'static> {
+        OpeningBatch::new(num_vars, 1).expect("valid opening batch summary")
     }
 
     fn setup_seed(max_setup_len: usize) -> AkitaSetupSeed {

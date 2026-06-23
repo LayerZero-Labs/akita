@@ -6,17 +6,18 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
+use akita_prover::ProverOpeningBatch;
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{
-    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProverClaims,
+    AkitaPolyOps, AkitaProverSetup, CommitmentComputeBackend, CommitmentProver,
     ProverComputeBackend,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::AkitaVerifierSetup;
 use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
-use akita_verifier::{CommitmentVerifier, VerifierClaims};
+use akita_types::{AkitaVerifierSetup, OpeningBatch};
+use akita_verifier::CommitmentVerifier;
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -115,7 +116,7 @@ where
         setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverOpeningBatch<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -169,11 +170,11 @@ where
     type BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    fn batched_verify<'a, T: Transcript<F>>(
+    fn batched_verify<T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, Self::ExtField, Self::Commitment>,
+        claims: OpeningBatch<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {

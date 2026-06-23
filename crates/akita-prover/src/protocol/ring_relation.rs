@@ -7,7 +7,8 @@ use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
-    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRowsPlan,
+    ProverOpeningBatch, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRowsPlan,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -20,10 +21,9 @@ use akita_transcript::Transcript;
 #[cfg(feature = "zk")]
 use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
-    RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
 };
-use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
+use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -331,23 +331,33 @@ impl RingRelationProver {
     #[allow(clippy::too_many_arguments, clippy::new_ret_no_self)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub fn new<F, const D: usize, T, P, B>(
+    pub fn new<'a, F, PointF, const D: usize, T, P, B>(
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        polys: &[&P],
+        fold_claims: ProverOpeningBatch<
+            'a,
+            PointF,
+            P,
+            [CyclotomicRing<F, D>],
+            AkitaCommitmentHint<F, D>,
+        >,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        opening_batch: OpeningBatch,
         lp: LevelParams,
-        mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
-    ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
+    ) -> Result<
+        (
+            RingRelationInstance<'static, F, D>,
+            RingRelationWitness<F, D>,
+        ),
+        AkitaError,
+    >
     where
         F: FieldCore + CanonicalField,
+        PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         P: AkitaPolyOps<F, D>,
         B: DigitRowsComputeBackend<F>,
@@ -360,6 +370,9 @@ impl RingRelationProver {
             );
         }
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        let opening_batch = fold_claims.to_opening_batch()?;
+        let polys = fold_claims.flat_polys();
+        let (_, commitment_rows, mut hint) = fold_claims.into_single_fold_parts()?;
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "batched prover opening-point layout mismatch".to_string(),
@@ -383,7 +396,7 @@ impl RingRelationProver {
                 "batched prover input lengths do not match".to_string(),
             ));
         }
-        if commitment.u.len() != lp.effective_commit_rows() {
+        if commitment_rows.len() != lp.effective_commit_rows() {
             return Err(AkitaError::InvalidInput(
                 "batched prover received a commitment with the wrong length".to_string(),
             ));
@@ -447,10 +460,10 @@ impl RingRelationProver {
         }
         let (z_folded_rings, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, T, D>(
-                transcript, polys, &lp, num_claims,
+                transcript, &polys, &lp, num_claims,
             )?;
 
-        let commitment_rows = commitment.u.to_vec();
+        let commitment_rows = commitment_rows.to_vec();
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits

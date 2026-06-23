@@ -40,7 +40,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::same_point(NV, 1).expect("singleton opening batch"),
+        &akita_types::OpeningBatch::new(NV, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let setup =

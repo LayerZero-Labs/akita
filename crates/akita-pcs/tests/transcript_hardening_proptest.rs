@@ -26,8 +26,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     init_rayon_pool();
 
     let total_claims = batch_shape(shape_index);
-    let opening_batch =
-        OpeningBatch::same_point(num_vars, total_claims).expect("valid opening batch");
+    let opening_batch = OpeningBatch::new(num_vars, total_claims).expect("valid opening batch");
     let layout =
         DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
 

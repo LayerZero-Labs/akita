@@ -262,13 +262,6 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
     })
 }
 
-/// Flatten commitment rows for the one batch commitment.
-pub fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
-    commitment: &RingCommitment<F, D>,
-) -> Vec<CyclotomicRing<F, D>> {
-    commitment.u.to_vec()
-}
-
 /// Absorb the batch commitment into the transcript.
 pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
     commitment: &RingCommitment<F, D>,
@@ -286,15 +279,14 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
 ///
 /// Returns an error if the shared opening point exceeds setup capacity, the
 /// payload is empty, or the claim count exceeds setup capacity.
-pub fn validate_batched_inputs<F, E, G, Len>(
+pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
-    input: &(&[E], G),
-    point_payload_len: Len,
+    point: &[E],
+    group_sizes: &[usize],
     for_prover: bool,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    Len: Fn(&G) -> usize,
 {
     let label = if for_prover {
         "batched_prove"
@@ -309,7 +301,6 @@ where
         }
     };
 
-    let (point, payload) = input;
     let num_vars = point.len();
     if num_vars > setup.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
@@ -318,7 +309,17 @@ where
             setup.seed().max_num_vars
         )));
     }
-    let num_claims = point_payload_len(payload);
+    if group_sizes.is_empty() {
+        return Err(shape_error(format!(
+            "{label} requires at least one commitment group",
+        )));
+    }
+    if group_sizes.contains(&0) {
+        return Err(shape_error(format!(
+            "{label} commitment groups must be nonempty",
+        )));
+    }
+    let num_claims = checked_total_claims(group_sizes, label)?;
     if num_claims == 0 {
         return Err(shape_error(format!(
             "{label} shared point must have at least one item",
@@ -613,10 +614,8 @@ mod tests {
     #[test]
     fn batched_input_validation_accepts_extension_points() {
         let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
-        let polys: Vec<usize> = vec![0, 1, 2];
-        let inputs = (&p0[..], polys);
 
-        validate_batched_inputs(&setup(), &inputs, |polys| polys.len(), true)
+        validate_batched_inputs(&setup(), &p0[..], &[3], true)
             .expect("extension-valued shared opening point should validate by shape");
     }
 
