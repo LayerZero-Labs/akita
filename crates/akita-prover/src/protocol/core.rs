@@ -12,9 +12,8 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, FoldInputPoly, ProverCommitmentGroup, ProverComputeBackend, ProverOpeningBatch,
-    ProverTranscriptGrind, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
-    RingRelationInstance, RingRelationWitness,
+    AkitaPolyOps, FoldInputPoly, ProverComputeBackend, ProverOpeningBatch, ProverTranscriptGrind,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -77,27 +76,6 @@ pub(in crate::protocol::core) struct ExtensionOpeningReduction<L: FieldCore> {
     #[cfg(feature = "zk")]
     pub(in crate::protocol::core) final_claim_public: L,
     pub(in crate::protocol::core) final_factor: L,
-}
-
-pub(crate) fn opening_batch_shape_for_prove<'a, PointF, PolyF, P, C: ?Sized, H, const D: usize>(
-    batch: &ProverOpeningBatch<'a, PointF, P, C, H>,
-    label: &str,
-) -> Result<OpeningBatch<'static>, AkitaError>
-where
-    PointF: Clone,
-    PolyF: FieldCore,
-    P: AkitaPolyOps<PolyF, D>,
-{
-    use akita_types::{padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity};
-
-    let padded_num_vars = padded_scalar_batch_num_vars(
-        batch
-            .groups()
-            .iter()
-            .flat_map(|group| group.polynomials.iter().map(AkitaPolyOps::num_vars)),
-    )?;
-    validate_scalar_point_matches_poly_arity(batch.point().len(), padded_num_vars, label)?;
-    batch.to_opening_batch(padded_num_vars)
 }
 
 mod extension_opening_reduction;

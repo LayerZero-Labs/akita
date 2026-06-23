@@ -35,7 +35,7 @@ pub use batch::{
     root_tensor_projection_enabled, validate_batched_inputs,
     validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
-pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
+pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
 #[cfg(feature = "zk")]
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};

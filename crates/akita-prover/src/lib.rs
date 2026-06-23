@@ -18,8 +18,10 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::{
-    embed_ring_subfield_vector, CleartextWitnessProof, CommitmentGroup, FlatDigitBlocks,
-    FpExtEncoding, OpeningBatch, OpeningPoints, PointVariableSelection, RingCommitment,
+    embed_ring_subfield_vector, padded_scalar_batch_num_vars,
+    validate_scalar_point_matches_poly_arity, CleartextWitnessProof, CommitmentGroup,
+    FlatDigitBlocks, FlatRingVec, FpExtEncoding, OpeningBatch, OpeningPoints,
+    PointVariableSelection, ProverCommitmentRows,
 };
 
 pub use api::{
@@ -74,29 +76,6 @@ pub struct ProverOpeningBatch<'a, F: Clone, P, C: ?Sized, H> {
     pub groups: Vec<ProverCommitmentGroup<'a, P, C, H>>,
 }
 
-type SingleFoldParts<'a, P, CommitF, const D: usize, H> =
-    (&'a [P], &'a [CyclotomicRing<CommitF, D>], H);
-
-pub(crate) trait ProverCommitmentRows<CommitF: FieldCore, const D: usize> {
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
-}
-
-impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
-    for RingCommitment<CommitF, D>
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        &self.u
-    }
-}
-
-impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
-    for [CyclotomicRing<CommitF, D>]
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        self
-    }
-}
-
 impl<'a, P, C: ?Sized, H> ProverCommitmentGroup<'a, P, C, H> {
     /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
@@ -140,6 +119,23 @@ impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
         )
     }
 
+    /// Shape-only opening batch with the padded domain selected from prover polynomials.
+    pub fn to_prover_batch_shape<PolyF, const D: usize>(
+        &self,
+    ) -> Result<OpeningBatch<'static>, AkitaError>
+    where
+        PolyF: FieldCore,
+        P: AkitaPolyOps<PolyF, D>,
+    {
+        let padded_num_vars = padded_scalar_batch_num_vars(
+            self.groups()
+                .iter()
+                .flat_map(|group| group.polynomials.iter().map(AkitaPolyOps::num_vars)),
+        )?;
+        validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
+        self.to_opening_batch(padded_num_vars)
+    }
+
     /// Polynomials flattened in canonical claim order.
     pub fn flat_polys(&self) -> Vec<&'a P> {
         self.groups
@@ -159,14 +155,12 @@ impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
     }
 
     /// Consume the batch and return its only group when the current single-group path applies.
-    pub fn into_single_group(
-        self,
-    ) -> Option<(OpeningPoints<'a, F>, ProverCommitmentGroup<'a, P, C, H>)> {
-        let Self { point, mut groups } = self;
+    pub fn into_single_group(self) -> Option<ProverCommitmentGroup<'a, P, C, H>> {
+        let Self { mut groups, .. } = self;
         if groups.len() != 1 {
             return None;
         }
-        groups.pop().map(|group| (point, group))
+        groups.pop()
     }
 
     /// Reborrow commitment payloads as raw commitment rows for fold preparation.
@@ -192,28 +186,10 @@ impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
         }
     }
 
-    /// Consume the current single-group fold batch into the pieces needed by fold preparation.
-    pub(crate) fn into_single_fold_parts<CommitF, const D: usize>(
-        self,
-    ) -> Result<SingleFoldParts<'a, P, CommitF, D, H>, AkitaError>
-    where
-        CommitF: FieldCore,
-        C: ProverCommitmentRows<CommitF, D>,
-    {
-        let (_, group) = self.into_single_group().ok_or_else(|| {
-            AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
-        })?;
-        Ok((
-            group.polynomials,
-            group.commitment.commitment_rows(),
-            group.hint,
-        ))
-    }
-
-    /// Borrow the current single-group fold batch's commitment rows.
-    pub(crate) fn single_fold_commitment_rows<CommitF, const D: usize>(
+    /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
+    pub(crate) fn single_fold_commitment<CommitF, const D: usize>(
         &self,
-    ) -> Result<&'a [CyclotomicRing<CommitF, D>], AkitaError>
+    ) -> Result<FlatRingVec<CommitF>, AkitaError>
     where
         CommitF: FieldCore,
         C: ProverCommitmentRows<CommitF, D>,
@@ -221,7 +197,48 @@ impl<'a, F: Clone, P, C: ?Sized, H> ProverOpeningBatch<'a, F, P, C, H> {
         let group = self.single_group().ok_or_else(|| {
             AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
         })?;
-        Ok(group.commitment.commitment_rows())
+        Ok(FlatRingVec::from_ring_elems(
+            group.commitment.commitment_rows(),
+        ))
+    }
+
+    /// Preserve this batch's grouping metadata while replacing its flat polynomial stream.
+    pub(crate) fn regroup_polynomials<'b, Q>(
+        self,
+        polynomials: &'b [Q],
+    ) -> Result<ProverOpeningBatch<'b, F, Q, C, H>, AkitaError>
+    where
+        'a: 'b,
+    {
+        let ProverOpeningBatch { point, groups } = self;
+        let mut input_offset = 0usize;
+        let mut regrouped = Vec::with_capacity(groups.len());
+        for group in groups {
+            let group_len = group.polynomials.len();
+            let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
+                AkitaError::InvalidInput("fold input group offset overflow".to_string())
+            })?;
+            let replacement_polynomials =
+                polynomials.get(input_offset..input_end).ok_or_else(|| {
+                    AkitaError::InvalidInput("fold input group shape mismatch".to_string())
+                })?;
+            regrouped.push(ProverCommitmentGroup {
+                point_vars: group.point_vars,
+                polynomials: replacement_polynomials,
+                commitment: group.commitment,
+                hint: group.hint,
+            });
+            input_offset = input_end;
+        }
+        if input_offset != polynomials.len() {
+            return Err(AkitaError::InvalidInput(
+                "fold input group coverage mismatch".to_string(),
+            ));
+        }
+        Ok(ProverOpeningBatch {
+            point,
+            groups: regrouped,
+        })
     }
 
     /// Build the single-claim batch used by recursive suffix fold levels.

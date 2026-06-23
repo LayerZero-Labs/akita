@@ -2,7 +2,6 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
-use crate::protocol::core::opening_batch_shape_for_prove;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
@@ -21,6 +20,7 @@ use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 #[cfg(feature = "zk")]
 use akita_types::terminal_e_hat_bytes_from_blocks;
+use akita_types::ProverCommitmentRows;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
 };
@@ -371,10 +371,13 @@ impl RingRelationProver {
             );
         }
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        let opening_batch =
-            opening_batch_shape_for_prove::<_, F, P, _, _, D>(&fold_claims, "ring_relation")?;
+        let opening_batch = fold_claims.to_prover_batch_shape::<F, D>()?;
         let polys = fold_claims.flat_polys();
-        let (_, commitment_rows, mut hint) = fold_claims.into_single_fold_parts()?;
+        let fold_group = fold_claims.into_single_group().ok_or_else(|| {
+            AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
+        })?;
+        let commitment_rows = fold_group.commitment.commitment_rows().to_vec();
+        let mut hint = fold_group.hint;
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "batched prover opening-point layout mismatch".to_string(),
@@ -465,7 +468,6 @@ impl RingRelationProver {
                 transcript, &polys, &lp, num_claims,
             )?;
 
-        let commitment_rows = commitment_rows.to_vec();
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits

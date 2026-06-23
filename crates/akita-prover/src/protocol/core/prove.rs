@@ -141,8 +141,7 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     let group_sizes = claims.group_sizes();
     validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
-    let opening_batch =
-        opening_batch_shape_for_prove::<_, Cfg::Field, P, _, _, D>(&claims, "batched_prove")?;
+    let opening_batch = claims.to_prover_batch_shape::<Cfg::Field, D>()?;
     let flat_polys = claims.flat_polys();
     reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
         &opening_batch,
@@ -265,8 +264,7 @@ where
 {
     backend.validate_prepared_setup::<D>(prepared, expanded.as_ref())?;
     #[cfg(feature = "zk")]
-    let opening_batch =
-        opening_batch_shape_for_prove::<_, Cfg::Field, P, _, _, D>(&claims, "batched_prove")?;
+    let opening_batch = claims.to_prover_batch_shape::<Cfg::Field, D>()?;
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
 

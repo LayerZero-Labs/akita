@@ -285,11 +285,9 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     B: ProverComputeBackend<F>,
 {
-    let opening_batch =
-        opening_batch_shape_for_prove::<_, F, FoldP, _, _, D>(&fold_claims, "fold_prove")?;
+    let opening_batch = fold_claims.to_prover_batch_shape::<F, D>()?;
     let fold_polys = fold_claims.flat_polys();
-    let commitment_rows = fold_claims.single_fold_commitment_rows()?;
-    let commitment = FlatRingVec::from_ring_elems(commitment_rows);
+    let commitment = fold_claims.single_fold_commitment::<F, D>()?;
 
     let (fold_inputs, protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, EorP, D>(
@@ -370,34 +368,7 @@ where
         }
     }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let ProverOpeningBatch { point, groups } = fold_claims;
-    let mut input_offset = 0usize;
-    let mut transformed_groups = Vec::with_capacity(groups.len());
-    for group in groups {
-        let group_len = group.polynomials.len();
-        let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
-            AkitaError::InvalidInput("fold input group offset overflow".to_string())
-        })?;
-        let polynomials = fold_inputs.get(input_offset..input_end).ok_or_else(|| {
-            AkitaError::InvalidInput("fold input group shape mismatch".to_string())
-        })?;
-        transformed_groups.push(ProverCommitmentGroup {
-            point_vars: group.point_vars,
-            polynomials,
-            commitment: group.commitment,
-            hint: group.hint,
-        });
-        input_offset = input_end;
-    }
-    if input_offset != fold_inputs.len() {
-        return Err(AkitaError::InvalidInput(
-            "fold input group coverage mismatch".to_string(),
-        ));
-    }
-    let transformed_fold_claims = ProverOpeningBatch {
-        point,
-        groups: transformed_groups,
-    };
+    let transformed_fold_claims = fold_claims.regroup_polynomials(&fold_inputs)?;
     let (instance, witness) = RingRelationProver::new(
         backend,
         prepared,

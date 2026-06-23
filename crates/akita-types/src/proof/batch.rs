@@ -299,11 +299,10 @@ pub fn padded_scalar_batch_num_vars(
 pub fn validate_scalar_point_matches_poly_arity(
     point_len: usize,
     padded_num_vars: usize,
-    label: &str,
 ) -> Result<(), AkitaError> {
     if point_len != padded_num_vars {
         return Err(AkitaError::InvalidInput(format!(
-            "{label} opening point length {point_len} does not match padded batch domain {padded_num_vars}"
+            "opening point length {point_len} does not match padded batch domain {padded_num_vars}"
         )));
     }
     Ok(())
@@ -740,14 +739,14 @@ mod tests {
 
     #[test]
     fn validate_scalar_point_matches_poly_arity_rejects_shorter_point() {
-        let err = validate_scalar_point_matches_poly_arity(18, 20, "batched_prove")
+        let err = validate_scalar_point_matches_poly_arity(18, 20)
             .expect_err("shorter point must reject");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]
     fn validate_scalar_point_matches_poly_arity_accepts_match() {
-        validate_scalar_point_matches_poly_arity(20, 20, "batched_prove")
+        validate_scalar_point_matches_poly_arity(20, 20)
             .expect("matching point length should validate");
     }
 }
