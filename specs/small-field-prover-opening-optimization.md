@@ -17,6 +17,9 @@ protocol, transcript, verifier behavior, and proof bytes stable while moving
 tensor-opening work to better backend boundaries, reducing repeated sparse
 materialization, and adding focused benchmarks for the remaining hot paths.
 
+**Post PO-CUTOVER (#206):** the tensor hooks listed below now live on
+`RootTensorSource` views and `TensorProjectionKernel` impls, not `AkitaPolyOps`.
+
 ## Intent
 
 ### Goal
@@ -27,8 +30,9 @@ reduction at existing backend and sumcheck abstraction boundaries.
 
 The key surfaces modified are:
 
-- `akita-prover::AkitaPolyOps`: new tensor column-partial and sparse
-  same-point linear-combination hooks.
+- `akita-prover::compute::kernels::TensorProjectionKernel` (via `RootTensorSource`
+  views): tensor column-partial and sparse same-point linear-combination hooks
+  (formerly on `AkitaPolyOps`).
 - `akita-prover::backend::dense`: dense tensor-opening methods that stream from
   ring storage instead of materializing a flat field vector first.
 - `akita-prover::backend::onehot`: one-hot tensor column partials, batched
