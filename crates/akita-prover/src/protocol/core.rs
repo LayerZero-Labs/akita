@@ -79,15 +79,7 @@ pub(in crate::protocol::core) struct ExtensionOpeningReduction<L: FieldCore> {
     pub(in crate::protocol::core) final_factor: L,
 }
 
-pub(crate) fn opening_batch_shape_for_prove<
-    'a,
-    PointF,
-    PolyF,
-    P,
-    C: ?Sized,
-    H,
-    const D: usize,
->(
+pub(crate) fn opening_batch_shape_for_prove<'a, PointF, PolyF, P, C: ?Sized, H, const D: usize>(
     batch: &ProverOpeningBatch<'a, PointF, P, C, H>,
     label: &str,
 ) -> Result<OpeningBatch<'static>, AkitaError>
