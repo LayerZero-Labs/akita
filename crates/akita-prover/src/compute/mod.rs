@@ -24,6 +24,7 @@
 
 mod backend;
 mod cpu;
+pub mod delegating_cpu;
 mod dispatch;
 mod kernels;
 mod operation_plans;
@@ -36,6 +37,7 @@ pub use backend::{
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
+pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel,

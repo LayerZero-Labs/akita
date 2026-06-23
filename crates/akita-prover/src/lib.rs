@@ -27,15 +27,16 @@ pub use backend::{
     SuffixWitnessView,
 };
 pub use compute::{
-    BatchDecomposeFoldOutcome, CommitBackendFor, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SparseRingCommitRowsPlan, TensorBackendFor, TieredProveStacks, UniformProverStack,
+    BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,
+    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput,
+    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks,
+    OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster, OpeningProveBackendFor, OperationCtx,
+    PreparedCrtNttProfile, ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack,
+    RecursiveProveBackend, RecursiveWitnessCommitRowsPlan, RingSwitchCluster,
+    RingSwitchComputeBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan,
+    TensorBackendFor, TensorCluster, TieredProveStacks, UniformProverStack,
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
