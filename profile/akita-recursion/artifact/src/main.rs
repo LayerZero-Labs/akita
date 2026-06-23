@@ -341,11 +341,11 @@ fn run() -> Result<(), String> {
         &prepared,
         (
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitment,
                 hint,
-            }],
+            },
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -366,10 +366,10 @@ fn run() -> Result<(), String> {
         &mut verifier_transcript,
         (
             &opening_point[..],
-            vec![akita_types::CommittedOpenings {
+            akita_types::CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            }],
+            },
         ),
         setup_contribution_mode,
     )

@@ -109,10 +109,10 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     ) -> VerifierClaims<'a, F, RingCommitment<F, D>> {
         (
             &self.opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &self.commitment,
-            }],
+            },
         )
     }
 
