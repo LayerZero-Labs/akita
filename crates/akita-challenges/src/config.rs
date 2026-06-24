@@ -26,12 +26,13 @@ pub const D64_PRODUCTION_EXACT_SHELL_MAG1: usize = 31;
 pub const D64_PRODUCTION_EXACT_SHELL_MAG2: usize = 11;
 pub const D64_PRODUCTION_OPERATOR_NORM_THRESHOLD: u32 = 18;
 
-/// Certified floor on `Pr[gamma(c) <= 18]` for the production `(31, 11)` shell at
-/// `D = 64`. Source: `lattice-jolt/experiments/operator-norm-acceptance/
-/// cert_d64_a31_b11_gamma18.json` (`p0 ≈ 0.2349106543`). The rational `117/500`
-/// undershoots `p0` so tail-bound `ln(1/p)` sizing stays conservative.
-pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM: u128 = 117;
-pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN: u128 = 500;
+/// Certified floor on `Pr[strict_accept]` for the production `(31, 11)` shell at
+/// `D = 64` with `T = 18` and the shipped `OpNormTable` predicate
+/// (`accept_strict_parts`, fixed-point scale `q = 48`). Monte Carlo on uniform
+/// shell draws gives `≈ 0.662`; `13/20` undershoots that rate so tail-bound
+/// `ln(1/p_opnorm)` sizing stays conservative.
+pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM: u128 = 13;
+pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN: u128 = 20;
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///

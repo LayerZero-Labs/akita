@@ -250,8 +250,8 @@ pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 /// acceptance probability on already-filtered blocks.
 ///
 /// `p_grind = 1/2` was the original baked-in default (`ln(4·num_fold_coeffs)`).
-/// Production ships `1/4`: a tighter certificate that still leaves honest grinding
-/// rare in practice because realized `‖z‖_inf` sits well below `t*`.
+/// Production ships `1/8`: a tighter per-challenge grind acceptance target in the
+/// union bound for `t*`.
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
@@ -322,20 +322,19 @@ fn op_norm_block_ln_term(num_fold_blocks: u128, p_num: u128, p_den: u128) -> u12
     num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
 }
 
-/// Union-bound ln term at the legacy `p_grind = 1/2` reference (`ln(4·num_fold_coeffs)`),
-/// scaled down for tighter descriptor-bound targets via
-/// `ln((1 - p_ref)/(1 - p_grind))` approximated as `p_grind_den / (2·(p_grind_den - p_grind_num))`.
+/// Conservative integer for `ln(2·num_fold_coeffs / (1 - p_grind))` with
+/// `p_grind = grind_target_accept_num / grind_target_accept_den`.
 #[inline]
 fn fold_witness_linf_grind_union_ln(
     num_fold_coeffs: u128,
     grind_target_accept_num: u128,
     grind_target_accept_den: u128,
 ) -> Result<u128, AkitaError> {
-    let ln_half = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
     let miss = grind_target_accept_den - grind_target_accept_num;
-    Ok(ln_half
-        .saturating_mul(grind_target_accept_den)
-        .div_ceil(2u128.saturating_mul(miss)))
+    let numer = 2u128
+        .saturating_mul(num_fold_coeffs)
+        .saturating_mul(grind_target_accept_den);
+    Ok(ceil_natural_log(numer.div_ceil(miss)))
 }
 
 /// Conservative integer for
@@ -836,9 +835,16 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+    fn fold_witness_linf_ln_term_grind_eighth_matches_direct_union_ln_at_2_16() {
         let n = 1u128 << 16;
-        let blocks = 16u128;
+        let eighth = fold_witness_linf_ln_term(n, 16, 1, 8, 1, 1).unwrap();
+        assert_eq!(eighth, 13, "ceil_ln(2·2^16·8/7)");
+    }
+
+    #[test]
+    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+        let n = 100u128;
+        let blocks = 1u128;
         let half = fold_witness_linf_ln_term(n, blocks, 1, 2, 1, 1).unwrap();
         let eighth = fold_witness_linf_ln_term(n, blocks, 1, 8, 1, 1).unwrap();
         assert!(eighth < half, "eighth={eighth} half={half}");

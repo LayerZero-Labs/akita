@@ -21,7 +21,7 @@ type F = Prime128OffsetA7F7;
 
 const D: usize = 64;
 const Q: u32 = 48;
-const T: u64 = 16;
+const T: u64 = 18;
 const C1: usize = 31;
 const C2: usize = 11;
 
@@ -137,7 +137,7 @@ fn perf_op_norm_d64() {
                 .unwrap()
         })
         .cloned()
-        .expect("some (31,11) shell accepts at T=16");
+        .expect("some (31,11) shell accepts at T=18");
 
     // (B) op-norm check, production d/2 scan, averaged over the pool.
     for ch in &pool {

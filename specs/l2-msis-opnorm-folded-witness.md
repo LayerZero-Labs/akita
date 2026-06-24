@@ -80,8 +80,8 @@ follow-up PR split from #195.
 **Implementation notes ([#207](https://github.com/LayerZero-Labs/akita/pull/207)).**
 The certified op-norm predicate uses transposed frequency tables with `i64`
 accumulators and fused 4-wide chunk paths (AVX2 / NEON).
-`choose_op_norm_rejection_for_a_role` is memoized on its geometry key so offline
-schedule search and table expansion do not repeat witness-scoring work.
+`choose_op_norm_rejection_for_a_role` is recomputed per geometry during offline
+schedule search and table expansion.
 
 ### Invariants
 
@@ -125,7 +125,7 @@ schedule search and table expansion do not repeat witness-scoring work.
   For D=64 exact shell, the target starting point is
   `ExactShell { count_mag1: 31, count_mag2: 11 }` with `gamma(c) <= 18`, whose
   raw support is about `2^130.152`.
-  The rational acceptance floor `117/500` is certified for tail-bound sizing on
+  The rational acceptance floor `13/20` is certified for tail-bound sizing on
   levels with `op_norm_rejection` enabled; a vendored checked ≥128-bit artifact
   in CI remains open (S2).
 - **No adversarial challenge bias hole.** The security proof must account for the
@@ -199,7 +199,7 @@ schedule search and table expansion do not repeat witness-scoring work.
       with rejection on **and** sparse-draw count is at most `2^12`.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
-      *(D64 op-norm split PR ships rational floor `117/500` at `T = 18`;
+      *(D64 op-norm split PR ships rational floor `13/20` at `T = 18`;
       vendored checked cert in CI remains open.)*
 - [ ] The prover derives the grouped `z_hat` limbs from the actual
       `DecomposeFoldWitness.centered_coeffs` used for ring-switch witness
@@ -1080,7 +1080,7 @@ the mathematical predicate `gamma_D(c) <= T`.
 
 This fast path is deterministic, integer-only, and works without changing the
 transcript stream.
-`D = 64` with `T = 16` is the first production target, but the same table
+`D = 64` with `T = 18` is the first production target, but the same table
 format should cover `D = 32` and `D = 128`.
 Only one representative of each conjugate frequency pair needs to be checked,
 though tests should compare the reduced loop against the full `0..D` formula.
@@ -1393,7 +1393,7 @@ Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later sl
 - **S3**: operator-norm threshold + transcript rejection.
   **Production D=64 cutover landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207)
   (`(31, 11), T = 18`, per-level gating, `2^12` sparse-draw cap, fused predicate,
-  planner memoization, `fp128_d64_*` regen). Vendored S2 ≥128-bit acceptance cert still open.
+  `fp128_d64_*` regen). Vendored S2 ≥128-bit acceptance cert still open.
 - **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
 
 ### Decisions To Lock (gating)
@@ -1467,7 +1467,7 @@ square bounds validated at construction. No floating point on the decision path.
 
 **S2 — D=64 accepted-support lower bound.** *(independent, research)*
 Establish a rigorous `>= 128`-bit accepted-support lower bound for shell
-`(31, 11)` at `T = 16` (`Pr[gamma(c) <= 16] >= 0.225`), as a checked certificate
+`(31, 11)` at `T = 18` (`Pr[strict_accept] >= 13/20` on Monte Carlo), as a checked certificate
 artifact rather than full enumeration.
 Decide the fallback (larger shell or higher `T`) if it lands short.
 Gates the production policy in S3.
@@ -1497,12 +1497,11 @@ target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
 **S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell)*
 `crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`,
 `sampler/op_norm_accumulate.rs` (transposed `i64` predicate, AVX2/NEON fusion),
-`akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate, `2^12` cap,
-thread-local memoization on `choose_op_norm_rejection_for_a_role`),
+`akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate, `2^12` cap),
 `akita-planner` (`choose_op_norm_rejection_for_a_role`, `expand` n_a audit),
 `LevelParams.op_norm_rejection`.
 Production D=64: `ExactShell { count_mag1: 31, count_mag2: 11 }`, `T = 18`,
-certified acceptance floor `117/500`, `fp128_d64_*` schedule regen.
+certified acceptance floor `13/20`, `fp128_d64_*` schedule regen.
 **Landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207). Vendored S2 ≥128-bit acceptance cert remains open.
 
 **S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*

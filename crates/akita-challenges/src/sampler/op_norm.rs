@@ -832,6 +832,37 @@ mod tests {
     }
 
     #[test]
+    fn production_shell_strict_accept_rate_meets_certified_floor() {
+        use crate::{
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN, D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let d = 64;
+        let t = table(d);
+        let threshold = u64::from(D64_PRODUCTION_OPERATOR_NORM_THRESHOLD);
+        let mut state = 0xface_cafe_beef_0001u64;
+        let samples = 50_000u64;
+        let mut accepts = 0u64;
+        for _ in 0..samples {
+            let ch = random_shell(&mut state, d, 31, 11);
+            if t.accept_strict_parts(&ch.positions, &ch.coeffs, threshold)
+                .expect("strict predicate")
+            {
+                accepts += 1;
+            }
+        }
+        let measured_num = u128::from(accepts) * D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN;
+        let certified_num = u128::from(samples) * D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM;
+        assert!(
+            measured_num >= certified_num,
+            "strict accept rate {accepts}/{samples} below certified {}/{}",
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+            D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN,
+        );
+    }
+
+    #[test]
     fn rejects_oversized_l1() {
         let d = 32;
         let t = OpNormTable::new(d, Q, 4, 16).unwrap();

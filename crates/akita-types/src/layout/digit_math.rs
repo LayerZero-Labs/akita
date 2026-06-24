@@ -85,12 +85,10 @@ pub fn optimal_m_r_split(
     fold_witness: FoldWitnessNorms,
     stage1_config: &SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
-    log_commit_bound: u32,
-    log_basis: u32,
+    decomposition: DecompositionParams,
     onehot_chunk_size: usize,
     reduced_vars: usize,
     num_ring: usize,
-    field_bits: u32,
 ) -> (usize, usize, u32) {
     // Too few variables to optimize; too many would overflow `2^r` in u64.
     if reduced_vars <= 2 || reduced_vars >= 53 {
@@ -98,7 +96,10 @@ pub fn optimal_m_r_split(
         return (reduced_vars - r, r, 1);
     }
 
-    let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
+    let field_bits = decomposition.field_bits();
+    let log_commit_bound = decomposition.log_commit_bound;
+    let delta_commit =
+        num_digits_for_bound(log_commit_bound, field_bits, decomposition.log_basis) as u64;
 
     let mut best: Option<(u64, usize, u32)> = None;
 
@@ -115,11 +116,7 @@ pub fn optimal_m_r_split(
         let Some((op_norm_rejection, _a_collision, n_a)) = choose_op_norm_rejection_for_a_role(
             sis_family,
             d as usize,
-            DecompositionParams {
-                log_basis,
-                log_commit_bound,
-                log_open_bound: None,
-            },
+            decomposition,
             stage1_config,
             fold_challenge_shape,
             log_commit_bound == 1,
@@ -139,11 +136,7 @@ pub fn optimal_m_r_split(
             r,
             num_claims,
             inner_width,
-            DecompositionParams {
-                log_basis,
-                log_commit_bound,
-                log_open_bound: None,
-            },
+            decomposition,
             stage1_config,
             fold_challenge_shape,
             d as usize,

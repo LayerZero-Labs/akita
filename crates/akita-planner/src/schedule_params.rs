@@ -700,12 +700,10 @@ fn compute_root_direct_level_params(
             fold_witness,
             &ring_challenge_cfg,
             TensorChallengeShape::Flat,
-            decomp.log_commit_bound,
-            log_basis,
+            decomp,
             policy.onehot_chunk_size,
             num_vars - alpha,
             0,
-            decomp.field_bits(),
         );
         (m_vars, r_vars)
     } else {

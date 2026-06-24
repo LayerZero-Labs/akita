@@ -175,7 +175,7 @@ The feature introduces or modifies:
 - [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
 - [x] D64 production `ExactShell { count_mag1: 31, count_mag2: 11 }` with operator-norm
-  threshold `T = 18`; certified acceptance floor `117/500` on levels with
+  threshold `T = 18`; certified acceptance floor `13/20` on levels with
   `op_norm_rejection` enabled.
 - [x] Per-level `LevelParams.op_norm_rejection` is enabled only when Γ collision pricing
   strictly lowers audited A-rank **and** `fold_level_witness_scoring_cost` is strictly
@@ -190,8 +190,6 @@ The feature introduces or modifies:
 - [x] Production op-norm predicate: transposed frequency tables with `i64` accumulators
   (`op_norm_accumulate`), fused 4-wide chunk paths on AVX2 and NEON; legacy nested `i128`
   loop retained for criterion A/B only.
-- [x] Planner hot path: thread-local memoization on `choose_op_norm_rejection_for_a_role`
-  (repeated `find_schedule` / table-expand calls share witness-scoring results).
 - [x] Tiered e2e smoke retargeted to `nv = 29` (witness-cost gating dropped root tiering at
   `nv = 27/28` under regen'd `fp128_d64_onehot_tiered` schedules).
 
@@ -233,8 +231,7 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
 - Op-norm rejection sampling adds per-sparse-challenge predicate work on enabled levels;
   the production path uses fused transposed `i64` accumulation (~2.7× faster than the
   legacy nested `i128` loop in local criterion A/B). Planner `choose_op_norm_rejection`
-  is memoized per geometry so schedule drift guards (`generated_schedule_tables_match_find_schedule`,
-  setup-envelope scans) stay tractable in CI.
+  recomputes per geometry during schedule search and drift guards.
 
 ## Design
 
@@ -427,10 +424,8 @@ ln_term = ln( 2·num_fold_coeffs / (1 - p_grind) ) + num_fold_blocks·ln(1/p_opn
 (`FoldLinfProtocolBinding::grind_target_accept_prob`; shipped `1/8`).
 `p_opnorm` is the operator-norm block-filter acceptance probability (`1` when the cap
 does not bind). The union bound certifies `Pr[‖z‖_inf > t*] <= 1 - p_grind`, so expected
-rerolls are `<= 1/p_grind` (here `<= 8`). At integer `ln` resolution the shipped target
-is applied as a rational tighten relative to the legacy `p_grind = 1/2` reference:
-`ln_union = ceil(ln(4·num_fold_coeffs)) · p_grind_den / (2·(p_grind_den - p_grind_num))`.
-The legacy `p_grind = 1/2` choice is recovered exactly when `p_grind_den = 2·(p_grind_den - p_grind_num)`.
+rerolls are `<= 1/p_grind` (here `<= 8`). The integer `ln` term is
+`ceil(ln(2·num_fold_coeffs·p_grind_den / (p_grind_den - p_grind_num)))`.
 At `p_opnorm = 1` and `p_grind = 1/8`:
 
 ```text
@@ -439,7 +434,7 @@ t* = sqrt(2·num_fold_blocks·challenge_l2_sq_max·witness_linf²·ln(8·num_fol
 
 Against the ω-envelope `β_inf = num_fold_blocks·ω·witness_linf`, the gain ratio is
 `t*/β_inf ≈ sqrt(2·challenge_l2_sq_max·ln_term)/(ω·sqrt(num_fold_blocks))`.
-For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`, `p_grind = 1/4`:
+For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`, `p_grind = 1/8`:
 gain ratios sit slightly below the `p_grind = 1/2` column (`≈ 0.41, 0.29, 0.20, 0.14`
 at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 
