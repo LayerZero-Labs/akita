@@ -50,14 +50,13 @@ instead of making every PR update pay their cost.
 
 The checked-in workflow currently runs:
 
-| Mode | Field | Workload | Variables | Polys | Config | Setup mode | Notes |
-| --- | --- | --- | ---: | ---: | --- | --- | --- |
-| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
-| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
-| `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | `direct` | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
-| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
-| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `recursive` | Same nv32 singleton as the direct row, but with `SetupContributionMode::Recursive`, so the report compares proof size, prover time, and verifier time for recursive setup-product checks. |
-| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
+| Mode | Field | Workload | Variables | Polys | Config | Notes |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
+| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
+| `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | Preserves same-point batched one-hot coverage. |
 
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:
@@ -128,11 +127,9 @@ The test-coverage cleanup touches:
 3. Benchmark-facing labels expose field family, workload, and ring dimension.
    fp128 rows say `*_fp128_d128`; one-hot rows say `1-of-256 one-hot`.
 4. Case IDs are semantic and stable for new artifacts:
-   `{field}-{workload[-batched]}-nv{num_vars}-np{num_polys}-d{D}` for direct
-   setup mode, with `-setup-recursive` appended for recursive setup mode.
-   Loaded summaries are normalized from `(mode, nv, np, setup_mode)` using the
-   new naming scheme. This intentionally does not preserve or compare legacy
-   IDs.
+   `{field}-{workload[-batched]}-nv{num_vars}-np{num_polys}-d{D}`.
+   Loaded summaries are normalized from `(mode, nv, np)` using the new naming
+   scheme. This intentionally does not preserve or compare legacy IDs.
 5. Each successful case must emit setup, commit, prove, verify, proof-size,
    proof-accounting, proof-level, planned-level, field-role, tail-encoding, and
    RSS metrics. Missing required metrics turn that case into a benchmark
@@ -308,7 +305,7 @@ excluded from the active CI benchmark matrix and from `AKITA_MODE=all`.
 ### Benchmark Runner And Artifacts
 
 `scripts/profile_bench_report.py run` parses repeated
-`MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE]` cases, runs them sequentially, and writes:
+`MODE:NUM_VARS:NUM_POLYS` cases, runs them sequentially, and writes:
 
 - `summary.json`: canonical structured summary
 - `summary.csv`: flat tabular summary
@@ -327,10 +324,9 @@ failed rows for the configured matrix so the normal renderers still work.
 `--compact`, it emits the PR-comment version; without `--compact`, it also emits
 per-case details in collapsible sections.
 
-The renderer normalizes loaded case summaries from `(mode, nv, np, setup_mode)`.
-Direct setup mode keeps the existing semantic ID; recursive setup mode appends
-`-setup-recursive`, so direct and recursive rows compare against matching
-baselines instead of colliding.
+The renderer normalizes loaded case summaries from `(mode, nv, np)`. This is
+intentional full cutover behavior: old artifact IDs are not mapped onto new
+semantic IDs, so old baselines are skipped until `main` has new artifacts.
 
 ### Schedule And Proof Accounting
 

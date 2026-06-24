@@ -40,7 +40,7 @@ for line in match.group(1).splitlines():
     profile_ci.add(line.strip('"'))
 
 wf = workflow.read_text(encoding="utf-8")
-case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
+case_line = re.compile(r"^([^:]+:\d+:\d+)\s*$")
 
 def cases_after_pipe(start: int) -> list[str]:
     cases: list[str] = []
@@ -68,14 +68,8 @@ if not bench_cases:
     raise SystemExit(1)
 failed = False
 for case_spec in bench_cases:
-    mode, num_vars, num_polys_s, *setup_mode = case_spec.split(":")
+    mode, num_vars, num_polys_s = case_spec.split(":")
     num_polys = int(num_polys_s)
-    if setup_mode and setup_mode[0] not in {"direct", "recursive"}:
-        print(
-            f"bench case '{case_spec}' uses unsupported setup contribution mode '{setup_mode[0]}'",
-            file=sys.stderr,
-        )
-        failed = True
     if mode not in MODE_FEATURE:
         print(f"bench case mode '{mode}' is missing from MODE_FEATURE table", file=sys.stderr)
         failed = True

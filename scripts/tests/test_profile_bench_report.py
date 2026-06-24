@@ -65,29 +65,6 @@ class ProfileBenchReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate benchmark case ids"):
             configured_cases(args)
 
-    def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
-        from scripts.profile_bench_report import configured_cases
-
-        args = type(
-            "Args",
-            (),
-            {
-                "case": [
-                    "onehot_fp128_d64:32:1",
-                    "onehot_fp128_d64:32:1:recursive",
-                ],
-                "mode": "onehot_fp128_d64",
-                "num_vars": 32,
-                "num_polys": 1,
-            },
-        )()
-
-        cases = configured_cases(args)
-
-        self.assertEqual([case.setup_mode for case in cases], ["direct", "recursive"])
-        self.assertNotEqual(cases[0].case_id, cases[1].case_id)
-        self.assertTrue(cases[1].case_id.endswith("-setup-recursive"))
-
     def test_write_aggregate_summaries_propagates_sibling_failure(self) -> None:
         from scripts.profile_bench_report import (
             BenchmarkCaseSpec,
