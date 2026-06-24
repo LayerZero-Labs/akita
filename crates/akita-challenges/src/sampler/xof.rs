@@ -58,17 +58,6 @@ impl XofCursor {
         cursor
     }
 
-    /// Fill `out` with the next bytes from the XOF stream.
-    ///
-    /// Used by callers that consume raw PRG bytes directly (e.g. packing a
-    /// ternary projection row two bits per entry) rather than via the typed
-    /// `next_*` draws.
-    pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
-        for slot in out.iter_mut() {
-            *slot = self.next_u8();
-        }
-    }
-
     #[inline]
     fn refill(&mut self) {
         self.reader.read(self.buf.as_mut());
@@ -85,7 +74,11 @@ impl XofCursor {
         b
     }
 
-    /// Copy `out.len()` bytes from the buffered XOF stream in one pass.
+    /// Fill `out` with the next bytes from the XOF stream.
+    ///
+    /// Used by callers that consume raw PRG bytes directly (e.g. packing a
+    /// ternary projection row two bits per entry) rather than via the typed
+    /// `next_*` draws.
     #[inline]
     pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
         let mut off = 0;
