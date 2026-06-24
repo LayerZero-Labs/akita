@@ -1211,7 +1211,7 @@ where
             #[cfg(not(feature = "zk"))]
             {
                 let eta = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-                let output = SetupSumcheckProver::prove::<F, T, _, D>(
+                let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
                     expanded,
                     prefix_slots,
                     lp,
@@ -1227,11 +1227,13 @@ where
                     ring_bits,
                     eta,
                     transcript,
-                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
                 )?;
+                let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
+                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                })?;
                 Ok(Some(Stage3ProveOutput {
                     proof: SetupSumcheckProof {
-                        claim: output.setup_claim,
+                        claim: output.setup_product_claim,
                         next_w_eval: output.next_w_eval,
                         sumcheck: output.sumcheck,
                     },

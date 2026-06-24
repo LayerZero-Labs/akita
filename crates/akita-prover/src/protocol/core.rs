@@ -10,7 +10,7 @@ use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
 };
 #[cfg(not(feature = "zk"))]
-use crate::protocol::sumcheck::SetupSumcheckProver;
+use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;

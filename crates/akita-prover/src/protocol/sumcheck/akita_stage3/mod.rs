@@ -5,6 +5,9 @@
 //! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
 //! `omega(lambda) * alpha(y)` table.
 
+mod product_table;
+mod utils;
+
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
@@ -18,137 +21,26 @@ use akita_types::{
     RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
+use product_table::{compact_witness_carry_term, dense_product_term, FactoredProductTerm};
+use std::sync::Arc;
 
-/// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
-pub struct SetupSumcheckProver<E: FieldCore> {
-    table: Vec<E>,
-    left_factor: Vec<E>,
-    right_factor: Vec<E>,
-    input_claim: E,
-    right_rounds: usize,
-    total_rounds: usize,
+struct WitnessCarrySource {
+    digits: Arc<[i8]>,
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
 }
 
 /// Output of the batched stage-3 prover.
-pub struct BatchedStage3SumcheckProverOutput<E: FieldCore> {
-    /// Claimed setup contribution fed into the stage-2 final row evaluation.
-    pub setup_claim: E,
+pub struct AkitaStage3ProverOutput<E: FieldCore> {
+    /// Claimed setup-product contribution fed into the stage-2 final row evaluation.
+    pub setup_product_claim: E,
     /// Re-randomized next-witness opening after the batched stage-3 point projection.
     pub next_w_eval: E,
     /// Batched next-witness opening point.
     pub next_w_point: Vec<E>,
     /// Degree-two batched setup-product + carried-witness sumcheck.
     pub sumcheck: SumcheckProof<E>,
-}
-
-impl<E: FieldCore> SetupSumcheckProver<E> {
-    /// Construct a factored product-sumcheck prover.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if factor lengths are not powers of two, are empty, or
-    /// if `table.len() != left_factor.len() * right_factor.len()`.
-    fn new(table: Vec<E>, left_factor: Vec<E>, right_factor: Vec<E>) -> Result<Self, AkitaError> {
-        if left_factor.is_empty()
-            || right_factor.is_empty()
-            || !left_factor.len().is_power_of_two()
-            || !right_factor.len().is_power_of_two()
-        {
-            return Err(AkitaError::InvalidInput(
-                "factored product dimensions must be non-empty powers of two".to_string(),
-            ));
-        }
-        let expected_len = left_factor
-            .len()
-            .checked_mul(right_factor.len())
-            .ok_or_else(|| AkitaError::InvalidInput("factored product size overflow".into()))?;
-        if table.len() != expected_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_len,
-                actual: table.len(),
-            });
-        }
-
-        let input_claim = product_claim(&table, &left_factor, &right_factor);
-        let right_rounds = right_factor.len().trailing_zeros() as usize;
-        let total_rounds = right_rounds + left_factor.len().trailing_zeros() as usize;
-        Ok(Self {
-            table,
-            left_factor,
-            right_factor,
-            input_claim,
-            right_rounds,
-            total_rounds,
-        })
-    }
-
-    /// Prove the batched recursive stage-3 sumcheck.
-    ///
-    /// This carries the stage-2 next-witness opening `W(stage2_point)` to a new
-    /// point that is a prefix/projection of the same batched challenge vector used
-    /// by the setup-product opening.
-    #[allow(clippy::too_many_arguments)]
-    pub fn prove<F, T, SampleRound, const D: usize>(
-        expanded: &AkitaExpandedSetup<F>,
-        prefix_slots: &SetupPrefixProverRegistry<F, D>,
-        lp: &LevelParams,
-        next_fold_level_params: &LevelParams,
-        relation: &RingRelationInstance<F, D>,
-        tau1: &[E],
-        alpha: E,
-        stage2_challenges: &[E],
-        stage2_next_w_eval: E,
-        logical_w: &[i8],
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
-        eta: E,
-        transcript: &mut T,
-        sample_round: SampleRound,
-    ) -> Result<BatchedStage3SumcheckProverOutput<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
-        T: Transcript<F>,
-        SampleRound: FnMut(&mut T) -> E,
-    {
-        let setup_prover = build_setup_product_prover::<F, E, T, D>(
-            expanded,
-            prefix_slots,
-            lp,
-            next_fold_level_params,
-            relation,
-            tau1,
-            alpha,
-            &stage2_challenges[ring_bits..],
-            transcript,
-        )?;
-        let setup_claim = setup_prover.input_claim();
-        let witness_prover = build_witness_carry_prover::<E>(
-            logical_w,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            stage2_challenges,
-            stage2_next_w_eval,
-        )?;
-        let mut batched = BatchedStage3Prover::new(setup_prover, witness_prover, eta)?;
-        let (sumcheck, batched_point, _final_claim) =
-            <BatchedStage3Prover<E> as SumcheckInstanceProverExt<E>>::prove::<F, T, _>(
-                &mut batched,
-                transcript,
-                sample_round,
-            )?;
-        let next_w_point = batched_point[..batched.witness.native_rounds].to_vec();
-        let next_w_eval =
-            evaluate_witness_at_point(logical_w, live_x_cols, col_bits, ring_bits, &next_w_point)?;
-        Ok(BatchedStage3SumcheckProverOutput {
-            setup_claim,
-            next_w_eval,
-            next_w_point,
-            sumcheck,
-        })
-    }
 }
 
 fn evaluate_witness_at_point<E>(
@@ -206,7 +98,7 @@ where
 }
 
 struct BatchedStage3Term<E: FieldCore> {
-    prover: SetupSumcheckProver<E>,
+    term: FactoredProductTerm<E>,
     current_claim: E,
     native_rounds: usize,
 }
@@ -216,44 +108,132 @@ struct PendingRound<E: FieldCore> {
     witness_poly: UniPoly<E>,
 }
 
-struct BatchedStage3Prover<E: FieldCore> {
+/// Batched Stage-3 setup-product + carried-witness sumcheck prover.
+pub struct AkitaStage3Prover<E: FieldCore> {
     setup: BatchedStage3Term<E>,
     witness: BatchedStage3Term<E>,
+    witness_source: WitnessCarrySource,
     eta: E,
     total_rounds: usize,
+    setup_product_claim: E,
     pending_round: Option<PendingRound<E>>,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> BatchedStage3Prover<E> {
-    fn new(
-        setup_prover: SetupSumcheckProver<E>,
-        witness_prover: SetupSumcheckProver<E>,
+impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
+    /// Construct a batched recursive stage-3 sumcheck prover.
+    ///
+    /// This carries the stage-2 next-witness opening `W(stage2_point)` to a new
+    /// point that is a prefix/projection of the same batched challenge vector used
+    /// by the setup-product opening.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<F, T, const D: usize>(
+        expanded: &AkitaExpandedSetup<F>,
+        prefix_slots: &SetupPrefixProverRegistry<F, D>,
+        lp: &LevelParams,
+        next_fold_level_params: &LevelParams,
+        relation: &RingRelationInstance<F, D>,
+        tau1: &[E],
+        alpha: E,
+        stage2_challenges: &[E],
+        stage2_next_w_eval: E,
+        logical_w: &[i8],
+        live_x_cols: usize,
+        col_bits: usize,
+        ring_bits: usize,
         eta: E,
-    ) -> Result<Self, AkitaError> {
-        let setup_rounds = setup_prover.num_rounds();
-        let witness_rounds = witness_prover.num_rounds();
+        transcript: &mut T,
+    ) -> Result<Self, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
+        T: Transcript<F>,
+    {
+        let setup_term = build_setup_product_term::<F, E, T, D>(
+            expanded,
+            prefix_slots,
+            lp,
+            next_fold_level_params,
+            relation,
+            tau1,
+            alpha,
+            &stage2_challenges[ring_bits..],
+            transcript,
+        )?;
+        let setup_product_claim = setup_term.input_claim();
+        let witness_digits = Arc::<[i8]>::from(logical_w);
+        let witness_term = build_witness_carry_term::<E>(
+            Arc::clone(&witness_digits),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            stage2_challenges,
+            stage2_next_w_eval,
+        )?;
+        let witness_source = WitnessCarrySource {
+            digits: witness_digits,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        };
+        let setup_rounds = setup_term.num_rounds();
+        let witness_rounds = witness_term.num_rounds();
         let total_rounds = setup_rounds.max(witness_rounds);
         Ok(Self {
             setup: BatchedStage3Term {
-                current_claim: setup_prover.input_claim(),
+                current_claim: setup_term.input_claim(),
                 native_rounds: setup_rounds,
-                prover: setup_prover,
+                term: setup_term,
             },
             witness: BatchedStage3Term {
-                current_claim: witness_prover.input_claim(),
+                current_claim: witness_term.input_claim(),
                 native_rounds: witness_rounds,
-                prover: witness_prover,
+                term: witness_term,
             },
+            witness_source,
             eta,
             total_rounds,
+            setup_product_claim,
             pending_round: None,
+        })
+    }
+
+    pub fn prove<F, T, SampleRound>(
+        &mut self,
+        transcript: &mut T,
+        sample_round: SampleRound,
+    ) -> Result<AkitaStage3ProverOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: AkitaSerialize,
+        T: Transcript<F>,
+        SampleRound: FnMut(&mut T) -> E,
+    {
+        let (sumcheck, batched_point, _final_claim) =
+            <Self as SumcheckInstanceProverExt<E>>::prove::<F, T, _>(
+                self,
+                transcript,
+                sample_round,
+            )?;
+        let next_w_point = batched_point[..self.witness.native_rounds].to_vec();
+        let next_w_eval = evaluate_witness_at_point(
+            &self.witness_source.digits,
+            self.witness_source.live_x_cols,
+            self.witness_source.col_bits,
+            self.witness_source.ring_bits,
+            &next_w_point,
+        )?;
+        Ok(AkitaStage3ProverOutput {
+            setup_product_claim: self.setup_product_claim,
+            next_w_eval,
+            next_w_point,
+            sumcheck,
         })
     }
 
     #[inline]
     fn term_round_poly(term: &mut BatchedStage3Term<E>, round: usize) -> UniPoly<E> {
         if round < term.native_rounds {
-            term.prover
+            term.term
                 .compute_round_univariate(round, term.current_claim)
         } else {
             // The term is independent of this padded variable. The normalized
@@ -280,7 +260,7 @@ impl<E: FieldCore + FromPrimitiveInt> BatchedStage3Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for BatchedStage3Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3Prover<E> {
     fn num_rounds(&self) -> usize {
         self.total_rounds
     }
@@ -305,17 +285,17 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for BatchedStage
     }
 
     fn ingest_challenge(&mut self, round: usize, r_round: E) {
-        let pending = self
+        let pending: PendingRound<E> = self
             .pending_round
             .take()
             .expect("batched stage-3 challenge ingested before round polynomial");
         self.setup.current_claim = pending.setup_poly.evaluate(&r_round);
         self.witness.current_claim = pending.witness_poly.evaluate(&r_round);
         if round < self.setup.native_rounds {
-            self.setup.prover.ingest_challenge(round, r_round);
+            self.setup.term.ingest_challenge(round, r_round);
         }
         if round < self.witness.native_rounds {
-            self.witness.prover.ingest_challenge(round, r_round);
+            self.witness.term.ingest_challenge(round, r_round);
         }
     }
 }
@@ -329,7 +309,7 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_prover<F, E, T, const D: usize>(
+fn build_setup_product_term<F, E, T, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
     lp: &LevelParams,
@@ -339,7 +319,7 @@ fn build_setup_product_prover<F, E, T, const D: usize>(
     alpha: E,
     x_challenges: &[E],
     transcript: &mut T,
-) -> Result<SetupSumcheckProver<E>, AkitaError>
+) -> Result<FactoredProductTerm<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
@@ -402,17 +382,17 @@ where
             }
         });
 
-    SetupSumcheckProver::new(setup_table, bar_omega, alpha_pows.to_vec())
+    dense_product_term(setup_table, bar_omega, alpha_pows.to_vec())
 }
 
-fn build_witness_carry_prover<E>(
-    logical_w: &[i8],
+fn build_witness_carry_term<E>(
+    logical_w: Arc<[i8]>,
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
     stage2_challenges: &[E],
     stage2_next_w_eval: E,
-) -> Result<SetupSumcheckProver<E>, AkitaError>
+) -> Result<FactoredProductTerm<E>, AkitaError>
 where
     E: FieldCore + FromPrimitiveInt,
 {
@@ -449,48 +429,13 @@ where
     let table_len = x_len
         .checked_mul(y_len)
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
-    let mut table = vec![E::zero(); table_len];
-    for (dst, &digit) in table.iter_mut().zip(logical_w) {
-        *dst = E::from_i64(i64::from(digit));
-    }
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
     let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
-    let prover = SetupSumcheckProver::new(table, left_factor, right_factor)?;
-    if prover.input_claim() != stage2_next_w_eval {
+    let term = compact_witness_carry_term(logical_w, table_len, left_factor, right_factor)?;
+    if term.input_claim() != stage2_next_w_eval {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(prover)
-}
-
-impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {
-    fn num_rounds(&self) -> usize {
-        self.total_rounds
-    }
-
-    fn degree_bound(&self) -> usize {
-        SETUP_SUMCHECK_DEGREE
-    }
-
-    fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
-        let (constant, linear, quadratic) = if round < self.right_rounds {
-            accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
-        } else {
-            accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
-        };
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
-    }
-
-    fn ingest_challenge(&mut self, round: usize, r_round: E) {
-        if round < self.right_rounds {
-            fold_right_round(&mut self.table, &mut self.right_factor, r_round);
-        } else {
-            fold_left_round(&mut self.table, &mut self.left_factor, r_round);
-        }
-    }
+    Ok(term)
 }
 
 /// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
@@ -628,116 +573,4 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
     })
-}
-
-fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
-    let right_len = right_factor.len();
-    cfg_fold_reduce!(
-        0..left_factor.len(),
-        E::zero,
-        |mut acc, left_idx| {
-            let left_weight = left_factor[left_idx];
-            let row = &table[left_idx * right_len..(left_idx + 1) * right_len];
-            for (&value, &right_weight) in row.iter().zip(right_factor.iter()) {
-                acc += value * left_weight * right_weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
-}
-
-fn accumulate_right_round<E: FieldCore>(
-    table: &[E],
-    left_factor: &[E],
-    right_factor: &[E],
-) -> (E, E, E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    cfg_fold_reduce!(
-        0..left_factor.len(),
-        || (E::zero(), E::zero(), E::zero()),
-        |(mut constant, mut linear, mut quadratic), left_idx| {
-            let left_weight = left_factor[left_idx];
-            let row_base = left_idx * right_len;
-            for pair_idx in 0..half {
-                let s0 = table[row_base + 2 * pair_idx];
-                let s1 = table[row_base + 2 * pair_idx + 1];
-                let f0 = left_weight * right_factor[2 * pair_idx];
-                let f1 = left_weight * right_factor[2 * pair_idx + 1];
-                let ds = s1 - s0;
-                let df = f1 - f0;
-                constant += s0 * f0;
-                linear += s0 * df + ds * f0;
-                quadratic += ds * df;
-            }
-            (constant, linear, quadratic)
-        },
-        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
-    )
-}
-
-fn accumulate_left_round<E: FieldCore>(
-    table: &[E],
-    left_factor: &[E],
-    right_weight: E,
-) -> (E, E, E) {
-    let half = left_factor.len() / 2;
-    cfg_fold_reduce!(
-        0..half,
-        || (E::zero(), E::zero(), E::zero()),
-        |(mut constant, mut linear, mut quadratic), pair_idx| {
-            let s0 = table[2 * pair_idx];
-            let s1 = table[2 * pair_idx + 1];
-            let f0 = left_factor[2 * pair_idx] * right_weight;
-            let f1 = left_factor[2 * pair_idx + 1] * right_weight;
-            let ds = s1 - s0;
-            let df = f1 - f0;
-            constant += s0 * f0;
-            linear += s0 * df + ds * f0;
-            quadratic += ds * df;
-            (constant, linear, quadratic)
-        },
-        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
-    )
-}
-
-fn fold_pair<E: FieldCore>(left: E, right: E, r: E) -> E {
-    left + r * (right - left)
-}
-
-fn fold_right_round<E: FieldCore>(table: &mut Vec<E>, right_factor: &mut Vec<E>, r: E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    let left_len = table.len() / right_len;
-    let mut folded = vec![E::zero(); left_len * half];
-    cfg_chunks_mut!(&mut folded, half)
-        .enumerate()
-        .for_each(|(left_idx, row)| {
-            let row_base = left_idx * right_len;
-            for pair_idx in 0..half {
-                row[pair_idx] = fold_pair(
-                    table[row_base + 2 * pair_idx],
-                    table[row_base + 2 * pair_idx + 1],
-                    r,
-                );
-            }
-        });
-    let folded_right = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(right_factor[2 * idx], right_factor[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    *right_factor = folded_right;
-    *table = folded;
-}
-
-fn fold_left_round<E: FieldCore>(table: &mut Vec<E>, left_factor: &mut Vec<E>, r: E) {
-    let half = left_factor.len() / 2;
-    let folded_table = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    let folded_left = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(left_factor[2 * idx], left_factor[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    *table = folded_table;
-    *left_factor = folded_left;
 }

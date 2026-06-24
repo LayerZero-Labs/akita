@@ -1,5 +1,5 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
-//! prover-side `SetupSumcheckProver`.
+//! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use crate::protocol::{SetupEvalPlan, SetupEvaluator};
@@ -17,7 +17,7 @@ use akita_types::{
     LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
-/// Verifier counterpart to `SetupSumcheckProver`: replays the setup product
+/// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
 ///
 /// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
