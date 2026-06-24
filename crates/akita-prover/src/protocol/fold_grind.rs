@@ -112,6 +112,7 @@ fn grind_probe_nonces(
 ///
 /// On the terminal fold only, tail-bound presets also reject witnesses whose
 /// centered coefficients would need the Golomb escape path at live `k`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup<D>>,
