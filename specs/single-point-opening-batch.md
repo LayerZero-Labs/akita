@@ -33,7 +33,7 @@ normalized batch descriptor (routing, gamma row, transcript binding).
   calls (or re-commit under a new batch at a new point).
 - For **multiple polynomials at one point**, use one `CommittedPolynomials` /
   `CommittedOpenings` entry whose `polynomials` / `openings` vectors list every
-  slot (`batched_commit`, `OpeningBatch::same_point`).
+  slot (`batched_commit`, `OpeningBatch::new`).
 
 ## Wire / transcript impact
 

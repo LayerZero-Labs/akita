@@ -20,14 +20,16 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
-    OneHotPoly,
+    compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
+    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    LevelParams, SetupContributionMode,
+    CommitmentGroup, LevelParams, OpeningBatchShape, PointVariableSelection, SetupContributionMode,
+    VerifierOpeningBatch,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -87,12 +89,16 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn opening_from_poly<P: AkitaPolyOps<F, D>>(
-    poly: &P,
+fn opening_from_poly<'a, I>(
+    poly: &'a OneHotPoly<F, D, I>,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,
-) -> Result<F, String> {
+) -> Result<F, String>
+where
+    I: OneHotIndex,
+    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, D, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
         .checked_add(layout.m_vars)
@@ -118,11 +124,19 @@ fn opening_from_poly<P: AkitaPolyOps<F, D>>(
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view()
+            .map_err(|err| format!("opening view: {err}"))?,
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .map_err(|err| format!("opening fold: {err}"))?;
+    let y_ring = opening.eval;
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
         .map_err(|err| format!("inner opening point should match ring dimension: {err}"))?;
     Ok((y_ring * v.sigma_m1()).coefficients()[0])
@@ -197,7 +211,7 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: akita_types::VerifierClaims<'_, Claim, akita_types::RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, Claim, &akita_types::RingCommitment<F, D>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _, D>(
@@ -255,7 +269,7 @@ fn run() -> Result<(), String> {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
+        &OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
@@ -315,6 +329,12 @@ fn run() -> Result<(), String> {
     let prepared = CpuBackend
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend,
+        &prepared,
+        prover_setup.expanded.as_ref(),
+    )
+    .map_err(|err| format!("prover stack validation failed: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"
@@ -323,9 +343,8 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &prover_setup,
-        &CpuBackend,
-        &prepared,
-        std::slice::from_ref(&&onehot_poly),
+        std::slice::from_ref(&onehot_poly),
+        &stack,
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
@@ -335,18 +354,19 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let prove_input = ProverOpeningBatch {
+        point: opening_point[..].into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+                .map_err(|err| format!("invalid opening point shape: {err}"))?,
+            polynomials: &poly_refs[..],
+            commitment: (commitment.clone(), hint),
+        }],
+    };
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
-        &CpuBackend,
-        &prepared,
-        (
-            &opening_point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitment,
-                hint,
-            }],
-        ),
+        prove_input,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,
@@ -364,13 +384,14 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            vec![akita_types::CommittedOpenings {
-                openings: &openings[..],
+        VerifierOpeningBatch::from_groups(
+            opening_point.clone(),
+            vec![CommitmentGroup {
+                claims: openings.to_vec(),
                 commitment: &commitment,
             }],
-        ),
+        )
+        .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
         setup_contribution_mode,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
@@ -406,7 +427,7 @@ fn run() -> Result<(), String> {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
-        decoded.verifier_claims(&openings_rt),
+        decoded.verifier_opening_batch(&openings_rt),
         decoded.setup_contribution_mode,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;

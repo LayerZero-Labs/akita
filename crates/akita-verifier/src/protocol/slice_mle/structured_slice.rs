@@ -368,11 +368,13 @@ mod tests {
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::offset_eq::summarize_pow2_block_carries;
     use akita_algebra::ring::scalar_powers;
+    use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, ring_relation_segment_layout_for_opening_shape,
-        LevelParams, MRowLayout, RingOpeningPoint, SisModulusFamily,
+        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningBatchShape,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+        RingRelationSegmentLayout, SisModulusFamily,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
@@ -415,6 +417,37 @@ mod tests {
         .expect("structured slice fixture lp")
     }
 
+    fn ring_relation_segment_layout_for_opening_shape(
+        lp: &LevelParams,
+        m_row_layout: MRowLayout,
+        num_polys: usize,
+    ) -> Result<RingRelationSegmentLayout, AkitaError> {
+        let opening_batch = OpeningBatchShape::new(32, num_polys)?;
+        let opening_point = RingOpeningPoint {
+            a: vec![F::zero(); lp.block_len],
+            b: vec![F::zero(); lp.num_blocks],
+        };
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let num_claims = opening_batch.num_claims();
+        let challenges = akita_challenges::Challenges::Sparse {
+            challenges: Vec::new(),
+            num_blocks_per_claim: lp.num_blocks,
+            num_claims,
+        };
+        let instance = RingRelationInstance::<F, D>::new(
+            m_row_layout,
+            challenges,
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            Vec::new(),
+        )?;
+        instance.segment_layout(lp)
+    }
+
     fn fixture() -> StructuredFixture {
         // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
         // recursive levels with this real D=32 shape.
@@ -436,12 +469,9 @@ mod tests {
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
-            &lp,
-            MRowLayout::WithDBlock,
-            num_claims,
-        )
-        .expect("witness segment layout");
+        let witness_segment_layout =
+            ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
+                .expect("witness segment layout");
         let offset_e = witness_segment_layout.offset_e;
         let offset_t = witness_segment_layout.offset_t;
         let offset_z = witness_segment_layout.offset_z;
@@ -484,7 +514,7 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            num_polys_per_commitment_group: vec![num_claims],
+            num_polys: num_claims,
             witness_segment_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();

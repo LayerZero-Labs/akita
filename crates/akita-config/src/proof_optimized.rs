@@ -7,7 +7,7 @@ use super::CommitmentConfig;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-use akita_types::OpeningBatch;
+use akita_types::OpeningBatchShape;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -41,11 +41,9 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     let cfg = match d {
         32 => akita_challenges::SparseChallengeConfig::BoundedL1Norm,
         64 => akita_challenges::SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            // `T >= ||c||_1` disables rejection until the S2 support certificate
-            // lands; production keeps the legacy (30, 12) shell unchanged.
-            operator_norm_threshold: 54,
+            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         },
         128 => akita_challenges::SparseChallengeConfig::Uniform {
             weight: 31,
@@ -204,12 +202,12 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,
     num_claims: usize,
-) -> Result<OpeningBatch, AkitaError> {
-    OpeningBatch::same_point(num_vars, num_claims)
+) -> Result<OpeningBatchShape, AkitaError> {
+    OpeningBatchShape::new(num_vars, num_claims)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
 
@@ -269,7 +267,7 @@ where
 /// the ZK blinding + hiding accumulators.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<SetupMatrixEnvelope, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -326,7 +324,7 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
 
 fn accumulate_root_matrix_envelope_for_opening_batch(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
@@ -339,15 +337,10 @@ fn accumulate_root_matrix_envelope_for_opening_batch(
 
 fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
     let num_claims = opening_batch.num_claims();
-    let max_group_poly_count = opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .copied()
-        .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
+    let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp
         .num_blocks
         .checked_mul(num_claims)
@@ -385,7 +378,7 @@ fn root_runtime_matrix_len_for_opening_batch(
 #[cfg(feature = "zk")]
 fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    _opening_batch: &OpeningBatch,
+    _opening_batch: &OpeningBatchShape,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     for lp in setup_level_params_from_runtime_schedule(&schedule.steps) {
@@ -416,7 +409,7 @@ fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
 #[cfg(feature = "zk")]
 fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     let Some(root_commit_params) = root_commit_params_from_schedule(schedule)? else {
@@ -464,7 +457,7 @@ fn root_commit_params_from_schedule(
 #[cfg(feature = "zk")]
 fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
     let fold_steps = schedule
         .steps
@@ -664,28 +657,28 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
     };
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $claim_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;
@@ -736,10 +729,10 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog tiered ($feat, $family_name, $table));
         }
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;
@@ -790,10 +783,10 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ExtField = $claim_field;
+            type ExtField = $ext_field;
             const D: usize = $d;
 
             const TIERED_COMMITMENT: bool = $tiered;

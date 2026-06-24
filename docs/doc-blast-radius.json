@@ -7,7 +7,6 @@
       "code": ["Cargo.toml", "crates/*/Cargo.toml"],
       "consider_updating": [
         "README.md",
-        "AGENTS.md",
         "docs/crate-graph.md",
         "book/src/how/architecture.md"
       ]
@@ -26,7 +25,7 @@
       ],
       "consider_updating": [
         "book/src/how/configuration.md",
-        "AGENTS.md",
+        "book/src/usage/profiling.md",
         "specs/planner-*.md",
         "specs/PRUNING.md"
       ]
@@ -41,7 +40,7 @@
       "consider_updating": [
         "book/src/how/proving/opening-points-block-order.md",
         "book/src/usage/commitment-api.md",
-        "AGENTS.md",
+        "book/src/how/architecture.md",
         "specs/single-point-opening-batch.md",
         "docs/block-order.md"
       ]
@@ -51,7 +50,6 @@
       "description": "Shared witness/polynomial view vocabulary",
       "code": ["crates/akita-witness/**"],
       "consider_updating": [
-        "AGENTS.md",
         "book/src/how/architecture.md",
         "book/src/how/proving/sumcheck-stages.md",
         "specs/akita-polyops-cutover.md",
@@ -90,7 +88,7 @@
       "code": ["crates/akita-verifier/**"],
       "consider_updating": [
         "book/src/how/verification.md",
-        "AGENTS.md",
+        "docs/verifier-contract.md",
         "docs/verifier-panic-audit.md",
         "specs/security-hardening.md"
       ]
@@ -175,7 +173,7 @@
       "id": "ci-tooling",
       "description": "CI workflows and repo scripts",
       "code": [".github/workflows/**", "scripts/**"],
-      "consider_updating": ["AGENTS.md", "docs/documentation.md", "specs/ci-test-timing.md"]
+      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/ci-test-timing.md"]
     },
     {
       "id": "book-tooling",

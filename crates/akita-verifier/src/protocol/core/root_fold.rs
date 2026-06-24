@@ -19,10 +19,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    shared_opening_point: &[E],
-    openings: &[E],
-    commitments: &[RingCommitment<F, D>],
-    opening_batch: OpeningBatch,
+    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -46,25 +43,22 @@ where
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
+    let commitment = claims
+        .single_group_commitment()
+        .copied()
+        .ok_or(AkitaError::InvalidProof)?;
+    let openings = claims.claims();
+    let opening_batch = claims.to_shape();
+    let shared_opening_point = claims.point();
     let num_claims = opening_batch.num_claims();
-    if openings.len() != num_claims || opening_batch.claim_poly_indices().len() != num_claims {
+    if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitments.is_empty()
-        || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
-        || commitments
-            .iter()
-            .any(|commitment| commitment.u.len() != root_lp.effective_commit_rows())
-    {
+    if commitment.u.len() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
     }
-    let commitment_rows = flatten_batched_commitment_rows(commitments);
 
-    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
-    for coord in shared_opening_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-    }
+    claims.append_to_transcript::<F, T>(transcript)?;
     if extension_opening_reduction.is_none() {
         let prepared_point = prepare_opening_point::<F, E, D>(
             shared_opening_point,
@@ -77,7 +71,7 @@ where
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
     #[cfg(feature = "zk")]
     let opening_masks = vec![None; num_claims];
@@ -86,7 +80,7 @@ where
         extension_opening_reduction,
         &[],
         shared_opening_point,
-        openings,
+        &openings,
         &row_coefficients,
         &opening_batch,
         basis,
@@ -131,7 +125,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, openings)?;
+        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
     #[cfg(not(feature = "zk"))]
     let trace_eval_target = eor_trace_final
         .as_ref()
@@ -168,7 +162,6 @@ where
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
         AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
             root_lp,
-            1,
             opening_batch.num_claims(),
             num_claims,
             1,
@@ -200,14 +193,21 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
+    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+        shared_opening_point,
+        opening_batch.clone(),
+        vec![CommitmentGroup {
+            claims: openings,
+            commitment: commitment.u.as_slice(),
+        }],
+    )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
         v: v_typed.to_vec(),
-        commitment_rows: &commitment_rows,
+        opening_batch: replay_opening_batch,
         row_coefficients,
-        opening_batch,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,

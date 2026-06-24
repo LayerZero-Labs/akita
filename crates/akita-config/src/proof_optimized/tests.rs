@@ -148,7 +148,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
     }
 
-    let opening_batch = OpeningBatch::same_point(10, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatchShape::new(10, 1).expect("singleton opening batch");
     let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
         .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
@@ -177,10 +177,10 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     use akita_types::{digest_effective_schedule, root_direct_schedule};
     type Cfg = fp128::D128Full;
     let real_opening_batch =
-        OpeningBatch::same_point(30, 4).expect("batched same-point opening batch");
+        OpeningBatchShape::new(30, 4).expect("batched same-point opening batch");
     let real_params =
         Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
-    let singleton_opening_batch = OpeningBatch::same_point(30, 1).expect("singleton opening batch");
+    let singleton_opening_batch = OpeningBatchShape::new(30, 1).expect("singleton opening batch");
     let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
         .expect("singleton commit params");
 
@@ -215,7 +215,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("grouped same-point opening_batch");
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("grouped same-point opening_batch");
     let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
@@ -225,13 +225,8 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
 
-fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatch) -> usize {
-    let max_group_poly_count = opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .copied()
-        .max()
-        .expect("nonempty opening_batch");
+fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatchShape) -> usize {
+    let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
@@ -241,7 +236,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatc
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("batched same-point opening_batch");
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("batched same-point opening_batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
@@ -261,7 +256,7 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     use akita_types::root_direct_schedule;
 
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(30, 4).expect("supported batched opening_batch");
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("supported batched opening_batch");
     let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("supported batched commit params");
     let schedule = root_direct_schedule(opening_batch.num_vars(), root_params.clone())
@@ -276,7 +271,7 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
 fn setup_matrix_scan_uses_one_shared_opening_point() {
     let opening_batch =
         worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
-    assert_eq!(opening_batch.num_polys_per_commitment_group(), &[4]);
+    assert_eq!(opening_batch.num_polynomials(), 4);
 }
 
 #[test]
@@ -296,8 +291,9 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
         max_num_batched_polys: usize,
     ) -> SetupMatrixEnvelope {
         let mut max_setup_len = 1usize;
+        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
         for num_vars in 1..=max_num_vars {
-            for num_polys in 1..=max_num_batched_polys {
+            for &num_polys in &poly_counts {
                 let opening_batch =
                     worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
                 if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
@@ -380,7 +376,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatch::same_point(26, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatchShape::new(26, 1).expect("singleton opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
@@ -461,7 +457,6 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         let runtime_next_w_len =
             akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
                 &fold.params,
-                1,
                 num_t_vectors,
                 num_w_vectors,
                 num_public_rows,
@@ -479,9 +474,6 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 #[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        if entry.key.num_commitment_groups != 1 {
-            continue;
-        }
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
             entry.key.num_t_vectors,
@@ -558,9 +550,6 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        if entry.key.num_commitment_groups != 1 {
-            continue;
-        }
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
             entry.key.num_t_vectors,
@@ -581,7 +570,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.num_commitment_groups == 1 && entry.key.num_t_vectors > 1)
+        .filter(|entry| entry.key.num_t_vectors > 1)
     {
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
@@ -702,10 +691,9 @@ fn batched_root_plan_matches_runtime_next_w_len() {
         .entries
         .iter()
         .find(|entry| {
-            entry.key.num_commitment_groups == 1
-                && (entry.key.num_t_vectors > 1
-                    || entry.key.num_w_vectors > 1
-                    || entry.key.num_z_vectors > 1)
+            entry.key.num_t_vectors > 1
+                || entry.key.num_w_vectors > 1
+                || entry.key.num_z_vectors > 1
         })
         .expect("generated table should contain a non-singleton batched-root row");
     let key = AkitaScheduleLookupKey::new(
@@ -857,11 +845,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         (
             64,
             SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
-                operator_norm_threshold: 54,
+                count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+                count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+                operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
             },
-            (54, 2),
+            (53, 2),
         ),
         (
             128,
@@ -895,6 +883,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         );
     }
 
+    let d64 = proof_optimized_ring_challenge_config(64).unwrap();
+    assert!(d64.operator_norm_rejection_binds());
+    assert_eq!(d64.operator_norm_cap(), 18);
+    assert_eq!(d64.challenge_l2_sq_max(), 75);
+
     // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
     // the one degree its sampler accepts.
     proof_optimized_ring_challenge_config(32)
@@ -905,6 +898,22 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // Ring degrees no preset uses must be rejected, not silently defaulted.
     assert!(proof_optimized_ring_challenge_config(16).is_err());
     assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+#[test]
+#[cfg(feature = "schedules-fp128-d64-onehot")]
+fn d64_shipped_catalog_ring_challenge_digest_matches_runtime_policy() {
+    use akita_planner::ring_challenge_config_digest;
+
+    use crate::proof_optimized::fp128;
+
+    let expected = ring_challenge_config_digest(&[64], fp128::D64OneHot::ring_challenge_config)
+        .expect("d=64 ring challenge digest");
+    let catalog = fp128::D64OneHot::schedule_catalog().expect("D64 one-hot catalog");
+    assert_eq!(
+        catalog.identity.ring_challenge_config_digest, expected,
+        "shipped fp128_d64_onehot digest must track proof_optimized_ring_challenge_config"
+    );
 }
 
 /// Assert one preset delegates its ring challenge to the shared policy.

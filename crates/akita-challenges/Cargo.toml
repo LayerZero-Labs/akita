@@ -28,6 +28,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "sparse_challenge"
 harness = false
 
+[[bench]]
+name = "op_norm_rejection"
+harness = false
+
 [features]
 default = []
 parallel = ["akita-field/parallel"]

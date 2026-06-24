@@ -7,11 +7,13 @@ staleness costs.
 |-------|----------|------|----------------|
 | **Book** | `book/` | Curated narrative (usage, protocol, foundations, roadmap) | Explanations a newcomer or integrator reads end to end |
 | **Specs** | `specs/` | Design records with acceptance criteria and review history | In-flight design, contracts under review, audit trail until folded |
-| **Runbook / ops** | `AGENTS.md`, `docs/` | Maintainer contracts, generated tables, historical snapshots | Agent/CI contracts, crate graph, audits |
+| **Runbook / ops** | `AGENTS.md`, `docs/` | Maintainer contracts, generated tables, historical snapshots | Agent commands, verifier-contract summary, pointer hub |
 
 **Rule:** one durable fact lives in one place. The book owns narrative truth once
-a chapter is written. Specs are archived after fold. `AGENTS.md` mirrors
-verifier-reachable contracts and commands; it is not a second book.
+a chapter is written. Specs are archived after fold. `AGENTS.md` holds essential
+commands, a short verifier-contract summary, and pointers; it is not a crate
+encyclopedia or second book. Crate maps, profiling runbooks, and full contracts
+live in the book and `docs/`.
 
 See also [`specs/PRUNING.md`](../specs/PRUNING.md) for spec lifecycle.
 
@@ -25,8 +27,8 @@ Every implementation PR must do **all** that apply:
 2. **Book stub** — if behavior is user-visible or architecturally load-bearing,
    add or refresh the owning book page (stubs may stay stubs, but "Sources to
    fold in" must cite real paths).
-3. **`AGENTS.md`** — update when verifier-reachable contracts, crate boundaries,
-   commands, or feature flags change.
+3. **`AGENTS.md`** — update when verifier-reachable contract summary, essential
+   commands, or feature-flag pointers change (detail goes in the book / `docs/`).
 4. **`docs/crate-graph.md`** — update when `Cargo.toml` workspace edges change
    (or run the quarterly audit that keeps it in sync).
 5. **Archive** — when a spec's durable content is folded into the book, `git mv`
@@ -89,7 +91,7 @@ Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 | New feature (large) | Required up front | Stub or chapter after ship | If contract changes | Rare |
 | API / proof shape change | Update or new spec | Owning chapter | Yes | crate-graph if deps change |
 | Internal refactor, same API | Optional note | Only if narrative wrong | If hooks move | No |
-| Preset / schedule table | planner specs | `how/configuration.md` | Profiling section | No |
+| Preset / schedule table | planner specs | `how/configuration.md` | Pointer only | `usage/profiling.md` if modes change |
 | Security / SIS sizing | `l2-msis-*`, `akita-sis-*` | `how/security.md` | If verifier-reachable | No |
 | Doc-only PR | Archive/fold as needed | Yes | If commands change | Yes |
 

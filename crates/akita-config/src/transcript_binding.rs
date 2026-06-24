@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    FpExtEncoding, OpeningBatch, PlanSection, Schedule, SetupSection,
+    FpExtEncoding, OpeningBatchShape, PlanSection, Schedule, SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -34,7 +34,7 @@ use akita_types::{
 /// - canonical descriptor serialization fails.
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     setup: &AkitaExpandedSetup<F>,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     schedule: &Schedule,
     basis: BasisMode,
     transcript: &mut T,
@@ -44,10 +44,9 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
-    Cfg::ExtField: FpExtEncoding<F>,
 {
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ExtField, Cfg::ExtField, D>()?,
+        AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),

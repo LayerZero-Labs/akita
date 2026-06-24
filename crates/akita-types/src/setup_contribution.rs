@@ -32,9 +32,9 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub n_d: usize,
     pub m_row_layout: MRowLayout,
     pub n_b: usize,
-    pub num_commitment_groups: usize,
+    pub num_segments: usize,
     pub rows: usize,
-    pub num_polys_per_commitment_group: Vec<usize>,
+    pub num_polys_per_segment: Vec<usize>,
     pub num_public_rows: usize,
     /// Tiered split factor `f` (`1` = single-tier). When `> 1`, `n_b` is the
     /// stored first-tier `B'` rank, the stored `B'` width is `n_cols_t /
@@ -429,10 +429,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: fold_gadget.len(),
             });
         }
-        if inputs.num_polys_per_commitment_group.len() != inputs.num_commitment_groups {
+        if inputs.num_polys_per_segment.len() != inputs.num_segments {
             return Err(AkitaError::InvalidSize {
-                expected: inputs.num_commitment_groups,
-                actual: inputs.num_polys_per_commitment_group.len(),
+                expected: inputs.num_segments,
+                actual: inputs.num_polys_per_segment.len(),
             });
         }
 
@@ -481,9 +481,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let z_dims_pow2 = inputs.block_len.is_power_of_two();
 
         let tiered = inputs.tier_split > 1;
-        if tiered && (inputs.n_f == 0 || inputs.num_commitment_groups != 1) {
+        if tiered && (inputs.n_f == 0 || inputs.num_segments != 1) {
             return Err(AkitaError::InvalidSetup(
-                "tiered setup contribution requires n_f > 0 and a single commitment group".into(),
+                "tiered setup contribution requires n_f > 0 and a single commitment bundle".into(),
             ));
         }
         let n_d_active = match inputs.m_row_layout {
@@ -501,17 +501,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         } else {
             0
         };
-        let commit_rows = checked_mul(
-            commit_rows_pg,
-            inputs.num_commitment_groups,
-            "COMMIT row count",
-        )?;
+        let commit_rows = checked_mul(commit_rows_pg, inputs.num_segments, "COMMIT row count")?;
         let b_inner_start = checked_add(f_start, commit_rows, "B_inner row start")?;
-        let b_inner_rows_total = checked_mul(
-            b_inner_rows_pg,
-            inputs.num_commitment_groups,
-            "B_inner row count",
-        )?;
+        let b_inner_rows_total =
+            checked_mul(b_inner_rows_pg, inputs.num_segments, "B_inner row count")?;
         let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
         let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
         // Non-tiered alias used by the packed B scan.
@@ -527,7 +520,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
         let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
         let max_group_poly_count = inputs
-            .num_polys_per_commitment_group
+            .num_polys_per_segment
             .iter()
             .copied()
             .max()
@@ -575,9 +568,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
 
-        let mut group_offsets = Vec::with_capacity(inputs.num_polys_per_commitment_group.len());
+        let mut group_offsets = Vec::with_capacity(inputs.num_polys_per_segment.len());
         let mut next_offset = 0usize;
-        for &group_poly_count in &inputs.num_polys_per_commitment_group {
+        for &group_poly_count in &inputs.num_polys_per_segment {
             group_offsets.push(next_offset);
             next_offset = checked_add(next_offset, group_poly_count, "T vector offset")?;
         }
@@ -620,9 +613,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let eq_hi_t_table: Vec<E> = (0..=t_hi_len)
             .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
             .collect();
-        let t_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_commitment_groups)
+        let t_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_segments)
             .map(|g| {
-                let group_size = inputs.num_polys_per_commitment_group[g];
+                let group_size = inputs.num_polys_per_segment[g];
                 cfg_into_iter!(0..n_cols_t)
                     .map(|c| {
                         let poly_idx = c / cols_per_poly_t;
@@ -668,11 +661,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let z_block_mask = inputs.block_len.wrapping_sub(1);
             let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
             let num_q_z = checked_mul(
-                checked_mul(
-                    inputs.num_commitment_groups,
-                    inputs.depth_fold,
-                    "Z high-eq width",
-                )?,
+                checked_mul(inputs.num_segments, inputs.depth_fold, "Z high-eq width")?,
                 inputs.depth_commit,
                 "Z high-eq width",
             )?;
@@ -685,10 +674,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     for (carry_slot, slot) in s.iter_mut().enumerate() {
                         let mut acc = E::zero();
                         for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
-                            for pt in 0..inputs.num_commitment_groups {
+                            for pt in 0..inputs.num_segments {
                                 let k = pt
-                                    + inputs.num_commitment_groups * df
-                                    + inputs.num_commitment_groups * inputs.depth_fold * dc
+                                    + inputs.num_segments * df
+                                    + inputs.num_segments * inputs.depth_fold * dc
                                     + carry_slot;
                                 acc += eq_hi_z_table[k].mul_base(fg);
                             }
@@ -711,11 +700,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 })
                 .collect()
         } else {
-            let z_total_blocks_dense = checked_mul(
-                inputs.block_len,
-                inputs.num_commitment_groups,
-                "dense Z block width",
-            )?;
+            let z_total_blocks_dense =
+                checked_mul(inputs.block_len, inputs.num_segments, "dense Z block width")?;
             let z_len_dense = checked_mul(
                 checked_mul(inputs.depth_fold, inputs.depth_commit, "dense Z length")?,
                 z_total_blocks_dense,
@@ -754,15 +740,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let dc = c % inputs.depth_commit;
                     let blk = c / inputs.depth_commit;
                     let mut acc = E::zero();
-                    for pt in 0..inputs.num_commitment_groups {
+                    for pt in 0..inputs.num_segments {
                         for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
                             let x = blk
                                 + inputs.block_len * pt
-                                + inputs.block_len * inputs.num_commitment_groups * df
-                                + inputs.block_len
-                                    * inputs.num_commitment_groups
-                                    * inputs.depth_fold
-                                    * dc;
+                                + inputs.block_len * inputs.num_segments * df
+                                + inputs.block_len * inputs.num_segments * inputs.depth_fold * dc;
                             let sum = offset_z_dense_low + x;
                             let low_idx = sum & mask;
                             // `eq_high_z_dense` starts at `offset_z_dense_high`,
@@ -785,7 +768,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         } else {
             (0..inputs.n_b)
                 .map(|row| {
-                    (0..inputs.num_commitment_groups)
+                    (0..inputs.num_segments)
                         .map(|g| inputs.eq_tau1[b_start + g * inputs.n_b + row])
                         .collect()
                 })
@@ -797,14 +780,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let tiered_data: Option<TieredCommitmentData<E>> = if tiered {
             let f_weights_by_row: Vec<Vec<E>> = (0..inputs.n_f)
                 .map(|row| {
-                    (0..inputs.num_commitment_groups)
+                    (0..inputs.num_segments)
                         .map(|g| inputs.eq_tau1[f_start + g * inputs.n_f + row])
                         .collect()
                 })
                 .collect();
             // û_concat column MLE over F's columns: a flat contiguous witness
-            // segment at `offset_u`, `f_stride` columns per commitment group.
-            let u_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_commitment_groups)
+            // segment at `offset_u`, `f_stride` columns per bundle bundle.
+            let u_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_segments)
                 .map(|g| {
                     (0..f_stride)
                         .map(|c| eq_eval_at_index(full_vec_randomness, offset_u + g * f_stride + c))
@@ -814,7 +797,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let inner_rows_pg = inputs.tier_split * inputs.n_b;
             // `[group][slice_row]` so each group's slice-row weights compose
             // directly with `fold_reused_b_weight`.
-            let b_inner_weights_by_group: Vec<Vec<E>> = (0..inputs.num_commitment_groups)
+            let b_inner_weights_by_group: Vec<Vec<E>> = (0..inputs.num_segments)
                 .map(|g| {
                     (0..inner_rows_pg)
                         .map(|slice_row| {
@@ -1248,9 +1231,9 @@ mod tests {
             n_d: 0,
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
-            num_commitment_groups: num_points,
+            num_segments: num_points,
             rows: 2,
-            num_polys_per_commitment_group: vec![0],
+            num_polys_per_segment: vec![0],
             num_public_rows: 0,
             tier_split: 1,
             n_f: 0,
@@ -1321,7 +1304,7 @@ mod tests {
             })
             .collect();
 
-        // Per-(slice,row) and per-(slice,col) weights for one commitment group.
+        // Per-(slice,row) and per-(slice,col) weights for one commitment bundle.
         let row_weight: Vec<F> = (0..tier_split * n_b_small)
             .map(|i| test_scalar(13 + i as u128 * 5))
             .collect();
