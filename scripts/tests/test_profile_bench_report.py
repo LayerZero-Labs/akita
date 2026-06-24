@@ -65,6 +65,37 @@ class ProfileBenchReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate benchmark case ids"):
             configured_cases(args)
 
+    def test_ingest_tail_summary_fields_parses_k_live_and_security(self) -> None:
+        from scripts.profile_bench_report import ingest_tail_summary_fields
+
+        summary: dict[str, object] = {}
+        ingest_tail_summary_fields(
+            summary,
+            {
+                "final_w_encoding": "segment_typed",
+                "z_witness_linf_cap": "4096",
+                "z_rice_k": "10",
+                "z_rice_k_security": "12",
+                "z_bits_per_coord_golomb": "12.50",
+            },
+        )
+        self.assertEqual(summary["z_rice_k"], 10)
+        self.assertEqual(summary["z_rice_k_security"], 12)
+        self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.50)
+
+    def test_legacy_z_fold_encoding_stats_prefers_k_live(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            'INFO z fold encoding stats label=onehot_fp128_d64 '
+            'z_coords=100 witness_linf_cap=4096 rice_k_live=10 rice_k_security=12 '
+            'bits_per_coord_k_live=12.5 bits_per_coord_packed=15.0 z_payload_bytes=200\n'
+        )
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        self.assertEqual(summary["z_rice_k"], 10)
+        self.assertEqual(summary["z_rice_k_security"], 12)
+        self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
+
     def test_write_aggregate_summaries_propagates_sibling_failure(self) -> None:
         from scripts.profile_bench_report import (
             BenchmarkCaseSpec,

@@ -285,6 +285,7 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_t_bytes",
     "tail_r_bytes",
     "z_rice_k",
+    "z_rice_k_security",
     "z_coords",
     "z_packed_hypothetical_bytes",
     "z_golomb_savings_bytes",
@@ -437,6 +438,7 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     z_witness_linf_cap = current.get("z_witness_linf_cap")
     z_rice_k = current.get("z_rice_k")
+    z_rice_k_security = current.get("z_rice_k_security")
     z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
     z_ring_elems = current.get("tail_z_ring_elems")
     z_bits_golomb = current.get("z_bits_per_coord_golomb")
@@ -446,8 +448,11 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if z_witness_linf_cap is not None and z_rice_k is not None and z_field_coeffs is not None:
         comparison = ""
         if z_bits_golomb is not None and z_bits_packed is not None:
+            k_note = f"Golomb k_live=`{z_rice_k}`"
+            if z_rice_k_security is not None:
+                k_note += f", k_security=`{z_rice_k_security}`"
             comparison = (
-                f", `{z_bits_golomb:.2f}` bits/field_coeff (Golomb k=`{z_rice_k}` from witness_linf_cap=`{z_witness_linf_cap}`) "
+                f", `{z_bits_golomb:.2f}` bits/field_coeff ({k_note} from witness_linf_cap=`{z_witness_linf_cap}`) "
                 f"vs `{z_bits_packed:.2f}` bits/field_coeff (legacy uniform `PackedDigits` z planes)"
             )
         savings_note = ""
@@ -715,11 +720,17 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["z_witness_linf_cap"] = kvs["witness_linf_cap"]
             elif "beta_inf" in kvs:
                 summary["z_witness_linf_cap"] = kvs["beta_inf"]
-            if "rice_k_public" in kvs:
+            if "rice_k_live" in kvs:
+                summary["z_rice_k"] = int(kvs["rice_k_live"])
+            elif "rice_k_public" in kvs:
                 summary["z_rice_k"] = int(kvs["rice_k_public"])
             elif "rice_k_beta" in kvs:
                 summary["z_rice_k"] = int(kvs["rice_k_beta"])
-            if "bits_per_coord_k_public" in kvs:
+            if "rice_k_security" in kvs:
+                summary["z_rice_k_security"] = int(kvs["rice_k_security"])
+            if "bits_per_coord_k_live" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_live"])
+            elif "bits_per_coord_k_public" in kvs:
                 summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_public"])
             elif "bits_per_coord_k_beta" in kvs:
                 summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_beta"])
