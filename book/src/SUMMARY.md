@@ -29,6 +29,7 @@
   - [Recursion and proof shape](./how/recursion.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
+    - [The distributed relation verifier](./how/verifying/distributed-relation-verifier.md)
   - [Security model](./how/security.md)
   - [Optimizations](./how/optimizations.md)
 
