@@ -14,7 +14,7 @@ use std::iter::repeat_n;
 /// `commit_rows_per_group` is the sent-commitment row count per group
 /// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
 /// `b_inner_rows_per_group` is the inner-consistency block size per group
-/// (`0` for single-tier). The number of commitment groups is inferred from
+/// (`0` for single-tier). The number of commitment bundles is inferred from
 /// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors

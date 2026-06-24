@@ -38,7 +38,9 @@ akita-witness = { version = "0.1.0", path = "../akita-witness" }
 rand = "0.8"
 
 [features]
-default = []
+default = ["schedules-default"]
+schedules-default = ["akita-config/schedules-default"]
+logging-transcript = ["akita-transcript/logging-transcript"]
 parallel = [
   "dep:rayon",
   "akita-challenges/parallel",
@@ -52,7 +54,6 @@ zk = [
   "akita-types/zk",
   "rand_core/getrandom",
 ]
-logging-transcript = ["akita-transcript/logging-transcript"]
 
 [lints]
 workspace = true

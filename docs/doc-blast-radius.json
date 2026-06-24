@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "regions": [
+    {
+      "id": "workspace-crates",
+      "description": "Workspace membership and public crate surface",
+      "code": ["Cargo.toml", "crates/*/Cargo.toml"],
+      "consider_updating": [
+        "README.md",
+        "docs/crate-graph.md",
+        "book/src/how/architecture.md"
+      ]
+    },
+    {
+      "id": "planner-schedule",
+      "description": "Schedule tables, DP fallback, proof-size planning",
+      "code": [
+        "crates/akita-planner/**",
+        "crates/akita-config/**",
+        "crates/akita-schedules/**",
+        "crates/akita-types/src/schedule*",
+        "crates/akita-types/src/**/schedule*",
+        "crates/akita-types/src/proof_size.rs",
+        "crates/akita-types/src/**/proof_size*"
+      ],
+      "consider_updating": [
+        "book/src/how/configuration.md",
+        "book/src/usage/profiling.md",
+        "specs/planner-*.md",
+        "specs/PRUNING.md"
+      ]
+    },
+    {
+      "id": "opening-batch",
+      "description": "Single-point opening batch descriptor and layout",
+      "code": [
+        "crates/akita-types/src/proof/opening_batch.rs",
+        "crates/akita-types/src/layout/opening_point.rs"
+      ],
+      "consider_updating": [
+        "book/src/how/proving/opening-points-block-order.md",
+        "book/src/usage/commitment-api.md",
+        "book/src/how/architecture.md",
+        "specs/single-point-opening-batch.md",
+        "docs/block-order.md"
+      ]
+    },
+    {
+      "id": "witness-polyops",
+      "description": "Shared witness/polynomial view vocabulary",
+      "code": ["crates/akita-witness/**"],
+      "consider_updating": [
+        "book/src/how/architecture.md",
+        "book/src/how/proving/sumcheck-stages.md",
+        "specs/akita-polyops-cutover.md",
+        "specs/akita-sumcheck-unification.md"
+      ]
+    },
+    {
+      "id": "sis-security",
+      "description": "SIS floors, norm bounds, challenge sampling",
+      "code": ["crates/akita-types/src/sis/**", "crates/akita-challenges/**"],
+      "consider_updating": [
+        "book/src/how/security.md",
+        "book/src/foundations/lattices-sis.md",
+        "book/src/foundations/operator-norm-certification.md",
+        "specs/akita-sis-*.md",
+        "specs/l2-msis-*.md",
+        "specs/bounded-l1-sparse-challenge.md",
+        "docs/security-posture.md"
+      ]
+    },
+    {
+      "id": "prover-protocol",
+      "description": "Prove pipeline, folds, sumcheck stages",
+      "code": ["crates/akita-prover/src/protocol/**", "crates/akita-sumcheck/**"],
+      "consider_updating": [
+        "book/src/how/proving/**",
+        "book/src/how/recursion.md",
+        "specs/packed-sumcheck.md",
+        "specs/setup-product-sumcheck.md",
+        "specs/terminal-fold-cutover.md"
+      ]
+    },
+    {
+      "id": "verifier",
+      "description": "Verifier replay and no-panic boundary",
+      "code": ["crates/akita-verifier/**"],
+      "consider_updating": [
+        "book/src/how/verification.md",
+        "docs/verifier-contract.md",
+        "docs/verifier-panic-audit.md",
+        "specs/security-hardening.md"
+      ]
+    },
+    {
+      "id": "transcript",
+      "description": "Fiat-Shamir transcript and instance binding",
+      "code": [
+        "crates/akita-transcript/**",
+        "crates/akita-types/src/instance_descriptor.rs"
+      ],
+      "consider_updating": [
+        "book/src/how/transcript.md",
+        "book/src/usage/commitment-api.md",
+        "specs/transcript-*.md"
+      ]
+    },
+    {
+      "id": "commitment-setup",
+      "description": "Setup expansion and Ajtai commitment",
+      "code": [
+        "crates/akita-setup/**",
+        "crates/akita-prover/src/api/commitment.rs",
+        "crates/akita-prover/src/backend/**"
+      ],
+      "consider_updating": [
+        "book/src/how/commitment.md",
+        "book/src/usage/commitment-api.md",
+        "specs/setup-*.md"
+      ]
+    },
+    {
+      "id": "field-algebra",
+      "description": "Field traits, packed SIMD, extension towers",
+      "code": ["crates/akita-field/**", "crates/akita-algebra/**"],
+      "consider_updating": [
+        "book/src/foundations/rings-and-fields.md",
+        "book/src/foundations/ntt-crt.md",
+        "book/src/how/optimizations.md",
+        "specs/akita-field-refactor.md",
+        "specs/crt-ntt-*.md",
+        "specs/avx-simd-port.md"
+      ]
+    },
+    {
+      "id": "extension-opening",
+      "description": "Extension-opening reduction prover paths",
+      "code": [
+        "crates/akita-prover/src/protocol/extension_opening_reduction/**",
+        "crates/akita-types/src/extension_opening_reduction.rs"
+      ],
+      "consider_updating": [
+        "book/src/foundations/extension-opening-reduction.md",
+        "book/src/how/proving/extension-opening-reduction.md",
+        "specs/eor-*.md",
+        "specs/extension-field-*.md"
+      ]
+    },
+    {
+      "id": "pcs-umbrella",
+      "description": "Public PCS API, examples, integration tests",
+      "code": ["crates/akita-pcs/**"],
+      "consider_updating": ["book/src/usage/**", "README.md"]
+    },
+    {
+      "id": "zk-r1cs",
+      "description": "Zero-knowledge path and deferred R1CS",
+      "code": [
+        "crates/akita-r1cs/**",
+        "crates/akita-prover/src/protocol/masking.rs",
+        "crates/akita-prover/src/protocol/zk_*"
+      ],
+      "consider_updating": [
+        "book/src/foundations/zero-knowledge.md",
+        "book/src/roadmap/zero-knowledge.md",
+        "book/src/roadmap/verifier-offloading.md",
+        "book/src/roadmap/euclidean-security.md",
+        "specs/akita-zk-*.md"
+      ]
+    },
+    {
+      "id": "ci-tooling",
+      "description": "CI workflows and repo scripts",
+      "code": [".github/workflows/**", "scripts/**"],
+      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/ci-test-timing.md"]
+    },
+    {
+      "id": "book-tooling",
+      "description": "Book structure and guardrails",
+      "code": ["book/**", "docs/documentation.md", "docs/doc-blast-radius.json"],
+      "consider_updating": ["book/README.md", "docs/documentation.md", "specs/PRUNING.md"]
+    }
+  ]
+}

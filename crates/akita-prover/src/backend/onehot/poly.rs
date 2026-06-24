@@ -150,7 +150,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(blocks)
     }
 
-    /// Sparse fast path for [`AkitaPolyOps::tensor_extension_column_partials_batch`]
+    /// Sparse fast path for `tensor_extension_column_partials_batch`.
     /// (the `split_bits <= low_vars`, power-of-two `onehot_k`, shared-shape
     /// case). Byte-identical to the dense column partials but exploits the
     /// one-hot structure to replace the per-chunk extension *multiply* of the
@@ -294,7 +294,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     ) -> Result<Arc<SparseRingPoly<F, D>>, AkitaError>
     where
         F: FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         let (width, total_evals) = self.tensor_packing_shape::<E>()?;
         let _span = tracing::info_span!(

@@ -26,10 +26,7 @@ pub use ext::lift::{
     ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,
 };
 pub use ext::{
-    Ext2, FpExt2, FpExt2Config, NegOneNr, PowerBasisFpExt4, PowerBasisFpExt4Config,
-    PowerBasisFpExt4MulBackend, RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend,
-    RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
-    TwoNr, UnitNr,
+    Ext2, FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend, NegOneNr, TwoNr,
 };
 pub use prime::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec, Fp128, Fp32,

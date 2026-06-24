@@ -1,17 +1,25 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
+#[cfg(feature = "schedules-default")]
 use akita_field::{CanonicalField, One};
+#[cfg(feature = "schedules-default")]
+use akita_planner::generated::GeneratedScheduleTable;
+#[cfg(feature = "schedules-default")]
 #[cfg(not(feature = "zk"))]
-use akita_planner::generated::{
-    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
+use akita_schedules::{
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
-use akita_planner::generated::{
+#[cfg(feature = "schedules-default")]
+use akita_schedules::{
     fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
-    fp64_d256_onehot_table, GeneratedScheduleTable,
+    fp64_d256_onehot_table,
 };
+#[cfg(feature = "schedules-default")]
 use akita_types::SisModulusFamily;
 
+#[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 6;
+#[cfg(feature = "schedules-default")]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
 #[test]
 fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
@@ -90,8 +98,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     struct UncommittableRootDirectCfg;
     impl CommitmentConfig for UncommittableRootDirectCfg {
         type Field = akita_field::Fp32<251>;
-        type ClaimField = akita_field::Fp32<251>;
-        type ChallengeField = akita_field::Fp32<251>;
+        type ExtField = akita_field::Fp32<251>;
         const D: usize = 8;
         fn decomposition() -> akita_types::DecompositionParams {
             akita_types::DecompositionParams {
@@ -114,7 +121,6 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-            _max_num_points: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
             Ok(SetupMatrixEnvelope {
                 max_setup_len: 1,
@@ -142,8 +148,8 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
     }
 
-    let incidence = ClaimIncidenceSummary::same_point(10, 1).expect("singleton incidence");
-    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&incidence)
+    let opening_batch = OpeningBatchShape::new(10, 1).expect("singleton opening batch");
+    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
         .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
         err.to_string()
@@ -154,52 +160,51 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 
 #[test]
 #[cfg(not(feature = "zk"))]
-fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
+fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // Locks in the fix for the descriptor-binding bug at
-    // `akita_prover::protocol::flow` and
-    // `akita_verifier::protocol::batched`: when the planner-selected
+    // `akita_prover::protocol::core` and
+    // `akita_verifier::protocol::core`: when the planner-selected
     // folded root cannot handle the opening shape, both sides build
     // a fallback root-direct schedule. That schedule's `params` are
     // hashed into the per-proof effective-schedule digest
     // (`PlanSection::from_schedule` -> `digest_effective_schedule`),
     // while the root-direct verification closure recomputes commitments
-    // using `Cfg::get_params_for_batched_commitment(real_incidence)`. If
+    // using `Cfg::get_params_for_batched_commitment(real_opening_batch)`. If
     // the fallback used a synthetic `same_point(num_vars, 1)`
-    // singleton incidence (the pre-fix behavior), the descriptor
+    // singleton opening batch (the pre-fix behavior), the descriptor
     // would bind singleton-sized params while verification ran
     // against batched ones.
     use akita_types::{digest_effective_schedule, root_direct_schedule};
     type Cfg = fp128::D128Full;
-    let real_incidence =
-        ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
+    let real_opening_batch =
+        OpeningBatchShape::new(30, 4).expect("batched same-point opening batch");
     let real_params =
-        Cfg::get_params_for_batched_commitment(&real_incidence).expect("batched commit params");
-    let singleton_incidence =
-        ClaimIncidenceSummary::same_point(30, 1).expect("singleton incidence");
-    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_incidence)
+        Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
+    let singleton_opening_batch = OpeningBatchShape::new(30, 1).expect("singleton opening batch");
+    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
         .expect("singleton commit params");
 
-    // Sanity: a non-singleton incidence should resolve to a
+    // Sanity: a non-singleton opening batch should resolve to a
     // different commit layout, otherwise the regression couldn't
     // manifest with this fixture.
     assert_ne!(
         real_params, singleton_params,
-        "test fixture: pick an incidence where batched and singleton params differ"
+        "test fixture: pick an opening batch where batched and singleton params differ"
     );
 
-    let real_schedule = root_direct_schedule(real_incidence.num_vars(), real_params.clone())
+    let real_schedule = root_direct_schedule(real_opening_batch.num_vars(), real_params.clone())
         .expect("fallback root-direct schedule");
     let bound_levels = setup_level_params_from_runtime_schedule(&real_schedule.steps);
     assert_eq!(
         bound_levels,
         vec![real_params],
-        "fallback schedule must carry the real-incidence params the verifier recomputes"
+        "fallback schedule must carry the real opening-batch params the verifier recomputes"
     );
 
     // The descriptor binds those params through the schedule digest: a
     // singleton-params fallback at the same `num_vars` must produce a
     // different preamble than the real batched-params fallback.
-    let singleton_schedule = root_direct_schedule(real_incidence.num_vars(), singleton_params)
+    let singleton_schedule = root_direct_schedule(real_opening_batch.num_vars(), singleton_params)
         .expect("singleton fallback root-direct schedule");
     assert_ne!(
         digest_effective_schedule(&real_schedule),
@@ -210,24 +215,19 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&incidence)
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("grouped same-point opening_batch");
+    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4)
         .expect("setup envelope should cover generated grouped batch schedules");
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
 
-fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceSummary) -> usize {
-    let max_group_poly_count = incidence
-        .num_polys_per_point()
-        .iter()
-        .copied()
-        .max()
-        .expect("nonempty incidence");
-    let d_width = lp.num_blocks * incidence.num_claims() * lp.num_digits_open;
+fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatchShape) -> usize {
+    let max_group_poly_count = opening_batch.num_polynomials();
+    let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
     (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
@@ -236,45 +236,98 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceS
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
-    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("batched same-point opening_batch");
+    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
         .expect("batched root schedule should carry commit params");
-    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_setup_len >= required);
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
         .expect("setup envelope should cover generated batched root widths");
     assert!(setup_envelope.max_setup_len >= required);
 }
 
 #[test]
-fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
+fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     use akita_types::root_direct_schedule;
 
     type Cfg = fp128::D128Full;
-    let incidence =
-        ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
-    let commit_incidence =
-        ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
-    let root_params = Cfg::get_params_for_batched_commitment(&commit_incidence)
+    let opening_batch = OpeningBatchShape::new(30, 4).expect("supported batched opening_batch");
+    let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("supported batched commit params");
-    let schedule = root_direct_schedule(incidence.num_vars(), root_params.clone())
+    let schedule = root_direct_schedule(opening_batch.num_vars(), root_params.clone())
         .expect("synthetic direct schedule");
-    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_setup_len >= required);
 }
 
 #[test]
-fn setup_matrix_scan_uses_worst_case_grouping_for_aggregate_shape() {
-    let incidence =
-        worst_case_grouped_incidence_for_shape(30, 4, 2).expect("valid aggregate incidence");
-    assert_eq!(incidence.num_polys_per_point(), &[3, 1]);
+fn setup_matrix_scan_uses_one_shared_opening_point() {
+    let opening_batch =
+        worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
+    assert_eq!(opening_batch.num_polynomials(), 4);
+}
+
+#[test]
+fn setup_envelope_poly_counts_match_shipped_table_keys() {
+    assert_eq!(super::setup_envelope_poly_counts(1), vec![1]);
+    assert_eq!(super::setup_envelope_poly_counts(2), vec![1, 2]);
+    #[cfg(feature = "zk")]
+    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 2, 3, 4]);
+    #[cfg(not(feature = "zk"))]
+    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 4]);
+}
+
+#[test]
+fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
+    fn exhaustive_envelope<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> SetupMatrixEnvelope {
+        let mut max_setup_len = 1usize;
+        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
+        for num_vars in 1..=max_num_vars {
+            for &num_polys in &poly_counts {
+                let opening_batch =
+                    worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
+                if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
+                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                }
+            }
+        }
+        SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+        }
+    }
+
+    for max_nv in [16usize, 24, 30] {
+        let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(max_nv, 4);
+        let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(max_nv, 4)
+            .expect("endpoint poly scan");
+        assert_eq!(
+            exhaustive.max_setup_len, endpoint.max_setup_len,
+            "D64OneHot nv<={max_nv}: endpoint scan must match exhaustive poly scan"
+        );
+
+        let exhaustive_full = exhaustive_envelope::<fp128::D64Full>(max_nv, 4);
+        let endpoint_full =
+            super::proof_optimized_max_setup_matrix_size::<fp128::D64Full>(max_nv, 4)
+                .expect("endpoint poly scan");
+        assert_eq!(
+            exhaustive_full.max_setup_len, endpoint_full.max_setup_len,
+            "D64Full nv<={max_nv}: endpoint scan must match exhaustive poly scan"
+        );
+    }
 }
 
 #[test]
@@ -323,12 +376,12 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     type Cfg = fp128::D128Full;
-    let incidence = ClaimIncidenceSummary::same_point(26, 1).expect("singleton incidence");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let opening_batch = OpeningBatchShape::new(26, 1).expect("singleton opening batch");
+    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
         .expect("batched root schedule should carry commit params");
-    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &incidence).unwrap();
+    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &opening_batch).unwrap();
     let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
     let hiding_params = root_params
         .with_decomp(
@@ -347,10 +400,10 @@ fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
         );
     let required = hiding_params.b_key.row_len() * blinding_cols;
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
     assert!(runtime_envelope.max_zk_b_len >= required);
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1, 1).unwrap();
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1).unwrap();
     assert!(setup_envelope.max_zk_b_len >= required);
 }
 
@@ -396,20 +449,14 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         };
         // Root-level batched witnesses fan out over the key's vector
         // counts; recursive levels collapse back to singleton-by-construction.
-        let (num_points, num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
-            (
-                key.num_points,
-                key.num_t_vectors,
-                key.num_w_vectors,
-                key.num_z_vectors,
-            )
+        let (num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
+            (key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
         } else {
-            (1, 1, 1, 1)
+            (1, 1, 1)
         };
         let runtime_next_w_len =
             akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
                 &fold.params,
-                num_points,
                 num_t_vectors,
                 num_w_vectors,
                 num_public_rows,
@@ -424,12 +471,11 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
     }
 }
 
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -438,6 +484,7 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
     }
 }
 
+#[cfg(feature = "schedules-default")]
 fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
     match Cfg::sis_modulus_family() {
         SisModulusFamily::Q32 => ("Q32/2xi32", 1_152_837_945_367_908_353),
@@ -446,6 +493,7 @@ fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u1
     }
 }
 
+#[cfg(feature = "schedules-default")]
 fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
     ring_dimension: usize,
     rhs_abs_bound: u64,
@@ -467,6 +515,7 @@ fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
     usize::try_from(width).ok()
 }
 
+#[cfg(feature = "schedules-default")]
 fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     level: &LevelParams,
@@ -496,13 +545,13 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     }
 }
 
+#[cfg(feature = "schedules-default")]
 fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -515,7 +564,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     }
 }
 
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     let mut checked_folded_entry = false;
     for entry in table
@@ -523,9 +572,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         .iter()
         .filter(|entry| entry.key.num_t_vectors > 1)
     {
-        let key = AkitaScheduleLookupKey::new_with_points(
+        let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
-            entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
@@ -557,15 +605,16 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
     assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp128::D64Full>(fp128_d64_full_table());
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp32::D128OneHot>(fp32_d128_onehot_table());
     assert_every_table_entry_materializes::<fp32::D256OneHot>(fp32_d256_onehot_table());
@@ -575,7 +624,7 @@ fn generated_small_field_schedule_tables_match_cfg_schedule() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
@@ -585,7 +634,7 @@ fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
 }
 
 #[test]
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "schedules-default", feature = "zk"))]
 fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
@@ -595,7 +644,7 @@ fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
@@ -603,7 +652,7 @@ fn generated_batched_roots_restore_scaled_widths() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn generated_d128_full_table_materializes_valid_plans() {
     let table = fp128_d128_full_table();
     for entry in table.entries {
@@ -635,28 +684,48 @@ fn adaptive_onehot_plan_matches_runtime_next_w_len() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
+#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn batched_root_plan_matches_runtime_next_w_len() {
     let table = fp128_d64_onehot_table();
     let entry = table
         .entries
         .iter()
         .find(|entry| {
-            entry.key.num_commitment_groups > 1
-                || entry.key.num_t_vectors > 1
+            entry.key.num_t_vectors > 1
                 || entry.key.num_w_vectors > 1
                 || entry.key.num_z_vectors > 1
         })
         .expect("generated table should contain a non-singleton batched-root row");
-    let key = AkitaScheduleLookupKey::new_with_points(
+    let key = AkitaScheduleLookupKey::new(
         entry.key.num_vars,
-        entry.key.num_commitment_groups,
         entry.key.num_t_vectors,
         entry.key.num_w_vectors,
         entry.key.num_z_vectors,
     );
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
+}
+
+#[test]
+#[cfg(feature = "zk")]
+fn batched_4x15_terminal_witness_is_packed_digits() {
+    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape, Step};
+    let key = AkitaScheduleLookupKey::new(15, 4, 4, 1);
+    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
+        .expect("config schedule should succeed");
+    let terminal_log_basis = match schedule.steps.last() {
+        Some(Step::Direct(direct)) => {
+            direct.log_basis(fp128::D64OneHot::decomposition().field_bits())
+        }
+        _ => panic!("zk schedule should end in a terminal direct step"),
+    };
+    match schedule_terminal_direct_witness_shape(&schedule).expect("terminal direct") {
+        CleartextWitnessShape::PackedDigits((len, bits)) => {
+            assert_eq!(*bits, terminal_log_basis);
+            assert!(*len > 0, "terminal witness len must be positive");
+        }
+        other => panic!("expected packed terminal witness for zk build, got {other:?}"),
+    }
 }
 
 #[test]
@@ -672,19 +741,20 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
-    let akita_types::CleartextWitnessShape::PackedDigits((num_elems, _bits)) =
+    let akita_types::CleartextWitnessShape::SegmentTyped(ref shape) =
         *akita_types::schedule_terminal_direct_witness_shape(&schedule)
             .expect("4x30 onehot schedule should end in a direct step")
     else {
-        panic!("4x30 onehot schedule should end in packed digits");
+        panic!("4x30 onehot schedule should end in segment-typed witness");
     };
     // Bound reflects the committed-fold A-role SIS pricing: honest pricing
     // lifts the per-level rank, widening the terminal witness, but the
     // byte-aware schedule still keeps folding rather than dumping a huge
     // cleartext root.
     assert!(
-        num_elems <= 375_104,
-        "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
+        shape.layout.logical_num_elems <= 375_104,
+        "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
+        shape.layout.logical_num_elems
     );
 }
 
@@ -775,11 +845,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         (
             64,
             SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
-                operator_norm_threshold: 54,
+                count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+                count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+                operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
             },
-            (54, 2),
+            (53, 2),
         ),
         (
             128,
@@ -813,6 +883,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         );
     }
 
+    let d64 = proof_optimized_ring_challenge_config(64).unwrap();
+    assert!(d64.operator_norm_rejection_binds());
+    assert_eq!(d64.operator_norm_cap(), 18);
+    assert_eq!(d64.challenge_l2_sq_max(), 75);
+
     // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
     // the one degree its sampler accepts.
     proof_optimized_ring_challenge_config(32)
@@ -823,6 +898,22 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // Ring degrees no preset uses must be rejected, not silently defaulted.
     assert!(proof_optimized_ring_challenge_config(16).is_err());
     assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+#[test]
+#[cfg(feature = "schedules-fp128-d64-onehot")]
+fn d64_shipped_catalog_ring_challenge_digest_matches_runtime_policy() {
+    use akita_planner::ring_challenge_config_digest;
+
+    use crate::proof_optimized::fp128;
+
+    let expected = ring_challenge_config_digest(&[64], fp128::D64OneHot::ring_challenge_config)
+        .expect("d=64 ring challenge digest");
+    let catalog = fp128::D64OneHot::schedule_catalog().expect("D64 one-hot catalog");
+    assert_eq!(
+        catalog.identity.ring_challenge_config_digest, expected,
+        "shipped fp128_d64_onehot digest must track proof_optimized_ring_challenge_config"
+    );
 }
 
 /// Assert one preset delegates its ring challenge to the shared policy.

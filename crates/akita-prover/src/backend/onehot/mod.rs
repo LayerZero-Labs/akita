@@ -1,15 +1,14 @@
 //! One-hot polynomial: sparse witness with at most one nonzero field
 //! element per chunk of size `onehot_k`.
 //!
-//! [`OneHotPoly`] is a backend for [`AkitaPolyOps`](akita_prover::AkitaPolyOps)
-//! that implements the four prover operations (ring evaluation, per-block
-//! fold, decompose+fold, and inner-Ajtai commit) by iterating only over
-//! the nonzero monomial positions.
+//! [`OneHotPoly`] implements the four prover operations (ring evaluation, per-block
+//! fold, decompose+fold, and inner-Ajtai commit) by iterating only over the
+//! nonzero monomial positions.
 //!
 //! # Module layout
 //!
 //! The module is organised as cohesive private submodules — entry types,
-//! flat block storage, and the polynomial + its [`AkitaPolyOps`] impl.
+//! flat block storage, and the polynomial inherent operation impl.
 //!
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
@@ -38,9 +37,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
-use akita_types::{
-    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
-};
+use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
@@ -50,11 +47,7 @@ use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_a
 use crate::compute::{
     CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };
-use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
-    SparseRingPoly,
-};
+use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.
@@ -80,4 +73,5 @@ pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
+pub use ops::{OneHotBatchView, OneHotView};
 pub use poly::OneHotPoly;

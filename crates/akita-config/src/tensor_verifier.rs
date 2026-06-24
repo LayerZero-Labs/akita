@@ -21,8 +21,7 @@ pub mod fp128 {
 
     impl CommitmentConfig for D64OneHotTensor {
         type Field = Field;
-        type ClaimField = Field;
-        type ChallengeField = Field;
+        type ExtField = Field;
         const D: usize = 64;
 
         fn decomposition() -> DecompositionParams {
@@ -58,12 +57,10 @@ pub mod fp128 {
         fn max_setup_matrix_size(
             max_num_vars: usize,
             max_num_batched_polys: usize,
-            max_num_points: usize,
         ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
             crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                 max_num_vars,
                 max_num_batched_polys,
-                max_num_points,
             )
         }
 
@@ -72,6 +69,17 @@ pub mod fp128 {
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
             )
+        }
+
+        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            #[cfg(feature = "schedules-fp128-d64-onehot-tensor")]
+            {
+                Some(akita_schedules::fp128_d64_onehot_tensor_table())
+            }
+            #[cfg(not(feature = "schedules-fp128-d64-onehot-tensor"))]
+            {
+                None
+            }
         }
     }
 }

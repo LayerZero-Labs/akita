@@ -41,7 +41,12 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     128,
     128,
-    128
+    128,
+    schedules = (
+        "schedules-fp128-d128-full",
+        "fp128_d128_full",
+        fp128_d128_full_table
+    )
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -50,7 +55,12 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     128,
     128,
-    1
+    1,
+    schedules = (
+        "schedules-fp128-d128-onehot",
+        "fp128_d128_onehot",
+        fp128_d128_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     D64Full,
@@ -59,7 +69,12 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     64,
     128,
-    128
+    128,
+    schedules = (
+        "schedules-fp128-d64-full",
+        "fp128_d64_full",
+        fp128_d64_full_table
+    )
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -69,7 +84,12 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256
+    256,
+    schedules = (
+        "schedules-fp128-d64-onehot",
+        "fp128_d64_onehot",
+        fp128_d64_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     D64OneHotTiered,
@@ -80,7 +100,12 @@ impl_proof_optimized_preset!(
     128,
     1,
     256,
-    /* tiered = */ true
+    true,
+    schedules = (
+        "schedules-fp128-d64-onehot-tiered",
+        "fp128_d64_onehot_tiered",
+        fp128_d64_onehot_tiered_table
+    )
 );
 impl_proof_optimized_preset!(
     D32Full,
@@ -184,7 +209,7 @@ where
 
 /// Select the best full-field fp128 preset for a schedule lookup key.
 ///
-/// The key carries singleton, grouped, and multipoint batch shape data, so
+/// The key carries singleton and grouped batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
 /// typed preset schedule tables. A genuine planner failure propagates as an
 /// error; for any valid key every preset yields a schedule (the DP falls back

@@ -27,9 +27,9 @@ mod proof;
 mod protocol;
 mod stages;
 
-pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+pub use akita_types::CommitmentVerifier;
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
-    prepare_ring_switch_row_eval, verify_batched, RingSwitchDeferredRowEval, RingSwitchReplay,
+    batched_verify, prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay,
 };
 pub use stages::stage1::AkitaStage1Verifier;

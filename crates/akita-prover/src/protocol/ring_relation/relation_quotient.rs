@@ -2,6 +2,11 @@ use super::repeated_b::repeated_b_commitment_rows;
 #[cfg(feature = "zk")]
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
+use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
+use crate::compute::{
+    OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
+    RingSwitchRelationKernel, RingSwitchRelationPlan,
+};
 use crate::validation::validate_i8_setup_log_basis;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
@@ -131,50 +136,6 @@ fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
-fn cyclic_public_row_product<F, const D: usize>(
-    e_folded: &[CyclotomicRing<F, D>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
-    row_coefficient_rings: &[CyclotomicRing<F, D>],
-    target_point_idx: usize,
-    blocks_per_claim: usize,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore,
-{
-    let mut cyclic = [F::zero(); D];
-    if row_coefficient_rings.len() != claim_to_point.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    for (claim_idx, &point_idx) in claim_to_point.iter().enumerate() {
-        if point_idx != target_point_idx {
-            continue;
-        }
-        let point = ring_multiplier_points
-            .get(point_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        for block_idx in 0..blocks_per_claim {
-            let folded_idx = claim_idx
-                .checked_mul(blocks_per_claim)
-                .and_then(|idx| idx.checked_add(block_idx))
-                .ok_or(AkitaError::InvalidProof)?;
-            let folded = e_folded.get(folded_idx).ok_or(AkitaError::InvalidProof)?;
-            let weighted_multiplier = if let Some(scalar) = point.b_constant_coeff(block_idx) {
-                row_coefficient_rings[claim_idx].scale(&scalar)
-            } else {
-                let b_rings = point.b_rings().ok_or(AkitaError::InvalidProof)?;
-                row_coefficient_rings[claim_idx] * b_rings[block_idx]
-            };
-            add_cyclic_ring_product::<F, D>(&mut cyclic, &weighted_multiplier, folded);
-        }
-    }
-    Ok(CyclotomicRing::from_coefficients(cyclic))
-}
-
-fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -> bool {
-    ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
-}
-
 fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
@@ -182,7 +143,7 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
 }
 
 fn cyclic_consistency_z_product<F, const D: usize>(
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
     z_folded_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
@@ -194,44 +155,39 @@ where
     let inner_width = block_len
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
-    if inner_width == 0
-        || z_folded_centered.len()
-            != ring_multiplier_points
-                .len()
-                .checked_mul(inner_width)
-                .ok_or_else(|| AkitaError::InvalidSetup("z point width overflow".to_string()))?
-    {
+    if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier z layout mismatch: z_folded_len={} points={} block_len={} depth_commit={} expected={}",
+            "ring-multiplier z layout mismatch: z_folded_len={} block_len={} depth_commit={} expected={}",
             z_folded_centered.len(),
-            ring_multiplier_points.len(),
             block_len,
             depth_commit,
-            ring_multiplier_points.len() * inner_width
+            inner_width
         )));
     }
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let mut cyclic = [F::zero(); D];
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
-    for (point_idx, opening_point) in ring_multiplier_points.iter().enumerate() {
-        if opening_point.a_len() < block_len {
+    {
+        if ring_multiplier_point.a_len() < block_len {
             return Err(AkitaError::InvalidInput(format!(
                 "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
-                opening_point.a_len()
+                ring_multiplier_point.a_len()
             )));
         }
         for block_idx in 0..block_len {
             let mut z_block = CyclotomicRing::<F, D>::zero();
             for (digit_idx, &g) in g_commit.iter().enumerate() {
-                let z_idx = point_idx * inner_width + block_idx * depth_commit + digit_idx;
+                let z_idx = block_idx * depth_commit + digit_idx;
                 z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
             }
-            if let Some(scalar) = opening_point.a_constant_coeff(block_idx) {
+            if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
                 reduced += z_block.scale(&scalar);
             } else {
-                let a_rings = opening_point.a_rings().ok_or(AkitaError::InvalidProof)?;
+                let a_rings = ring_multiplier_point
+                    .a_rings()
+                    .ok_or(AkitaError::InvalidProof)?;
                 let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
                 reduced += *multiplier * z_block;
@@ -254,8 +210,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ring_switch_ctx: &OperationCtx<'_, F, B, D>,
     lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
@@ -264,71 +219,34 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
-    claim_to_commitment_group: &[usize],
-    claim_poly_in_commitment_group: &[usize],
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
     row_coefficient_rings: &[CyclotomicRing<F, D>],
     z_folded_centered: &[[i32; D]],
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
-    num_polys_per_commitment_group: &[usize],
+    num_polys: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
-    B: RingSwitchComputeBackend<F>,
+    B: RingSwitchProveBackend<F, D>,
 {
+    let backend = ring_switch_ctx.backend();
+    let prepared = ring_switch_ctx.prepared();
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    if num_polys_per_commitment_group.is_empty() || num_polys_per_commitment_group.contains(&0) {
+    if num_polys == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_claims = claim_to_commitment_group.len();
-    if claim_poly_in_commitment_group.len() != num_claims {
+    let num_claims = row_coefficient_rings.len();
+    if num_polys != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    // Build a flat (claim → global poly slot) map. `recomposed_inner_rows`
-    // is flattened by polynomial slot (then block), so the global poly
-    // slot is `Σ_{g < group_idx} num_polys_per_commitment_group[g] + poly_idx`. Validate
-    // that every claim references a real `(group, poly)` cell.
-    let mut group_offsets = Vec::with_capacity(num_polys_per_commitment_group.len());
-    let mut acc = 0usize;
-    for &count in num_polys_per_commitment_group {
-        group_offsets.push(acc);
-        acc = acc.checked_add(count).ok_or(AkitaError::InvalidProof)?;
-    }
-    let total_poly_slots = acc;
-    let mut poly_slot_for_claim = Vec::with_capacity(num_claims);
-    for claim_idx in 0..num_claims {
-        let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_polys_per_commitment_group.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let poly_idx = claim_poly_in_commitment_group[claim_idx];
-        if poly_idx >= num_polys_per_commitment_group[group_idx] {
-            return Err(AkitaError::InvalidProof);
-        }
-        poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
-    }
-    let num_z_segments = ring_multiplier_points.len();
-    if num_z_segments == 0
-        || claim_to_point.len().checked_mul(blocks_per_claim) != Some(e_folded.len())
-        || row_coefficient_rings.len() != claim_to_point.len()
-        || claim_to_commitment_group.len() != claim_to_point.len()
-        || claim_poly_in_commitment_group.len() != claim_to_point.len()
-    {
+    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len()) {
         return Err(AkitaError::InvalidProof);
     }
-    let num_points = num_polys_per_commitment_group.len();
-    if claim_to_point
-        .iter()
-        .any(|&point_idx| point_idx >= num_points)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_inner_rows = total_poly_slots
+    let expected_inner_rows = num_polys
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
     if recomposed_inner_rows.len() != expected_inner_rows {
@@ -372,19 +290,9 @@ where
         MRowLayout::WithoutDBlock => 0,
     };
     let tiered = lp.f_key.is_some();
-    if tiered && num_points != 1 {
-        // The tiered relation slices the single commitment group's t̂; multipoint
-        // tiering is a follow-up (see specs/tiered-commitment.md edge cases).
-        return Err(AkitaError::InvalidSetup(
-            "tiered relation currently supports a single commitment group".to_string(),
-        ));
-    }
-    let commitment_row_count = n_b
-        .checked_mul(num_points)
-        .ok_or(AkitaError::InvalidProof)?;
     // Public-output M rows are enforced by the fused trace term, not M itself.
     const NUM_PUBLIC_M_ROWS: usize = 0;
-    let num_rows = lp.m_row_count_for(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let num_rows = lp.m_row_count_for(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
@@ -393,38 +301,36 @@ where
     // Public openings bind through the fused trace term, not M rows.
     let d_start = lp.d_start(NUM_PUBLIC_M_ROWS)?;
     let f_start = lp.f_start(NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let a_start = lp.a_start(num_points, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let a_start = lp.a_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
 
-    if inner_width == 0
-        || z_folded_centered.len()
-            != num_z_segments
-                .checked_mul(inner_width)
-                .ok_or(AkitaError::InvalidProof)?
-    {
+    if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
     }
 
     let mut z_segments = z_folded_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let use_relation_b_rows = !tiered && commitment_row_count == n_b && num_points == 1;
+    let use_relation_b_rows = !tiered;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
     let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
         t_hat.flat_digits()
     } else {
         &[]
     };
-    let relation_rows = backend.ring_switch_relation_rows::<D>(
+    let relation_rows = RingSwitchRelationKernel::relation_rows(
+        backend,
         prepared,
-        RingSwitchRelationRowsPlan {
-            n_d: n_d_active,
-            n_b: relation_n_b,
-            n_a,
+        RingSwitchRelationView {
             e_hat: e_hat_flat,
             t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_folded_centered_inf_norm,
+        },
+        RingSwitchRelationPlan {
+            n_d: n_d_active,
+            n_b: relation_n_b,
+            n_a,
             log_basis: lp.log_basis,
         },
     )?;
@@ -449,13 +355,14 @@ where
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {
-        let segment_rows = backend.ring_switch_quotient_rows::<D>(
+        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
+            backend,
             prepared,
-            RingSwitchQuotientRowsPlan {
-                n_a,
+            RingSwitchQuotientView {
                 z_segment,
                 z_folded_centered_inf_norm,
             },
+            RingSwitchQuotientPlan { n_a },
         )?;
         if segment_rows.len() != n_a {
             return Err(AkitaError::InvalidProof);
@@ -493,12 +400,12 @@ where
             t_hat,
             #[cfg(feature = "zk")]
             b_blinding_digits,
-            num_polys_per_commitment_group,
+            &[num_polys],
             blocks_per_claim,
             lp.log_basis,
         )?
     };
-    if !tiered && commitment_cyclic_rows.len() != commitment_row_count {
+    if !tiered && commitment_cyclic_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -555,11 +462,7 @@ where
     } else {
         None
     };
-    let constant_opening_multipliers = ring_multiplier_points
-        .iter()
-        .all(|point| point.is_constant());
-    let constant_public_multipliers =
-        constant_opening_multipliers && row_coefficient_rings.iter().all(ring_is_constant);
+    let constant_opening_multipliers = ring_multiplier_point.is_constant();
     let consistency_z_quotient = if constant_opening_multipliers {
         // Degree-one openings embed scalar weights as constant rings. Cyclic
         // and negacyclic multiplication by a constant agree, so the quotient
@@ -567,7 +470,7 @@ where
         CyclotomicRing::<F, D>::zero()
     } else {
         let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
-            ring_multiplier_points,
+            ring_multiplier_point,
             z_folded_centered,
             lp.block_len,
             lp.num_digits_commit,
@@ -597,24 +500,6 @@ where
             quotient -= consistency_z_quotient;
             result.push(quotient);
             other_time += t_row.elapsed().as_secs_f64();
-        } else if row_idx < d_start {
-            let _span = tracing::info_span!("bTw_row").entered();
-            if constant_public_multipliers {
-                // Constant public multipliers have identical cyclic and
-                // negacyclic products, so this row contributes no quotient.
-                result.push(CyclotomicRing::<F, D>::zero());
-            } else {
-                let point_idx = row_idx - 1;
-                let cyclic = cyclic_public_row_product::<F, D>(
-                    e_folded,
-                    ring_multiplier_points,
-                    claim_to_point,
-                    row_coefficient_rings,
-                    point_idx,
-                    blocks_per_claim,
-                )?;
-                result.push(quotient_from_cyclic_and_reduced(&cyclic, &y[row_idx]));
-            }
         } else if row_idx < f_start {
             // D-block: v = D·ê.
             result.push(quotient_from_cyclic_and_reduced(
@@ -650,18 +535,14 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
 
-            // Iterate `(claim, block)` over the challenge space and route
-            // each cell to its polynomial-slot in `recomposed_inner_rows`
-            // (`poly_slot * num_blocks + block_idx`). Iterating over the
-            // raw `recomposed_inner_rows.len()` would conflate poly slots
-            // with claims and overrun `challenges` whenever a group has
-            // more polynomial slots than opened claims.
+            // In a dense single commitment group, claim order is polynomial
+            // order. Iterate `(claim, block)` over the challenge space and
+            // read the matching committed polynomial block directly.
             let mut quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
                     let claim_idx = i / blocks_per_claim;
                     let block_idx = i % blocks_per_claim;
-                    let poly_slot = poly_slot_for_claim[claim_idx];
-                    let inner_idx = poly_slot * blocks_per_claim + block_idx;
+                    let inner_idx = claim_idx * blocks_per_claim + block_idx;
                     recomposed_inner_rows[inner_idx].get(a_idx).copied()
                 })?;
 

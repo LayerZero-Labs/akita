@@ -3,15 +3,17 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
-pub(super) use akita_prover::AkitaPolyOps;
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
+use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
+pub(super) use akita_prover::{ProverCommitmentGroup, ProverOpeningBatch};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
+    BasisMode, BlockOrder, CommitmentGroup, PointVariableSelection, RingCommitment,
+    VerifierOpeningBatch,
 };
-pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -19,7 +21,7 @@ use std::sync::Once;
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-// Bare presets: test-only multipoint / non-singleton batched incidences
+// Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::D64OneHot;
@@ -60,95 +62,60 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
+pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [FF],
-    polynomials: &'a [P],
-    commitment: &'a C,
-    hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        CommittedPolynomials {
+    polynomials: &'a [&'a P],
+    commitment: &'a RingCommitment<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF, D>,
+) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
+    ProverOpeningBatch {
+        point: point.into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
             polynomials,
-            commitment,
-            hint,
-        },
-    )]
+            commitment: (commitment.clone(), hint),
+        }],
+    }
 }
 
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        CommittedOpenings {
-            openings,
+) -> VerifierOpeningBatch<'static, FF, &'a C> {
+    VerifierOpeningBatch::from_groups(
+        point.to_vec(),
+        vec![CommitmentGroup {
+            claims: openings.to_vec(),
             commitment,
-        },
-    )]
+        }],
+    )
+    .expect("valid verifier input")
 }
 
-pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
-    points: &[&'a [FF]],
-    polynomials_by_point: &[&'a [P]],
-    commitments: &'a [C],
-    hints: Vec<H>,
-) -> ProverClaims<'a, FF, P, C, H> {
-    points
-        .iter()
-        .zip(polynomials_by_point.iter())
-        .zip(commitments.iter())
-        .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
-            (
-                *point,
-                CommittedPolynomials {
-                    polynomials,
-                    commitment,
-                    hint,
-                },
-            )
-        })
-        .collect()
-}
-
-pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
-    points: &[&'a [FF]],
-    openings_by_point: &[&'a [FF]],
-    commitments: &'a [C],
-) -> VerifierClaims<'a, FF, C> {
-    points
-        .iter()
-        .zip(openings_by_point.iter())
-        .zip(commitments.iter())
-        .map(|((point, openings), commitment)| {
-            (
-                *point,
-                CommittedOpenings {
-                    openings,
-                    commitment,
-                },
-            )
-        })
-        .collect()
-}
-
-pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
-    poly: &P,
+pub(super) fn opening_from_poly<'a, const D: usize, P>(
+    poly: &'a P,
     point: &[F],
     layout: &LevelParams,
-) -> F {
-    opening_from_poly_with_basis(poly, point, layout, BasisMode::Lagrange)
+) -> F
+where
+    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
+    opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
 }
 
-pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>>(
-    poly: &P,
+pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
+    poly: &'a P,
     point: &[F],
     layout: &LevelParams,
     basis_mode: BasisMode,
-) -> F {
+) -> F
+where
+    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
     assert!(
@@ -171,11 +138,18 @@ pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>
     )
     .expect("opening point shape should match layout");
 
-    let (folded_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::<P::OpeningView<'a>, F, D>::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let folded_ring = opening.eval;
     let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]

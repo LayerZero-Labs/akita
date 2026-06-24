@@ -1,5 +1,5 @@
 use super::*;
-use crate::AkitaPolyOps;
+use crate::compute::{CommitInnerPlan, OperationCtx};
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -28,14 +28,15 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &OperationCtx<'_, F, B, D>,
     commit_layout: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
+    let backend = commit_ctx.backend();
+    let prepared = commit_ctx.prepared();
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
             "commit_w layout D={} does not match target D={D}",
@@ -66,16 +67,8 @@ where
     );
 
     let w_view = w.view::<F, D>()?;
-    let inner = w_view.commit_inner(
-        backend,
-        prepared,
-        commit_layout.a_key.row_len(),
-        commit_layout.block_len,
-        commit_layout.num_blocks,
-        commit_layout.num_digits_commit,
-        commit_layout.num_digits_open,
-        commit_layout.log_basis,
-    )?;
+    let plan = CommitInnerPlan::from_level(commit_layout);
+    let inner = w_view.commit_inner(backend, prepared, plan)?;
     validate_commit_inner_shape(
         &inner,
         commit_layout.num_blocks,
@@ -171,12 +164,12 @@ where
     let commit_d = commit_params.ring_dimension;
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
         let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
-        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+        let commit_ctx = OperationCtx::new(backend, &prepared_commit, expanded.as_ref())?;
+        if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 logical_w,
                 expanded.as_ref(),
-                backend,
-                &prepared_commit,
+                &commit_ctx,
                 &commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -189,14 +182,13 @@ where
             // digit count), so the committed witness fits the schedule's
             // recursive commit params directly — no per-length re-derivation.
             let committed_w =
-                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, { D_COMMIT }>(
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, { D_COMMIT }>(
                     logical_w,
                 )?;
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 &committed_w,
                 expanded.as_ref(),
-                backend,
-                &prepared_commit,
+                &commit_ctx,
                 &commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -223,8 +215,7 @@ where
 pub fn commit_next_w<Cfg, B, const D: usize>(
     commit_params: &LevelParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    commit_ctx: &OperationCtx<'_, Cfg::Field, B, D>,
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where
@@ -233,12 +224,11 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     if commit_params.ring_dimension == D {
-        if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+        if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 logical_w,
                 expanded.as_ref(),
-                backend,
-                prepared,
+                commit_ctx,
                 commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -250,12 +240,11 @@ where
             // The tensor pack is length-preserving, so the committed witness
             // fits the schedule's recursive commit params directly.
             let committed_w =
-                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, D>(logical_w)?;
+                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, D>(logical_w)?;
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 &committed_w,
                 expanded.as_ref(),
-                backend,
-                prepared,
+                commit_ctx,
                 commit_params,
             )?;
             Ok(NextWitnessCommitment {
@@ -266,7 +255,7 @@ where
         }
     } else {
         dispatch_commit_w_with_layout_policy::<Cfg, B>(
-            backend,
+            commit_ctx.backend(),
             commit_params.clone(),
             expanded,
             logical_w,

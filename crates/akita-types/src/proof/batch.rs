@@ -3,14 +3,12 @@
 use crate::{
     basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
-    RingSubfieldEncoding,
+    AppendToTranscript, BasisMode, BlockOrder, FpExtEncoding, LevelParams, RingCommitment,
+    RingOpeningPoint,
 };
 use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
-};
+use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
 
 /// Recursive opening point prepared for ring-level replay.
@@ -190,7 +188,7 @@ fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     embed_ring_subfield_scalar::<F, E, D>(value, error)
 }
@@ -204,7 +202,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
 ) -> Result<RingMultiplierOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: RingSubfieldEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let expected_len = r_vars
         .checked_add(m_vars)
@@ -240,43 +238,6 @@ where
     Ok(RingMultiplierOpeningPoint::from_ring(a, b))
 }
 
-/// Flatten commitment rows in group order.
-pub fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    commitments
-        .iter()
-        .flat_map(|commitment| commitment.u.iter().copied())
-        .collect()
-}
-
-/// Absorb batched commitments into the transcript in group order.
-pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    for commitment in commitments {
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-    }
-}
-
-/// Absorb public claim-field opening points into the base-field transcript.
-pub fn append_claim_points_to_transcript<F, E, T>(points: &[&[E]], transcript: &mut T)
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for point in points {
-        for coord in *point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-        }
-    }
-}
-
 /// Absorb public claim-field evaluations into the base-field transcript.
 pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
 where
@@ -301,26 +262,66 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
     })
 }
 
-/// Validate common batched prove/verify input shape constraints.
+/// Absorb the batch commitment into the transcript.
+pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
+    commitment: &RingCommitment<F, D>,
+    transcript: &mut T,
+) where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+}
+
+/// Largest natural arity across polynomials in a scalar batched commit/prove call.
 ///
-/// Each input pair is `(opening_point, point_payload)` where `point_payload`
-/// is one commitment-plus-openings unit (the prover supplies polynomials
-/// here, the verifier supplies claimed evaluations).
+/// Matches `prepare_batched_commit_inputs`, which selects the root layout from
+/// the maximum `num_vars` across the bundled polynomials.
 ///
 /// # Errors
 ///
-/// Returns an error if the batch is empty, has inconsistent opening-point
-/// dimensions, has empty point payloads, exceeds setup capacity, or overflows
-/// its flattened claim count.
-pub fn validate_batched_inputs<F, E, G, Len>(
+/// Returns an error if `poly_num_vars` is empty.
+pub fn padded_scalar_batch_num_vars(
+    poly_num_vars: impl IntoIterator<Item = usize>,
+) -> Result<usize, AkitaError> {
+    poly_num_vars.into_iter().max().ok_or_else(|| {
+        AkitaError::InvalidInput(
+            "batched opening batch requires at least one polynomial".to_string(),
+        )
+    })
+}
+
+/// Opening point length must match the padded batch domain selected at commit time.
+///
+/// # Errors
+///
+/// Returns an error when `point_len` and `padded_num_vars` differ.
+pub fn validate_scalar_point_matches_poly_arity(
+    point_len: usize,
+    padded_num_vars: usize,
+) -> Result<(), AkitaError> {
+    if point_len != padded_num_vars {
+        return Err(AkitaError::InvalidInput(format!(
+            "opening point length {point_len} does not match padded batch domain {padded_num_vars}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate common batched prove/verify input shape constraints.
+///
+/// # Errors
+///
+/// Returns an error if the shared opening point exceeds setup capacity, the
+/// payload is empty, or the claim count exceeds setup capacity.
+pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
-    inputs: &[(&[E], G)],
-    point_payload_len: Len,
+    point: &[E],
+    group_sizes: &[usize],
     for_prover: bool,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    Len: Fn(&G) -> usize,
 {
     let label = if for_prover {
         "batched_prove"
@@ -335,17 +336,7 @@ where
         }
     };
 
-    if inputs.is_empty() {
-        return Err(shape_error(format!(
-            "{label} requires at least one opening point"
-        )));
-    }
-    let num_vars = inputs[0].0.len();
-    if inputs.iter().any(|(point, _)| point.len() != num_vars) {
-        return Err(shape_error(format!(
-            "{label} requires all opening points to have the same length"
-        )));
-    }
+    let num_vars = point.len();
     if num_vars > setup.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "{label} received opening points with {} variables but setup supports at most {}",
@@ -353,28 +344,21 @@ where
             setup.seed().max_num_vars
         )));
     }
-    if inputs.len() > setup.seed().max_num_points {
-        if for_prover {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove received {} opening points but setup supports at most {}",
-                inputs.len(),
-                setup.seed().max_num_points
-            )));
-        }
-        return Err(AkitaError::InvalidProof);
+    if group_sizes.is_empty() {
+        return Err(shape_error(format!(
+            "{label} requires at least one commitment group",
+        )));
     }
-
-    let mut num_claims = 0usize;
-    for (point_idx, (_, payload)) in inputs.iter().enumerate() {
-        let point_claims = point_payload_len(payload);
-        if point_claims == 0 {
-            return Err(shape_error(format!(
-                "{label} point {point_idx} must have at least one item",
-            )));
-        }
-        num_claims = num_claims
-            .checked_add(point_claims)
-            .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
+    if group_sizes.contains(&0) {
+        return Err(shape_error(format!(
+            "{label} commitment groups must be nonempty",
+        )));
+    }
+    let num_claims = checked_total_claims(group_sizes, label)?;
+    if num_claims == 0 {
+        return Err(shape_error(format!(
+            "{label} requires at least one claimed opening",
+        )));
     }
     if num_claims > setup.seed().max_num_batched_polys {
         if for_prover {
@@ -414,7 +398,7 @@ pub fn prepare_opening_point<F, L, const D: usize>(
 ) -> Result<PreparedOpeningPoint<F, L, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    L: RingSubfieldEncoding<F>,
+    L: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
     let target_num_vars = lp
@@ -568,7 +552,7 @@ where
 /// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
 /// at the same point are handled by one public row per point, with row-local
 /// extension batching coefficients embedded into the ring relation.
-pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
+pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],
     lp: &LevelParams,
     alpha_bits: usize,
@@ -576,17 +560,14 @@ pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
 where
     F: FieldCore,
     E: ExtField<F>,
-    L: ExtField<F>,
 {
-    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+    if E::EXT_DEGREE == 1 {
         return true;
     }
-    if !D.is_multiple_of(<L as ExtField<F>>::EXT_DEGREE)
-        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
-    {
+    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
         return false;
     }
-    let packed_slots = D / <L as ExtField<F>>::EXT_DEGREE;
+    let packed_slots = D / E::EXT_DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
     if packed_inner_bits > alpha_bits {
         return false;
@@ -611,18 +592,16 @@ where
 }
 
 /// Return whether root tensor projection can represent this field/ring shape.
-pub fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
+pub fn root_tensor_projection_enabled<F, E, const D: usize>(num_vars: usize) -> bool
 where
     F: FieldCore,
     E: ExtField<F>,
-    C: ExtField<F>,
 {
-    let width = C::EXT_DEGREE;
+    let width = E::EXT_DEGREE;
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
     width > 1
-        && width == E::EXT_DEGREE
         && width.is_power_of_two()
         && D.is_power_of_two()
         && D >= double_width
@@ -635,18 +614,17 @@ mod tests {
     use super::*;
     use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, RingSubfieldFpExt4};
+    use akita_field::{Fp32, FpExt2, FpExt4, LiftBase, NegOneNr};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
-    type L = RingSubfieldFpExt4<F>;
+    type L = FpExt4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
-                max_num_points: 2,
                 gen_ring_dim: 1,
                 max_setup_len: 1,
                 #[cfg(feature = "zk")]
@@ -666,12 +644,9 @@ mod tests {
     #[test]
     fn batched_input_validation_accepts_extension_points() {
         let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
-        let p1 = [E::new(F::from_u64(3), F::from_u64(4))];
-        let polys: Vec<usize> = vec![0, 1, 2];
-        let inputs = vec![(&p0[..], polys.clone()), (&p1[..], polys)];
 
-        validate_batched_inputs(&setup(), &inputs, |polys| polys.len(), true)
-            .expect("extension-valued opening points should validate by shape");
+        validate_batched_inputs(&setup(), &p0[..], &[3], true)
+            .expect("extension-valued shared opening point should validate by shape");
     }
 
     fn packed_inner_lp() -> LevelParams {
@@ -730,12 +705,12 @@ mod tests {
         let lp = packed_inner_lp();
         let point = [F::from_u64(7), F::from_u64(11)];
 
-        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
+        assert!(folded_root_supports_opening_shape::<F, F, 32>(
             &[&point[..]],
             &lp,
             5,
         ));
-        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
+        assert!(folded_root_supports_opening_shape::<F, F, 32>(
             &[&point[..]],
             &lp,
             5,
@@ -744,8 +719,28 @@ mod tests {
 
     #[test]
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
-        assert!(root_tensor_projection_enabled::<F, L, L, 8>(3));
-        assert!(!root_tensor_projection_enabled::<F, L, L, 4>(2));
-        assert!(!root_tensor_projection_enabled::<F, E, L, 8>(3));
+        assert!(root_tensor_projection_enabled::<F, L, 8>(3));
+        assert!(!root_tensor_projection_enabled::<F, L, 4>(2));
+    }
+
+    #[test]
+    fn padded_scalar_batch_num_vars_uses_max_poly_arity() {
+        assert_eq!(
+            padded_scalar_batch_num_vars([12, 20, 18]).expect("nonempty"),
+            20
+        );
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_rejects_shorter_point() {
+        let err = validate_scalar_point_matches_poly_arity(18, 20)
+            .expect_err("shorter point must reject");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_accepts_match() {
+        validate_scalar_point_matches_poly_arity(20, 20)
+            .expect("matching point length should validate");
     }
 }

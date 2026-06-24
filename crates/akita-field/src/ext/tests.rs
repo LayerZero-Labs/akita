@@ -10,10 +10,9 @@ use rand::SeedableRng;
 
 type F = Fp64<4294967197>;
 type E2 = Ext2<F>;
-type E4 = TowerBasisFpExt4<F, TwoNr, UnitNr>;
-type P4 = PowerBasisFpExt4<F, TwoNr>;
-type R4 = RingSubfieldFpExt4<F>;
-type R8 = RingSubfieldFpExt8<F>;
+type E4 = FpExt4<F>;
+type R4 = FpExt4<F>;
+type R8 = FpExt8<F>;
 
 #[test]
 fn fp_ext2_add_sub_identity() {
@@ -105,28 +104,7 @@ fn fp_ext4_inv() {
 }
 
 #[test]
-fn power_basis_fp_ext4_square_matches_mul() {
-    let mut rng = StdRng::seed_from_u64(3333);
-    for _ in 0..50 {
-        let a = P4::random(&mut rng);
-        assert_eq!(a.square(), a * a);
-    }
-}
-
-#[test]
-fn power_basis_fp_ext4_inv() {
-    let mut rng = StdRng::seed_from_u64(4444);
-    for _ in 0..50 {
-        let a = P4::random(&mut rng);
-        if !a.is_zero() {
-            let inv = a.inverse().unwrap();
-            assert_eq!(a * inv, P4::one());
-        }
-    }
-}
-
-#[test]
-fn ring_subfield_fp_ext4_multiplication_table() {
+fn fp_ext4_multiplication_table() {
     let two = F::from_u64(2);
     let e1 = R4::new([F::zero(), F::one(), F::zero(), F::zero()]);
     let e2 = R4::new([F::zero(), F::zero(), F::one(), F::zero()]);
@@ -142,28 +120,7 @@ fn ring_subfield_fp_ext4_multiplication_table() {
 }
 
 #[test]
-fn ring_subfield_fp_ext4_square_matches_mul() {
-    let mut rng = StdRng::seed_from_u64(5555);
-    for _ in 0..50 {
-        let a = R4::random(&mut rng);
-        assert_eq!(a.square(), a * a);
-    }
-}
-
-#[test]
-fn ring_subfield_fp_ext4_inv() {
-    let mut rng = StdRng::seed_from_u64(6666);
-    for _ in 0..50 {
-        let a = R4::random(&mut rng);
-        if !a.is_zero() {
-            let inv = a.inverse().unwrap();
-            assert_eq!(a * inv, R4::one());
-        }
-    }
-}
-
-#[test]
-fn ring_subfield_fp_ext8_multiplication_table_spot_checks() {
+fn fp_ext8_multiplication_table_spot_checks() {
     let two = F::from_u64(2);
     let e = |idx: usize| {
         R8::new(std::array::from_fn(|i| {
@@ -193,7 +150,7 @@ fn ring_subfield_fp_ext8_multiplication_table_spot_checks() {
 }
 
 #[test]
-fn ring_subfield_fp_ext8_square_matches_mul() {
+fn fp_ext8_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(7777);
     for _ in 0..50 {
         let a = R8::random(&mut rng);
@@ -202,7 +159,7 @@ fn ring_subfield_fp_ext8_square_matches_mul() {
 }
 
 #[test]
-fn ring_subfield_fp_ext8_inv() {
+fn fp_ext8_inv() {
     let mut rng = StdRng::seed_from_u64(8888);
     for _ in 0..50 {
         let a = R8::random(&mut rng);
@@ -214,7 +171,7 @@ fn ring_subfield_fp_ext8_inv() {
 }
 
 #[test]
-fn ring_subfield_fp_ext8_serialization_is_coeff_ordered() {
+fn fp_ext8_serialization_is_coeff_ordered() {
     let x = R8::new(std::array::from_fn(|i| F::from_u64(i as u64 + 1)));
     let mut bytes = Vec::new();
     x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
@@ -300,7 +257,7 @@ fn canonical_ring_subfield_thetas_are_the_packing_basis() {
 }
 
 #[test]
-fn canonical_ring_subfield_fp_ext8_thetas_are_the_packing_basis() {
+fn canonical_fp_ext8_thetas_are_the_packing_basis() {
     let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
     for (idx, theta) in thetas.iter().enumerate().take(8) {
         assert_eq!(
@@ -343,10 +300,16 @@ fn from_small_int_fp_ext2() {
 #[test]
 fn from_small_int_fp_ext4() {
     let a = E4::from_u64(42);
-    assert_eq!(a, E4::new(E2::from_u64(42), E2::zero()));
+    assert_eq!(
+        a,
+        E4::new([F::from_u64(42), F::zero(), F::zero(), F::zero(),])
+    );
 
     let b = E4::from_i64(-7);
-    assert_eq!(b, E4::new(E2::from_i64(-7), E2::zero()));
+    assert_eq!(
+        b,
+        E4::new([F::from_i64(-7), F::zero(), F::zero(), F::zero(),])
+    );
 }
 
 #[test]
@@ -368,10 +331,7 @@ fn ext_field_from_base_slice() {
     let c2 = F::from_u64(7);
     let c3 = F::from_u64(11);
     let e4 = E4::from_base_slice(&[c0, c1, c2, c3]);
-    assert_eq!(e4, E4::new(E2::new(c0, c2), E2::new(c1, c3)));
-
-    let p4 = P4::from_base_slice(&[c0, c1, c2, c3]);
-    assert_eq!(p4, P4::new([c0, c1, c2, c3]));
+    assert_eq!(e4, E4::new([c0, c1, c2, c3]));
 
     let r4 = R4::from_base_slice(&[c0, c1, c2, c3]);
     assert_eq!(r4, R4::new([c0, c1, c2, c3]));
@@ -385,75 +345,11 @@ fn ext_field_from_base_slice() {
 }
 
 #[test]
-fn tower_and_power_basis_fp_ext4_multiplication_agree() {
-    let x_p = P4::new([
-        F::from_u64(1),
-        F::from_u64(2),
-        F::from_u64(3),
-        F::from_u64(4),
-    ]);
-    let y_p = P4::new([
-        F::from_u64(5),
-        F::from_u64(6),
-        F::from_u64(7),
-        F::from_u64(8),
-    ]);
-    let x_t: E4 = x_p.into();
-    let y_t: E4 = y_p.into();
-
-    let got: P4 = (x_t * y_t).into();
-    assert_eq!(got, x_p * y_p);
-}
-
-#[test]
-fn power_basis_fp_ext4_transcript_limb_order_is_univariate() {
-    let x = P4::new([
-        F::from_u64(1),
-        F::from_u64(2),
-        F::from_u64(3),
-        F::from_u64(4),
-    ]);
-    assert_eq!(
-        <P4 as ExtField<F>>::to_base_vec(&x),
-        vec![
-            F::from_u64(1),
-            F::from_u64(2),
-            F::from_u64(3),
-            F::from_u64(4)
-        ]
-    );
-}
-
-#[test]
-fn tower_basis_fp_ext4_transcript_limb_order_is_univariate() {
-    let x = E4::new(
-        E2::new(F::from_u64(1), F::from_u64(3)),
-        E2::new(F::from_u64(2), F::from_u64(4)),
-    );
-    assert_eq!(
-        <E4 as ExtField<F>>::to_base_vec(&x),
-        vec![
-            F::from_u64(1),
-            F::from_u64(2),
-            F::from_u64(3),
-            F::from_u64(4)
-        ]
-    );
-}
-
-#[test]
 fn extension_fields_are_array_layouts() {
     assert_eq!(core::mem::size_of::<E2>(), core::mem::size_of::<[F; 2]>());
     assert_eq!(core::mem::align_of::<E2>(), core::mem::align_of::<[F; 2]>());
-    assert_eq!(core::mem::size_of::<P4>(), core::mem::size_of::<[F; 4]>());
-    assert_eq!(core::mem::align_of::<P4>(), core::mem::align_of::<[F; 4]>());
-    assert_eq!(core::mem::size_of::<R4>(), core::mem::size_of::<[F; 4]>());
-    assert_eq!(core::mem::align_of::<R4>(), core::mem::align_of::<[F; 4]>());
-    assert_eq!(core::mem::size_of::<E4>(), core::mem::size_of::<[E2; 2]>());
-    assert_eq!(
-        core::mem::align_of::<E4>(),
-        core::mem::align_of::<[E2; 2]>()
-    );
+    assert_eq!(core::mem::size_of::<E4>(), core::mem::size_of::<[F; 4]>());
+    assert_eq!(core::mem::align_of::<E4>(), core::mem::align_of::<[F; 4]>());
 }
 
 #[test]
@@ -466,38 +362,38 @@ fn eq_impl() {
 }
 
 #[test]
-fn ring_subfield_fp_ext4_fp32_product_accum_matches_direct_mul() {
-    use super::ring_subfield_fp_ext4::ring_subfield_fp_ext4_mul_to_accum_fp32;
-    use crate::unreduced::RingSubfieldFpExt4Fp32ProductAccum;
+fn fp_ext4_fp32_product_accum_matches_direct_mul() {
+    use super::fp_ext4::fp_ext4_mul_to_accum_fp32;
+    use crate::unreduced::FpExt4Fp32ProductAccum;
     use crate::Fp32;
     use num_traits::Zero;
 
     type Fp = Fp32<251>;
-    type R4Fp32 = RingSubfieldFpExt4<Fp>;
+    type R4Fp32 = FpExt4<Fp>;
 
     let mut rng = StdRng::seed_from_u64(0xACC0);
     for _ in 0..200 {
         let a = R4Fp32::random(&mut rng);
         let b = R4Fp32::random(&mut rng);
         let direct = a * b;
-        let accum = ring_subfield_fp_ext4_mul_to_accum_fp32(a.coeffs, b.coeffs);
+        let accum = fp_ext4_mul_to_accum_fp32(a.coeffs, b.coeffs);
         let reduced = R4Fp32::new(accum.reduce::<251>());
         assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
     }
 
-    let zero_accum = RingSubfieldFpExt4Fp32ProductAccum::ZERO;
+    let zero_accum = FpExt4Fp32ProductAccum::ZERO;
     assert!(zero_accum.is_zero());
     let reduced_zero = R4Fp32::new(zero_accum.reduce::<251>());
     assert_eq!(reduced_zero, R4Fp32::zero());
 }
 
 #[test]
-fn ring_subfield_fp_ext4_fp32_accum_summation() {
+fn fp_ext4_fp32_accum_summation() {
     use crate::Fp32;
     use num_traits::Zero;
 
     type Fp = Fp32<251>;
-    type R4Fp32 = RingSubfieldFpExt4<Fp>;
+    type R4Fp32 = FpExt4<Fp>;
 
     let mut rng = StdRng::seed_from_u64(0xACC1);
     let n = 1024;
@@ -557,7 +453,7 @@ fn mul_base_to_product_accum_matches_mul_base_sum() {
 
     // fp_ext4/Fp32 takes the optimal coordinate-scaling override; fp_ext2/Fp64
     // takes the lifted default body. Both defer reduction.
-    check::<Fp32<251>, RingSubfieldFpExt4<Fp32<251>>>(0xB001);
+    check::<Fp32<251>, FpExt4<Fp32<251>>>(0xB001);
     check::<F, Ext2<F>>(0xB002);
 }
 

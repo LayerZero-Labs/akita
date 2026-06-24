@@ -14,8 +14,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, LevelParams,
-    RingRelationInstance, RingSubfieldEncoding, SetupContributionPlan, SetupContributionPlanInputs,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -110,7 +110,7 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+        E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
     {
@@ -226,18 +226,11 @@ fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
-    let num_t_vectors = relation
-        .commitment_routing()
-        .num_polys_per_commitment_group()
-        .iter()
-        .try_fold(0usize, |acc, &count| {
-            acc.checked_add(count)
-                .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
-        })?;
+    let num_t_vectors = relation.opening_batch().num_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
@@ -269,20 +262,9 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore,
 {
-    let routing = relation.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
-    let num_claims = relation.claim_to_point().len();
-    let num_points = num_polys_per_commitment_group.len();
-    if relation.opening_points().len() != num_points {
-        return Err(AkitaError::InvalidProof);
-    }
-    if relation
-        .claim_to_point()
-        .iter()
-        .any(|&point_idx| point_idx >= num_points)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
+    let opening_batch = relation.opening_batch();
+    let num_claims = relation.opening_batch().num_claims();
+    let num_polys = opening_batch.num_polynomials();
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
@@ -303,10 +285,7 @@ where
         ));
     }
 
-    let num_t_vectors = num_polys_per_commitment_group
-        .iter()
-        .try_fold(0usize, |acc, &count| acc.checked_add(count))
-        .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
+    let num_t_vectors = num_polys;
     let inner_width = lp
         .block_len
         .checked_mul(depth_commit)
@@ -316,12 +295,7 @@ where
             "A-key column width is too small for setup contribution layout".to_string(),
         ));
     }
-    let max_point_poly_count = num_polys_per_commitment_group
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let expected_b_width = max_point_poly_count
+    let expected_b_width = num_polys
         .checked_mul(lp.a_key.row_len())
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(lp.num_blocks))
@@ -343,7 +317,7 @@ where
     let m_row_layout = relation.m_row_layout();
     // Public-output M rows are enforced by the fused trace term, not M itself.
     let num_public_m_rows = 0usize;
-    let rows = lp.m_row_count_for(num_points, num_public_m_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(1, num_public_m_rows, m_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -366,9 +340,9 @@ where
         n_d: lp.d_key.row_len(),
         m_row_layout,
         n_b: lp.b_key.row_len(),
-        num_points,
+        num_segments: 1,
         rows,
-        num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
+        num_polys_per_segment: vec![num_polys],
         num_public_rows: num_public_m_rows,
         // Stage-3 (recursive setup-contribution mode) tiered support is a
         // follow-up; the default Direct verifier path uses `eval_at_point`.

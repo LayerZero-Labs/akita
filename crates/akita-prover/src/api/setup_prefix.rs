@@ -256,7 +256,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_seed_digest, ClaimIncidenceSummary, SetupMatrixEnvelope,
+        active_setup_field_len, setup_seed_digest, OpeningBatchShape, SetupMatrixEnvelope,
         SisModulusFamily,
     };
 
@@ -299,7 +299,6 @@ mod tests {
     ) -> AkitaProverSetup<F, D> {
         AkitaProverSetup::<F, D>::generate_with_capacity(
             8,
-            1,
             1,
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
@@ -348,13 +347,13 @@ mod tests {
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
         let level_params = prefix_level_params(D);
-        let incidence = ClaimIncidenceSummary::same_point(4, 1).expect("incidence");
+        let opening_batch = OpeningBatchShape::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
             .num_blocks
             .checked_mul(level_params.block_len)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
-        let natural_len = active_setup_field_len(&level_params, &incidence, D)
+        let natural_len = active_setup_field_len(&level_params, &opening_batch, D)
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);

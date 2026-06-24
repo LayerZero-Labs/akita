@@ -2,8 +2,8 @@
 //!
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
-//! the `stage1` / `fold_shape` closures, exactly the shape
-//! `crate::schedule_from_entry` already consumes. This keeps the
+//! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
+//! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
 //! DP a pure function of `(policy, key)` so `akita-config` can call it
 //! directly on a schedule-table miss without a dependency cycle.
 
@@ -13,22 +13,23 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_extension_opening_partials, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    terminal_direct_witness_shape, terminal_fold_segment_counts,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 
 use crate::PlannerPolicy;
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
-pub(crate) type Stage1Fn<'a> =
+pub(crate) type RingChallengeConfigFn<'a> =
     &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
 
 /// Stage-1 fold-round challenge-shape closure (`level 0` root shape).
@@ -146,11 +147,11 @@ fn multi_tiered_keys(
 /// don't do that here.
 fn derive_candidate_level_params(
     policy: &PlannerPolicy,
-    stage1: Stage1Fn<'_>,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     current_witness_len: usize,
     log_basis: u32,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
-    let Ok(stage1_config) = stage1(policy.ring_dimension) else {
+    let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
         return Ok(None);
     };
     if !current_witness_len.is_multiple_of(policy.ring_dimension) {
@@ -184,24 +185,22 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(norm_s) = rounded_up_collision_norm_s(
+        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+            continue;
+        };
+        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
             family,
             d,
             decomp,
-            &stage1_config,
+            &ring_challenge_cfg,
             TensorChallengeShape::Flat,
             false,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
             r,
             1,
+            width_s as u64,
         ) else {
-            continue;
-        };
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
-            continue;
-        };
-        let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
             continue;
         };
         let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -235,7 +234,7 @@ fn derive_candidate_level_params(
             (1, b_key, None)
         };
 
-        let candidate_params = LevelParams {
+        let Ok(candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
             a_key,
@@ -245,7 +244,8 @@ fn derive_candidate_level_params(
             block_len,
             m_vars: reduced_vars - r,
             r_vars: r,
-            stage1_config: stage1_config.clone(),
+            stage1_config: ring_challenge_cfg.clone(),
+            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -253,12 +253,19 @@ fn derive_candidate_level_params(
             onehot_chunk_size: 0,
             tier_split,
             f_key,
+            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
+        }
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
+            continue;
         };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             1,
@@ -269,7 +276,6 @@ fn derive_candidate_level_params(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             1,
@@ -320,10 +326,7 @@ fn extension_opening_reduction_level_bytes(
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
-        (
-            root_extension_opening_partials(width, key.num_w_vectors),
-            key.num_vars,
-        )
+        (width.saturating_mul(key.num_w_vectors), key.num_vars)
     } else {
         (width, padded_boolean_vars(current_w_len)?)
     };
@@ -347,6 +350,14 @@ struct FoldSuffix {
     steps: Vec<Step>,
 }
 
+/// Best direct suffix at one DP state: witness length only. The terminal
+/// `DirectStep` is materialized at stitch time from the predecessor fold's
+/// committed `LevelParams`.
+#[derive(Clone, Copy)]
+struct DirectSuffix {
+    current_w_len: usize,
+}
+
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first
 /// step:
@@ -357,7 +368,7 @@ struct FoldSuffix {
 ///   `log_basis`.
 #[derive(Clone)]
 struct SuffixResult {
-    best_direct: Option<(usize, Vec<Step>)>,
+    best_direct: Option<DirectSuffix>,
     best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
@@ -367,18 +378,73 @@ impl SuffixResult {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn make_terminal_direct_step(
+    current_w_len: usize,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    num_w_vectors: usize,
+    num_t_vectors: usize,
+    num_public_rows: usize,
+    num_segments: usize,
+    terminal_log_basis: u32,
+) -> Result<DirectStep, AkitaError> {
+    let witness_shape = terminal_direct_witness_shape(
+        terminal_lp,
+        field_bits,
+        current_w_len,
+        terminal_log_basis,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_segments,
+    )?;
+    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+    Ok(DirectStep {
+        current_w_len,
+        witness_shape,
+        direct_bytes,
+        params: None,
+    })
+}
+
+fn terminal_direct_suffix_cost(
+    current_w_len: usize,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    key: AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+    terminal_log_basis: u32,
+) -> Result<(DirectStep, usize), AkitaError> {
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
+        terminal_fold_segment_counts(key, terminal_fold_level);
+    let direct = make_terminal_direct_step(
+        current_w_len,
+        terminal_lp,
+        field_bits,
+        num_w_vectors,
+        num_t_vectors,
+        num_public_rows,
+        num_segments,
+        terminal_log_basis,
+    )?;
+    let direct_bytes = direct.direct_bytes;
+    Ok((direct, direct_bytes))
+}
+
 type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
-/// `policy`, `stage1`, and `num_vars` are constant across the whole
+/// `policy`, `ring_challenge_config`, and `num_vars` are constant across the whole
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
 struct SuffixCtx<'a> {
     policy: &'a PlannerPolicy,
-    stage1: Stage1Fn<'a>,
+    ring_challenge_config: RingChallengeConfigFn<'a>,
     num_vars: usize,
+    key: AkitaScheduleLookupKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -404,8 +470,9 @@ fn derive_optimal_suffix_schedule(
 ) -> Result<SuffixResult, AkitaError> {
     let SuffixCtx {
         policy,
-        stage1,
+        ring_challenge_config,
         num_vars,
+        key,
     } = *ctx;
     let memo_key = (
         level,
@@ -419,17 +486,19 @@ fn derive_optimal_suffix_schedule(
         }
     }
 
-    let best_direct = {
-        let witness_shape =
-            CleartextWitnessShape::PackedDigits((current_witness_len_terminal, current_lb));
-        let direct_bytes = direct_witness_bytes(policy.decomposition.field_bits(), &witness_shape);
-        let step = Step::Direct(DirectStep {
+    let best_direct = if derive_candidate_level_params(
+        policy,
+        ring_challenge_config,
+        current_witness_len,
+        current_lb,
+    )?
+    .is_some()
+    {
+        Some(DirectSuffix {
             current_w_len: current_witness_len_terminal,
-            witness_shape,
-            direct_bytes,
-            params: None,
-        });
-        Some((direct_bytes, vec![step]))
+        })
+    } else {
+        None
     };
 
     if depth > MAX_RECURSION_DEPTH {
@@ -448,7 +517,7 @@ fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, stage1, current_witness_len, lb)?
+            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
         else {
             continue;
         };
@@ -479,10 +548,19 @@ fn derive_optimal_suffix_schedule(
         };
 
         // Branch A: suffix is a Direct at level+1.
-        if let Some((suffix_cost, suffix_sched)) = suffix.best_direct.as_ref() {
+        if let Some(direct_suffix) = suffix.best_direct {
+            let field_bits = policy.decomposition.field_bits();
+            let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                direct_suffix.current_w_len,
+                &candidate_params,
+                field_bits,
+                key,
+                level,
+                lb,
+            )?;
             let level_proof_size = level_proof_bytes(
-                policy.decomposition.field_bits(),
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                field_bits,
+                field_bits * policy.chal_ext_degree as u32,
                 &candidate_params,
                 None,
                 next_witness_len_terminal,
@@ -490,14 +568,15 @@ fn derive_optimal_suffix_schedule(
                 MRowLayout::WithoutDBlock,
             ) + eor_bytes;
             let total = level_proof_size + suffix_cost;
-            let mut steps = Vec::with_capacity(1 + suffix_sched.len());
-            steps.push(Step::Fold(FoldStep {
-                params: candidate_params.clone(),
-                current_w_len: current_witness_len,
-                next_w_len: next_witness_len_terminal,
-                level_bytes: level_proof_size,
-            }));
-            steps.extend(suffix_sched.iter().cloned());
+            let steps = vec![
+                Step::Fold(FoldStep {
+                    params: candidate_params.clone(),
+                    current_w_len: current_witness_len,
+                    next_w_len: next_witness_len_terminal,
+                    level_bytes: level_proof_size,
+                }),
+                Step::Direct(direct_step),
+            ];
             try_update(total, steps, &mut best_for_this_lb);
         }
         // Branch B: suffix is a Fold at level+1.
@@ -575,13 +654,13 @@ fn derive_optimal_suffix_schedule(
 /// `Result::ok()` fallback.
 fn compute_root_direct_level_params(
     policy: &PlannerPolicy,
-    stage1: Stage1Fn<'_>,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     num_vars: usize,
     log_basis: u32,
     fold_challenge_shape: TensorChallengeShape,
     num_claims: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
-    let stage1_config = stage1(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
     let sis_family = policy.sis_family;
     let decomp = policy.decomposition;
@@ -604,11 +683,8 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let fold_challenge = FoldChallengeNorms {
-            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&stage1_config)
-                as u128,
-            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&stage1_config) as u128,
-        };
+        let fold_challenge =
+            akita_types::sis::fold_challenge_norms(&ring_challenge_cfg, TensorChallengeShape::Flat);
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
@@ -620,11 +696,12 @@ fn compute_root_direct_level_params(
             policy.ring_subfield_norm_bound,
             fold_challenge,
             fold_witness,
-            decomp.log_commit_bound,
-            log_basis,
+            &ring_challenge_cfg,
+            TensorChallengeShape::Flat,
+            decomp,
+            policy.onehot_chunk_size,
             num_vars - alpha,
             0,
-            decomp.field_bits(),
         );
         (m_vars, r_vars)
     } else {
@@ -642,24 +719,22 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(norm_s) = rounded_up_collision_norm_s(
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+        return Ok(None);
+    };
+    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
         sis_family,
         d,
         level_decomp,
-        &stage1_config,
+        &ring_challenge_cfg,
         fold_challenge_shape,
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        width_s as u64,
     ) else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
-        return Ok(None);
-    };
-    let Some(n_a) = min_secure_rank(sis_family, d as u32, norm_s, width_s as u64) else {
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
@@ -712,22 +787,29 @@ fn compute_root_direct_level_params(
         block_len,
         m_vars,
         r_vars,
-        stage1_config,
+        stage1_config: ring_challenge_cfg,
+        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
         onehot_chunk_size,
         tier_split,
         f_key,
-    };
+        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        num_digits_fold_one: 1,
+        field_bits_hint: 0,
+        cached_num_digits_fold_claims: 0,
+        cached_num_digits_fold_value: 1,
+    }
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
 }
 
 /// Find the optimal schedule for a root schedule lookup key under `policy`.
 ///
 /// Runs an exhaustive DP that minimizes proof size. The result is a pure,
-/// deterministic function of `(policy, key)` (plus the `stage1` /
-/// `fold_shape` closures, which presets derive from the same hooks the
+/// deterministic function of `(policy, key)` (plus the `ring_challenge_config` /
+/// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
 /// generated tables were emitted from), so the prover and verifier
 /// regenerate identical schedules on a table miss.
 ///
@@ -739,31 +821,41 @@ fn compute_root_direct_level_params(
 pub fn find_schedule(
     key: AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
-    stage1: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    let stage1: Stage1Fn<'_> = &stage1;
-    let fold_shape: FoldShapeFn<'_> = &fold_shape;
+    find_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+fn find_schedule_inner(
+    key: AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<Schedule, AkitaError> {
+    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
     let suffix_ctx = SuffixCtx {
         policy,
-        stage1,
+        ring_challenge_config,
         num_vars: key.num_vars,
+        key,
     };
 
     let t_vectors = key.num_t_vectors;
-    let w_vectors = key.num_w_vectors;
     let z_vectors = key.num_z_vectors;
-    let num_points = key.num_points;
-    if num_points == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    if policy.tiered && z_vectors != 1 {
         return Err(AkitaError::InvalidSetup(
-            "schedule key planner dimensions must be at least 1".into(),
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
         ));
     }
-    if num_points > t_vectors || num_points > w_vectors {
-        return Err(AkitaError::InvalidSetup(
-            "schedule key opening-point count cannot exceed t or w vector counts".into(),
-        ));
-    }
+    key.validate_scalar_root_batch()?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -785,7 +877,7 @@ pub fn find_schedule(
     // pass. `Ok(None)` is the uncommittable (large-`num_vars`) edge.
     let root_direct_commit_params = compute_root_direct_level_params(
         policy,
-        stage1,
+        ring_challenge_config,
         key.num_vars,
         policy.decomposition.log_basis,
         fold_challenge_shape,
@@ -799,7 +891,7 @@ pub fn find_schedule(
     })];
     let mut memo = ScheduleMemo::new();
 
-    let stage1_config = stage1(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.num_vars.saturating_sub(alpha);
 
@@ -836,24 +928,22 @@ pub fn find_schedule(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(norm_s) = rounded_up_collision_norm_s(
+            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+                continue;
+            };
+            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
                 family,
                 d,
                 level_decomp,
-                &stage1_config,
+                &ring_challenge_cfg,
                 fold_challenge_shape,
                 true,
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
                 r_vars,
                 t_vectors,
+                width_s as u64,
             ) else {
-                continue;
-            };
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-                continue;
-            };
-            let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
                 continue;
             };
             let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -900,7 +990,7 @@ pub fn find_schedule(
             } else {
                 (1, b_key, None)
             };
-            let candidate_params = LevelParams {
+            let Ok(candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
                 a_key,
@@ -910,20 +1000,28 @@ pub fn find_schedule(
                 block_len,
                 m_vars,
                 r_vars,
-                stage1_config: stage1_config.clone(),
+                stage1_config: ring_challenge_cfg.clone(),
+                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
                 onehot_chunk_size,
                 tier_split,
                 f_key,
+                fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+                num_digits_fold_one: 1,
+                field_bits_hint: 0,
+                cached_num_digits_fold_claims: 0,
+                cached_num_digits_fold_value: 1,
+            }
+            .with_fold_linf_cap_config(field_bits, key.num_t_vectors) else {
+                continue;
             };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    key.num_points,
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,
@@ -969,7 +1067,15 @@ pub fn find_schedule(
             };
 
             // Branch A: suffix at level 1 is a Direct
-            if let Some((suffix_cost, suffix_sched)) = suffix.best_direct.as_ref() {
+            if let Some(direct_suffix) = suffix.best_direct {
+                let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                    direct_suffix.current_w_len,
+                    &candidate_params,
+                    field_bits,
+                    key,
+                    0,
+                    candidate_log_basis,
+                )?;
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
@@ -982,15 +1088,15 @@ pub fn find_schedule(
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
                     best_cost = total;
-                    let mut steps = Vec::with_capacity(1 + suffix_sched.len());
-                    steps.push(Step::Fold(FoldStep {
-                        params: candidate_params.clone(),
-                        current_w_len: witness_len,
-                        next_w_len: next_w_len_terminal,
-                        level_bytes: root_proof_size,
-                    }));
-                    steps.extend(suffix_sched.iter().cloned());
-                    best_steps = steps;
+                    best_steps = vec![
+                        Step::Fold(FoldStep {
+                            params: candidate_params.clone(),
+                            current_w_len: witness_len,
+                            next_w_len: next_w_len_terminal,
+                            level_bytes: root_proof_size,
+                        }),
+                        Step::Direct(direct_step),
+                    ];
                 }
             }
             // Branch B: suffix at level 1 is a Fold

@@ -37,11 +37,27 @@ REQUIRED_RUN_METRICS = (
     "crt_limb_bits",
     "balanced_digit_safe_width",
     "raw_i8_safe_width",
-    "claim_ext_degree",
-    "challenge_ext_degree",
+    "ext_degree",
     "akita_levels",
 )
 REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
+
+# Byte columns emitted by `crates/akita-pcs/examples/profile/report.rs` for each
+# fold level. Their sum must match `total_bytes` (terminal levels omit absent
+# wire fields; the parser defaults missing keys to zero).
+PROOF_LEVEL_BYTE_FIELDS = (
+    "extension_opening_partials_bytes",
+    "extension_opening_sumcheck_bytes",
+    "fold_grind_nonce_bytes",
+    "v_bytes",
+    "stage1_sumcheck_bytes",
+    "stage1_interstage_claims_bytes",
+    "stage1_s_claim_bytes",
+    "stage2_sumcheck_bytes",
+    "stage3_sumcheck_bytes",
+    "next_w_commitment_bytes",
+    "next_w_eval_bytes",
+)
 
 
 @dataclass(frozen=True)
@@ -157,6 +173,25 @@ def parse_args() -> argparse.Namespace:
             "and they do not contribute to the reported median."
         ),
     )
+    run_parser.add_argument(
+        "--baseline-binary",
+        default="",
+        help=(
+            "Optional second binary (e.g. the PR merge-base build) benchmarked "
+            "interleaved with --binary: every warm-up and measured run executes "
+            "--binary immediately followed by the baseline, so machine-state "
+            "drift lands on both sides of each pair instead of on one whole "
+            "block."
+        ),
+    )
+    run_parser.add_argument(
+        "--baseline-output-dir",
+        default="",
+        help=(
+            "Directory for the baseline side's logs and summary files (same "
+            "layout as --output-dir). Required with --baseline-binary."
+        ),
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
@@ -227,6 +262,211 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+TAIL_SUMMARY_INT_FIELDS = (
+    "tail_bytes",
+    "final_w_num_elems",
+    "final_w_bits_per_elem",
+    "tail_log_basis",
+    "tail_z_first",
+    "tail_z_prefix_bytes",
+    "tail_z_golomb_bytes",
+    "tail_z_bytes",
+    "tail_z_field_elems",
+    "tail_z_ring_elems",
+    "tail_z_budget_bytes",
+    "tail_z_slack_bytes",
+    "tail_e_field_elems",
+    "tail_e_ring_elems",
+    "tail_t_field_elems",
+    "tail_t_ring_elems",
+    "tail_r_field_elems",
+    "tail_r_ring_elems",
+    "tail_e_bytes",
+    "tail_t_bytes",
+    "tail_r_bytes",
+    "z_rice_k",
+    "z_coords",
+    "z_packed_hypothetical_bytes",
+    "z_golomb_savings_bytes",
+)
+
+TAIL_SUMMARY_FLOAT_FIELDS = (
+    "z_bits_per_coord_golomb",
+    "z_bits_per_coord_packed",
+)
+
+TAIL_ENCODING_POLICIES = {
+    "segment_typed": "non-zk folded terminal (default in profile bench)",
+    "packed_digits": "zk-feature folded terminal fallback",
+    "field_elements": "root-direct cleartext witness",
+    "none": "root-direct zero-fold (no cleartext tail)",
+}
+
+
+def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) -> None:
+    if "final_w_encoding" in kvs:
+        summary["tail_encoding"] = kvs["final_w_encoding"]
+    if "final_w_policy" in kvs:
+        summary["tail_policy"] = kvs["final_w_policy"]
+    if "final_w_num_elems" in kvs:
+        summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
+        summary["terminal_w_len"] = int(kvs["final_w_num_elems"])
+    bits_per_elem = kvs.get("final_w_bits_per_elem")
+    if bits_per_elem is not None and bits_per_elem != "None":
+        summary["tail_bits_per_elem"] = int(bits_per_elem)
+    if kvs.get("final_w_encoding") == "packed_digits" and "final_w_bits_per_elem" in kvs:
+        summary["terminal_log_basis"] = int(kvs["final_w_bits_per_elem"])
+    for key in TAIL_SUMMARY_INT_FIELDS:
+        if key in kvs:
+            summary[key] = int(kvs[key])
+    if "tail_z_coords" in kvs and "tail_z_field_elems" not in summary:
+        summary["tail_z_field_elems"] = int(kvs["tail_z_coords"])
+    for key in TAIL_SUMMARY_FLOAT_FIELDS:
+        if key in kvs:
+            summary[key] = float(kvs[key])
+    if "z_witness_linf_cap" in kvs:
+        summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
+    elif "z_beta_inf" in kvs:
+        summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
+    if summary.get("tail_log_basis") is not None:
+        summary["terminal_log_basis"] = summary["tail_log_basis"]
+
+
+def render_tail_encoding(current: dict[str, object]) -> None:
+    encoding = current.get("tail_encoding")
+    if encoding == "none" or (
+        current.get("tail_bytes") == 0 and encoding in (None, "none")
+    ):
+        print(
+            "- Tail encoding: `none` "
+            "(root-direct zero-fold; profile bench has no cleartext tail witness)"
+        )
+        return
+    if encoding is None:
+        return
+
+    policy = current.get("tail_policy")
+    policy_hint = TAIL_ENCODING_POLICIES.get(str(encoding), str(policy or encoding))
+    print(f"- Tail encoding: `{encoding}` ({policy_hint})")
+
+    if encoding == "packed_digits":
+        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
+            print(
+                f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` logical elems at "
+                f"`{current['tail_bits_per_elem']}` bits/elem (uniform `PackedDigits`)"
+            )
+        return
+
+    if encoding == "field_elements":
+        if current.get("tail_num_elems") is not None:
+            print(
+                f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` raw field elements"
+            )
+        return
+
+    if encoding != "segment_typed":
+        return
+
+    if current.get("tail_num_elems") is not None and current.get("tail_log_basis") is not None:
+        z_first = current.get("tail_z_first")
+        z_first_label = "z-first" if z_first == 1 else "e-first"
+        print(
+            f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elems, "
+            f"`log_basis={current['tail_log_basis']}`, wire order `{z_first_label}`"
+        )
+
+    z_prefix = current.get("tail_z_prefix_bytes")
+    z_golomb = current.get("tail_z_golomb_bytes")
+    z_wire = current.get("tail_z_bytes")
+    z_field = current.get("tail_z_field_elems")
+    z_ring = current.get("tail_z_ring_elems")
+    if z_wire is not None and z_field is not None and z_ring is not None:
+        prefix_golomb = ""
+        if z_prefix is not None and z_golomb is not None:
+            prefix_golomb = (
+                f" (len prefix `{fmt_bytes(float(z_prefix))} B` + Golomb "
+                f"`{fmt_bytes(float(z_golomb))} B`)"
+            )
+        print(
+            f"  - `z` segment: `{fmt_bytes(float(z_wire))} B`{prefix_golomb}, "
+            f"`{fmt_count(float(z_field))}` field coeffs, "
+            f"`{fmt_count(float(z_ring))}` ring elems"
+        )
+
+    for seg, bytes_key, field_key, ring_key in (
+        ("e", "tail_e_bytes", "tail_e_field_elems", "tail_e_ring_elems"),
+        ("t", "tail_t_bytes", "tail_t_field_elems", "tail_t_ring_elems"),
+        ("r", "tail_r_bytes", "tail_r_field_elems", "tail_r_ring_elems"),
+    ):
+        seg_bytes = current.get(bytes_key)
+        field_coeffs = current.get(field_key)
+        ring_elems = current.get(ring_key)
+        if seg_bytes is None:
+            continue
+        detail = f"`{fmt_bytes(float(seg_bytes))} B`"
+        if field_coeffs is not None:
+            detail += f", `{fmt_count(float(field_coeffs))}` field coeffs"
+        if ring_elems is not None:
+            detail += f", `{fmt_count(float(ring_elems))}` ring elems"
+        print(f"  - `{seg}` segment: {detail}")
+
+    if all(
+        current.get(key) is not None
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_r_bytes")
+    ):
+        wire_total = (
+            int(current["tail_z_bytes"])
+            + int(current["tail_e_bytes"])
+            + int(current["tail_t_bytes"])
+            + int(current["tail_r_bytes"])
+        )
+        print(f"  - Wire total (z+e+t+r): `{fmt_bytes(float(wire_total))} B`")
+
+    z_budget = current.get("tail_z_budget_bytes")
+    z_slack = current.get("tail_z_slack_bytes")
+    if z_budget is not None and z_golomb is not None:
+        slack_note = (
+            f", slack `{fmt_bytes(float(z_slack))} B` under planner upper bound"
+            if z_slack is not None
+            else ""
+        )
+        print(
+            f"  - Golomb z budget: realized `{fmt_bytes(float(z_golomb))} B` / "
+            f"scheduled upper `{fmt_bytes(float(z_budget))} B`{slack_note}"
+        )
+
+    z_witness_linf_cap = current.get("z_witness_linf_cap")
+    z_rice_k = current.get("z_rice_k")
+    z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
+    z_ring_elems = current.get("tail_z_ring_elems")
+    z_bits_golomb = current.get("z_bits_per_coord_golomb")
+    z_bits_packed = current.get("z_bits_per_coord_packed")
+    z_packed_hyp = current.get("z_packed_hypothetical_bytes")
+    z_savings = current.get("z_golomb_savings_bytes")
+    if z_witness_linf_cap is not None and z_rice_k is not None and z_field_coeffs is not None:
+        comparison = ""
+        if z_bits_golomb is not None and z_bits_packed is not None:
+            comparison = (
+                f", `{z_bits_golomb:.2f}` bits/field_coeff (Golomb k=`{z_rice_k}` from witness_linf_cap=`{z_witness_linf_cap}`) "
+                f"vs `{z_bits_packed:.2f}` bits/field_coeff (legacy uniform `PackedDigits` z planes)"
+            )
+        savings_note = ""
+        if z_packed_hyp is not None and z_golomb is not None and z_savings is not None:
+            savings_note = (
+                f"; hypothetical packed z `{fmt_bytes(float(z_packed_hyp))} B`, "
+                f"savings `{fmt_bytes(float(z_savings))} B`"
+            )
+        ring_note = (
+            f"`{fmt_count(float(z_ring_elems))}` ring elems, "
+            if z_ring_elems is not None
+            else ""
+        )
+        print(
+            f"  - Golomb z model: {ring_note}"
+            f"`{fmt_count(float(z_field_coeffs))}` field coeffs{comparison}{savings_note}"
+        )
+
+
 def write_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -258,9 +498,17 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
             missing.append(key)
-    if summary.get("tail_num_elems") is None:
+    tail_bytes = summary.get("tail_bytes")
+    tail_encoding = summary.get("tail_encoding")
+    if tail_bytes not in (None, 0) and tail_encoding is None:
+        missing.append("tail_encoding")
+    if (
+        tail_encoding not in ("none", None)
+        and tail_bytes not in (None, 0)
+        and summary.get("tail_num_elems") is None
+    ):
         missing.append("tail_num_elems")
-    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") != "field_elements":
+    if summary.get("tail_bits_per_elem") is None and tail_encoding == "packed_digits":
         missing.append("tail_bits_per_elem")
     proof_size = summary.get("proof_size_bytes")
     accounted = summary.get("accounted_bytes")
@@ -277,7 +525,12 @@ TIMING_SAMPLE_METRICS = (
     "prove_akita_s",
     "verify_akita_s",
 )
-SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",)
+GRIND_SAMPLE_METRICS = (
+    "grind_levels",
+    "grind_nonce_max",
+    "grind_attempts_sum",
+)
+SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",) + GRIND_SAMPLE_METRICS
 
 
 def case_id(mode: str, num_vars: int, num_polys: int) -> str:
@@ -329,8 +582,16 @@ def parse_case_spec(spec: str, default_mode: str) -> BenchmarkCaseSpec:
 
 def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
     if args.case:
-        return [parse_case_spec(spec, args.mode) for spec in args.case]
-    return [BenchmarkCaseSpec(mode=args.mode, num_vars=args.num_vars, num_polys=args.num_polys)]
+        cases = [parse_case_spec(spec, args.mode) for spec in args.case]
+    else:
+        cases = [BenchmarkCaseSpec(mode=args.mode, num_vars=args.num_vars, num_polys=args.num_polys)]
+    # case_id is the output dir name and the failure/aggregation key, so
+    # duplicates would collide on disk and pool into one aggregate.
+    case_ids = [case.case_id for case in cases]
+    duplicates = sorted({cid for cid in case_ids if case_ids.count(cid) > 1})
+    if duplicates:
+        raise ValueError("duplicate benchmark case ids: " + ", ".join(duplicates))
+    return cases
 
 
 def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> dict[str, object]:
@@ -388,9 +649,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
-        elif "profile field roles" in line and kvs.get("label") == mode:
-            summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
-            summary["challenge_ext_degree"] = int(kvs["challenge_ext_degree"])
+        elif "profile extension field" in line and kvs.get("label") == mode:
+            summary["ext_degree"] = int(kvs["ext_degree"])
         elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
             summary["extension_root_direct_fallback"] = True
         elif "planned fold level" in line and kvs.get("label") == mode:
@@ -426,27 +686,47 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "level": level,
                 "d": int(kvs["d"]),
                 "total_bytes": int(kvs["total_bytes"]),
-                "v_bytes": int(kvs.get("v_bytes", "0")),
-                "stage1_sumcheck_bytes": int(kvs.get("stage1_sumcheck_bytes", "0")),
-                "stage1_interstage_claims_bytes": int(
-                    kvs.get("stage1_interstage_claims_bytes", "0")
-                ),
-                "stage1_s_claim_bytes": int(kvs.get("stage1_s_claim_bytes", "0")),
-                "stage2_sumcheck_bytes": int(kvs.get("stage2_sumcheck_bytes", "0")),
-                "next_w_commitment_bytes": int(kvs.get("next_w_commitment_bytes", "0")),
-                "next_w_eval_bytes": int(kvs.get("next_w_eval_bytes", "0")),
+                **{
+                    field: int(kvs.get(field, "0"))
+                    for field in PROOF_LEVEL_BYTE_FIELDS
+                },
             }
+            if "grind_nonce" in kvs:
+                proof_levels[level]["grind_nonce_val"] = int(kvs["grind_nonce"])
+            if "grind_attempts" in kvs:
+                proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
+        elif "fold grind summary" in line and kvs.get("label") == mode:
+            summary["grind_levels"] = int(kvs["grind_levels"])
+            if int(kvs["grind_levels"]) > 0:
+                summary["grind_nonce_max"] = int(kvs["grind_nonce_max"])
+                summary["grind_attempts_sum"] = int(kvs["grind_attempts_sum"])
+                summary["grind_nonces"] = kvs["grind_nonces"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
-            summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
-            if "final_w_encoding" in kvs:
-                summary["tail_encoding"] = kvs["final_w_encoding"]
-            bits_per_elem = kvs.get("final_w_bits_per_elem")
-            summary["terminal_w_len"] = int(kvs["final_w_num_elems"])
-            if bits_per_elem is not None and bits_per_elem != "None":
-                summary["tail_bits_per_elem"] = int(bits_per_elem)
-                summary["terminal_log_basis"] = int(bits_per_elem)
+            ingest_tail_summary_fields(summary, kvs)
+        elif "z fold encoding stats" in line and kvs.get("label") == mode:
+            # Legacy line shape before tail summary consolidation; keep for old logs.
+            if summary.get("tail_encoding") != "segment_typed":
+                summary["tail_encoding"] = "segment_typed"
+            if "z_coords" in kvs:
+                summary["z_coords"] = int(kvs["z_coords"])
+            if "witness_linf_cap" in kvs:
+                summary["z_witness_linf_cap"] = kvs["witness_linf_cap"]
+            elif "beta_inf" in kvs:
+                summary["z_witness_linf_cap"] = kvs["beta_inf"]
+            if "rice_k_public" in kvs:
+                summary["z_rice_k"] = int(kvs["rice_k_public"])
+            elif "rice_k_beta" in kvs:
+                summary["z_rice_k"] = int(kvs["rice_k_beta"])
+            if "bits_per_coord_k_public" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_public"])
+            elif "bits_per_coord_k_beta" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_beta"])
+            if "bits_per_coord_packed" in kvs:
+                summary["z_bits_per_coord_packed"] = float(kvs["bits_per_coord_packed"])
+            if "z_payload_bytes" in kvs:
+                summary["tail_z_golomb_bytes"] = int(kvs["z_payload_bytes"])
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -536,13 +816,13 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "crt_limb_bits": "CRT profile",
         "balanced_digit_safe_width": "CRT capacity",
         "raw_i8_safe_width": "CRT capacity",
-        "claim_ext_degree": "field roles",
-        "challenge_ext_degree": "field roles",
+        "ext_degree": "field role",
         "akita_levels": "proof levels",
         "planned_levels": "planned levels",
         "proof_levels": "proof levels",
-        "tail_num_elems": "tail shape",
-        "tail_bits_per_elem": "tail shape",
+        "tail_num_elems": "tail encoding",
+        "tail_encoding": "tail encoding",
+        "tail_bits_per_elem": "tail encoding",
     }
     if first_missing in phase_by_metric:
         return phase_by_metric[first_missing]
@@ -585,6 +865,7 @@ SUMMARY_CSV_COLUMNS = (
     "crt_limb_bits",
     "balanced_digit_safe_width",
     "raw_i8_safe_width",
+    "ext_degree",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -595,7 +876,12 @@ SUMMARY_CSV_COLUMNS = (
     "tail_bytes",
     "proof_framing_bytes",
     "akita_levels",
+    "grind_levels",
+    "grind_nonce_max",
+    "grind_attempts_sum",
+    "grind_nonces",
     "tail_num_elems",
+    "tail_encoding",
     "tail_bits_per_elem",
     "exit_code",
     "error",
@@ -623,6 +909,11 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
         if values:
             combined[key] = statistics.median(values)
 
+    for key in GRIND_SAMPLE_METRICS:
+        values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
+        if values:
+            combined[key] = statistics.median(values)
+
     rss_values = [int(summary["max_rss_kib"]) for summary in summaries if summary.get("max_rss_kib")]
     if rss_values:
         combined["max_rss_kib"] = max(rss_values)
@@ -637,6 +928,132 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     return combined
 
 
+@dataclass(frozen=True)
+class ScheduledRun:
+    """One planned execution of a benchmark binary."""
+
+    binary: str
+    summary_dir: pathlib.Path  # root whose summary.json this run's case feeds
+    run_dir: pathlib.Path  # directory for this single execution's output
+    case: BenchmarkCaseSpec
+    kind: str  # "warmup" or "measured"
+    run_index: int  # 0 for warm-ups, 1..runs for measured
+
+
+def plan_case_runs(
+    binary: str,
+    summary_dir: pathlib.Path,
+    case: BenchmarkCaseSpec,
+    runs: int,
+    warmups: int,
+) -> list[ScheduledRun]:
+    """All executions of one case for one binary, in execution order."""
+    case_dir = summary_dir / case.case_id
+    schedule = [
+        ScheduledRun(
+            binary, summary_dir, case_dir / f"warmup-{warmup_index}", case, "warmup", 0
+        )
+        for warmup_index in range(1, warmups + 1)
+    ]
+    for run_index in range(1, runs + 1):
+        run_dir = case_dir if runs == 1 else case_dir / f"run-{run_index}"
+        schedule.append(ScheduledRun(binary, summary_dir, run_dir, case, "measured", run_index))
+    return schedule
+
+
+def execute_schedule(
+    schedule: list[ScheduledRun],
+) -> tuple[list[tuple[ScheduledRun, dict[str, object]]], int]:
+    """Execute runs in order, recording the summaries that feed aggregation.
+
+    Successful warm-up output is discarded. The first failure records its
+    failure summary and cancels the case for every binary — rerunning the
+    failing binary would repeat the same error, and a pairwise comparison
+    is meaningless once one side fails. Remaining cases still run. Returns
+    the recorded (run, summary) pairs and the first non-zero exit code,
+    0 otherwise.
+    """
+    results: list[tuple[ScheduledRun, dict[str, object]]] = []
+    failed_cases: set[str] = set()
+    overall_return_code = 0
+    for run in schedule:
+        if run.case.case_id in failed_cases:
+            continue
+        summary, return_code = run_benchmark_case(run.binary, run.run_dir, run.case)
+        summary["run_index"] = run.run_index
+        if return_code != 0:
+            failed_cases.add(run.case.case_id)
+            if overall_return_code == 0:
+                overall_return_code = return_code
+            results.append((run, summary))
+        elif run.kind == "measured":
+            results.append((run, summary))
+    return results, overall_return_code
+
+
+def failure_summaries_by_case(
+    results: list[tuple[ScheduledRun, dict[str, object]]],
+) -> dict[str, dict[str, object]]:
+    """Map case_id to the first recorded failure summary for that case."""
+    failures: dict[str, dict[str, object]] = {}
+    for run, summary in results:
+        if int(summary.get("exit_code", 0)) != 0:
+            failures.setdefault(run.case.case_id, summary)
+    return failures
+
+
+def propagate_sibling_case_failure(
+    case_summaries: list[dict[str, object]],
+    failure: dict[str, object],
+) -> list[dict[str, object]]:
+    """Mirror a paired-binary failure onto the sibling output root."""
+    if any(int(summary.get("exit_code", 0)) != 0 for summary in case_summaries):
+        return case_summaries
+    propagated = dict(failure)
+    propagated["error"] = (
+        "case cancelled after the paired binary failed: "
+        f"{failure.get('error', 'profile run failed')}"
+    )
+    propagated["exit_code"] = failure.get("exit_code", 1)
+    propagated["failure_phase"] = failure.get("failure_phase", "unknown")
+    return [*case_summaries, propagated]
+
+
+def write_aggregate_summaries(
+    summary_dirs: list[pathlib.Path],
+    cases: list[BenchmarkCaseSpec],
+    results: list[tuple[ScheduledRun, dict[str, object]]],
+    warmups: int,
+) -> None:
+    """Aggregate recorded run summaries into summary.json/summary.csv per root."""
+    generated_at = datetime.now(timezone.utc).isoformat()
+    failures_by_case = failure_summaries_by_case(results)
+    for summary_dir in summary_dirs:
+        aggregate: dict[str, object] = {
+            "schema_version": 2,
+            "generated_at": generated_at,
+            "warmups": warmups,
+            "cases": [],
+        }
+        for case in cases:
+            case_summaries = [
+                summary
+                for run, summary in results
+                if run.summary_dir == summary_dir and run.case.case_id == case.case_id
+            ]
+            failure = failures_by_case.get(case.case_id)
+            if failure is not None:
+                case_summaries = propagate_sibling_case_failure(case_summaries, failure)
+            if case_summaries:
+                aggregate["cases"].append(combine_case_run_summaries(case_summaries))
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        write_text(
+            summary_dir / "summary.json",
+            json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
+        )
+        write_summary_csv(summary_dir / "summary.csv", aggregate["cases"])
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -645,52 +1062,31 @@ def run_benchmark(args: argparse.Namespace) -> int:
     if args.warmups < 0:
         raise ValueError("--warmups must be non-negative")
 
+    if bool(args.baseline_binary) != bool(args.baseline_output_dir):
+        raise ValueError("--baseline-binary and --baseline-output-dir must be set together")
+    binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
+    if args.baseline_binary:
+        baseline_dir = pathlib.Path(args.baseline_output_dir)
+        baseline_dir.mkdir(parents=True, exist_ok=True)
+        binaries.append((args.baseline_binary, baseline_dir))
+
     cases = configured_cases(args)
-    aggregate_summary: dict[str, object] = {
-        "schema_version": 2,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "warmups": args.warmups,
-        "cases": [],
-    }
-    overall_return_code = 0
-
+    schedule: list[ScheduledRun] = []
     for case in cases:
-        case_dir = output_dir / case.case_id
-        # Warm-up runs: prime caches, allocator, and lazily-initialized
-        # statics (NTT roots, schedule tables) so the first measured run
-        # is not penalized. Output is discarded on success; on failure we
-        # surface the warm-up's failure summary instead of running the
-        # measured loop (rerunning a known-broken case would just repeat
-        # the same error).
-        run_summaries = []
-        warmup_failure_summary: dict[str, object] | None = None
-        for warmup_index in range(1, args.warmups + 1):
-            warmup_dir = case_dir / f"warmup-{warmup_index}"
-            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
-            if return_code != 0:
-                summary["run_index"] = 0
-                warmup_failure_summary = summary
-                if overall_return_code == 0:
-                    overall_return_code = return_code
-                break
-        if warmup_failure_summary is not None:
-            run_summaries.append(warmup_failure_summary)
-        else:
-            for run_index in range(1, args.runs + 1):
-                run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
-                summary["run_index"] = run_index
-                run_summaries.append(summary)
-                if return_code != 0:
-                    if overall_return_code == 0:
-                        overall_return_code = return_code
-                    break
-        aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
+        plans = [
+            plan_case_runs(binary, summary_dir, case, args.runs, args.warmups)
+            for binary, summary_dir in binaries
+        ]
+        # Interleave the binaries' plans: each warm-up/measured slot runs
+        # every binary back-to-back (PR, base, PR, base, ...), so
+        # machine-state drift on shared runners lands on both sides of each
+        # adjacent pair instead of on one whole block.
+        schedule.extend(run for slot in zip(*plans, strict=True) for run in slot)
 
-    write_text(
-        output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
+    results, overall_return_code = execute_schedule(schedule)
+    write_aggregate_summaries(
+        [summary_dir for _, summary_dir in binaries], cases, results, args.warmups
     )
-    write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
     return overall_return_code
 
 
@@ -831,6 +1227,13 @@ def fmt_bytes(value: float) -> str:
 
 def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
+
+
+def fmt_optional_count(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_count(float(value))
 
 
 def case_status(summary: dict[str, object]) -> str:
@@ -983,6 +1386,8 @@ def render_matrix_summary(
         "Verify ms",
         "RSS MiB",
         "Proof B",
+        "Grind Σ",
+        "Grind max",
     ]
     if matrix_baseline is not None:
         label = matrix_baseline[0]
@@ -1008,6 +1413,8 @@ def render_matrix_summary(
             fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
+            fmt_optional_count(current, "grind_attempts_sum"),
+            fmt_optional_count(current, "grind_nonce_max"),
         ]
         if matrix_baseline is not None:
             baseline_case = matrix_baseline[1].get(str(current["case_id"]))
@@ -1059,23 +1466,43 @@ def render_planned_levels(levels: list[dict[str, object]]) -> None:
     print("</details>")
 
 
+def proof_level_component_bytes(level: dict[str, object]) -> int:
+    return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
+
+
+def fmt_level_grind_field(value: object) -> str:
+    if value is None:
+        return "n/a"
+    return fmt_count(float(value))
+
+
 def render_proof_levels(levels: list[dict[str, object]]) -> None:
     print("<details>")
     print("<summary>Per-level proof-size breakdown</summary>")
     print()
     print(
-        "| L | total | v | stage1 sc | interstage | s_claim | "
-        "stage2 sc | next_w_commit | next_w_eval |"
+        "| L | total | eor partials | eor sc | grind nonce B | grind nonce val | "
+        "grind tries | v | stage1 sc | interstage | s_claim | stage2 sc | stage3 sc | "
+        "next_w_commit | next_w_eval |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "---: | ---: | ---: | ---: | ---: |"
+    )
     for level in levels:
         print(
             f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+            f"{fmt_bytes(float(level['extension_opening_partials_bytes']))} | "
+            f"{fmt_bytes(float(level['extension_opening_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['fold_grind_nonce_bytes']))} | "
+            f"{fmt_level_grind_field(level.get('grind_nonce_val'))} | "
+            f"{fmt_level_grind_field(level.get('grind_attempts'))} | "
             f"{fmt_bytes(float(level['v_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
             f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['stage3_sumcheck_bytes']))} | "
             f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
             f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
         )
@@ -1116,6 +1543,13 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             raise ValueError(
                 f"planned/proof D mismatch at L{planned_level}: "
                 f"planned={planned_d}, proof={proof_d}"
+            )
+        component_bytes = proof_level_component_bytes(proof)
+        total_bytes = int(proof["total_bytes"])
+        if component_bytes != total_bytes:
+            raise ValueError(
+                f"proof level component sum mismatch at L{proof_level}: "
+                f"total_bytes={total_bytes}, component_sum={component_bytes}"
             )
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
@@ -1337,32 +1771,42 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("akita_levels") is not None:
             print(f"- Akita levels: `{current['akita_levels']}`")
-        if current.get("claim_ext_degree") is not None or current.get("challenge_ext_degree") is not None:
-            print(
-                f"- Field roles: `claim_ext_degree={current.get('claim_ext_degree', 'n/a')}`, "
-                f"`challenge_ext_degree={current.get('challenge_ext_degree', 'n/a')}`"
-            )
+        if current.get("grind_levels") is not None:
+            grind_levels = int(current["grind_levels"])
+            if grind_levels > 0:
+                print(
+                    f"- Fold grind: `{fmt_count(float(grind_levels))}` levels, "
+                    f"`{fmt_count(float(current.get('grind_attempts_sum', 0)))}` total tries "
+                    f"(max nonce `{current.get('grind_nonce_max', 'n/a')}`)"
+                )
+                if current.get("grind_nonces") is not None:
+                    print(f"- Fold grind nonces (L0..): `{current['grind_nonces']}`")
+            else:
+                print("- Fold grind: root-direct (no grind levels)")
+        if current.get("ext_degree") is not None:
+            print(f"- Field role: `ext_degree={current['ext_degree']}`")
         if current.get("extension_root_direct_fallback"):
             print(
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
-                "do not apply until the Frobenius/multipoint optimization is wired."
+                "do not apply until the Frobenius optimization is wired."
             )
-        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
-            print(
-                f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "
-                f"`{current['tail_bits_per_elem']}` bits/elem"
-            )
-        elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "field_elements":
-            print(f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` field elements")
-        if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
+        render_tail_encoding(current)
+        if (
+            current.get("terminal_w_len") is not None
+            and current.get("terminal_log_basis") is not None
+            and current.get("tail_encoding") not in ("segment_typed", "none", None)
+        ):
             print(
                 f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
                 f"with `log_basis={current['terminal_log_basis']}`"
             )
-        elif current.get("terminal_w_len") is not None and current.get("tail_encoding") == "field_elements":
+        elif (
+            current.get("terminal_w_len") is not None
+            and current.get("tail_encoding") == "field_elements"
+        ):
             print(
                 f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
-                f"with field-element encoding"
+                "with field-element encoding"
             )
 
         planned_levels = current.get("planned_levels")

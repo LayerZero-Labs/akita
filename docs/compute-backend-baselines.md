@@ -1,5 +1,11 @@
 # Compute Backend Baselines
 
+> **Historical snapshot.** Frozen local baselines from the compute-backend
+> cutover (dated host/commit; some referenced benches no longer exist). For live
+> numbers use the profile harness and CI matrix (Akita Book
+> `book/src/usage/profiling.md` and `specs/profile-bench-coverage-matrix.md`).
+> Scheduled to move to `docs/archive/` (see `specs/PRUNING.md`).
+
 These are local CPU baselines for the first compute-backend cutover. They are
 short-run baselines meant to catch large regressions while the backend
 operation boundary is being introduced; rerun with default Criterion settings

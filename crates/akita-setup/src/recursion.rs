@@ -11,8 +11,8 @@ use akita_prover::{
 use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, ClaimIncidenceSummary,
-    LevelParams, SETUP_OFFLOAD_D_SETUP,
+    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
+    OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, const D: usize, B>(
@@ -59,7 +59,6 @@ fn populate_recursive_setup_prefixes<F, const D: usize, Cfg>(
     setup: &mut AkitaProverSetup<F, D>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -69,10 +68,9 @@ where
         return Ok(());
     }
 
-    let root_incidence =
-        ClaimIncidenceSummary::from_counts(max_num_vars, max_num_batched_polys, max_num_points)?;
-    let schedule = Cfg::get_params_for_prove(&root_incidence)?;
-    let recursive_incidence = ClaimIncidenceSummary::same_point(0, 1)?;
+    let root_opening_batch = OpeningBatchShape::new(max_num_vars, max_num_batched_polys)?;
+    let schedule = Cfg::get_params_for_prove(&root_opening_batch)?;
+    let recursive_opening_batch = OpeningBatchShape::new(0, 1)?;
     let available_field_len = setup
         .expanded
         .shared_matrix()
@@ -91,14 +89,14 @@ where
         if idx >= terminal_fold_idx {
             continue;
         }
-        let incidence = if idx == 0 {
-            &root_incidence
+        let opening_batch = if idx == 0 {
+            &root_opening_batch
         } else {
-            &recursive_incidence
+            &recursive_opening_batch
         };
         let next_fold = &folds[idx + 1];
         let natural_len =
-            active_setup_field_len(&fold.params, incidence, D)?.min(available_field_len);
+            active_setup_field_len(&fold.params, opening_batch, D)?.min(available_field_len);
         let n_prefix = padded_setup_prefix_len(natural_len);
         if n_prefix > available_field_len {
             continue;
@@ -133,23 +131,20 @@ where
 pub fn new_prover_setup_recursion<F, const D: usize, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let mut setup =
-        new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)?;
+    let mut setup = new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys)?;
     populate_recursive_setup_prefixes::<F, D, Cfg>(
         &mut setup,
         max_num_vars,
         max_num_batched_polys,
-        max_num_points,
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys, max_num_points)?;
+    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
 
     Ok(setup)
 }
@@ -164,7 +159,7 @@ mod tests {
 
     #[test]
     fn recursive_d64_setup_populates_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1, 1)
+        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1)
             .expect("recursive D64 setup");
 
         assert!(
@@ -187,7 +182,7 @@ mod tests {
 
     #[test]
     fn recursive_d32_setup_skips_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1, 1)
+        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1)
             .expect("recursive D32 setup");
 
         assert!(

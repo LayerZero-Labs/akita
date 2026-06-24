@@ -27,7 +27,7 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let default_gamma;
@@ -44,9 +44,8 @@ where
     };
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let routing = instance.commitment_routing();
-    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
-    let num_points = num_polys_per_commitment_group.len();
+    let opening_batch = instance.opening_batch();
+    let num_polys = opening_batch.num_polynomials();
     let num_public_m_rows = 0usize;
 
     let num_ring_elems = w.len() / D;
@@ -56,7 +55,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count_for(num_points, num_public_m_rows, m_row_layout)?;
+    let m_rows = lp.m_row_count_for(1, num_public_m_rows, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -75,13 +74,8 @@ where
     let ring_alpha_evals_y = scalar_powers(alpha, D);
     let alpha_evals_y = scalar_powers(alpha, D);
 
-    let opening_points = instance.opening_points();
-    let ring_multiplier_points = instance.ring_multiplier_points();
-    let claim_to_point = instance.claim_to_point();
-    let claim_to_commitment_group = routing.claim_to_commitment_group();
-    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
     let challenges = &instance.challenges;
-    if gamma.len() != claim_to_point.len() {
+    if gamma.len() != instance.opening_batch().num_claims() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));
@@ -92,17 +86,14 @@ where
         || {
             compute_m_evals_x::<F, E, D>(
                 setup,
-                opening_points,
-                ring_multiplier_points,
-                claim_to_point,
+                instance.opening_point(),
+                instance.ring_multiplier_point(),
                 challenges,
                 alpha,
                 &ring_alpha_evals_y,
                 lp,
                 &tau1,
-                num_polys_per_commitment_group,
-                claim_to_commitment_group,
-                claim_poly_in_commitment_group,
+                num_polys,
                 gamma,
                 num_public_m_rows,
                 m_row_layout,
@@ -114,17 +105,14 @@ where
     let (m_evals_x_result, w_result) = {
         let m_evals_x = compute_m_evals_x::<F, E, D>(
             setup,
-            opening_points,
-            ring_multiplier_points,
-            claim_to_point,
+            instance.opening_point(),
+            instance.ring_multiplier_point(),
             challenges,
             alpha,
             &ring_alpha_evals_y,
             lp,
             &tau1,
-            num_polys_per_commitment_group,
-            claim_to_commitment_group,
-            claim_poly_in_commitment_group,
+            num_polys,
             gamma,
             num_public_m_rows,
             m_row_layout,

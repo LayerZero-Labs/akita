@@ -3,9 +3,12 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::montgomery::{mont_mul_4x_i32_avx2, reduce_range_4x_i32_avx2};
+use super::montgomery::{
+    forward_dif_tail_i32_avx2, mont_mul_4x_i32_avx2, reduce_range_4x_i32_avx2,
+};
 use super::{avx_ntt_mode, d32, wide512, AvxNttMode};
 use crate::ntt::butterfly::NttTwiddles;
+use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// AVX2 forward negacyclic NTT for one `i32` CRT limb.
@@ -60,31 +63,49 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     }
 
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
-                let mut j = 0usize;
-                while j < len {
-                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
-                    unsafe {
-                        let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
-                        let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
-                        let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
-                        _mm_storeu_si128(
-                            a_ptr.add(start + j) as *mut __m128i,
-                            reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
-                        );
-                        _mm_storeu_si128(
-                            a_ptr.add(start + j + len) as *mut __m128i,
-                            mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
-                        );
-                    }
-                    j += 4;
+            let mut j = 0usize;
+            while j < len {
+                // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                unsafe {
+                    let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
+                    let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
+                    let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
+                    _mm_storeu_si128(
+                        a_ptr.add(start + j) as *mut __m128i,
+                        reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
+                    );
+                    _mm_storeu_si128(
+                        a_ptr.add(start + j + len) as *mut __m128i,
+                        mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
+                    );
                 }
-            } else {
+                j += 4;
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+
+    if forward_dif_tail_eligible::<D>() {
+        // SAFETY: guaranteed by this function's safety contract.
+        unsafe {
+            forward_dif_tail_i32_avx2::<D>(
+                a_ptr,
+                tw.fwd_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+            );
+        }
+    } else {
+        while len > 0 {
+            let twiddle_base = len - 1;
+            let mut start = 0usize;
+            while start < D {
                 for j in 0..len {
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
@@ -94,14 +115,13 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
                     a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                     a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
+                start += 2 * len;
             }
-            start += 2 * len;
+            len /= 2;
         }
-        len /= 2;
+        // SAFETY: guaranteed by this function's safety contract.
+        unsafe { reduce_range_in_place_i32(a, prime, p_d) };
     }
-
-    // SAFETY: guaranteed by this function's safety contract.
-    unsafe { reduce_range_in_place_i32(a, prime, p_d) };
 }
 
 /// AVX2 inverse negacyclic NTT for one `i32` CRT limb.
@@ -231,31 +251,49 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
         let mut start = 0usize;
         while start < D {
-            if len >= 4 {
-                let mut j = 0usize;
-                while j < len {
-                    // SAFETY: guaranteed by stage bounds and this function's safety contract.
-                    unsafe {
-                        let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
-                        let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
-                        let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
-                        _mm_storeu_si128(
-                            a_ptr.add(start + j) as *mut __m128i,
-                            reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
-                        );
-                        _mm_storeu_si128(
-                            a_ptr.add(start + j + len) as *mut __m128i,
-                            mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
-                        );
-                    }
-                    j += 4;
+            let mut j = 0usize;
+            while j < len {
+                // SAFETY: guaranteed by stage bounds and this function's safety contract.
+                unsafe {
+                    let u = _mm_loadu_si128(a_ptr.add(start + j) as *const __m128i);
+                    let v = _mm_loadu_si128(a_ptr.add(start + j + len) as *const __m128i);
+                    let w = _mm_loadu_si128(tw_ptr.add(twiddle_base + j) as *const __m128i);
+                    _mm_storeu_si128(
+                        a_ptr.add(start + j) as *mut __m128i,
+                        reduce_range_4x_i32_avx2(_mm_add_epi32(u, v), p_d),
+                    );
+                    _mm_storeu_si128(
+                        a_ptr.add(start + j + len) as *mut __m128i,
+                        mont_mul_4x_i32_avx2(_mm_sub_epi32(u, v), w, p_d, pinv_d),
+                    );
                 }
-            } else {
+                j += 4;
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+
+    if forward_dif_tail_eligible::<D>() {
+        // SAFETY: guaranteed by this function's safety contract.
+        unsafe {
+            forward_dif_tail_i32_avx2::<D>(
+                a_ptr,
+                tw.fwd_twiddles.as_ptr() as *const i32,
+                p_d,
+                pinv_d,
+            );
+        }
+    } else {
+        while len > 0 {
+            let twiddle_base = len - 1;
+            let mut start = 0usize;
+            while start < D {
                 for j in 0..len {
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
@@ -265,14 +303,13 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
                     a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                     a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
+                start += 2 * len;
             }
-            start += 2 * len;
+            len /= 2;
         }
-        len /= 2;
+        // SAFETY: guaranteed by this function's safety contract.
+        unsafe { reduce_range_in_place_i32(a, prime, p_d) };
     }
-
-    // SAFETY: guaranteed by this function's safety contract.
-    unsafe { reduce_range_in_place_i32(a, prime, p_d) };
 }
 
 /// AVX2 inverse cyclic NTT for one `i32` CRT limb.

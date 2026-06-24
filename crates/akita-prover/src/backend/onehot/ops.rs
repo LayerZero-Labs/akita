@@ -1,5 +1,13 @@
 use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
+use crate::backend::RootTensorProjectionPoly;
+use crate::compute::{
+    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
+};
 use akita_field::MulBaseUnreduced;
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
@@ -9,9 +17,25 @@ use akita_field::MulBaseUnreduced;
 /// the computed partials are independent of its value.
 const ONEHOT_TENSOR_PARTIALS_INNER_BITS: usize = 12;
 
-impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, I>
+/// Borrowed single-polynomial view over one-hot chunk storage.
+///
+/// One view type backs the commit, opening-fold, and tensor-projection kernels;
+/// the kernel trait it is passed to selects the operation.
+#[derive(Debug, Clone, Copy)]
+pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+    poly: &'a OneHotPoly<F, D, I>,
+}
+
+/// Same-point batch view over several one-hot polynomials.
+#[derive(Debug, Clone, Copy)]
+pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+    polys: &'a [&'a OneHotPoly<F, D, I>],
+}
+
+impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, D, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore,
+    I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
@@ -24,8 +48,287 @@ where
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.onehot_k)
     }
+}
 
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    type CommitView<'a>
+        = OneHotView<'a, F, D, I>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        Ok(OneHotView { poly: self })
+    }
+}
+
+impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    type OpeningView<'a>
+        = OneHotView<'a, F, D, I>
+    where
+        Self: 'a;
+
+    type OpeningBatchView<'a>
+        = OneHotBatchView<'a, F, D, I>
+    where
+        Self: 'a;
+
+    fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+        Ok(OneHotView { poly: self })
+    }
+
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        Ok(OneHotBatchView { polys })
+    }
+}
+
+impl<F, const D: usize, I> RootTensorSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    type TensorView<'a>
+        = OneHotView<'a, F, D, I>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = OneHotBatchView<'a, F, D, I>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        Ok(OneHotView { poly: self })
+    }
+
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Ok(OneHotBatchView { polys })
+    }
+}
+
+impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for OneHotPoly<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut evals = vec![F::zero(); total_evals];
+        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
+                continue;
+            };
+            let field_pos = chunk_idx
+                .checked_mul(self.onehot_k)
+                .and_then(|base| base.checked_add(raw.as_usize()))
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("onehot direct witness index overflow".to_string())
+                })?;
+            if field_pos >= evals.len() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "onehot direct witness index {field_pos} out of range for {} evals",
+                    evals.len()
+                )));
+            }
+            evals[field_pos] = F::one();
+        }
+        Ok(CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(evals),
+        ))
+    }
+}
+
+impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn commit_inner(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        source: OneHotView<'_, F, D, I>,
+        plan: CommitInnerPlan,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+        source.poly.commit_inner(self, prepared, plan)
+    }
+}
+
+impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotView<'_, F, D, I>,
+        plan: OpeningFoldPlan<'_, F, D>,
+    ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let (eval, folded) = match plan {
+            OpeningFoldPlan::Base {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars,
+                fold_scalars,
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+        };
+        Ok(OpeningFoldOutput { eval, folded })
+    }
+
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotView<'_, F, D, I>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        Ok(source.poly.decompose_fold(
+            plan.challenges,
+            plan.block_len,
+            plan.num_digits,
+            plan.log_basis,
+        ))
+    }
+}
+
+impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + HasWide,
+    I: OneHotIndex,
+{
+    fn decompose_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotBatchView<'_, F, D, I>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
+        match plan {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges,
+                block_len,
+                num_digits,
+                log_basis,
+            } => match OneHotPoly::decompose_fold_batched(
+                source.polys,
+                challenges,
+                block_len,
+                num_digits,
+                log_basis,
+            ) {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
+            },
+            DecomposeFoldBatchPlan::Tensor {
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            } => match OneHotPoly::decompose_fold_tensor_batched(
+                source.polys,
+                tensor,
+                block_len,
+                num_digits,
+                log_basis,
+            )? {
+                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
+            },
+        }
+    }
+}
+
+impl<F, E, const D: usize, I> TensorProjectionKernel<OneHotView<'_, F, D, I>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    E: ExtField<F>,
+    I: OneHotIndex,
+{
+    fn column_partials(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotView<'_, F, D, I>,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        source.poly.tensor_extension_column_partials(logical_point)
+    }
+
+    fn packed_witness(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotView<'_, F, D, I>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
+            Some(witness) => TensorPackedWitness::Sparse(witness),
+            None => TensorPackedWitness::Dense(source.poly.tensor_packed_extension_evals()?),
+        })
+    }
+
+    fn root_projection(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotView<'_, F, D, I>,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        E: FpExtEncoding<F>,
+    {
+        source.poly.tensor_packed_extension_root_poly::<E>()
+    }
+}
+
+impl<F, E, const D: usize, I> TensorProjectionBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + HasWide,
+    E: ExtField<F>,
+    I: OneHotIndex,
+{
+    fn column_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotBatchView<'_, F, D, I>,
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        OneHotPoly::tensor_extension_column_partials_batch(source.polys, logical_point)
+    }
+
+    fn sparse_linear_combination(
+        &self,
+        _prepared: Option<&Self::PreparedSetup<D>>,
+        source: OneHotBatchView<'_, F, D, I>,
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
+        OneHotPoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
+    }
+}
+
+impl<F, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I>
+where
+    F: FieldCore + CanonicalField + HasWide,
+{
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
@@ -40,7 +343,7 @@ where
         }
     }
 
-    fn fold_blocks_ring(
+    pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
@@ -59,7 +362,31 @@ where
         }
     }
 
-    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
+            self.fold_blocks_ring(fold_scalars, block_len),
+            eval_outer_scalars,
+        )
+    }
+
+    pub(crate) fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -90,7 +417,10 @@ where
             .fold(E::zero(), |acc, weight| acc + weight))
     }
 
-    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    pub(crate) fn tensor_extension_column_partials<E>(
+        &self,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
@@ -151,7 +481,7 @@ where
         Ok(partials)
     }
 
-    fn tensor_extension_column_partials_batch<E>(
+    pub(crate) fn tensor_extension_column_partials_batch<E>(
         polys: &[&Self],
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -240,7 +570,21 @@ where
         Ok(out)
     }
 
-    fn tensor_packed_extension_sparse_evals<E>(
+    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: akita_field::ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor projection requires field-element root witness".to_string(),
+            )
+        })?;
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+    }
+
+    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
     where
@@ -249,7 +593,7 @@ where
         Ok(Some(self.tensor_packed_sparse_witness::<E>()?))
     }
 
-    fn tensor_packed_extension_sparse_linear_combination<E>(
+    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
         polys: &[&Self],
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
@@ -401,18 +745,18 @@ where
         )?))
     }
 
-    fn tensor_packed_extension_root_poly<E>(
+    pub(crate) fn tensor_packed_extension_root_poly<E>(
         &self,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
-        E: RingSubfieldEncoding<F>,
+        E: FpExtEncoding<F>,
     {
         Ok(self.tensor_packed_sparse_ring_poly::<E>()?.into())
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -433,7 +777,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
-    fn decompose_fold_batched(
+    pub(crate) fn decompose_fold_batched(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -463,7 +807,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
-    fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
@@ -474,84 +818,35 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    fn commit_inner<B>(
+    pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
-        n_a: usize,
-        block_len: usize,
-        _num_blocks: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
+        plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(block_len)?;
-        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "one-hot inner commitment digit block count overflow".to_string(),
-            )
-        })?;
+        let blocks = self.blocks_for(plan.block_len)?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
-                n_a,
-                block_len,
-                num_digits_commit,
+                n_a: plan.n_a,
+                block_len: plan.block_len,
+                num_digits_commit: plan.num_digits_commit,
                 blocks: blocks.commit_plan_blocks(),
             },
         )?;
 
-        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| {
-                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
-                }
-            });
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
-            }
-        });
+        let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
+            &t,
+            plan.num_digits_open,
+            plan.log_basis,
+        )?;
 
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
+            decomposed_inner_rows,
         })
-    }
-
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
-        })?;
-        let mut evals = vec![F::zero(); total_evals];
-        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
-            let Some(raw) = opt else {
-                continue;
-            };
-            let field_pos = chunk_idx
-                .checked_mul(self.onehot_k)
-                .and_then(|base| base.checked_add(raw.as_usize()))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("onehot direct witness index overflow".to_string())
-                })?;
-            if field_pos >= evals.len() {
-                return Err(AkitaError::InvalidInput(format!(
-                    "onehot direct witness index {field_pos} out of range for {} evals",
-                    evals.len()
-                )));
-            }
-            evals[field_pos] = F::one();
-        }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(evals),
-        ))
     }
 }

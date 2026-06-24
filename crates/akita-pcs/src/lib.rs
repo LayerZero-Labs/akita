@@ -50,23 +50,29 @@ pub use akita_field::{fft, packed, unreduced};
 pub use akita_field::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
     AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp32, Fp64,
-    FpExt2, FpExt2Config, FromPrimitiveInt, HalvingField, Invertible, LiftBase, PowerBasisFpExt4,
-    PowerBasisFpExt4Config, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
+    FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FromPrimitiveInt, HalvingField,
+    Invertible, LiftBase, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
     Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99,
     Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
-    PseudoMersenneField, RandomSampling, SmoothFftField, TowerBasisFpExt4, TowerBasisFpExt4Config,
-    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    PseudoMersenneField, RandomSampling, SmoothFftField, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
+    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
-    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    FlatBlockTable, MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    CommitmentComputeBackend, CommitmentProver, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,
+    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry, OneHotCommitBlocks,
+    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, ProveBackendFor,
+    ProverCommitmentGroup, ProverOpeningBatch, RecursiveProveBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan, TensorBackendFor,
+    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
-pub use akita_types::{BasisMode, BlockOrder};
+pub use akita_types::{
+    BasisMode, BlockOrder, CommitmentGroup, OpeningBatchShape, PointVariableSelection,
+    VerifierOpeningBatch,
+};
 pub use scheme::AkitaCommitmentScheme;

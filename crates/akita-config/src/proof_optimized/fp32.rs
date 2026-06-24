@@ -4,8 +4,8 @@ use super::*;
 
 /// Base field for the fp32 scaffold presets.
 pub type Field = Prime32Offset99;
-/// ring-subfield used for fp32 public claims and Fiat-Shamir challenges.
-pub type ExtensionField = RingSubfieldFpExt4<Field>;
+/// Akita's degree-4 extension for fp32 public claims and Fiat-Shamir challenges.
+pub type ExtensionField = FpExt4<Field>;
 
 /// Full-field `D=64` preset for fp32 crossover profiling.
 #[derive(Clone, Copy, Debug, Default)]
@@ -65,7 +65,12 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q32,
     128,
     32,
-    1
+    1,
+    schedules = (
+        "schedules-fp32-d128-onehot",
+        "fp32_d128_onehot",
+        fp32_d128_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     D256Full,
@@ -83,5 +88,10 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q32,
     256,
     32,
-    1
+    1,
+    schedules = (
+        "schedules-fp32-d256-onehot",
+        "fp32_d256_onehot",
+        fp32_d256_onehot_table
+    )
 );

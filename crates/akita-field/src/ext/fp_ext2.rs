@@ -365,8 +365,8 @@ impl<F: FieldCore + BalancedDigitLookup + Valid, C: FpExt2Config<F>> BalancedDig
 
 /// Identity-stub `HasUnreducedOps` for `FpExt2` variants without a dedicated
 /// delayed-reduction accumulator. `ProductAccum = Self`, so every multiply
-/// reduces immediately. Same pattern as `RingSubfieldFpExt4<Fp64/Fp128>` and
-/// `RingSubfieldFpExt8<*>`.
+/// reduces immediately. Same pattern as `FpExt4<Fp64/Fp128>` and
+/// `FpExt8<*>`.
 macro_rules! impl_fp_ext2_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
         impl<const $p: $pty, C: FpExt2Config<$base<$p>>> HasUnreducedOps for FpExt2<$base<$p>, C> {
@@ -422,7 +422,7 @@ impl_fp_ext2_default_optimized_fold!(Fp128<P: u128>);
 
 /// Specialized EOR fold for `FpExt2<Fp64<P>, C>`.
 ///
-/// Mirrors `RingSubfieldFpExt4<Fp32>`: precompute the "multiply by `r`" matrix
+/// Mirrors `FpExt4<Fp32>`: precompute the "multiply by `r`" matrix
 /// once per round, then fold each pair as `even + r·(odd − even)` using
 /// base-field (`u64`) products with a single delayed reduction per output
 /// coordinate. Only `Fp64` bases are specialized; other bases keep the generic

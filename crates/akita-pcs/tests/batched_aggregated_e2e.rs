@@ -1,12 +1,12 @@
 //! End-to-end tests for **batched aggregated** commitments.
 //!
-//! All polynomials in a batch are placed into a single commitment group, so
+//! All polynomials in a batch are placed into a single commitment bundle, so
 //! `batched_commit` produces exactly one commitment that aggregates every
 //! polynomial.  The test exercises `batched_commit` → `batched_prove` →
 //! serialize/deserialize → `batched_verify`.
 //!
 //! This file intentionally keeps a much smaller matrix than the grouped and
-//! multipoint suites, because those tests already cover most batching-shape
+//! same-point batching suites, because those tests already cover most batching-shape
 //! permutations. The aggregated suite now focuses on the unique
 //! single-commitment path with a few representative cases:
 //!
@@ -29,7 +29,7 @@ use akita_prover::MultilinearPolynomial;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
+use akita_types::{AkitaBatchedProof, OpeningBatchShape};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -49,12 +49,13 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 mod non_zk_aggregated_cases {
     use super::*;
 
-    /// All one-hot polynomials are aggregated into a single commitment group.
+    /// All one-hot polynomials are aggregated into a single commitment bundle.
     fn run_aggregated_onehot(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
-            let layout = OneHotCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+            let opening_batch = OpeningBatchShape::new(nv, batch_size).expect("opening_batch");
+            let layout =
+                OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
             let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -63,15 +64,21 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xf00d_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, &pt, &layout))
+                .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &pt, &layout))
                 .collect();
 
             let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::setup_prover(nv, batch_size, 1)
+            >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let stack = akita_prover::UniformProverStack::uniform(
+                &CpuBackend,
+                &prepared,
+                setup.expanded.as_ref(),
+            )
+            .expect("stack");
             let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
@@ -80,7 +87,7 @@ mod non_zk_aggregated_cases {
             let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::commit(&setup, &CpuBackend, &prepared, &polys)
+            >>::commit(&setup, &polys, &stack)
             .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
@@ -97,14 +104,13 @@ mod non_zk_aggregated_cases {
                 ONEHOT_D,
             >>::batched_prove(
                 &setup,
-                &CpuBackend,
-                &prepared,
                 prove_input(
                     &pt[..],
-                    &polys[..],
+                    &polys.iter().collect::<Vec<_>>()[..],
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
+                &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -150,12 +156,13 @@ mod non_zk_aggregated_cases {
         });
     }
 
-    /// All dense polynomials are aggregated into a single commitment group.
+    /// All dense polynomials are aggregated into a single commitment bundle.
     fn run_aggregated_dense(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
-            let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+            let opening_batch = OpeningBatchShape::new(nv, batch_size).expect("opening_batch");
+            let layout =
+                DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
             let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -164,15 +171,21 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xaaaa_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, &pt, &layout))
+                .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
                 .collect();
 
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(nv, batch_size, 1)
+            >>::setup_prover(nv, batch_size)
             .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let stack = akita_prover::UniformProverStack::uniform(
+                &CpuBackend,
+                &prepared,
+                setup.expanded.as_ref(),
+            )
+            .expect("stack");
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -180,10 +193,7 @@ mod non_zk_aggregated_cases {
 
             let (commitments, hints) =
                 <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::commit(
-                    &setup,
-                    &CpuBackend,
-                    &prepared,
-                    &polys,
+                    &setup, &polys, &stack,
                 )
                 .map(|(commitment, hint)| (vec![commitment], vec![hint]))
                 .expect("grouped commit");
@@ -200,14 +210,13 @@ mod non_zk_aggregated_cases {
                 DENSE_D,
             >>::batched_prove(
                 &setup,
-                &CpuBackend,
-                &prepared,
                 prove_input(
                     &pt[..],
-                    &polys[..],
+                    &polys.iter().collect::<Vec<_>>()[..],
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
+                &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
                 akita_types::SetupContributionMode::Direct,
@@ -285,31 +294,37 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 17;
         const BATCH_SIZE: usize = 4;
 
-        let incidence = ClaimIncidenceSummary::same_point(NV, BATCH_SIZE).expect("incidence");
-        let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let opening_batch = OpeningBatchShape::new(NV, BATCH_SIZE).expect("opening_batch");
+        let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);
         let onehot_b = make_dense_cfg_onehot_poly(&layout, 0x4d10_1002);
 
         let polys = [
-            MultilinearPolynomial::dense(&dense_a),
-            MultilinearPolynomial::onehot(&onehot_a),
-            MultilinearPolynomial::dense(&dense_b),
-            MultilinearPolynomial::onehot(&onehot_b),
+            MultilinearPolynomial::dense(dense_a),
+            MultilinearPolynomial::onehot(onehot_a),
+            MultilinearPolynomial::dense(dense_b),
+            MultilinearPolynomial::onehot(onehot_b),
         ];
         let pt = random_point(NV, 0x4d10_ffff);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
             .collect();
 
         let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::setup_prover(NV, BATCH_SIZE, 1)
+        >>::setup_prover(NV, BATCH_SIZE)
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -318,7 +333,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&setup, &CpuBackend, &prepared, &polys)
+        >>::commit(&setup, &polys, &stack)
         .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
@@ -329,14 +344,13 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             F,
             DENSE_D,
         >>::batched_prove(
-            &setup, &CpuBackend,
-            &prepared,
+            &setup,
             prove_input(
                 &pt[..],
-                &polys[..],
+                &polys.iter().collect::<Vec<_>>()[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
-            ),
+            ), &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,

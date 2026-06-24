@@ -29,7 +29,8 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
 [features]
-default = []
+default = ["schedules-default"]
+schedules-default = ["akita-config/schedules-default"]
 parallel = [
   "akita-algebra/parallel",
   "akita-field/parallel",

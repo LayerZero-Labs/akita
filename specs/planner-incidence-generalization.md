@@ -1,4 +1,17 @@
-# Planner Incidence Generalization
+# Spec: Planner Incidence Generalization
+
+> **Superseded (schedule keys):** portions of this spec that describe schedule lookup
+> keys, shipped-table selection, or preset↔table binding are superseded by
+> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md). This file remains
+> for historical witness-layout / incidence notes until archived.
+
+| Field         | Value                          |
+|---------------|--------------------------------|
+| Author(s)     |                                |
+| Created       | 2026-05-27                     |
+| Status        | active                         |
+| PR            |                                |
+| Book-chapter  | book/src/how/configuration.md  |
 
 ## Goal
 
@@ -214,6 +227,12 @@ Current interim status:
 - `num_commitment_groups` and `num_public_y_rows` are not yet persisted in the
   generated key.
 
+For the production same-point multi-commitment rollout, do not continue this
+older aggregate-incidence plan directly. Follow
+[`multi-group-batching.md`](multi-group-batching.md), which keeps scalar
+same-bundle schedules separate from grouped root keys and requires explicit
+rejects until the grouped descriptor and schedule shape land.
+
 ## Root Witness Size Formula
 
 Replace the legacy aggregate shape formula with a profile-based formula.
@@ -258,8 +277,8 @@ The main current shape carriers are:
 - `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the
   exact root profile counts.
 - Config-policy call sites in `crates/akita-config/src/lib.rs`,
-  `crates/akita-config/src/schedule_policy.rs`, and
-  `crates/akita-config/src/proof_optimized.rs`.
+  `crates/akita-config/src/transcript_binding.rs`, and
+  `crates/akita-config/src/proof_optimized.rs` (`policy_of`, `CommitmentConfig`).
 
 The long-term direction should be:
 

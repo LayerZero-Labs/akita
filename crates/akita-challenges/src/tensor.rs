@@ -21,9 +21,9 @@
 //! [`IntegerChallenge`], because tensor products can widen coefficients beyond
 //! the sampled [`SparseChallenge`] range.
 
-use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
-use akita_transcript::{labels, Transcript};
+use crate::{IntegerChallenge, SparseChallenge, SparseChallengeConfig};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_transcript::labels;
 use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
@@ -77,15 +77,10 @@ impl ChallengeShape {
 
     /// Effective per-logical-block operator-norm cap `Gamma` for this shape.
     ///
-    /// This is the operator-norm analogue of [`Self::effective_l1_mass`]: the
-    /// cap used by operator-norm rejection (`gamma(c) <= Gamma`). A-role SIS
-    /// sizing still uses Lemma 7 (`8·ω·fold_witness_beta·ν`) with `ω` from
-    /// [`Self::effective_l1_mass`]. A flat fold applies one sampled
-    /// challenge per block, so its cap is the family's
-    /// [`SparseChallengeConfig::operator_norm_cap`]. A tensor fold materializes
-    /// the product `α_p · β_q`, which is *not* itself operator-norm rejected;
-    /// the operator norm is submultiplicative (`γ(α·β) <= γ(α)·γ(β)`), so the
-    /// sound cap is the product of the two factors' caps, `Gamma^2`.
+    /// Flat folds use [`SparseChallengeConfig::operator_norm_cap`]; tensor folds
+    /// use the submultiplicative product `Gamma^2`. A-role committed-fold
+    /// collision sizing reads this cap; fold-digit `beta_inf` still uses
+    /// [`Self::effective_l1_mass`].
     #[inline]
     #[must_use]
     pub fn effective_operator_norm_cap(&self, cfg: &SparseChallengeConfig) -> u64 {
@@ -93,6 +88,22 @@ impl ChallengeShape {
         match self {
             Self::Flat => cap,
             Self::Tensor => cap.saturating_mul(cap),
+        }
+    }
+
+    /// Effective per-logical-block `max ‖c‖_2²` for this fold-challenge shape.
+    ///
+    /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use
+    /// [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds use the
+    /// product bound for future descriptor binding. The first fold-linf digit-count
+    /// cutover sizes only flat certified families from the flat value directly.
+    #[inline]
+    #[must_use]
+    pub fn effective_l2_sq_max(&self, cfg: &SparseChallengeConfig) -> u128 {
+        let challenge_l2_sq_max = cfg.challenge_l2_sq_max();
+        match self {
+            Self::Flat => challenge_l2_sq_max,
+            Self::Tensor => challenge_l2_sq_max.saturating_mul(challenge_l2_sq_max),
         }
     }
 }
@@ -140,7 +151,7 @@ pub enum Challenges {
     },
 }
 
-/// Transcript labels consumed by [`sample_folding_challenges`].
+/// Transcript labels consumed by [`crate::sample_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
 /// accidental left/right swaps. Callers pick label byte strings appropriate
@@ -731,6 +742,26 @@ pub fn tensor_split(num_blocks: usize) -> Result<(usize, usize), AkitaError> {
     Ok((1usize << left_bits, 1usize << right_bits))
 }
 
+/// Total sparse challenges drawn in one fold round.
+///
+/// Flat: `num_blocks · num_claims` with `num_blocks = 2^{r_vars}`.
+/// Tensor: `num_claims · (left_len + right_len)` after [`tensor_split`].
+#[inline]
+pub fn fold_sparse_challenge_sample_count(
+    shape: ChallengeShape,
+    r_vars: usize,
+    num_claims: usize,
+) -> Option<usize> {
+    let num_blocks = 1usize.checked_shl(r_vars as u32)?;
+    match shape {
+        ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
+        ChallengeShape::Tensor => {
+            let (left_len, right_len) = tensor_split(num_blocks).ok()?;
+            left_len.checked_add(right_len)?.checked_mul(num_claims)
+        }
+    }
+}
+
 /// Compute the canonical digest absorbed between tensor-left and tensor-right
 /// challenge sampling.
 ///
@@ -781,64 +812,4 @@ pub fn tensor_left_digest<const D: usize>(
     }
 
     Ok(hasher.finalize().into())
-}
-
-/// Sample folding challenges using the configured shape.
-///
-/// # Errors
-///
-/// Returns an error if count arithmetic overflows, if tensor splitting is
-/// invalid, or if sparse challenge sampling fails.
-pub fn sample_folding_challenges<F, T, const D: usize>(
-    transcript: &mut T,
-    num_blocks: usize,
-    num_claims: usize,
-    cfg: &SparseChallengeConfig,
-    shape: &ChallengeShape,
-    labels: ChallengeLabels<'_>,
-) -> Result<Challenges, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    match shape {
-        ChallengeShape::Flat => {
-            let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
-            })?;
-            let challenges =
-                sample_sparse_challenges::<F, T, D>(transcript, labels.flat, total, cfg)?;
-            Challenges::from_sparse(challenges, num_blocks, num_claims)
-        }
-        ChallengeShape::Tensor => {
-            let (left_len, right_len) = tensor_split(num_blocks)?;
-            let left_total = left_len.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("tensor-left challenge count overflow".to_string())
-            })?;
-            let right_total = right_len.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("tensor-right challenge count overflow".to_string())
-            })?;
-            let left = sample_sparse_challenges::<F, T, D>(
-                transcript,
-                labels.tensor_left,
-                left_total,
-                cfg,
-            )?;
-            let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
-            transcript.append_bytes(labels.tensor_left_digest, &left_digest);
-            let right = sample_sparse_challenges::<F, T, D>(
-                transcript,
-                labels.tensor_right,
-                right_total,
-                cfg,
-            )?;
-            Challenges::from_tensor::<D>(TensorChallenges {
-                left,
-                right,
-                left_len,
-                right_len,
-                num_claims,
-            })
-        }
-    }
 }

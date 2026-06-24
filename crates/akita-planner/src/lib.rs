@@ -3,8 +3,8 @@
 //! This crate is a **pure, `Cfg`-free DP library**. The single entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
-//! carried by the plain-value [`PlannerPolicy`] plus a `stage1` /
-//! `fold_shape` closure pair, so the planner names no `CommitmentConfig`
+//! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
+//! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-types` / `akita-challenges` /
 //! `akita-field`.
 //!
@@ -12,16 +12,23 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-use akita_types::{DecompositionParams, SisModulusFamily};
+pub use akita_types::{DecompositionParams, SisModulusFamily};
 
+pub mod catalog_identity;
+pub mod emit;
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
 
-pub use generated::GeneratedScheduleTable;
+pub use akita_challenges::TensorChallengeShape;
+pub use catalog_identity::{
+    expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
+    validate_catalog_identity,
+};
+pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub use resolve::{
-    estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
-    shipped_table,
+    estimate_proof_bytes, generated_schedule_lookup_key, resolve_schedule, schedule_from_entry,
 };
 pub use schedule_params::find_schedule;
 
@@ -41,9 +48,9 @@ pub struct PlannerPolicy {
     /// `psi`-embedding infinity-norm expansion
     /// (`Cfg::ring_subfield_embedding_norm_bound()`).
     pub ring_subfield_norm_bound: u32,
-    /// Extension degree `[ClaimField : Field]` (`Cfg::CLAIM_EXT_DEGREE`).
+    /// Opening-reduction extension width (`Cfg::EXT_DEGREE`).
     pub claim_ext_degree: usize,
-    /// Extension degree `[ChallengeField : Field]` (`Cfg::CHAL_EXT_DEGREE`).
+    /// Fiat-Shamir scalar extension width (`Cfg::EXT_DEGREE`).
     pub chal_ext_degree: usize,
     /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
     pub basis_range: (u32, u32),
@@ -61,7 +68,7 @@ pub struct PlannerPolicy {
     /// per level whose first-tier footprint would otherwise exceed `A`. When
     /// `false`, every level emits `tier_split == 1` / `f_key == None` and the
     /// layout is identical to the historical single-tier scheme. Also keys the
-    /// [`shipped_table`] discriminator so a tiered policy never aliases a
+    /// tiered schedule catalog so a tiered policy never aliases a
     /// non-tiered table.
     pub tiered: bool,
 }

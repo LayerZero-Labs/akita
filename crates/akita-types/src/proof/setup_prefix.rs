@@ -10,7 +10,7 @@ use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
     AkitaCommitmentHint, FlatRingVec, RingCommitment,
 };
-use crate::{ClaimIncidenceSummary, LevelParams};
+use crate::{LevelParams, OpeningBatchShape};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -747,19 +747,14 @@ where
 /// Return the packed role widths `(W_A, W_B, W_D)` for one active level shape.
 fn active_setup_role_widths(
     level_params: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<(usize, usize, usize), AkitaError> {
     let w_a = level_params
         .block_len
         .checked_mul(level_params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-    let num_claims = incidence.num_claims();
-    let max_group_poly_count = incidence
-        .num_polys_per_point()
-        .iter()
-        .copied()
-        .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty claim incidence".to_string()))?;
+    let num_claims = opening_batch.num_claims();
+    let max_group_poly_count = opening_batch.num_polynomials();
     let w_d = num_claims
         .checked_mul(level_params.num_blocks)
         .and_then(|n| n.checked_mul(level_params.num_digits_open))
@@ -775,9 +770,9 @@ fn active_setup_role_widths(
 /// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
 fn active_setup_ring_slots(
     level_params: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
-    let (w_a, w_b, w_d) = active_setup_role_widths(level_params, incidence)?;
+    let (w_a, w_b, w_d) = active_setup_role_widths(level_params, opening_batch)?;
     let a_slots = level_params
         .a_key
         .row_len()
@@ -799,10 +794,10 @@ fn active_setup_ring_slots(
 /// Active flat coefficient count `N_active^F = D_setup * N_active^R`.
 pub fn active_setup_field_len(
     level_params: &LevelParams,
-    incidence: &ClaimIncidenceSummary,
+    opening_batch: &OpeningBatchShape,
     d_setup: usize,
 ) -> Result<usize, AkitaError> {
-    active_setup_ring_slots(level_params, incidence)?
+    active_setup_ring_slots(level_params, opening_batch)?
         .checked_mul(d_setup)
         .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".to_string()))
 }
@@ -946,7 +941,7 @@ fn read_limited_usize<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClaimIncidenceSummary, LevelParams, SisModulusFamily};
+    use crate::{LevelParams, OpeningBatchShape, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {
@@ -969,8 +964,8 @@ mod tests {
     #[test]
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
-        let incidence = ClaimIncidenceSummary::from_point_polys(5, vec![2, 1]).expect("incidence");
-        let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &incidence).expect("widths");
+        let opening_batch = OpeningBatchShape::new(5, 3).expect("opening batch");
+        let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &opening_batch).expect("widths");
         let expected_ring_slots = lp
             .a_key
             .row_len()
@@ -979,11 +974,11 @@ mod tests {
             .max(lp.b_key.row_len().checked_mul(w_b).unwrap())
             .max(lp.d_key.row_len().checked_mul(w_d).unwrap());
         assert_eq!(
-            active_setup_ring_slots(&lp, &incidence).expect("ring slots"),
+            active_setup_ring_slots(&lp, &opening_batch).expect("ring slots"),
             expected_ring_slots
         );
         assert_eq!(
-            active_setup_field_len(&lp, &incidence, SETUP_OFFLOAD_D_SETUP).expect("field len"),
+            active_setup_field_len(&lp, &opening_batch, SETUP_OFFLOAD_D_SETUP).expect("field len"),
             expected_ring_slots * SETUP_OFFLOAD_D_SETUP
         );
     }
@@ -999,7 +994,6 @@ mod tests {
         let seed = AkitaSetupSeed {
             max_num_vars: 1,
             max_num_batched_polys: 1,
-            max_num_points: 1,
             gen_ring_dim: d_setup,
             max_setup_len: 2,
             #[cfg(feature = "zk")]

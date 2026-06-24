@@ -15,6 +15,7 @@ members = [
   "crates/akita-verifier",
   "crates/akita-prover",
   "crates/akita-planner",
+  "crates/akita-schedules",
   "crates/akita-witness",
 ]
 # `profile/akita-recursion/` is a standalone sub-workspace: it pins its own

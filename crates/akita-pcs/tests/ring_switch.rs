@@ -93,19 +93,22 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
+    use akita_prover::backend::DenseView;
+    use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
+        ComputeBackendSetup, CpuBackend, DensePoly, ProverCommitmentGroup, ProverOpeningBatch,
+        RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary, MRowLayout,
-        RingMultiplierOpeningPoint,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, MRowLayout,
+        PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -114,12 +117,21 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn single_point_group_incidence(
-        num_vars: usize,
-        group_poly_count: usize,
-    ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::from_point_polys(num_vars, vec![group_poly_count])
-            .expect("valid single-point incidence")
+    fn prover_fold_claims<'a, F: FieldCore + Clone, P, const D: usize>(
+        point: &'a [F],
+        polynomials: &'a [&'a P],
+        commitment: &'a RingCommitment<F, D>,
+        hint: AkitaCommitmentHint<F, D>,
+    ) -> ProverOpeningBatch<'a, F, P, F, D> {
+        ProverOpeningBatch {
+            point: point.into(),
+            groups: vec![ProverCommitmentGroup {
+                point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                    .expect("full-point prover group"),
+                polynomials,
+                commitment: (commitment.clone(), hint),
+            }],
+        }
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -268,7 +280,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -280,17 +292,21 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                std::slice::from_ref(&poly),
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -304,51 +320,53 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (_, e_folded) = poly.evaluate_and_fold_ring(
-            ring_multiplier_point
-                .b_rings()
-                .expect("nonconstant test point has ring b weights"),
-            ring_multiplier_point
-                .a_rings()
-                .expect("nonconstant test point has ring a weights"),
-            lp.block_len,
-        );
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Ring {
+                eval_outer_scalars: ring_multiplier_point
+                    .b_rings()
+                    .expect("nonconstant test point has ring b weights"),
+                fold_scalars: ring_multiplier_point
+                    .a_rings()
+                    .expect("nonconstant test point has ring a weights"),
+                block_len: lp.block_len,
+            },
+        )
+        .expect("evaluate_and_fold_ring");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-ring-multiplier-regression");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, witness) =
+            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point,
+                ring_multiplier_point.clone(),
+                fold_claims,
+                vec![e_folded],
+                lp.clone(),
+                &mut transcript,
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            lp.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
-
-        let w = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &lp,
-        )
-        .expect("ring-switch witness");
+        let build_output =
+            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+                .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(29);
@@ -368,17 +386,14 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[instance.opening_points()[0].clone()],
-                std::slice::from_ref(&ring_multiplier_point),
-                &[0usize],
+                instance.opening_point(),
+                &ring_multiplier_point,
                 &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
                 &tau1,
-                &[1usize],
-                &[0usize],
-                &[0usize],
+                1,
                 &[F::one()],
                 0,
                 MRowLayout::WithDBlock,
@@ -400,7 +415,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -414,17 +429,21 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                std::slice::from_ref(&poly),
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -437,44 +456,49 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (_, e_folded) =
-            poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: lp.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, witness) =
+            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point,
+                ring_multiplier_point.clone(),
+                fold_claims,
+                vec![e_folded],
+                lp.clone(),
+                &mut transcript,
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            lp.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
-
-        let w = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &lp,
-        )
-        .expect("ring-switch witness");
+        let build_output =
+            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+                .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
@@ -494,17 +518,14 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[instance.opening_points()[0].clone()],
-                std::slice::from_ref(&ring_multiplier_point),
-                &[0usize],
+                instance.opening_point(),
+                &ring_multiplier_point,
                 &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
                 &tau1,
-                &[1usize],
-                &[0usize],
-                &[0usize],
+                1,
                 &[F::one()],
                 0,
                 MRowLayout::WithDBlock,
@@ -561,7 +582,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 
@@ -575,17 +596,21 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
-                .unwrap();
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let (commitment, batched_hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                std::slice::from_ref(&poly),
-            )
-            .expect("commitment");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -598,45 +623,46 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (_, e_folded) = poly.evaluate_and_fold(
-            &ring_opening_point.b,
-            &ring_opening_point.a,
-            level_params.block_len,
-        );
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: level_params.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"prepared-m-eval-test");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        let incidence_summary = single_point_group_incidence(NV, 1);
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, witness) =
+            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point.clone(),
+                ring_multiplier_point.clone(),
+                fold_claims,
+                vec![e_folded],
+                level_params.clone(),
+                &mut transcript,
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithDBlock,
+            )
+            .expect("ring relation");
 
-        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
-            &CpuBackend,
-            &prepared,
-            vec![ring_opening_point.clone()],
-            vec![ring_multiplier_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![e_folded],
-            &incidence_summary,
-            level_params.clone(),
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::WithDBlock,
-        )
-        .expect("ring relation");
-
-        ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &CpuBackend,
-            &prepared,
-            &level_params,
-        )
-        .expect("ring-switch witness");
+        ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &level_params, false)
+            .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -648,17 +674,14 @@ mod tests {
 
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
-            std::slice::from_ref(&ring_opening_point),
-            std::slice::from_ref(&ring_multiplier_point),
-            &[0usize],
+            &ring_opening_point,
+            &ring_multiplier_point,
             &instance.challenges,
             alpha,
             &alpha_evals_y,
             &level_params,
             &tau1,
-            &[1usize],
-            &[0usize],
-            &[0usize],
+            1,
             &[F::one()],
             0,
             MRowLayout::WithDBlock,
@@ -684,8 +707,8 @@ mod tests {
             .eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
-                std::slice::from_ref(&ring_opening_point),
-                std::slice::from_ref(&ring_multiplier_point),
+                &ring_opening_point,
+                &ring_multiplier_point,
                 alpha,
                 None,
             )
@@ -694,6 +717,130 @@ mod tests {
         assert_eq!(
             got, expected,
             "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
+        );
+    }
+
+    #[test]
+    fn segment_typed_expand_matches_logical_w() {
+        use akita_types::{
+            build_segment_typed_witness, expand_segment_typed_to_i8_digits,
+            ring_opening_point_from_field, BasisMode, BlockOrder,
+        };
+
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let level_params = Cfg::get_params_for_batched_commitment(
+            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
+        )
+        .expect("commitment layout");
+
+        let mut rng = StdRng::seed_from_u64(0x5E6E_7E8E);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            level_params.r_vars,
+            level_params.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                eval_outer_scalars: &ring_opening_point.b,
+                fold_scalars: &ring_opening_point.a,
+                block_len: level_params.block_len,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
+
+        let mut transcript = AkitaTranscript::<F>::new(b"segment-typed-expand-test");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, witness) =
+            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point,
+                ring_multiplier_point,
+                fold_claims,
+                vec![e_folded],
+                level_params.clone(),
+                &mut transcript,
+                vec![CyclotomicRing::<F, D>::one()],
+                MRowLayout::WithoutDBlock,
+            )
+            .expect("ring relation");
+
+        let build_output = ring_switch_build_w::<F, CpuBackend, D>(
+            &instance,
+            witness,
+            &op_ctx,
+            &level_params,
+            true,
+        )
+        .expect("ring-switch witness");
+        let logical_digits = build_output.w.as_i8_digits();
+        let artifacts = build_output
+            .terminal_artifacts
+            .expect("terminal artifacts retained");
+        let segment = build_segment_typed_witness::<D, F>(
+            &artifacts.e_folded,
+            &artifacts.recomposed_inner_rows,
+            &artifacts.z_folded_centered,
+            &artifacts.r,
+            &level_params,
+            1,
+            1,
+            1,
+            1,
+        )
+        .expect("segment witness");
+        let expanded = expand_segment_typed_to_i8_digits::<D, F>(&segment, &level_params, 1)
+            .expect("expand segment typed");
+        assert_eq!(
+            expanded, logical_digits,
+            "segment-typed expand must match ring_switch_build_w digit stream"
         );
     }
 }

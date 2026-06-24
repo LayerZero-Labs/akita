@@ -8,10 +8,10 @@
 //! leaf primitives together explicitly:
 //!
 //! ```ignore
-//! let norm_s  = norm_bound::rounded_up_collision_norm_s(family, d, decomp, &stage1, shape, is_root, k, nu, r_vars, num_claims)?;
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
 //!     block_len, decomposition_digits::num_digits_s_commit(decomp, is_root))?;
-//! let n_a     = ajtai_key::min_secure_rank(family, d as u32, norm_s, width_s as u64)?;
+//! let (op_norm_rejection, norm_s, n_a) = op_norm_pricing::choose_op_norm_rejection_for_a_role(
+//!     family, d, decomp, &stage1, shape, is_root, k, nu, r_vars, num_claims, width_s as u64)?;
 //! let a_key   = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
 //! ```
 //!
@@ -21,9 +21,11 @@
 
 pub mod ajtai_key;
 pub mod decomposition_digits;
+pub mod fold_witness_grind;
 pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
+pub mod op_norm_pricing;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_collision, collision_l2_sq_for_linf_envelope,
@@ -35,10 +37,19 @@ pub use decomposition_digits::{
     decomposed_w_ring_count, num_digits_fold, num_digits_for_bound, num_digits_open,
     num_digits_s_commit,
 };
+pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use four_square::four_squares;
 pub use norm_bound::{
-    committed_fold_collision_l2_sq, fold_witness_beta, l2_sq_from_linf,
-    ring_product_infinity_norm_bound, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    committed_fold_collision_l2_sq, fold_challenge_norms, fold_witness_beta, fold_witness_linf_cap,
+    fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
+    isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_t,
     rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
-    FoldWitnessNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
+};
+pub use op_norm_pricing::{
+    choose_op_norm_rejection_for_a_role,
+    choose_op_norm_rejection_for_a_role_with_max_sparse_samples, committed_fold_a_role_mass,
+    fold_level_witness_scoring_cost, OP_NORM_REJECTION_MAX_SPARSE_SAMPLES,
 };

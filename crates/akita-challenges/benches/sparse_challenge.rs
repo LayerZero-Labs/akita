@@ -74,6 +74,8 @@ fn bench_batch(c: &mut Criterion) {
                         b"bench/batch",
                         n,
                         black_box(cfg),
+                        0,
+                        false,
                     )
                     .expect("batch sparse challenges");
                     black_box(challenges)
