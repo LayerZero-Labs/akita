@@ -7,7 +7,7 @@ use super::CommitmentConfig;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-use akita_types::OpeningBatch;
+use akita_types::OpeningBatchShape;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -202,12 +202,12 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,
     num_claims: usize,
-) -> Result<OpeningBatch, AkitaError> {
-    OpeningBatch::same_point(num_vars, num_claims)
+) -> Result<OpeningBatchShape, AkitaError> {
+    OpeningBatchShape::new(num_vars, num_claims)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
 
@@ -267,7 +267,7 @@ where
 /// the ZK blinding + hiding accumulators.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<SetupMatrixEnvelope, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -324,7 +324,7 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
 
 fn accumulate_root_matrix_envelope_for_opening_batch(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
@@ -337,15 +337,10 @@ fn accumulate_root_matrix_envelope_for_opening_batch(
 
 fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
     let num_claims = opening_batch.num_claims();
-    let max_group_poly_count = opening_batch
-        .num_polys_per_commitment_group()
-        .iter()
-        .copied()
-        .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty opening batch".to_string()))?;
+    let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp
         .num_blocks
         .checked_mul(num_claims)
@@ -383,7 +378,7 @@ fn root_runtime_matrix_len_for_opening_batch(
 #[cfg(feature = "zk")]
 fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    _opening_batch: &OpeningBatch,
+    _opening_batch: &OpeningBatchShape,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     for lp in setup_level_params_from_runtime_schedule(&schedule.steps) {
@@ -414,7 +409,7 @@ fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
 #[cfg(feature = "zk")]
 fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     let Some(root_commit_params) = root_commit_params_from_schedule(schedule)? else {
@@ -462,7 +457,7 @@ fn root_commit_params_from_schedule(
 #[cfg(feature = "zk")]
 fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
     schedule: &Schedule,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
     let fold_steps = schedule
         .steps

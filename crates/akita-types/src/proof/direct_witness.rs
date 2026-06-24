@@ -109,7 +109,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     pub fn logical_i8_digits<const D: usize>(
         &self,
         lp: &LevelParams,
-        num_commitment_groups: usize,
+        num_segments: usize,
     ) -> Result<Vec<i8>, AkitaError>
     where
         F: CanonicalField + HalvingField,
@@ -117,7 +117,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         match self {
             Self::PackedDigits(_) => self.packed_i8_digits(),
             Self::SegmentTyped(witness) => {
-                expand_segment_typed_to_i8_digits::<D, F>(witness, lp, num_commitment_groups)
+                expand_segment_typed_to_i8_digits::<D, F>(witness, lp, num_segments)
             }
             Self::FieldElements(_) => Err(AkitaError::InvalidProof),
         }
@@ -206,7 +206,7 @@ pub fn terminal_direct_witness_shape(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     #[cfg(feature = "zk")]
     {
@@ -217,7 +217,7 @@ pub fn terminal_direct_witness_shape(
             num_w_vectors,
             num_t_vectors,
             num_public_rows,
-            num_commitment_groups,
+            num_segments,
         );
         Ok(CleartextWitnessShape::PackedDigits((
             current_w_len,
@@ -233,7 +233,7 @@ pub fn terminal_direct_witness_shape(
             num_w_vectors,
             num_t_vectors,
             num_public_rows,
-            num_commitment_groups,
+            num_segments,
         )
     }
 }
@@ -251,7 +251,7 @@ pub fn terminal_direct_witness_shape_for_key(
     current_w_len: usize,
     terminal_log_basis: u32,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
         terminal_fold_segment_counts(key, terminal_fold_level);
     terminal_direct_witness_shape(
         terminal_lp,
@@ -261,7 +261,7 @@ pub fn terminal_direct_witness_shape_for_key(
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
     )
 }
 
@@ -278,14 +278,14 @@ pub fn segment_typed_witness_shape(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     let layout = tail_segment_layout(
         terminal_lp,
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
         field_bits,
     )?;
     let z_payload_bytes = segment_typed_z_payload_bytes(terminal_lp, &layout, num_t_vectors)?;

@@ -21,14 +21,15 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend, OneHotIndex,
-    OneHotPoly,
+    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    LevelParams, SetupContributionMode,
+    CommitmentGroup, LevelParams, OpeningBatchShape, PointVariableSelection, SetupContributionMode,
+    VerifierOpeningBatch,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -210,7 +211,7 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: akita_types::VerifierClaims<'_, Claim, akita_types::RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, Claim, &akita_types::RingCommitment<F, D>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _, D>(
@@ -268,7 +269,7 @@ fn run() -> Result<(), String> {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::same_point(nv, 1).expect("singleton opening batch"),
+        &OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
@@ -353,16 +354,18 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let prove_input = ProverOpeningBatch {
+        point: opening_point[..].into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+                .map_err(|err| format!("invalid opening point shape: {err}"))?,
+            polynomials: &poly_refs[..],
+            commitment: (commitment.clone(), hint),
+        }],
+    };
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
-        (
-            &opening_point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitment,
-                hint,
-            }],
-        ),
+        prove_input,
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -381,13 +384,14 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            vec![akita_types::CommittedOpenings {
-                openings: &openings[..],
+        VerifierOpeningBatch::from_groups(
+            opening_point.clone(),
+            vec![CommitmentGroup {
+                claims: openings.to_vec(),
                 commitment: &commitment,
             }],
-        ),
+        )
+        .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
         setup_contribution_mode,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
@@ -423,7 +427,7 @@ fn run() -> Result<(), String> {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
-        decoded.verifier_claims(&openings_rt),
+        decoded.verifier_opening_batch(&openings_rt),
         decoded.setup_contribution_mode,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;

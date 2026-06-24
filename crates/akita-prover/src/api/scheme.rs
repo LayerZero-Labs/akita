@@ -5,7 +5,7 @@ use crate::compute::{
     LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
     UniformProverStack,
 };
-use crate::ProverClaims;
+use crate::ProverOpeningBatch;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -48,7 +48,7 @@ where
     /// setup is invalid.
     fn setup_prover(
         max_num_vars: usize,
-        max_num_batched_polys: usize,
+        max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError>;
 
     /// Build prover setup for recursive setup-contribution mode.
@@ -59,7 +59,7 @@ where
     /// population fails.
     fn setup_prover_recursion(
         max_num_vars: usize,
-        max_num_batched_polys: usize,
+        max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError>;
 
     /// Derive verifier setup from prover setup.
@@ -85,21 +85,20 @@ where
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>;
 
-    /// Commit the polynomial bundles used by a batched prove.
+    /// Commit the polynomial bundle used by a batched prove.
     ///
-    /// Each input bundle produces one commitment. All bundles share one public
-    /// opening point in the subsequent [`Self::batched_prove`] call.
+    /// The input bundle produces one commitment. All polynomials share one
+    /// public opening point in the subsequent [`Self::batched_prove`] call.
     ///
     /// # Errors
     ///
     /// Returns an error if input validation, layout selection, or any
     /// per-point commitment fails.
-    #[allow(clippy::type_complexity)]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
-        polys_per_commitment_group: &[&[P]],
+        polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -119,7 +118,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, Self::ExtField, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,

@@ -10,19 +10,6 @@ use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
-fn append_shared_opening_point_to_transcript<F, E, T>(
-    shared_opening_point: &[E],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for coord in shared_opening_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-    }
-}
-
 fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
@@ -54,11 +41,7 @@ where
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
-    polys: &[&P],
-    opening_batch: OpeningBatch,
-    shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
@@ -89,27 +72,34 @@ where
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
+    let opening_batch = claims.to_opening_shape::<F>()?;
+    let num_claims = opening_batch.num_claims();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
 
-    if shared_opening_point.len() > opening_num_vars {
+    if claims.point().len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {
             expected: opening_num_vars,
-            actual: shared_opening_point.len(),
+            actual: claims.point().len(),
         });
     }
+    let flat_polys = claims.flat_polys();
+    if flat_polys.len() != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "invalid root-level inputs".to_string(),
+        ));
+    }
 
-    let commitment_rows = flatten_batched_commitment_rows(commitments);
+    let eor_opening_batch =
+        VerifierOpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
+    let non_eor_protocol_point = claims.point().to_vec();
     prepare_fold_inner::<F, E, T, P, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
-        polys,
-        polys,
-        &opening_batch,
-        opening_batch.clone(),
-        &opening_batch,
-        shared_opening_point,
+        claims,
+        &flat_polys,
+        &eor_opening_batch,
         #[cfg(feature = "zk")]
         None,
         #[cfg(feature = "zk")]
@@ -118,16 +108,13 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        shared_opening_point.to_vec(),
+        non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
         alpha_bits,
         basis,
         BlockOrder::RowMajor,
-        commitment_hints,
-        commitments,
         m_row_layout,
-        FlatRingVec::from_ring_elems(&commitment_rows),
     )
 }
 
@@ -157,11 +144,7 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    polys: &[&P],
-    opening_batch: OpeningBatch,
-    shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
@@ -204,27 +187,22 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
+    let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
-    if polys.len() != num_claims {
+    if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
     }
 
-    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
-    append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
+    claims.append_to_transcript::<T>(transcript)?;
 
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
         stack,
         transcript,
-        polys,
-        opening_batch,
-        shared_opening_point,
-        commitments,
-        commitment_hints,
+        claims,
         root_params,
         MRowLayout::WithDBlock,
         #[cfg(feature = "zk")]
@@ -274,11 +252,7 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
         RingSwitch = R,
     >,
     transcript: &mut T,
-    polys: &[&P],
-    opening_batch: OpeningBatch,
-    shared_opening_point: &[E],
-    commitments: &[RingCommitment<F, D>],
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -322,29 +296,24 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
+    let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
 
-    if polys.len() != num_claims {
+    if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
     }
 
-    append_opening_batch_shape_to_transcript::<F, T>(&opening_batch, transcript)?;
-    append_batched_commitments_to_transcript(commitments, transcript);
-    append_shared_opening_point_to_transcript::<F, E, T>(shared_opening_point, transcript);
+    claims.append_to_transcript::<T>(transcript)?;
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
         stack,
         transcript,
-        polys,
-        opening_batch,
-        shared_opening_point,
-        commitments,
-        commitment_hints,
+        claims,
         root_params,
         MRowLayout::WithoutDBlock,
         #[cfg(feature = "zk")]

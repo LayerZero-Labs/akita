@@ -30,9 +30,9 @@ where
     let b_start = 1 + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
-    // `[group t_hat || group blinding]` for each commitment group. The
+    // `[group t_hat || group blinding]` for each commitment bundle. The
     // witness has one blinding segment per point; every segment reuses the
-    // same stored per-commitment zkB row view with fresh digits.
+    // same stored per-bundle zkB row view with fresh digits.
     let b_blinding_segment_len = prepared.b_blinding_segment_len;
     let b_zk_view = setup
         .zk_b_matrix()
@@ -118,8 +118,9 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::zk;
     use akita_types::{
-        ring_relation_segment_layout_for_opening_shape, AkitaSetupSeed, FlatMatrix, LevelParams,
-        MRowLayout, SisModulusFamily,
+        AkitaSetupSeed, FlatMatrix, LevelParams, MRowLayout, OpeningBatchShape,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+        RingRelationSegmentLayout, SisModulusFamily,
     };
 
     type F = Prime128OffsetA7F7;
@@ -153,6 +154,37 @@ mod tests {
         .expect("zk blinding fixture lp")
     }
 
+    fn ring_relation_segment_layout_for_opening_shape(
+        lp: &LevelParams,
+        m_row_layout: MRowLayout,
+        num_polys: usize,
+    ) -> Result<RingRelationSegmentLayout, AkitaError> {
+        let opening_batch = OpeningBatchShape::new(32, num_polys)?;
+        let opening_point = RingOpeningPoint {
+            a: vec![F::zero(); lp.block_len],
+            b: vec![F::zero(); lp.num_blocks],
+        };
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let num_claims = opening_batch.num_claims();
+        let challenges = akita_challenges::Challenges::Sparse {
+            challenges: Vec::new(),
+            num_blocks_per_claim: lp.num_blocks,
+            num_claims,
+        };
+        let instance = RingRelationInstance::<F, D>::new(
+            m_row_layout,
+            challenges,
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            Vec::new(),
+        )?;
+        instance.segment_layout(lp)
+    }
+
     fn fixture() -> ZkFixture {
         // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
         // recursive levels with this real D=32 shape.
@@ -167,7 +199,7 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let num_polys_per_commitment_group = vec![3usize];
+        let num_polys_per_segment = [3usize];
         let num_public_rows = 0usize;
         let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
@@ -179,19 +211,16 @@ mod tests {
         let b_blinding_segment_len = b_blinding_digit_planes_per_point;
         let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
         let lp = fixture_lp();
-        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
-            &lp,
-            MRowLayout::WithDBlock,
-            num_claims,
-        )
-        .expect("witness segment layout");
+        let witness_segment_layout =
+            ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
+                .expect("witness segment layout");
         let total_len = witness_segment_layout.offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
         let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;
         let max_zk_d_len = n_d * d_blinding_segment_len;
 
         let t_cols_per_claim = num_blocks * n_a * depth_open;
-        let max_b_local_col = num_polys_per_commitment_group
+        let max_b_local_col = num_polys_per_segment
             .iter()
             .map(|&count| count * t_cols_per_claim)
             .max()
@@ -225,7 +254,7 @@ mod tests {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: num_polys_per_commitment_group.iter().sum(),
+                max_num_batched_polys: num_polys_per_segment.iter().sum(),
                 gen_ring_dim: D,
                 max_setup_len,
                 max_zk_b_len,
@@ -245,7 +274,7 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
-            num_t_vectors: num_polys_per_commitment_group.iter().sum(),
+            num_t_vectors: num_polys_per_segment.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -264,7 +293,7 @@ mod tests {
             tier_split: 1,
             n_f: 0,
             rows,
-            num_polys_per_commitment_group,
+            num_polys: num_polys_per_segment.iter().sum(),
             witness_segment_layout,
         };
         ZkFixture {

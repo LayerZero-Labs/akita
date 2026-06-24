@@ -331,22 +331,28 @@ where
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
     let logical_polys = [logical_w];
     let fold_polys = [&w];
-    let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
+    let eor_opening_batch =
+        VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
     let commitment_u = commitment.as_ring_slice::<D>()?;
-    let recursive_commitment = RingCommitment {
-        u: commitment_u.to_vec(),
-    };
+    let suffix_commitment = (
+        RingCommitment {
+            u: commitment_u.to_vec(),
+        },
+        typed_hint,
+    );
+    let fold_claims = ProverOpeningBatch::new_suffix(
+        opening_point,
+        recursive_num_vars,
+        &fold_polys,
+        suffix_commitment,
+    )?;
     prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
-        &logical_polys,
-        &fold_polys,
+        fold_claims,
+        &logical_polys[..],
         &eor_opening_batch,
-        opening_batch.clone(),
-        &opening_batch,
-        opening_point,
         #[cfg(feature = "zk")]
         None,
         #[cfg(feature = "zk")]
@@ -361,10 +367,7 @@ where
         alpha,
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
-        vec![typed_hint],
-        std::slice::from_ref(&recursive_commitment),
         m_row_layout,
-        commitment,
     )
 }
 
@@ -405,7 +408,7 @@ mod tests {
             final_factor: TestF::one(),
         });
 
-        let opening_batch = OpeningBatch::same_point(0, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatchShape::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,

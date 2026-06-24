@@ -277,18 +277,19 @@ impl<E: FieldCore> TraceTable<E> {
             Self::RingDense(dense) => {
                 let next_live_x_cols = live_x_cols.div_ceil(2);
                 let mut out = vec![E::zero(); y_len * next_live_x_cols];
-                for y in 0..y_len {
-                    let src_start = y * live_x_cols;
-                    let dst_start = y * next_live_x_cols;
-                    for pair_x in 0..next_live_x_cols {
-                        let left = 2 * pair_x;
-                        let a = dense[src_start + left];
+                for pair_x in 0..next_live_x_cols {
+                    let left = 2 * pair_x;
+                    let dst_start = pair_x * y_len;
+                    let left_start = left * y_len;
+                    let right_start = (left + 1) * y_len;
+                    for y in 0..y_len {
+                        let a = dense[left_start + y];
                         let b = if left + 1 < live_x_cols {
-                            dense[src_start + left + 1]
+                            dense[right_start + y]
                         } else {
                             E::zero()
                         };
-                        out[dst_start + pair_x] = fold_pair(a, b, r);
+                        out[dst_start + y] = fold_pair(a, b, r);
                     }
                 }
                 *dense = out;
@@ -312,6 +313,35 @@ impl<E: FieldCore> TraceTable<E> {
             self.fold_x(live_x_cols, y_len, r);
         } else {
             self.fold_y(r);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+
+    #[test]
+    fn ring_dense_fold_x_preserves_column_major_layout() {
+        let dense = (0..12).map(F::from_u64).collect();
+        let mut table = TraceTable::ring_dense(dense);
+        let r = F::from_u64(3);
+
+        table.fold_x(3, 4, r);
+
+        for y in 0..4 {
+            let y_value = F::from_u64(y as u64);
+            assert_eq!(
+                table.get(0, y, 4),
+                fold_pair(y_value, F::from_u64((4 + y) as u64), r)
+            );
+            assert_eq!(
+                table.get(1, y, 4),
+                fold_pair(F::from_u64((8 + y) as u64), F::zero(), r)
+            );
         }
     }
 }

@@ -106,7 +106,7 @@ fn akita_verify(input: &[u8]) -> u32 {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        decoded.verifier_claims(&openings),
+        decoded.verifier_opening_batch(&openings),
         BasisMode::Lagrange,
         decoded.setup_contribution_mode,
     );

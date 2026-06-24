@@ -37,7 +37,7 @@ fn run_tail_bound_with_grind_onehot_roundtrip(
     seed: u64,
 ) -> AkitaBatchedProof<F, F> {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+        &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     assert_eq!(
@@ -121,7 +121,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
 
         let num_vars = 28;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x51_51_00_02);
@@ -194,7 +194,7 @@ fn fold_recursive_handle_tamper_rejected() {
 
         let num_vars = 28;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x51_51_00_04);
@@ -239,7 +239,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
     run_on_large_stack(|| {
         let num_vars = 28;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x61_61);

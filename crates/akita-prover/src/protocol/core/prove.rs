@@ -10,123 +10,43 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+use akita_types::{
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+};
 
-struct ProverPreparedOpeningBatch<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
-    point: &'a [E],
-    payloads: Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
-    summary: OpeningBatch,
-}
-
-fn prover_claims_to_opening_batch<'a, F, E, P, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-) -> Result<ProverPreparedOpeningBatch<'a, F, E, P, D>, AkitaError>
+fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
+    opening_batch: &OpeningBatchShape,
+    polys: &[&P],
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
 where
+    Cfg: CommitmentConfig,
     F: FieldCore,
-    E: FieldCore,
     P: RootPolyShape<F, D>,
 {
-    let (point, payloads) = claims;
-    let slots = payloads
-        .iter()
-        .enumerate()
-        .flat_map(|(commitment_group, payload)| {
-            payload
-                .polynomials
-                .iter()
-                .enumerate()
-                .map(move |(poly_idx, poly)| OpeningClaimSlot {
-                    commitment_group,
-                    poly_idx,
-                    // Prover inputs do not contain claimed evaluations. The shared
-                    // validator ignores this field, so zero is only a structural
-                    // placeholder.
-                    claimed_eval: E::zero(),
-                    natural_num_vars: poly.num_vars(),
-                    kind: OpeningClaimKind::Polynomial,
-                })
-        })
-        .collect::<Vec<_>>();
-    let total_polys = payloads
-        .iter()
-        .try_fold(0usize, |acc, payload| acc.checked_add(payload.poly_count()))
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("batched_prove polynomial count overflow".to_string())
-        })?;
-    if slots.len() != total_polys {
-        return Err(AkitaError::InvalidInput(
-            "batched_prove polynomial slot count mismatch".to_string(),
+    if opening_batch.num_commitment_groups() <= 1 {
+        return Ok(());
+    }
+    if Cfg::TIERED_COMMITMENT {
+        return Err(AkitaError::InvalidSetup(
+            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
         ));
     }
-
-    let batch = OpeningBatchInput { point, slots };
-    let summary = batch.validate(OpeningBatchLimits {
-        max_num_vars: expanded.seed.max_num_vars,
-        max_num_claims: expanded.seed.max_num_batched_polys,
-    })?;
-
-    Ok(ProverPreparedOpeningBatch {
-        point,
-        payloads,
-        summary,
-    })
+    if setup_contribution_mode == SetupContributionMode::Recursive {
+        return Err(AkitaError::InvalidSetup(
+            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
+        ));
+    }
+    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
+        return Err(AkitaError::InvalidInput(
+            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
+        ));
+    }
+    Err(AkitaError::InvalidInput(
+        GROUPED_ROOT_UNSUPPORTED.to_string(),
+    ))
 }
-/// Validate and flatten batched prover claims into the root proof shape.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape exceeds setup capacity, mixes
-/// incompatible dimensions, or has malformed batch counts.
-pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-) -> Result<PreparedBatchedProveInputs<'a, F, E, P, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    P: RootPolyShape<F, D>,
-{
-    validate_batched_inputs(
-        expanded,
-        &claims,
-        |payloads| {
-            payloads
-                .iter()
-                .map(|payload| payload.polynomials.len())
-                .sum()
-        },
-        true,
-    )?;
-
-    let prepared_batch = prover_claims_to_opening_batch(expanded, claims)?;
-    let opening_point = prepared_batch.point;
-    let commitments = prepared_batch
-        .payloads
-        .iter()
-        .map(|payload| payload.commitment.clone())
-        .collect::<Vec<_>>();
-    let opening_batch = prepared_batch.summary;
-    let flat_polys: Vec<&P> = opening_batch
-        .claim_to_commitment_group()
-        .iter()
-        .zip(opening_batch.claim_poly_indices().iter())
-        .map(|(&group_idx, &poly_idx)| prepared_batch.payloads[group_idx].polynomials[poly_idx])
-        .collect();
-    let commitment_hints = prepared_batch
-        .payloads
-        .into_iter()
-        .map(|payload| payload.hint)
-        .collect();
-
-    Ok(PreparedBatchedProveInputs {
-        opening_point,
-        commitments,
-        opening_batch,
-        flat_polys,
-        commitment_hints,
-    })
-}
-
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
@@ -200,13 +120,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    claims: ProverClaims<
-        'a,
-        Cfg::ExtField,
-        P,
-        RingCommitment<Cfg::Field, D>,
-        AkitaCommitmentHint<Cfg::Field, D>,
-    >,
+    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -256,22 +170,26 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
-    let prepared_claims = {
-        let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
-        prepare_batched_prove_inputs::<Cfg::Field, Cfg::ExtField, P, D>(expanded.as_ref(), claims)?
-    };
-    let num_vars = prepared_claims.opening_batch.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.opening_batch)?;
+    let group_sizes = claims.group_sizes();
+    validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
+    let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
+    let flat_polys = claims.flat_polys();
+    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
+        &opening_batch,
+        &flat_polys,
+        setup_contribution_mode,
+    )?;
+    let num_vars = opening_batch.num_vars();
+    let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-            std::slice::from_ref(&prepared_claims.opening_point),
+            std::slice::from_ref(&claims.point()),
             &root_step.params,
             alpha_bits,
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
         {
-            let commit_params =
-                Cfg::get_params_for_batched_commitment(&prepared_claims.opening_batch)?;
+            let commit_params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -281,23 +199,25 @@ where
         None => None,
     }
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
-        &prepared_claims.flat_polys,
-        root_commit_params,
-    )?;
+    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
-        &prepared_claims.opening_batch,
+        &opening_batch,
         &schedule,
         basis,
         transcript,
     )?;
 
     if schedule_is_root_direct(&schedule) {
+        let commitment_hints = claims
+            .groups()
+            .iter()
+            .map(|group| group.commitment.1.clone())
+            .collect::<Vec<_>>();
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
-            &prepared_claims.flat_polys,
-            &prepared_claims.commitment_hints,
+            &flat_polys,
+            &commitment_hints,
         );
     }
 
@@ -311,7 +231,7 @@ where
         prefix_slots,
         stacks,
         transcript,
-        prepared_claims,
+        claims,
         &schedule,
         basis,
         setup_contribution_mode,
@@ -346,7 +266,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, Cfg::Field, Cfg::ExtField, P, D>,
+    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -397,15 +317,18 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
-
-    if prepared_claims
-        .commitments
-        .iter()
-        .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
+    #[cfg(feature = "zk")]
+    let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
     {
-        return Err(AkitaError::InvalidInput(
-            "batched_prove received a commitment with the wrong length".to_string(),
-        ));
+        let commitments = claims.commitments();
+        if commitments
+            .iter()
+            .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
+        {
+            return Err(AkitaError::InvalidInput(
+                "root commitment row count does not match scheduled root params".to_string(),
+            ));
+        }
     }
 
     let root_packed_w_len = root_current_w_len(&root_scheduled.params);
@@ -419,8 +342,8 @@ where
             root_stack.commit(),
             schedule,
             &root_scheduled.params,
-            prepared_claims.opening_batch.num_vars(),
-            prepared_claims.opening_batch.num_claims(),
+            opening_batch.num_vars(),
+            opening_batch.num_claims(),
             1,
         )?;
     #[cfg(feature = "zk")]
@@ -445,11 +368,7 @@ where
             expanded,
             stacks,
             transcript,
-            &prepared_claims.flat_polys,
-            prepared_claims.opening_batch,
-            prepared_claims.opening_point,
-            &prepared_claims.commitments,
-            prepared_claims.commitment_hints,
+            claims,
             &root_scheduled,
             #[cfg(not(feature = "zk"))]
             terminal_shape,
@@ -476,11 +395,7 @@ where
         prefix_slots,
         stacks,
         transcript,
-        &prepared_claims.flat_polys,
-        prepared_claims.opening_batch,
-        prepared_claims.opening_point,
-        &prepared_claims.commitments,
-        prepared_claims.commitment_hints,
+        claims,
         &root_scheduled,
         #[cfg(feature = "zk")]
         zk_hiding_state,

@@ -100,6 +100,27 @@ pub struct RingCommitment<F: FieldCore, const D: usize> {
     pub u: Vec<CyclotomicRing<F, D>>,
 }
 
+/// Borrow ring rows from commitment-like prover inputs.
+pub trait ProverCommitmentRows<CommitF: FieldCore, const D: usize> {
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
+}
+
+impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+    for RingCommitment<CommitF, D>
+{
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
+        &self.u
+    }
+}
+
+impl<CommitF: FieldCore, const D: usize> ProverCommitmentRows<CommitF, D>
+    for [CyclotomicRing<CommitF, D>]
+{
+    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
+        self
+    }
+}
+
 impl<F: FieldCore + Valid, const D: usize> Valid for RingCommitment<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         self.u.check()

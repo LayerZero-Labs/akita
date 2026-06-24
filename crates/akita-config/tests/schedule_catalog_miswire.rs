@@ -5,13 +5,13 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::resolve_schedule;
-use akita_types::AkitaScheduleLookupKey;
+use akita_types::{AkitaScheduleLookupKey, OpeningBatchShape};
 
 #[test]
 fn miswired_catalog_rejects_before_lookup() {
     let wrong_catalog = akita_schedules::fp128_d64_onehot_table();
     let key = AkitaScheduleLookupKey::new_from_opening_batch(
-        &akita_types::OpeningBatch::same_point(28, 1).expect("opening batch"),
+        &OpeningBatchShape::new(28, 1).expect("opening batch"),
     )
     .expect("lookup key");
 

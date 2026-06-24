@@ -602,7 +602,7 @@ impl LevelParams {
     // ring-switch row eval) must derive its block starts from these helpers
     // rather than recompute the layout inline.
 
-    /// Sent-commitment row count per commitment group: the second-tier `F`
+    /// Sent-commitment row count per bundle bundle: the second-tier `F`
     /// rows (`f_key.row_len()`) when tiered, else the first-tier `B` rows
     /// (`b_key.row_len()`). This is the length of `RingCommitment.u`.
     #[inline]
@@ -613,7 +613,7 @@ impl LevelParams {
         }
     }
 
-    /// Inner `B`-consistency rows per commitment group: `0` when not tiered,
+    /// Inner `B`-consistency rows per bundle bundle: `0` when not tiered,
     /// else `tier_split · b_key.row_len()` (the `f` reused-`B'` slice images,
     /// hidden in the witness `w`).
     #[inline]
@@ -627,8 +627,8 @@ impl LevelParams {
 
     /// Ring-element length of the decomposed concatenated slice images
     /// `û_concat = decompose(u_1 ‖ … ‖ u_f)` carried in the witness `w`, per
-    /// commitment group: `tier_split · b_key.row_len() · num_digits_open` when
-    /// tiered, else `0`. Multiply by the commitment-group count for the total
+    /// commitment bundle: `tier_split · b_key.row_len() · num_digits_open` when
+    /// tiered, else `0`. Multiply by the commitment-bundle count for the total
     /// witness contribution. This must agree across the planner, the prover's
     /// `build_w_coeffs`, and the verifier so the recursive witness length is
     /// consistent.

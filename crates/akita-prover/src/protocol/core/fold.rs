@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "zk")]
+use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
@@ -192,7 +194,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
@@ -260,15 +262,24 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, C, O, TS, R, const D: usize>(
+pub(in crate::protocol::core) fn prepare_fold_inner<
+    'a,
+    F,
+    E,
+    T,
+    P,
+    V,
+    C,
+    O,
+    TS,
+    R,
+    const D: usize,
+>(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
+    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
     eor_polys: &[&P],
-    fold_polys: &[&P],
-    opening_batch: &OpeningBatch,
-    relation_opening_batch: OpeningBatch,
-    trace_opening_batch: &OpeningBatch,
-    opening_point: &[E],
+    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
     #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     #[cfg(feature = "zk")] no_eor_trace_eval_target_public: Option<E>,
     pad_base_evals: bool,
@@ -280,10 +291,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<F, E, T, P, V, C, O, TS, R, 
     alpha_bits: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
-    commitments: &[RingCommitment<F, D>],
     m_row_layout: MRowLayout,
-    commitment: FlatRingVec<F>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -306,14 +314,15 @@ where
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     R: DigitRowsComputeBackend<F>,
 {
+    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = prove_extension_opening_reduction::<F, E, T, P, TS, D>(
             tensor.backend(),
             Some(tensor.prepared()),
             eor_polys,
-            opening_batch,
-            opening_point,
+            eor_opening_batch,
             #[cfg(feature = "zk")]
             public_openings,
             pad_base_evals,
@@ -342,12 +351,12 @@ where
             let fold_refs = fold_polys.to_vec();
             finish_prepared_fold::<F, E, T, P, C, O, TS, R, D>(FinishFoldArgs {
                 stack,
+                fold_claims,
                 fold_refs: &fold_refs,
                 protocol_point: &protocol_point,
                 reduction,
                 row_coefficients,
-                trace_opening_batch,
-                relation_opening_batch,
+                trace_opening_batch: &opening_batch,
                 level_params,
                 alpha_bits,
                 basis,
@@ -358,10 +367,7 @@ where
                 transcript,
                 #[cfg(feature = "zk")]
                 zk_hiding,
-                commitment_hints,
-                commitments,
                 m_row_layout,
-                commitment,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -379,15 +385,16 @@ where
                     .collect::<Result<Vec<_>, _>>()?
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
+            let transformed_fold_claims = fold_claims.regroup_polynomial_refs(&fold_refs)?;
             finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, C, O, TS, R, D>(
                 FinishFoldArgs {
                     stack,
+                    fold_claims: transformed_fold_claims,
                     fold_refs: &fold_refs,
                     protocol_point: &protocol_point,
                     reduction,
                     row_coefficients,
-                    trace_opening_batch,
-                    relation_opening_batch,
+                    trace_opening_batch: &opening_batch,
                     level_params,
                     alpha_bits,
                     basis,
@@ -398,10 +405,7 @@ where
                     transcript,
                     #[cfg(feature = "zk")]
                     zk_hiding,
-                    commitment_hints,
-                    commitments,
                     m_row_layout,
-                    commitment,
                 },
             )
         }
@@ -409,12 +413,12 @@ where
         let fold_refs = fold_polys.to_vec();
         finish_prepared_fold::<F, E, T, P, C, O, TS, R, D>(FinishFoldArgs {
             stack,
+            fold_claims,
             fold_refs: &fold_refs,
             protocol_point: &protocol_point,
             reduction,
             row_coefficients,
-            trace_opening_batch,
-            relation_opening_batch,
+            trace_opening_batch: &opening_batch,
             level_params,
             alpha_bits,
             basis,
@@ -425,10 +429,7 @@ where
             transcript,
             #[cfg(feature = "zk")]
             zk_hiding,
-            commitment_hints,
-            commitments,
             m_row_layout,
-            commitment,
         })
     }
 }
@@ -444,12 +445,12 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
+    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
-    trace_opening_batch: &'a OpeningBatch,
-    relation_opening_batch: OpeningBatch,
+    trace_opening_batch: &'a OpeningBatchShape,
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
@@ -460,10 +461,7 @@ where
     transcript: &'p mut T,
     #[cfg(feature = "zk")]
     zk_hiding: ZkHidingProverState<F>,
-    commitment_hints: Vec<AkitaCommitmentHint<F, D>>,
-    commitments: &'a [RingCommitment<F, D>],
     m_row_layout: MRowLayout,
-    commitment: FlatRingVec<F>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -491,12 +489,12 @@ where
 {
     let FinishFoldArgs {
         stack,
+        fold_claims,
         fold_refs,
         protocol_point,
         reduction,
         row_coefficients,
         trace_opening_batch,
-        relation_opening_batch,
         level_params,
         alpha_bits,
         basis,
@@ -507,10 +505,7 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        commitment_hints,
-        commitments,
         m_row_layout,
-        commitment,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -550,18 +545,16 @@ where
         }
     }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _, _>(
+    let commitment = fold_claims.single_fold_commitment()?;
+    let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
         prepared_point.ring_multiplier_point.clone(),
-        fold_refs,
+        fold_claims,
         e_folded_by_claim,
-        relation_opening_batch,
         level_params.clone(),
-        commitment_hints,
         transcript,
-        commitments,
         row_coefficient_rings,
         m_row_layout,
     )?;
@@ -709,7 +702,9 @@ where
         transcript,
         is_terminal_fold,
         lp,
+        #[cfg(feature = "zk")]
         &prepared_fold.instance,
+        #[cfg(feature = "zk")]
         &logical_w,
         next_commitment,
         if is_terminal_fold {
@@ -952,8 +947,8 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] logical_w: &RecursiveWitnessFlat,
+    #[cfg(feature = "zk")] instance: &RingRelationInstance<F, D>,
+    #[cfg(feature = "zk")] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
     #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
@@ -981,10 +976,6 @@ where
                             .to_string(),
                     ));
                 }
-                let num_commitment_groups = instance
-                    .opening_batch()
-                    .num_polys_per_commitment_group()
-                    .len();
                 let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                     terminal_direct_witness_shape.ok_or_else(|| {
                         AkitaError::InvalidSetup(
@@ -1011,7 +1002,7 @@ where
                     num_w_vectors,
                     num_t_vectors,
                     num_public_rows,
-                    num_commitment_groups,
+                    1,
                 )?;
                 if segment.layout != scheduled_shape.layout {
                     return Err(AkitaError::InvalidSetup(

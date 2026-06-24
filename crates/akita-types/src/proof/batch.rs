@@ -262,27 +262,50 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
     })
 }
 
-/// Flatten commitment rows in commitment-group order.
-pub fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    commitments
-        .iter()
-        .flat_map(|commitment| commitment.u.iter().copied())
-        .collect()
-}
-
-/// Absorb batched commitments into the transcript in commitment-group order.
+/// Absorb the batch commitment into the transcript.
 pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     transcript: &mut T,
 ) where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    for commitment in commitments {
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+}
+
+/// Largest natural arity across polynomials in a scalar batched commit/prove call.
+///
+/// Matches `prepare_batched_commit_inputs`, which selects the root layout from
+/// the maximum `num_vars` across the bundled polynomials.
+///
+/// # Errors
+///
+/// Returns an error if `poly_num_vars` is empty.
+pub fn padded_scalar_batch_num_vars(
+    poly_num_vars: impl IntoIterator<Item = usize>,
+) -> Result<usize, AkitaError> {
+    poly_num_vars.into_iter().max().ok_or_else(|| {
+        AkitaError::InvalidInput(
+            "batched opening batch requires at least one polynomial".to_string(),
+        )
+    })
+}
+
+/// Opening point length must match the padded batch domain selected at commit time.
+///
+/// # Errors
+///
+/// Returns an error when `point_len` and `padded_num_vars` differ.
+pub fn validate_scalar_point_matches_poly_arity(
+    point_len: usize,
+    padded_num_vars: usize,
+) -> Result<(), AkitaError> {
+    if point_len != padded_num_vars {
+        return Err(AkitaError::InvalidInput(format!(
+            "opening point length {point_len} does not match padded batch domain {padded_num_vars}"
+        )));
     }
+    Ok(())
 }
 
 /// Validate common batched prove/verify input shape constraints.
@@ -291,15 +314,14 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
 ///
 /// Returns an error if the shared opening point exceeds setup capacity, the
 /// payload is empty, or the claim count exceeds setup capacity.
-pub fn validate_batched_inputs<F, E, G, Len>(
+pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
-    input: &(&[E], G),
-    point_payload_len: Len,
+    point: &[E],
+    group_sizes: &[usize],
     for_prover: bool,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    Len: Fn(&G) -> usize,
 {
     let label = if for_prover {
         "batched_prove"
@@ -314,7 +336,6 @@ where
         }
     };
 
-    let (point, payload) = input;
     let num_vars = point.len();
     if num_vars > setup.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
@@ -323,10 +344,20 @@ where
             setup.seed().max_num_vars
         )));
     }
-    let num_claims = point_payload_len(payload);
+    if group_sizes.is_empty() {
+        return Err(shape_error(format!(
+            "{label} requires at least one commitment group",
+        )));
+    }
+    if group_sizes.contains(&0) {
+        return Err(shape_error(format!(
+            "{label} commitment groups must be nonempty",
+        )));
+    }
+    let num_claims = checked_total_claims(group_sizes, label)?;
     if num_claims == 0 {
         return Err(shape_error(format!(
-            "{label} shared point must have at least one item",
+            "{label} requires at least one claimed opening",
         )));
     }
     if num_claims > setup.seed().max_num_batched_polys {
@@ -613,10 +644,8 @@ mod tests {
     #[test]
     fn batched_input_validation_accepts_extension_points() {
         let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
-        let polys: Vec<usize> = vec![0, 1, 2];
-        let inputs = (&p0[..], polys);
 
-        validate_batched_inputs(&setup(), &inputs, |polys| polys.len(), true)
+        validate_batched_inputs(&setup(), &p0[..], &[3], true)
             .expect("extension-valued shared opening point should validate by shape");
     }
 
@@ -692,5 +721,26 @@ mod tests {
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
         assert!(root_tensor_projection_enabled::<F, L, 8>(3));
         assert!(!root_tensor_projection_enabled::<F, L, 4>(2));
+    }
+
+    #[test]
+    fn padded_scalar_batch_num_vars_uses_max_poly_arity() {
+        assert_eq!(
+            padded_scalar_batch_num_vars([12, 20, 18]).expect("nonempty"),
+            20
+        );
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_rejects_shorter_point() {
+        let err = validate_scalar_point_matches_poly_arity(18, 20)
+            .expect_err("shorter point must reject");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn validate_scalar_point_matches_poly_arity_accepts_match() {
+        validate_scalar_point_matches_poly_arity(20, 20)
+            .expect("matching point length should validate");
     }
 }

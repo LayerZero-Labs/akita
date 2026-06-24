@@ -34,9 +34,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             plan_case_runs(binary, summary_dir, case, runs=2, warmups=1)
             for binary, summary_dir in binaries
         ]
-        schedule = [
-            run for slot in zip(*plans, strict=True) for run in slot  # noqa: B905
-        ]
+        self.assertEqual(len({len(plan) for plan in plans}), 1)
+        schedule = [run for slot in zip(*plans) for run in slot]
 
         self.assertEqual(
             [run.binary for run in schedule],

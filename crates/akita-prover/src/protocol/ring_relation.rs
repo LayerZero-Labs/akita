@@ -9,7 +9,9 @@ use crate::compute::{
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend};
+use crate::{
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
+};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, IntegerChallenge, SparseChallenge};
@@ -21,10 +23,9 @@ use akita_transcript::Transcript;
 #[cfg(feature = "zk")]
 use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
-    RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
 };
-use akita_types::{LevelParams, OpeningBatch, RingRelationInstance};
+use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -420,31 +421,44 @@ impl RingRelationProver {
     #[allow(clippy::too_many_arguments, clippy::new_ret_no_self)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub fn new<F, const D: usize, T, P, OB, RB>(
+    pub fn new<'a, F, PointF, const D: usize, T, P, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB, D>,
         ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        polys: &[&P],
+        fold_claims: ProverOpeningBatch<'a, PointF, P, F, D>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        opening_batch: OpeningBatch,
         lp: LevelParams,
-        hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
-        commitments: &[RingCommitment<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField,
+        PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         P: RootOpeningSource<F, D>,
         OB: DigitRowsComputeBackend<F>
-            + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-            + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+            + for<'b> OpeningBatchKernel<P::OpeningBatchView<'b>, F, D>
+            + for<'b> OpeningFoldKernel<P::OpeningView<'b>, F, D>,
         RB: DigitRowsComputeBackend<F>,
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        let opening_batch = fold_claims.to_opening_shape::<F>()?;
+        let polys = fold_claims.flat_polys();
+        let group_sizes = opening_batch.num_polys_per_commitment_group();
+        let mut hints = Vec::with_capacity(fold_claims.groups.len());
+        let mut commitment_rows = Vec::new();
+        for group in fold_claims.groups {
+            let (group_commitment, group_hint) = group.commitment;
+            if group_commitment.u.len() != lp.effective_commit_rows() {
+                return Err(AkitaError::InvalidInput(
+                    "batched prover received a commitment with the wrong length".to_string(),
+                ));
+            }
+            commitment_rows.extend_from_slice(&group_commitment.u);
+            hints.push(group_hint.clone());
+        }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "batched prover opening-point layout mismatch".to_string(),
@@ -463,22 +477,10 @@ impl RingRelationProver {
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if polys.len() != pre_folded_e_by_poly.len()
-            || polys.len() != num_claims
-            || opening_batch.claim_poly_indices().len() != num_claims
-            || hints.len() != opening_batch.num_polys_per_commitment_group().len()
-            || commitments.len() != opening_batch.num_polys_per_commitment_group().len()
-        {
+        if polys.len() != pre_folded_e_by_poly.len() || polys.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
-        }
-        for commitment in commitments {
-            if commitment.u.len() != lp.effective_commit_rows() {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
-            }
         }
         if row_coefficient_rings.len() != num_claims {
             return Err(AkitaError::InvalidInput(
@@ -496,7 +498,7 @@ impl RingRelationProver {
         };
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
             hints,
-            opening_batch.num_polys_per_commitment_group(),
+            &group_sizes,
             lp.num_digits_open,
             lp.log_basis,
         )?;
@@ -542,15 +544,11 @@ impl RingRelationProver {
                 opening_backend,
                 Some(opening_ctx.prepared()),
                 transcript,
-                polys,
+                &polys,
                 &lp,
                 num_claims,
             )?;
 
-        let commitment_rows = commitments
-            .iter()
-            .flat_map(|commitment| commitment.u.iter().copied())
-            .collect::<Vec<_>>();
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits

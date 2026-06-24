@@ -115,7 +115,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .m_row_count(1, 1)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
-    // Tiered single-group `û_concat` (one commitment group); `0` single-tier.
+    // Tiered single-group `û_concat` (one commitment bundle); `0` single-tier.
     let u_concat_count = lp.u_concat_ring_len_per_group();
 
     #[cfg(feature = "zk")]
