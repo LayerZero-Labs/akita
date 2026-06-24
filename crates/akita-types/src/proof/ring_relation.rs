@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::OpeningBatch;
+use super::OpeningBatchShape;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
@@ -8,7 +8,7 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, FieldCore, Zero};
+use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
 /// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
@@ -21,8 +21,7 @@ pub fn ring_column_z_first(lp: &LevelParams) -> bool {
 
 /// Witness-column segment offsets for ring-switch evaluation.
 ///
-/// Produced only by [`RingRelationInstance::segment_layout`] (or
-/// [`ring_relation_segment_layout_for_opening_shape`] in tests).
+/// Produced only by [`RingRelationInstance::segment_layout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingRelationSegmentLayout {
     pub offset_e: usize,
@@ -46,7 +45,7 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    opening_batch: OpeningBatch,
+    opening_batch: OpeningBatchShape,
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     y: Vec<CyclotomicRing<F, D>>,
@@ -63,7 +62,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        opening_batch: OpeningBatch,
+        opening_batch: OpeningBatchShape,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
@@ -99,7 +98,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         self.m_row_layout
     }
 
-    pub fn opening_batch(&self) -> &OpeningBatch {
+    pub fn opening_batch(&self) -> &OpeningBatchShape {
         &self.opening_batch
     }
 
@@ -109,10 +108,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
 
     pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F, D> {
         &self.ring_multiplier_point
-    }
-
-    pub fn claim_poly_indices(&self) -> &[usize] {
-        self.opening_batch.claim_poly_indices()
     }
 
     pub fn gamma(&self) -> &[F] {
@@ -178,14 +173,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let total_blocks = num_blocks
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-        let num_t_vectors = self
-            .opening_batch
-            .num_polys_per_commitment_group()
-            .iter()
-            .try_fold(0usize, |acc, &count| {
-                acc.checked_add(count)
-                    .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
-            })?;
+        let num_t_vectors = self.opening_batch.num_polynomials();
         let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits())?;
         if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -226,7 +214,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         #[cfg(feature = "zk")]
         let b_blinding_segment_len = b_blinding_digit_planes_per_point;
 
-        // Tiered `û_concat` segment length (per the single commitment group);
+        // Tiered `û_concat` segment length (per the single commitment bundle);
         // `0` for single-tier levels.
         let u_len = lp.u_concat_ring_len_per_group();
         let z_first = ring_column_z_first(lp);
@@ -283,48 +271,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     }
 }
 
-/// Derive witness segment layout for unit tests from level params and opening shape.
-///
-/// Production code must use [`RingRelationInstance::segment_layout`].
-///
-/// # Errors
-///
-/// Same as [`RingRelationInstance::segment_layout`].
-pub fn ring_relation_segment_layout_for_opening_shape<
-    F: FieldCore + CanonicalField + Zero,
-    const D: usize,
->(
-    lp: &LevelParams,
-    m_row_layout: MRowLayout,
-    num_polys: usize,
-) -> Result<RingRelationSegmentLayout, AkitaError> {
-    let opening_batch = OpeningBatch::same_point(32, num_polys)?;
-    let opening_point = RingOpeningPoint {
-        a: vec![F::zero(); lp.block_len],
-        b: vec![F::zero(); lp.num_blocks],
-    };
-    let ring_multiplier_point: RingMultiplierOpeningPoint<F, D> =
-        RingMultiplierOpeningPoint::from_base(&opening_point);
-    let num_claims = opening_batch.num_claims();
-    let challenges = Challenges::Sparse {
-        challenges: Vec::new(),
-        num_blocks_per_claim: lp.num_blocks,
-        num_claims,
-    };
-    let instance = RingRelationInstance::new(
-        m_row_layout,
-        challenges,
-        opening_point,
-        ring_multiplier_point,
-        opening_batch,
-        vec![F::zero(); num_claims],
-        vec![CyclotomicRing::<F, D>::zero(); num_claims],
-        vec![CyclotomicRing::<F, D>::zero(); num_claims],
-        Vec::new(),
-    )?;
-    instance.segment_layout(lp)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,7 +319,7 @@ mod tests {
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatch::same_point(2, 1).expect("valid opening batch");
+        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
@@ -398,7 +344,7 @@ mod tests {
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatch::same_point(2, 3).expect("valid batch");
+        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
@@ -417,11 +363,7 @@ mod tests {
         let layout = instance.segment_layout(&lp).expect("layout");
         assert!(ring_column_z_first(&lp));
         assert_eq!(layout.offset_z, 0);
-        let num_t_vectors = instance
-            .opening_batch()
-            .num_polys_per_commitment_group()
-            .iter()
-            .sum::<usize>();
+        let num_t_vectors = instance.opening_batch().num_polynomials();
         let depth_fold = lp
             .num_digits_fold(num_t_vectors, F::modulus_bits())
             .unwrap();

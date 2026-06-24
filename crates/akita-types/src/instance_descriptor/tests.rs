@@ -1,5 +1,8 @@
 use super::*;
-use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
+use crate::{
+    CleartextWitnessShape, FoldStep, LevelParams, OpeningBatchShape, OpeningGroupShape,
+    PointVariableSelection, Step,
+};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -21,7 +24,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatch::same_point(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningBatchShape::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -41,8 +44,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     };
 
     AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, Prime32Offset99, 32>()
-            .expect("algebra"),
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 32>().expect("algebra"),
         SetupSection {
             decomposition: DecompositionParams {
                 log_basis: 3,
@@ -75,11 +77,11 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            222,
             [
-                0x10, 0x0d, 0x7e, 0xbb, 0x66, 0xd7, 0xf7, 0xbb, 0x99, 0x57, 0xbe, 0x86, 0x14, 0x19,
-                0x6d, 0x9e, 0x88, 0xdc, 0x7a, 0x39, 0xed, 0xb3, 0xe6, 0x69, 0x61, 0x27, 0x6b, 0x38,
-                0x11, 0xe4, 0xfc, 0xa7,
+                0x8f, 0x44, 0xbd, 0xd2, 0x57, 0x5b, 0x85, 0x24, 0xe6, 0xf4, 0x95, 0x69, 0x92, 0x08,
+                0x55, 0xbf, 0x95, 0xa3, 0x9d, 0x73, 0x4e, 0xba, 0xac, 0xbb, 0x73, 0x8b, 0xf7, 0x7d,
+                0xfd, 0xbe, 0x3b, 0x82,
             ]
         )
     );
@@ -94,14 +96,14 @@ fn fold_linf_descriptor_canonical_digest_pinned_zk() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            183,
+            222,
             [
-                0x0e, 0x62, 0xc6, 0x82, 0xf2, 0xa6, 0x5d, 0xe1, 0xdb, 0x34, 0xba, 0x86, 0x71, 0x00,
-                0x30, 0x85, 0xc6, 0x40, 0xd5, 0x2c, 0x8b, 0xb5, 0x5b, 0xd1, 0x45, 0xbe, 0xa8, 0xed,
-                0x15, 0x02, 0x88, 0xa7,
+                0xb6, 0x09, 0x98, 0x7a, 0x1a, 0x23, 0x6f, 0x99, 0x7a, 0x0b, 0xe7, 0x3e, 0xd8, 0xd2,
+                0x67, 0xba, 0x69, 0x81, 0x44, 0xeb, 0x9a, 0x66, 0x27, 0xb6, 0x06, 0xa0, 0x04, 0x96,
+                0xf4, 0x2a, 0x94, 0xcf,
             ]
         ),
-        "update pinned zk digest after changing descriptor layout"
+        "update pinned zk digest after collapsing descriptor extension degrees"
     );
 }
 
@@ -268,25 +270,70 @@ fn descriptor_rejects_stale_schema_version() {
 #[test]
 fn algebra_section_binds_prime_and_extension_shape() {
     let fp32 =
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, Prime32Offset99, 32>()
-            .expect("fp32 algebra");
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 32>().expect("fp32 algebra");
     let fp64 =
-        AlgebraSection::for_fields::<Prime64Offset59, Prime64Offset59, Prime64Offset59, 32>()
-            .expect("fp64 algebra");
+        AlgebraSection::for_fields::<Prime64Offset59, Prime64Offset59, 32>().expect("fp64 algebra");
 
     assert_ne!(fp32.prime_modulus_be, fp64.prime_modulus_be);
     assert_eq!(fp32.ring_dimension_d, 32);
     assert_eq!(fp32.field_extension_degree, 1);
-    assert_eq!(fp32.claim_extension_degree, 1);
-    assert_eq!(fp32.challenge_extension_degree, 1);
+    assert_eq!(fp32.extension_degree, 1);
 }
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatch::same_point(4, 2).expect("left");
-    let right = OpeningBatch::same_point(4, 3).expect("right");
+    let left = OpeningBatchShape::new(4, 2).expect("left");
+    let right = OpeningBatchShape::new(4, 3).expect("right");
 
     assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+}
+
+#[test]
+fn opening_batch_digest_binds_group_partition() {
+    let grouped = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningBatchShape::new(4, 3).expect("scalar");
+
+    assert_ne!(
+        digest_opening_batch(&grouped),
+        digest_opening_batch(&scalar)
+    );
+}
+
+#[test]
+fn opening_batch_digest_binds_point_variable_selection_order() {
+    let forward = OpeningBatchShape::from_groups(
+        2,
+        vec![OpeningGroupShape {
+            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
+            num_claims: 1,
+        }],
+    )
+    .expect("forward");
+    let swapped = OpeningBatchShape::from_groups(
+        2,
+        vec![OpeningGroupShape {
+            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
+            num_claims: 1,
+        }],
+    )
+    .expect("swapped");
+
+    assert_ne!(
+        digest_opening_batch(&forward),
+        digest_opening_batch(&swapped)
+    );
+}
+
+#[test]
+fn call_section_exposes_group_partition() {
+    let opening_batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+
+    assert_eq!(call.num_polys, 3);
+    assert_eq!(call.num_claims, 3);
+    assert_eq!(call.num_commitment_groups, 2);
+    assert_eq!(call.num_polys_per_commitment_group, vec![1, 2]);
+    assert_eq!(call.point_variable_selections, vec![vec![0, 1, 2, 3]; 2]);
 }
 
 #[test]

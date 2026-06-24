@@ -9,7 +9,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
-use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatch, Schedule, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatchShape, Schedule, Step};
 
 fn footprint(key: &akita_types::AjtaiKeyParams) -> usize {
     key.row_len() * key.col_len()
@@ -72,6 +72,16 @@ fn tiered_preset_tiers_a_batched_root() {
 }
 
 #[test]
+fn tiered_preset_rejects_grouped_root_key() {
+    let key = AkitaScheduleLookupKey::new(22, 3, 2, 2);
+
+    let err =
+        fp128::D64OneHotTiered::runtime_schedule(key).expect_err("grouped tiered key must reject");
+
+    assert!(matches!(err, akita_field::AkitaError::InvalidSetup(_)));
+}
+
+#[test]
 fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
     // For the same batched opening_batch, the tiered preset's shared-matrix
     // envelope must never exceed the non-tiered sibling's, and must be strictly
@@ -79,7 +89,7 @@ fn tiered_envelope_never_larger_and_sometimes_smaller_than_non_tiered() {
     let nv = 22;
     let mut saw_strict_shrink = false;
     for batch in [64usize, 128, 256, 512, 1024] {
-        let opening_batch = OpeningBatch::same_point(nv, batch).expect("opening_batch");
+        let opening_batch = OpeningBatchShape::new(nv, batch).expect("opening_batch");
         let tiered_sched =
             fp128::D64OneHotTiered::get_params_for_prove(&opening_batch).expect("tiered schedule");
         let plain_sched =

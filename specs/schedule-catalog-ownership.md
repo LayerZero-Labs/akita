@@ -190,7 +190,7 @@ the `profile-ci` feature.
   planner semantics with non-ZK table data. Non-ZK-only families (currently tiered)
   are inert under `zk` and excluded from the ZK drift guard.
 - **Same-point batching only.** Lookup keys derive from `OpeningBatch` /
-  `OpeningBatch::same_point(num_vars, num_polys)` (and `new_from_opening_batch`).
+  `OpeningBatch::new(num_vars, num_polys)` (and `new_from_opening_batch`).
   No multipoint keys, no `ClaimIncidenceSummary` schedule path (type not in tree).
 - **Table miss falls back to DP**, never errors solely because a row is absent (unless
   DP itself rejects the key).
@@ -299,7 +299,7 @@ the `profile-ci` feature.
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
-  `AkitaScheduleLookupKey::new_from_opening_batch` / `OpeningBatch::same_point`.
+  `AkitaScheduleLookupKey::new_from_opening_batch` / `OpeningBatch::new`.
 - [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
   per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
   emit `[1, 38]` without changing Akita core.
@@ -605,7 +605,7 @@ existing `CommitmentConfig` hook name.
 
 ### Schedule lookup keys (same-point only)
 
-Production folded path uses `OpeningBatch::same_point(padded_num_vars, num_polys)`:
+Production folded path uses `OpeningBatch::new(padded_num_vars, num_polys)`:
 
 ```text
 num_t_vectors = num_polys        (polynomials in the bundled commitment)
@@ -625,9 +625,11 @@ The current `family_keys` helper hardcodes `[1, 4]`. This refactor moves that li
 onto `GeneratedFamily` so Akita and downstream catalogs can enumerate different batch
 widths without changing planner code.
 
-This replaces the stale incidence generalization plan. If multi-commitment same-point
-(`OpeningBatch::from_commitment_groups`) is enabled on the folded path in a future
-PR, key derivation may extend `new_from_opening_batch` without reviving multipoint.
+This replaces the stale incidence generalization plan for scalar same-bundle
+batching. Multi-commitment same-point batching is tracked separately in
+[`multi-group-batching.md`](multi-group-batching.md); until its grouped key and
+descriptor shape land, scalar lookup must not collapse grouped inputs through
+`new_from_opening_batch`.
 
 ### `akita-schedules` crate
 

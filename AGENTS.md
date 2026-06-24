@@ -15,30 +15,21 @@ cargo test
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
 ```
 
-## Documentation guardrails
+## Documentation
 
-Canonical policy: [`docs/documentation.md`](docs/documentation.md). The [Akita Book](book/README.md)
-is the narrative; `specs/` is the design-record library until folded
-([`specs/PRUNING.md`](specs/PRUNING.md)).
+Canonical policy: [`docs/documentation.md`](docs/documentation.md).
+Narrative docs live in the [Akita Book](book/README.md); design records in `specs/` until folded ([`specs/PRUNING.md`](specs/PRUNING.md)).
 
-- **Hard (CI):** `Documentation guardrails` workflow — dead symbols in live specs,
-  `Book-chapter:` paths, `mdbook build` (`scripts/check-doc-guardrails.sh`).
-- **Soft (PR comment):** blast-radius advisory (`<!-- akita-doc-blast-radius -->`),
-  from `docs/doc-blast-radius.json` via `scripts/doc_blast_radius.py`.
+- **Hard (CI):** dead symbols in live specs/docs, `Book-chapter:` paths, `mdbook build` — [`scripts/check-doc-guardrails.sh`](scripts/check-doc-guardrails.sh).
+- **Soft (PR comment):** blast-radius advisory — [`docs/doc-blast-radius.json`](docs/doc-blast-radius.json).
 
-## CI test timing
+## Verifier no-panic contract
 
-Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
-showing per-pass wall time vs a main baseline, critical-path wall time when passes
-run in parallel, plus per-test outliers from the nextest JUnit output. CI runs the
-non-zk and all-features nextest passes in parallel matrix jobs (`slice:index/total`
-via `matrix.shard` / `strategy.job-total`; 1-based index, not `strategy.job-index`),
-with [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) per pass (`cache: false`
-on `setup-rust-toolchain` so the explicit shared-key step owns `target/`). The
-`test-timing` job merges shard JUnit and uploads artifact `ci-test-timing-data`
-containing `summary.json` and the rendered comment/report.
+Verifier-reachable code must reject malformed input with `AkitaError` or `SerializationError`, never panic.
+Do not add verifier-reachable `panic!`, `assert!`, `unwrap`, unchecked indexing, or unbounded allocation without prior validation at a boundary.
+Full contract: [`book/src/how/verification.md`](book/src/how/verification.md) and [`docs/verifier-contract.md`](docs/verifier-contract.md).
 
-## Crate Structure
+## Crate structure
 
 Workspace members under `crates/`:
 
@@ -59,7 +50,7 @@ Workspace members under `crates/`:
 - `akita-planner` — pure, **`Cfg`-free** schedule engine. Holds generated schedule-table *types* (`GeneratedScheduleTable`, `GeneratedStep`, `table_entry`, `expand`, `schedule_from_entry`), catalog identity validation, the reusable table emitter (`emit::EmitSpec`), and the offline DP `find_schedule(key, &PlannerPolicy, ring_challenge_config, fold_challenge_shape_at_level)`. The single resolution entry point is `resolve_schedule(key, &PlannerPolicy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)`: validates catalog identity on a hit, expands the compact entry, or runs the DP on a miss. Shipped table *data* lives in `akita-schedules`, not here. Names no `CommitmentConfig` type; depends only on `akita-types` / `akita-challenges` / `akita-field`. Sits **below** `akita-config`: `CommitmentConfig::runtime_schedule` passes `Self::schedule_catalog()` into `resolve_schedule`. The preset family list and `gen_schedule_tables` binary live in `akita-config`; the binary adapts families into `EmitSpec` and writes into `crates/akita-schedules/src/generated/` (full regen: non-zk emit, `zk` emit, then `--wiring-only`)
 - `akita-pcs` — umbrella crate with `AkitaCommitmentScheme` orchestration, examples, benches, integration tests, and public re-exports
 
-## Key Abstractions
+## Key abstractions
 
 - `AkitaCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
 - `CommitmentConfig` — single user-facing trait defining every per-config policy hook (algebra, SIS family, decomposition, layout, schedule table/key/plan, transcript bind, prove/commitment params). Replaces the previous `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad. Verifier-reachable hooks return `Result<_, AkitaError>` (`level_params_with_log_basis`, `log_basis_at_level`, `ring_challenge_config`)
@@ -73,49 +64,22 @@ Workspace members under `crates/`:
 - `AkitaTranscript`, `Transcript` — spongefish-backed Fiat-Shamir layer
 - `AkitaInstanceDescriptor` — canonical transcript preamble binding algebra, setup, plan, and call shape
 
-## Verifier No-Panic Contract
-
-Verifier-reachable execution is a no-panic boundary.
-Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
-
-This applies to `akita-verifier` and any verifier-reachable code in `akita-types` (including SIS derivation + table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths, `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`), and `akita-planner` (the schedule-search DP). The DP is now verifier-reachable through `CommitmentConfig::runtime_schedule`'s table-miss fallback, so `find_schedule` and every helper it calls must reject malformed input with `AkitaError`, never panic. The verifier must still validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
-Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.
-
-Prefer strengthening existing validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points.
-Keep hot verifier arithmetic paths fast: do not add slow fallback evaluators, compatibility shims, or repeated defensive checks inside tight loops when the invariant can be enforced once at the boundary.
-Prover-only panics are acceptable for now if they are not reachable from verifier paths.
-
-## Feature Flags
+## Feature flags
 
 - `parallel` — Rayon parallelization (default)
-- `disk-persistence` — disk-backed persistence paths used by some commitment flows
-- `logging-transcript` — enables `LoggingTranscript` schedule events and smell checks in transcript tests
+- `disk-persistence` — disk-backed persistence for some commitment flows
+- `logging-transcript` — `LoggingTranscript` schedule events and smell checks
 
-## Transcript Hardening
+Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 
-The active transcript-hardening pillars are:
+## Maintainer pointers
 
-- P0: bind canonical `AkitaInstanceDescriptor` bytes through spongefish `DomainSeparator.instance(...)` before protocol replay.
-- P2: use `AkitaTranscript` plus production-ZST labels; labels are diagnostics and must not enter production sponge bytes.
-- P3: use `LoggingTranscript` tests for prover/verifier event-stream equality and wire-before-squeeze smell checks.
-
-Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardening.md): prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, and NARG migration.
-
-## Offline SIS table regen
-
-`scripts/stitch_generated_sis_table.py` regenerates `generated_sis_table/` using Sage and the
-pinned `third_party/lattice-estimator` checkout (`git submodule update --init`).
-Reference replay: `sage -python scripts/sis_golden/check.py`. Rust CI does not
-require Sage or an initialized submodule.
-
-## Profiling
-
-Canonical: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.
-
-Under committed-fold A-role SIS pricing, **fp128** production is **D=64** (exact-shell; ~20% smaller than D128). Shipped tables: `fp128_d64_onehot`, `fp128_d64_full`, `fp128_d128_*`. **D32** presets always use planner DP (no shipped table). **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128 one-hot** (CI benches at nv=28). Use `akita_config::proof_optimized::fp128::best_onehot_schedule` / `best_full_schedule` to compare ring degrees. See `.github/workflows/profile-bench.yml` for the active CI matrix. CI profile builds use `--no-default-features --features parallel,profile-ci`; when adding a bench case, extend the mode→feature table in `scripts/check_profile_ci_features.sh`.
-
-Knobs (`AKITA_MODE`, `AKITA_NUM_VARS`, `AKITA_PROFILE_TRACE`, `AKITA_PROFILE_LOG`, `AKITA_PROFILE_ANSI`, `AKITA_PROFILE_SPAN_CLOSES`, `AKITA_ALLOW_DEBUG_PROFILE`): defaults and details in `examples/profile.rs`. `RAYON_NUM_THREADS` caps Rayon threads; `--no-default-features` disables `parallel`. The `--release` guard can be bypassed with `AKITA_ALLOW_DEBUG_PROFILE=1`.
-
-## Running the verifier inside Jolt
-
-Standalone sub-workspace at `profile/akita-recursion/` (excluded from this workspace, pinned to Rust 1.95 + RISC-V, applies Jolt's `[patch.crates-io]` overrides for `arkworks-algebra`). Full runbook, knob reference, current cycle results, and open follow-ups: [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
+| Topic | Where |
+|-------|-------|
+| Crate map and dependency graph | [`docs/crate-graph.md`](docs/crate-graph.md), [`book/src/how/architecture.md`](book/src/how/architecture.md) |
+| Core API types | [`book/src/how/architecture.md`](book/src/how/architecture.md#core-types) |
+| CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
+| Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
+| Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
+| Offline SIS table regen | `scripts/stitch_generated_sis_table.py` (Sage + pinned `third_party/lattice-estimator`) |
+| Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

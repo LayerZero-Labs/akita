@@ -1,4 +1,14 @@
 use super::*;
+use crate::backend::RecursiveWitnessFlat;
+use crate::compute::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend,
+    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
+    SuffixRingSwitchProveBackend, TensorBackendFor,
+};
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 
@@ -48,11 +58,18 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<Cfg, T, B, const D: usize>(
+pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        Cfg::Field,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
@@ -66,7 +83,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + FrobeniusExtField<Cfg::Field>
         + HasUnreducedOps
@@ -75,7 +95,23 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    B: ProverComputeBackend<Cfg::Field>,
+    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    O: SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    TS: SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    R: SuffixRingSwitchProveBackend<Cfg::Field>
+        + RingSwitchProveBackend<Cfg::Field, D>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -101,9 +137,9 @@ where
             MRowLayout::WithDBlock
         };
         let out = if level_d == D {
-            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, D>(
-                backend,
-                prepared,
+            let stack = stacks.prove_stack_at_level(level);
+            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, D>(
+                stack,
                 transcript,
                 current_state,
                 level,
@@ -113,11 +149,10 @@ where
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
             })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, D>(
+            prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, D>(
                 expanded,
                 prefix_slots,
-                backend,
-                prepared,
+                stack,
                 transcript,
                 level,
                 &scheduled,
@@ -136,27 +171,45 @@ where
             })
         } else {
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+                let tier_stack = stacks.prove_stack_at_level(level);
+                let expanded_cloned = Arc::clone(expanded);
+                let commit_backend = tier_stack.commit().backend();
+                let opening_backend = tier_stack.opening().backend();
+                let tensor_backend = tier_stack.tensor().backend();
+                let ring_backend = tier_stack.ring_switch().backend();
+                let commit_prepared =
+                    commit_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let opening_prepared =
+                    opening_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let tensor_prepared =
+                    tensor_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let ring_prepared = ring_backend.prepare_expanded::<D_LEVEL>(expanded_cloned)?;
+                let level_stack = ProverComputeStack::<Cfg::Field, D_LEVEL, C, O, TS, R>::new(
+                    (commit_backend, &commit_prepared),
+                    (opening_backend, &opening_prepared),
+                    (tensor_backend, &tensor_prepared),
+                    (ring_backend, &ring_prepared),
+                    expanded.as_ref(),
+                )?;
                 let level_prefix_slots = SetupPrefixProverRegistry::new();
-                let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B, { D_LEVEL }>(
-                    backend,
-                    &level_prepared,
-                    transcript,
-                    current_state,
-                    level,
-                    level_params,
-                    m_row_layout,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
-                    ))
-                })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, B, Cfg, { D_LEVEL }>(
+                let prepared_fold =
+                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
+                        &level_stack,
+                        transcript,
+                        current_state,
+                        level,
+                        level_params,
+                        m_row_layout,
+                    )
+                    .map_err(|err| {
+                        AkitaError::InvalidInput(format!(
+                            "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
+                        ))
+                    })?;
+                prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
                     expanded,
                     &level_prefix_slots,
-                    backend,
-                    &level_prepared,
+                    &level_stack,
                     transcript,
                     level,
                     &scheduled,
@@ -222,12 +275,11 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prepare_suffix<F, L, T, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
+    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
-    level: usize,
+    _level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
@@ -238,7 +290,10 @@ where
         + HasWide
         + HalvingField
         + Invertible
-        + PseudoMersenneField,
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     L: FpExtEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
@@ -247,70 +302,72 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    B: ProverComputeBackend<F>,
+    TS: TensorBackendFor<F, RecursiveWitnessFlat, L, D>,
+    O: DigitRowsComputeBackend<F>
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+    C: ComputeBackendSetup<F>,
+    R: DigitRowsComputeBackend<F>,
 {
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level,
-            "prepare_suffix"
-        );
-    }
+    let SuffixProverState {
+        w,
+        logical_w: optional_logical_w,
+        commitment,
+        hint,
+        sumcheck_challenges,
+        #[cfg(feature = "zk")]
+        opening_public,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+        ..
+    } = current_state;
+    let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
+    let typed_hint = hint.to_typed::<D>()?;
+    let opening_point = &sumcheck_challenges;
 
-    let witness_view = current_state.w.view::<F, D>()?;
-    let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
-    let typed_hint = current_state.hint.to_typed::<D>()?;
-    let opening_point = &current_state.sumcheck_challenges;
-    #[cfg(feature = "zk")]
-    let zk_hiding = current_state.zk_hiding;
-
-    current_state
-        .commitment
-        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
-    let logical_view = logical_w.view::<F, D>()?;
-    let logical_polys = [&logical_view];
-    let fold_polys = [&witness_view];
-    let eor_opening_batch = OpeningBatch::same_point(opening_point.len(), 1)?;
-    let expected_openings = needs_extension_reduction.then(|| vec![current_state.opening]);
+    let logical_polys = [logical_w];
+    let fold_polys = [&w];
+    let eor_opening_batch =
+        VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(recursive_num_vars, 1)?;
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
-    let recursive_commitment = RingCommitment {
-        u: commitment_u.to_vec(),
-    };
-    prepare_fold_inner::<F, L, T, _, _, _, B, D>(
-        backend,
-        prepared,
-        needs_extension_reduction,
-        &logical_polys,
-        &fold_polys,
-        &eor_opening_batch,
-        opening_batch.clone(),
-        &opening_batch,
+    let commitment_u = commitment.as_ring_slice::<D>()?;
+    let suffix_commitment = (
+        RingCommitment {
+            u: commitment_u.to_vec(),
+        },
+        typed_hint,
+    );
+    let fold_claims = ProverOpeningBatch::new_suffix(
         opening_point,
+        recursive_num_vars,
+        &fold_polys,
+        suffix_commitment,
+    )?;
+    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+        stack,
+        needs_extension_reduction,
+        fold_claims,
+        &logical_polys[..],
+        &eor_opening_batch,
         #[cfg(feature = "zk")]
         None,
         #[cfg(feature = "zk")]
-        Some(current_state.opening_public),
+        Some(opening_public),
         true,
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_openings,
         opening_point.to_vec(),
         || Ok(()),
         level_params,
         alpha,
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
-        vec![typed_hint],
-        std::slice::from_ref(&recursive_commitment),
         m_row_layout,
-        current_state.commitment,
     )
 }
 
@@ -351,7 +408,7 @@ mod tests {
             final_factor: TestF::one(),
         });
 
-        let opening_batch = OpeningBatch::same_point(0, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatchShape::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,

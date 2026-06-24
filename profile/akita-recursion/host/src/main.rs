@@ -150,7 +150,7 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        decoded.verifier_claims(&openings),
+        decoded.verifier_opening_batch(&openings),
         BasisMode::Lagrange,
         decoded.setup_contribution_mode,
     )

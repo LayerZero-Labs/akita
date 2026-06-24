@@ -45,7 +45,7 @@ pub(crate) struct SetupContributionShape {
     pub n_a: usize,
     pub n_d: usize,
     pub n_b: usize,
-    pub num_polys_per_commitment_group: Vec<usize>,
+    pub num_polys_per_segment: Vec<usize>,
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
     pub z_first: bool,
@@ -68,7 +68,7 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 1,
             n_b: 2,
-            num_polys_per_commitment_group: vec![1],
+            num_polys_per_segment: vec![1],
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
@@ -80,7 +80,7 @@ impl SetupContributionShape {
     /// Tiered single-point root: first-tier `B'` reused across `tier_split`
     /// column-slices plus the second-tier `F` (COMMIT) block, exercising the
     /// tiered `bar_omega` / direct-scan equivalence. Tiering requires a single
-    /// commitment group (`num_points == 1`) and `n_f > 0`; `tier_split` divides
+    /// commitment bundle (`num_points == 1`) and `n_f > 0`; `tier_split` divides
     /// the per-group `n_cols_t = n_a · depth_open · num_blocks` (here 64).
     pub fn tiered_root_single_point() -> Self {
         let mut shape = Self::root_single_point();
@@ -101,7 +101,7 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 2,
             n_b: 2,
-            num_polys_per_commitment_group: vec![3],
+            num_polys_per_segment: vec![3],
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
@@ -127,6 +127,7 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
+        shape.num_polys_per_segment = vec![4];
         shape
     }
 
@@ -149,8 +150,8 @@ impl SetupContributionShape {
 
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
-        let num_points = shape.num_polys_per_commitment_group.len();
-        let num_t_vectors = shape.num_polys_per_commitment_group.iter().sum();
+        let num_points = shape.num_polys_per_segment.len();
+        let num_t_vectors = shape.num_polys_per_segment.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
@@ -170,13 +171,7 @@ impl SetupContributionFixture {
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
-        let n_cols_t = shape
-            .num_polys_per_commitment_group
-            .iter()
-            .copied()
-            .max()
-            .unwrap()
-            * cols_per_poly_t;
+        let n_cols_t = shape.num_polys_per_segment.iter().copied().max().unwrap() * cols_per_poly_t;
         // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
         // commits `tier_split·n_b·depth_open` decomposed digits.
         let f_stride = shape.tier_split * shape.n_b * shape.depth_open;
@@ -233,7 +228,7 @@ impl SetupContributionFixture {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: shape.num_polys_per_commitment_group.iter().sum(),
+                max_num_batched_polys: shape.num_polys_per_segment.iter().sum(),
                 gen_ring_dim: TEST_RING_DIM,
                 max_setup_len,
                 #[cfg(feature = "zk")]
@@ -281,7 +276,7 @@ impl SetupContributionFixture {
             tier_split: shape.tier_split,
             n_f: shape.n_f,
             rows,
-            num_polys_per_commitment_group: shape.num_polys_per_commitment_group.clone(),
+            num_polys: shape.num_polys_per_segment.iter().sum(),
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,

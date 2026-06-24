@@ -5,7 +5,7 @@
 /// The gadget base is `b = 2^log_basis`. Each ring coefficient with centered
 /// magnitude fitting in `log_commit_bound` bits is decomposed into
 /// `ceil(log_commit_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DecompositionParams {
     /// Base-2 logarithm of the gadget base (e.g. 3 for base-8 digits in [-4, 3]).
     pub log_basis: u32,

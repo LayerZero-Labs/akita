@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
 | Status      | proposed, draft for iteration |
-| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (`quang/s3-s5-sis-estimator-spec`) |
+| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
 
 ## Summary
 
@@ -17,7 +17,7 @@ protocol.
 
 The cutover has three linked parts.
 First, folding challenges are sampled from operator-norm accepted distributions,
-starting with the D=64 exact-shell family and rejection threshold `gamma(c) <= 16`.
+starting with the D=64 exact-shell family and production rejection threshold `gamma(c) <= 18`.
 Second, the folded witness `z = sum_i c_i * s_i` carries a certified Euclidean
 norm bound, proved over the finite field as an exact integer statement.
 Third, the SIS planner, generated tables, public security model, transcript
@@ -55,6 +55,34 @@ The primary protocol surfaces are:
 - `akita-config` / `akita-planner`: schedule search, shipped-table selection,
   generated table representation, and proof-size accounting under the L2 MSIS
   model.
+### Product scope (operator-norm rejection)
+
+Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
+infrastructure: the planner may enable it only when Γ collision pricing
+strictly lowers audited A-rank vs ω pricing **and** the fold-level witness
+scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
+`optimal_m_r_split`) is strictly lower with rejection on at that geometry **and**
+the fold draw samples at most `2^12` sparse challenges (flat `2^{r_vars} · num_claims`,
+or tensor `num_claims · (left_len + right_len)`).
+**Production scope today is D=64 only.** The only shipped binding preset is
+`ExactShell { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
+D=32 uses `BoundedL1Norm`; D=128 and D=256 use `Uniform` sparse challenges
+(`proof_optimized_ring_challenge_config`). For those families
+`operator_norm_cap` equals L1 mass, so the flag stays false and the sampler
+skips the rejection oracle. D=128/D=256 flat folds may still use fold-linf
+tail-bound digit tightening ([`fold-linf-rejection.md`](fold-linf-rejection.md));
+that is orthogonal to operator-norm rejection.
+Extending rejection to other ring dimensions is deferred until a binding Γ
+preset and a certified acceptance floor exist for that `(family, d)` pair.
+L2 certificate geometry (`fold_l2_certificate`, `B_l2_pub`) is a separate
+follow-up PR split from #195.
+
+**Implementation notes ([#207](https://github.com/LayerZero-Labs/akita/pull/207)).**
+The certified op-norm predicate uses transposed frequency tables with `i64`
+accumulators and fused 4-wide chunk paths (AVX2 / NEON).
+`choose_op_norm_rejection_for_a_role` is recomputed per geometry during offline
+schedule search and table expansion.
+
 ### Invariants
 
 - **Single security table, per-role norm derivation.** All SIS binding decisions
@@ -95,8 +123,11 @@ The primary protocol surfaces are:
 - **Accepted challenge entropy.** Each production challenge family has at least
   128 bits of accepted Fiat-Shamir support after rejection sampling.
   For D=64 exact shell, the target starting point is
-  `ExactShell { count_mag1: 31, count_mag2: 11 }` with `gamma(c) <= 16`, whose
+  `ExactShell { count_mag1: 31, count_mag2: 11 }` with `gamma(c) <= 18`, whose
   raw support is about `2^130.152`.
+  The rational acceptance floor `13/20` is certified for tail-bound sizing on
+  levels with `op_norm_rejection` enabled; a vendored checked ≥128-bit artifact
+  in CI remains open (S2).
 - **No adversarial challenge bias hole.** The security proof must account for the
   accepted challenge distribution used by the extractor.
   Honest-pair experiments are calibration only and cannot justify the production
@@ -160,12 +191,16 @@ The primary protocol surfaces are:
       `rounded_up_collision_norm_s`, derived `d·B²` table keys (`COEFF_LINF_BUCKETS`,
       `collision_l2_sq_for_linf_envelope`), and pow2-ladder fallback; `collision_inf` is
       removed from production call sites (`collision_l2_sq` on `AjtaiKeyParams`).
-- [x] *(#155, S3 infra)* Exact-shell operator-norm rejection sampling,
-      `operator_norm_cap`, and descriptor binding are implemented. Production
-      D=64 keeps `(30, 12)` with `T = 54` (no rejection) until S2 certifies
-      `(31, 11), T = 16`.
+- [x] *(#155, S3 infra; D64 op-norm split PR)* Exact-shell operator-norm rejection
+      sampling, `operator_norm_cap`, per-level `op_norm_rejection` on `LevelParams`,
+      and descriptor binding are implemented. Production D=64 ships `(31, 11)` with
+      `T = 18`; the planner enables rejection sampling only on fold levels where
+      Γ pricing strictly lowers audited A-rank **and** witness-scoring cost is cheaper
+      with rejection on **and** sparse-draw count is at most `2^12`.
 - [ ] The D=64 accepted family has a rigorous support lower bound of at least
       128 bits, not just a Monte Carlo estimate.
+      *(D64 op-norm split PR ships rational floor `13/20` at `T = 18`;
+      vendored checked cert in CI remains open.)*
 - [ ] The prover derives the grouped `z_hat` limbs from the actual
       `DecomposeFoldWitness.centered_coeffs` used for ring-switch witness
       construction, and its reconstructed `Z_SQUARED` matches a direct integer
@@ -311,11 +346,12 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Fold width: `B = num_claims * num_blocks` (typically `num_claims = 1` at
   root).
 - Per-coordinate RMS: `z_rms = ||z||_2 / sqrt(coeffs)`.
-- Current production D=64 exact shell is `(30, 12)`, so
-  `rho2 = 30 + 4 * 12 = 78`.
-  Proposed cutover shell `(31, 11)` would give `rho2 = 75`.
-- Formula comparisons use candidate `Gamma = 16`.
-  The profile sampler does **not** yet enforce operator-norm rejection.
+- Current production D=64 exact shell is `(31, 11)`, so
+  `rho2 = 31 + 4 * 11 = 75`.
+  Operator-norm rejection is enabled per fold level only when Γ pricing lowers
+  audited A-rank and witness-scoring cost favors rejection; the sampler enforces
+  `gamma(c) <= 18` on those levels.
+- Formula comparisons in historical calibration notes use candidate `Gamma = 16`.
 - Backsolved source second moment (calibration only):
   `mu2_implied = z_rms^2 / (rho2 * B)`.
   This is not a direct measurement of `sum_i ||s_i||_2^2`.
@@ -333,11 +369,10 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Dense profile runs may panic afterward on a pre-existing proof-size overcount
   assertion (`planned` vs `actual` bytes).
   Norm logs are emitted before that panic.
-- Op-norm rejection on fixed-energy exact shell does not change `rho2 = 78`;
-  it would tighten `Gamma` and tail behavior, not coefficient energy.
-- These runs use the *current* `(30, 12)` shell (`rho2 = 78`), not the proposed
-  production `(31, 11)` shell (`rho2 = 75`). The backsolved second moments should
-  be re-measured under `(31, 11)` before they feed planner code.
+- Op-norm rejection on fixed-energy exact shell does not change `rho2 = 75` for
+  `(31, 11)`; it tightens Γ-priced A-role ranks and tail behavior on enabled levels.
+- Historical calibration tables below used the prior `(30, 12)` shell (`rho2 = 78`).
+  Re-measure under `(31, 11)` before feeding backsolved second moments into planner code.
 - Next instrumentation: log `sum_i ||s_i||_2` and `sum_i ||s_i||_2^2`
   directly at the decompose-fold source boundary before turning heuristics into
   planner code.
@@ -950,7 +985,7 @@ SparseChallengeConfig::ExactShell {
     count_mag1: 31,
     count_mag2: 11,
 }
-operator_norm_threshold = 16
+operator_norm_threshold = 18
 ```
 
 The raw support is:
@@ -962,7 +997,7 @@ binom(64, 42) · binom(42, 31) · 2^42 ~= 2^130.152255.
 To retain 128 accepted challenge bits, the proof must establish:
 
 ```text
-Pr[gamma(c) <= 16] >= 2^(128 - 130.152255...) ~= 0.225.
+Pr[gamma(c) <= 18] >= 2^(128 - 130.152255...) ~= 0.225.
 ```
 
 The implementation must not rely on machine floating-point FFTs to enforce
@@ -1045,7 +1080,7 @@ the mathematical predicate `gamma_D(c) <= T`.
 
 This fast path is deterministic, integer-only, and works without changing the
 transcript stream.
-`D = 64` with `T = 16` is the first production target, but the same table
+`D = 64` with `T = 18` is the first production target, but the same table
 format should cover `D = 32` and `D = 128`.
 Only one representative of each conjugate frequency pair needs to be checked,
 though tests should compare the reduced loop against the full `0..D` formula.
@@ -1355,8 +1390,10 @@ Implementation on branch `quang/s3-s5-sis-estimator-spec` (PR #155) and later sl
 - **S5b** (same #155): L2 table regen + stitch (pow2 ladder + derived `d·B²` keys),
   `collision_l2_sq` rename, wire A/B/D pricing through `collision_l2_sq_for_linf_envelope`.
   *(Done in #155.)*
-- **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
-  production D=64 shell/threshold; see below).
+- **S3**: operator-norm threshold + transcript rejection.
+  **Production D=64 cutover landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207)
+  (`(31, 11), T = 18`, per-level gating, `2^12` sparse-draw cap, fused predicate,
+  `fp128_d64_*` regen). Vendored S2 ≥128-bit acceptance cert still open.
 - **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
 
 ### Decisions To Lock (gating)
@@ -1368,10 +1405,10 @@ Each gates specific slices, noted in parentheses.
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
 - D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
-- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3).
-  **Frozen on `main` until S2 certifies:** keep `ExactShell { count_mag1: 30, count_mag2: 12 }`
-  with no `operator_norm_threshold` field. Do not land `(31, 11), T = 16` in
-  `proof_optimized` presets until the S2 accepted-support lower bound is a checked artifact.
+- Production D=64 shell and threshold: **`(31, 11), T = 18` shipped** in
+  [#207](https://github.com/LayerZero-Labs/akita/pull/207) (per-level `op_norm_rejection`
+  gating, witness-scoring cost, `2^12` sparse-draw cap).
+  Vendored S2 accepted-support lower bound ≥128 bits remains a follow-up artifact.
 - Certificate `Z_SQUARED` ceiling from `β_inf` and `balanced_digit_max` per
   level (not `‖s‖_2` surrogates). (S4, S8)
 - Certificate placement: whether the limb / carry virtualization claims are
@@ -1395,7 +1432,7 @@ WAVE 0  (independent, start now, parallel)
 WAVE 1
   S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)  DONE
   S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)                         #155
-  S3  threshold + transcript rejection       (S1, S2 for production policy)
+  S3  threshold + transcript rejection       (S1)                         DONE (D64 prod)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
 
 WAVE 2
@@ -1430,7 +1467,7 @@ square bounds validated at construction. No floating point on the decision path.
 
 **S2 — D=64 accepted-support lower bound.** *(independent, research)*
 Establish a rigorous `>= 128`-bit accepted-support lower bound for shell
-`(31, 11)` at `T = 16` (`Pr[gamma(c) <= 16] >= 0.225`), as a checked certificate
+`(31, 11)` at `T = 18` (`Pr[strict_accept] >= 13/20` on Monte Carlo), as a checked certificate
 artifact rather than full enumeration.
 Decide the fallback (larger shell or higher `T`) if it lands short.
 Gates the production policy in S3.
@@ -1457,14 +1494,15 @@ The four-square slack is committed as `ell_hat` on every realized level (not jus
 ZK), so the certificate proves an equality; small-field levels need a `u128`
 target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
 
-**S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell after S2)*
-`crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`.
-Add `operator_norm_threshold` to `ExactShell`, reject-and-resample with stable
-XOF consumption (no prover/verifier divergence) calling the S1 predicate, and
-bind shell parameters + threshold into `domain_separator_bytes`.
-Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
-**Do not** change `proof_optimized` D=64 production presets until S2 certifies the
-accepted-support lower bound.
+**S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell)*
+`crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`,
+`sampler/op_norm_accumulate.rs` (transposed `i64` predicate, AVX2/NEON fusion),
+`akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate, `2^12` cap),
+`akita-planner` (`choose_op_norm_rejection_for_a_role`, `expand` n_a audit),
+`LevelParams.op_norm_rejection`.
+Production D=64: `ExactShell { count_mag1: 31, count_mag2: 11 }`, `T = 18`,
+certified acceptance floor `13/20`, `fp128_d64_*` schedule regen.
+**Landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207). Vendored S2 ≥128-bit acceptance cert remains open.
 
 **S5a — Euclidean SIS table regen (lattice-estimator).** *(done in #155)*
 [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).

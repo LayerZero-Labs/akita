@@ -49,20 +49,20 @@ use akita_types::derive_tensor_extension_opening_claim_from_partials;
 #[cfg(feature = "zk")]
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
-    build_trace_claim_root, ensure_trace_stage2_supported, flatten_batched_commitment_rows,
-    generate_y, prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
+    append_claim_values_to_transcript, batched_eval_target_from_opening_batch,
+    build_trace_claim_root, ensure_trace_stage2_supported, generate_y, prepare_opening_point,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,
     trace_weight_layout_from_segment, w_ring_element_count_with_counts, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    FoldLinfProtocolBinding, FpExtEncoding, LevelParams, MRowLayout, OpeningBatch,
-    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, Schedule, SetupContributionMode, SetupSumcheckProof,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
+    CleartextWitnessProof, CommitmentGroup, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FlatRingVec, FoldLinfProtocolBinding, FpExtEncoding, LevelParams, MRowLayout,
+    OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
+    SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, TraceClaim, VerifierOpeningBatch,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

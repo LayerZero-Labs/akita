@@ -10,7 +10,7 @@ use super::build::{
 };
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningBatch,
+    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningBatchShape,
     PreparedOpeningPoint, RingRelationSegmentLayout, TraceFieldBlockOpening, TraceRingBlockOpening,
     TraceTerm, TraceWeightLayout,
 };
@@ -175,7 +175,7 @@ where
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
     lp: &'a LevelParams,
-    opening_batch: &'a OpeningBatch,
+    opening_batch: &'a OpeningBatchShape,
     prepared_point: &'a PreparedOpeningPoint<F, E, D>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
@@ -243,7 +243,7 @@ pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_te
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     lp: &LevelParams,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -368,7 +368,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     b_open: &[E],
     basis: BasisMode,
@@ -405,7 +405,7 @@ where
 pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     b_open: &[E],
     basis: BasisMode,

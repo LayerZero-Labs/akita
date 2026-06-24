@@ -62,6 +62,10 @@ pub struct LevelParams {
     /// levels `block_len` is not necessarily `2^r_vars`.
     pub r_vars: usize,
     pub stage1_config: SparseChallengeConfig,
+    /// When true, fold challenges are operator-norm rejected and A-role SIS
+    /// collision is priced with `Γ`; when false, samples from the full shell
+    /// and prices with L1 mass `ω`.
+    pub op_norm_rejection: bool,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
     /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
@@ -132,6 +136,7 @@ impl LevelParams {
                 weight: 0,
                 nonzero_coeffs: Vec::new(),
             },
+            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -183,6 +188,7 @@ impl LevelParams {
             m_vars: 0,
             r_vars: 0,
             stage1_config,
+            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -204,7 +210,7 @@ impl LevelParams {
             .effective_l1_mass(&self.stage1_config)
     }
 
-    /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded
+    /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
     /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
     #[inline]
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
@@ -249,14 +255,13 @@ impl LevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
-    /// Operator-norm acceptance probability `p` as a rational `p_num / p_den`.
-    ///
-    /// Shipping tail-bound-with-grind presets bind `p = 1` because
-    /// `effective_operator_norm_cap >= challenge_l1_mass`. Empirical `p < 1`
-    /// sizing is deferred until a binding cap is shipped.
+    /// Operator-norm acceptance probability `p_opnorm` as a rational `p_num / p_den`.
     #[inline]
     pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
-        (1, 1)
+        (
+            self.fold_linf_cap_config.op_norm_accept_p_num,
+            self.fold_linf_cap_config.op_norm_accept_p_den,
+        )
     }
 
     /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
@@ -286,19 +291,26 @@ impl LevelParams {
     }
 
     /// Attach the level-static fold-linf cap config derived from this layout.
-    #[must_use]
-    pub fn with_fold_linf_cap_config(mut self, field_bits: u32, root_num_claims: usize) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
+    pub fn with_fold_linf_cap_config(
+        mut self,
+        field_bits: u32,
+        root_num_claims: usize,
+    ) -> Result<Self, AkitaError> {
         self.field_bits_hint = field_bits;
         self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
+            self.op_norm_rejection,
             self.inner_width(),
-        );
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        )?;
+        let challenge =
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         let witness = self.fold_witness_norms();
         self.num_digits_fold_one = crate::sis::num_digits_fold(
             self.r_vars,
@@ -326,7 +338,7 @@ impl LevelParams {
             self.cached_num_digits_fold_claims = 0;
             self.cached_num_digits_fold_value = self.num_digits_fold_one;
         }
-        self
+        Ok(self)
     }
 
     /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
@@ -356,10 +368,8 @@ impl LevelParams {
         let witness = self.fold_witness_norms();
         let witness_linf = witness.infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        let challenge =
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
         crate::sis::fold_witness_linf_cap(
             beta,
@@ -455,10 +465,8 @@ impl LevelParams {
         {
             return Ok(self.cached_num_digits_fold_value);
         }
-        let challenge = crate::sis::FoldChallengeNorms {
-            infinity_norm: self.challenge_infinity_norm() as u128,
-            l1_norm: self.challenge_l1_mass() as u128,
-        };
+        let challenge =
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
         crate::sis::num_digits_fold(
             self.r_vars,
             num_claims,
@@ -519,6 +527,7 @@ impl LevelParams {
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        bytes.push(u8::from(self.op_norm_rejection));
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
@@ -593,7 +602,7 @@ impl LevelParams {
     // ring-switch row eval) must derive its block starts from these helpers
     // rather than recompute the layout inline.
 
-    /// Sent-commitment row count per commitment group: the second-tier `F`
+    /// Sent-commitment row count per bundle bundle: the second-tier `F`
     /// rows (`f_key.row_len()`) when tiered, else the first-tier `B` rows
     /// (`b_key.row_len()`). This is the length of `RingCommitment.u`.
     #[inline]
@@ -604,7 +613,7 @@ impl LevelParams {
         }
     }
 
-    /// Inner `B`-consistency rows per commitment group: `0` when not tiered,
+    /// Inner `B`-consistency rows per bundle bundle: `0` when not tiered,
     /// else `tier_split · b_key.row_len()` (the `f` reused-`B'` slice images,
     /// hidden in the witness `w`).
     #[inline]
@@ -618,8 +627,8 @@ impl LevelParams {
 
     /// Ring-element length of the decomposed concatenated slice images
     /// `û_concat = decompose(u_1 ‖ … ‖ u_f)` carried in the witness `w`, per
-    /// commitment group: `tier_split · b_key.row_len() · num_digits_open` when
-    /// tiered, else `0`. Multiply by the commitment-group count for the total
+    /// commitment bundle: `tier_split · b_key.row_len() · num_digits_open` when
+    /// tiered, else `0`. Multiply by the commitment-bundle count for the total
     /// witness contribution. This must agree across the planner, the prover's
     /// `build_w_coeffs`, and the verifier so the recursive witness length is
     /// consistent.
@@ -804,6 +813,7 @@ impl LevelParams {
             m_vars,
             r_vars,
             stage1_config: self.stage1_config.clone(),
+            op_norm_rejection: self.op_norm_rejection,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
@@ -821,7 +831,7 @@ impl LevelParams {
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
         };
         let field_bits = self.field_bits_for_cache();
-        Ok(rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims))
+        rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
     }
 
     /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
@@ -838,7 +848,7 @@ impl LevelParams {
     /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
     /// or threaded through [`Self::with_decomp`], and would let the SIS
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
-    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Self {
+    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
@@ -869,6 +879,7 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
+            op_norm_rejection: other.op_norm_rejection,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
@@ -965,7 +976,7 @@ mod tests {
         let params = sample_params_only();
         let layout_lp = sample_layout_lp();
 
-        let lp = params.with_layout(&layout_lp, 128);
+        let lp = params.with_layout(&layout_lp, 128).unwrap();
 
         assert_eq!(lp.ring_dimension, 64);
         assert_eq!(lp.log_basis, layout_lp.log_basis);
@@ -981,7 +992,9 @@ mod tests {
 
     #[test]
     fn derived_widths_match_ajtai_col_len() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
 
         assert_eq!(lp.inner_width(), lp.a_key.col_len());
         assert_eq!(lp.outer_width(), lp.b_key.col_len());
@@ -991,7 +1004,7 @@ mod tests {
     #[test]
     fn derived_log_values() {
         let layout_lp = sample_layout_lp();
-        let lp = sample_params_only().with_layout(&layout_lp, 128);
+        let lp = sample_params_only().with_layout(&layout_lp, 128).unwrap();
 
         assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
         assert_eq!(lp.log_block_len(), layout_lp.m_vars);
@@ -1000,7 +1013,9 @@ mod tests {
 
     #[test]
     fn m_row_count_values() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
 
         assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
@@ -1013,7 +1028,9 @@ mod tests {
 
     #[test]
     fn canonical_row_offsets_match_open_coded_non_tiered() {
-        let lp = sample_params_only().with_layout(&sample_layout_lp(), 128);
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
         let n_d = lp.d_key.row_len();

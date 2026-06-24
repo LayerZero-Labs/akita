@@ -513,7 +513,7 @@ pub fn tail_segment_layout(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
     let d = lp.ring_dimension;
@@ -563,7 +563,7 @@ pub fn tail_segment_layout(
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
     let r_plane_rings = lp
-        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_segments, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -575,7 +575,7 @@ pub fn tail_segment_layout(
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
     let r_field_elems = lp
-        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_segments, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
@@ -742,7 +742,7 @@ pub fn build_segment_typed_witness<const D: usize, F>(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -753,7 +753,7 @@ where
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
         field_bits,
     )?;
     let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
@@ -824,7 +824,7 @@ pub fn validate_segment_typed_z_payload<F: FieldCore>(
 pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
-    num_commitment_groups: usize,
+    num_segments: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -840,7 +840,7 @@ where
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
         field_bits,
     )?;
     if expected_layout != witness.layout {

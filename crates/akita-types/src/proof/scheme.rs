@@ -1,42 +1,12 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{AppendToTranscript, BasisMode, SetupContributionMode};
+use crate::{AppendToTranscript, BasisMode, SetupContributionMode, VerifierOpeningBatch};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
+use std::borrow::Cow;
 
 /// Opening-point coordinates used by batched verification inputs.
-pub type OpeningPoints<'a, F> = &'a [F];
-
-/// One PCS commitment and the claimed openings of its bundled polynomials.
-///
-/// `openings[i]` is the claimed evaluation of `polynomials[i]` at the batch's
-/// shared opening point. A batched call may cite multiple `CommittedOpenings`
-/// entries (multiple commitment objects), but every slot opens at the same
-/// point; multipoint openings (different points per claim) are not supported.
-#[derive(Debug, Clone)]
-pub struct CommittedOpenings<'a, F, C> {
-    /// Claimed evaluations for the bundled polynomials at the shared point.
-    pub openings: &'a [F],
-    /// Commitment covering `openings`.
-    pub commitment: &'a C,
-}
-
-/// Batched verifier input: one shared opening point plus commitment bundles.
-///
-/// Shape: `(shared_point, vec![CommittedOpenings, ...])`.
-///
-/// # Protocol contract
-///
-/// - **Single opening point.** All claims in the batch share `shared_point`.
-///   To open the same polynomials at different points, run separate prove/verify
-///   calls.
-/// - **Folded batched prove/verify (production path).** One commitment object
-///   bundling `N` polynomials (`vec![CommittedOpenings { openings: N, .. }]`
-///   with `N > 1` or multiple slots in one bundle). This is the shape exercised
-///   by E2E tests and shipped planner tables.
-/// - **Multiple commitment objects at one point** are representable in this
-///   type but not yet supported on the folded recursion path (future work).
-pub type VerifierClaims<'a, F, C> = (OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>);
+pub type OpeningPoints<'a, F> = Cow<'a, [F]>;
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -64,17 +34,17 @@ where
     /// Verify a fused batched opening proof at one shared opening point.
     ///
     /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`OpeningBatch`](crate::OpeningBatch) built from `claims` (single shared point, no multipoint).
+    /// [`VerifierOpeningBatch`] built from `claims` (single shared point, no multipoint).
     ///
     /// # Errors
     ///
     /// Returns an error when verification fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_verify<'a, T: Transcript<F>>(
+    fn batched_verify<T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, Self::ExtField, Self::Commitment>,
+        claims: VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;
