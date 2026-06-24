@@ -398,7 +398,6 @@ mod tests {
                 &[F::one()],
                 0,
                 MRowLayout::WithDBlock,
-                None,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
@@ -532,7 +531,6 @@ mod tests {
                 &[F::one()],
                 0,
                 MRowLayout::WithDBlock,
-                None,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
