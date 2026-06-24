@@ -874,8 +874,7 @@ where
         let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
         #[cfg(not(feature = "zk"))]
         let proof_w_eval = w_eval;
-        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
-        let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
+        let stage3_output = prove_stage3::<F, L, T, D>(
             setup_contribution_mode,
             expanded.as_ref(),
             prefix_slots,
@@ -886,8 +885,22 @@ where
             alpha,
             &sumcheck_challenges,
             ring_bits,
+            logical_w.as_i8_digits(),
+            w_eval,
             transcript,
         )?;
+        let (stage3_sumcheck_proof, challenges, w_eval, public_w_eval) =
+            if let Some(output) = stage3_output {
+                (
+                    Some(output.proof),
+                    output.challenges,
+                    output.witness_claim,
+                    output.witness_claim,
+                )
+            } else {
+                (None, sumcheck_challenges.clone(), w_eval, proof_w_eval)
+            };
+        transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &public_w_eval);
         let stage1_proof = stage1_proof.ok_or_else(|| {
             AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
         })?;
@@ -931,10 +944,10 @@ where
                 commitment: committed_commitment,
                 hint: committed_hint,
                 log_basis: scheduled.next_params.log_basis,
-                sumcheck_challenges,
+                sumcheck_challenges: challenges,
                 opening: w_eval,
                 #[cfg(feature = "zk")]
-                opening_public: proof_w_eval,
+                opening_public: public_w_eval,
                 #[cfg(feature = "zk")]
                 zk_hiding,
             },
@@ -1161,8 +1174,10 @@ pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     alpha: L,
     sumcheck_challenges: &[L],
     ring_bits: usize,
+    witness_digits: &[i8],
+    witness_claim: L,
     transcript: &mut T,
-) -> Result<Option<SetupSumcheckProof<L>>, AkitaError>
+) -> Result<Option<Stage3ProveOutput<L>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     L: FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
@@ -1179,12 +1194,22 @@ where
                 tau1,
                 alpha,
                 &sumcheck_challenges[ring_bits..],
+                Stage2Handoff {
+                    witness_digits,
+                    stage2_point: sumcheck_challenges,
+                    stage2_claim: witness_claim,
+                },
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
             )?;
-            Ok(Some(SetupSumcheckProof {
-                claim: output.claim,
-                sumcheck: output.sumcheck,
+            Ok(Some(Stage3ProveOutput {
+                proof: SetupSumcheckProof {
+                    setup_claim: output.setup_claim,
+                    witness_claim: output.witness_claim,
+                    sumcheck: output.sumcheck,
+                },
+                witness_claim: output.witness_claim,
+                challenges: output.challenges,
             }))
         }
         SetupContributionMode::Direct => Ok(None),

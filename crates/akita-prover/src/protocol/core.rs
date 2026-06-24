@@ -9,7 +9,9 @@ use crate::protocol::extension_opening_reduction::{
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
+use crate::protocol::sumcheck::{
+    AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver, Stage2Handoff, Stage3ProveOutput,
+};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
@@ -36,7 +38,7 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
+    ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};

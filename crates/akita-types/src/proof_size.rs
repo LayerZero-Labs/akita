@@ -121,11 +121,11 @@ pub fn level_proof_bytes(
 /// planner DP: the shipped schedules price the direct-mode fold, and recursive
 /// observed sizes are reported separately.
 ///
-/// The payload is the claim (one challenge-field element) followed by a
+/// The payload is the setup claim, the reduced carry claim, and a
 /// degree-[`crate::SETUP_SUMCHECK_DEGREE`] product sumcheck. The variable order
-/// is the `D` ring-coordinate bits followed by the setup-ring index bits, so
-/// the round count is `log2(D) + log2(next_pow2(setup_ring_len))` and each
-/// round ships `SETUP_SUMCHECK_DEGREE` compressed coefficients.
+/// is the `D` ring-coordinate bits followed by the setup-ring index bits, so the
+/// round count is `log2(D) + log2(next_pow2(setup_ring_len))` and each round
+/// ships `SETUP_SUMCHECK_DEGREE` compressed coefficients.
 ///
 /// `ring_dimension` and the next-power-of-two of `setup_ring_len` must be
 /// powers of two; this offline helper is not on the verifier path.
@@ -138,8 +138,8 @@ pub fn stage3_setup_product_bytes(
     let ring_bits = ring_dimension.trailing_zeros() as usize;
     let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
     let rounds = ring_bits + lambda_bits;
-    // Claimed setup contribution + degree-2 product sumcheck rounds.
-    challenge_elem_bytes
+    // Claimed setup contribution + reduced carry claim + product sumcheck rounds.
+    2 * challenge_elem_bytes
         + sumcheck_bytes(rounds, crate::SETUP_SUMCHECK_DEGREE, challenge_elem_bytes)
 }
 
@@ -262,7 +262,8 @@ mod tests {
         let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
         let rounds = ring_bits + lambda_bits;
         SetupSumcheckProof {
-            claim: F::zero(),
+            setup_claim: F::zero(),
+            witness_claim: F::zero(),
             sumcheck: akita_sumcheck::SumcheckProof {
                 round_polys: (0..rounds)
                     .map(|_| CompressedUniPoly {
@@ -367,7 +368,8 @@ mod tests {
         for &d in &[32usize, 64, 128] {
             for &setup_ring_len in &[1usize, 3, 8, 17, 64, 100] {
                 let proof = dummy_stage3_proof::<F>(d, setup_ring_len);
-                let serialized = proof.claim.serialized_size(Compress::No)
+                let serialized = proof.setup_claim.serialized_size(Compress::No)
+                    + proof.witness_claim.serialized_size(Compress::No)
                     + proof.sumcheck.serialized_size(Compress::No);
                 assert_eq!(
                     stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len),

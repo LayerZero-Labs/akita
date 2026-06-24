@@ -5,6 +5,9 @@
 //! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
 //! `omega(lambda) * alpha(y)` table.
 
+mod handoff;
+mod utils;
+
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
@@ -16,14 +19,21 @@ use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupPrefixProverRegistry, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
+use handoff::{prepare_stage2_handoff, Stage2HandoffState};
+use utils::{
+    accumulate_left_round, accumulate_right_round, fold_left_round, fold_right_round, product_claim,
+};
+
+pub use handoff::Stage2Handoff;
 
 /// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
 pub struct SetupSumcheckProver<E: FieldCore> {
     table: Vec<E>,
     left_factor: Vec<E>,
     right_factor: Vec<E>,
+    stage2_handoff: Stage2HandoffState<E>,
     input_claim: E,
     right_rounds: usize,
     total_rounds: usize,
@@ -32,19 +42,35 @@ pub struct SetupSumcheckProver<E: FieldCore> {
 /// Output of the setup product sumcheck prover.
 pub struct SetupSumcheckProverOutput<E: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
-    pub claim: E,
+    pub setup_claim: E,
+    /// Final carried claim after Stage 3. With Stage-2 handoff enabled this is
+    /// `W(r_stage3)`; otherwise it is the setup-product final claim.
+    pub witness_claim: E,
+    /// Stage-3 sumcheck point that produced `witness_claim`.
+    pub challenges: Vec<E>,
     /// Degree-two product sumcheck over `S(lambda, y) * omega(lambda) * alpha(y)`.
     pub sumcheck: SumcheckProof<E>,
 }
 
-impl<E: FieldCore> SetupSumcheckProver<E> {
+pub(crate) struct Stage3ProveOutput<E: FieldCore> {
+    pub(crate) proof: SetupSumcheckProof<E>,
+    pub(crate) witness_claim: E,
+    pub(crate) challenges: Vec<E>,
+}
+
+impl<E: FieldCore + FromPrimitiveInt> SetupSumcheckProver<E> {
     /// Construct a factored product-sumcheck prover.
     ///
     /// # Errors
     ///
     /// Returns an error if factor lengths are not powers of two, are empty, or
     /// if `table.len() != left_factor.len() * right_factor.len()`.
-    fn new(table: Vec<E>, left_factor: Vec<E>, right_factor: Vec<E>) -> Result<Self, AkitaError> {
+    fn new(
+        table: Vec<E>,
+        left_factor: Vec<E>,
+        right_factor: Vec<E>,
+        stage2_handoff: Stage2HandoffState<E>,
+    ) -> Result<Self, AkitaError> {
         if left_factor.is_empty()
             || right_factor.is_empty()
             || !left_factor.len().is_power_of_two()
@@ -65,13 +91,24 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
             });
         }
 
-        let input_claim = product_claim(&table, &left_factor, &right_factor);
+        if !stage2_handoff.matches_shape(left_factor.len(), right_factor.len(), table.len()) {
+            return Err(AkitaError::InvalidInput(
+                "stage2 handoff shape must match stage3 setup product shape".to_string(),
+            ));
+        }
+        if stage2_handoff.product_claim() != stage2_handoff.expected_claim() {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let mut input_claim = product_claim(&table, &left_factor, &right_factor);
+        input_claim += stage2_handoff.expected_claim();
         let right_rounds = right_factor.len().trailing_zeros() as usize;
         let total_rounds = right_rounds + left_factor.len().trailing_zeros() as usize;
         Ok(Self {
             table,
             left_factor,
             right_factor,
+            stage2_handoff,
             input_claim,
             right_rounds,
             total_rounds,
@@ -105,6 +142,7 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         tau1: &[E],
         alpha: E,
         x_challenges: &[E],
+        stage2_handoff: Stage2Handoff<'_, E>,
         transcript: &mut T,
         sample_round: SampleRound,
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
@@ -152,9 +190,25 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
         let setup_entries = setup_view.as_slice();
 
-        let lambda_len = required.checked_next_power_of_two().ok_or_else(|| {
+        let ring_bits = D.trailing_zeros() as usize;
+        let mut lambda_len = required.checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("setup product lambda length overflow".into())
         })?;
+        let witness_lambda_bits = stage2_handoff
+            .stage2_point
+            .len()
+            .checked_sub(ring_bits)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("stage3 witness point length underflow".to_string())
+            })?;
+        let witness_lambda_len = 1usize
+            .checked_shl(u32::try_from(witness_lambda_bits).map_err(|_| {
+                AkitaError::InvalidSetup("stage3 witness lambda bits overflow".to_string())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("stage3 witness lambda length overflow".to_string())
+            })?;
+        lambda_len = lambda_len.max(witness_lambda_len);
         bar_omega.resize(lambda_len, E::zero());
 
         let table_len = lambda_len.checked_mul(D).ok_or_else(|| {
@@ -171,19 +225,26 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
                 }
             });
 
-        let mut prover = Self::new(setup_table, bar_omega, alpha_pows)?;
-        let claim = prover.input_claim();
-        let (sumcheck, _challenges, _final_claim) =
-            <Self as SumcheckInstanceProverExt<E>>::prove::<F, T, _>(
-                &mut prover,
-                transcript,
-                sample_round,
-            )?;
-        Ok(SetupSumcheckProverOutput { claim, sumcheck })
+        let setup_claim = product_claim(&setup_table, &bar_omega, &alpha_pows);
+        let stage2_handoff = prepare_stage2_handoff::<E, D>(stage2_handoff, lambda_len, ring_bits)?;
+
+        let mut prover = Self::new(setup_table, bar_omega, alpha_pows, stage2_handoff)?;
+        let (sumcheck, challenges, _final_claim) = <Self as SumcheckInstanceProverExt<E>>::prove::<
+            F,
+            T,
+            _,
+        >(&mut prover, transcript, sample_round)?;
+        let witness_claim = prover.stage2_handoff.final_value();
+        Ok(SetupSumcheckProverOutput {
+            setup_claim,
+            witness_claim,
+            challenges,
+            sumcheck,
+        })
     }
 }
 
-impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {
+impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.total_rounds
     }
@@ -197,19 +258,30 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {
     }
 
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
-        let (constant, linear, quadratic) = if round < self.right_rounds {
+        let (mut constant, mut linear, mut quadratic) = if round < self.right_rounds {
             accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
         } else {
             accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
         };
+        let handoff = &self.stage2_handoff;
+        let (w_constant, w_linear, w_quadratic) = if round < self.right_rounds {
+            handoff.accumulate_right_round()
+        } else {
+            handoff.accumulate_left_round()
+        };
+        constant += w_constant;
+        linear += w_linear;
+        quadratic += w_quadratic;
         UniPoly::from_coeffs(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, round: usize, r_round: E) {
         if round < self.right_rounds {
             fold_right_round(&mut self.table, &mut self.right_factor, r_round);
+            self.stage2_handoff.fold_right_round(r_round);
         } else {
             fold_left_round(&mut self.table, &mut self.left_factor, r_round);
+            self.stage2_handoff.fold_left_round(r_round);
         }
     }
 }
@@ -349,116 +421,4 @@ where
         tier_split: lp.tier_split,
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
     })
-}
-
-fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
-    let right_len = right_factor.len();
-    cfg_fold_reduce!(
-        0..left_factor.len(),
-        E::zero,
-        |mut acc, left_idx| {
-            let left_weight = left_factor[left_idx];
-            let row = &table[left_idx * right_len..(left_idx + 1) * right_len];
-            for (&value, &right_weight) in row.iter().zip(right_factor.iter()) {
-                acc += value * left_weight * right_weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
-}
-
-fn accumulate_right_round<E: FieldCore>(
-    table: &[E],
-    left_factor: &[E],
-    right_factor: &[E],
-) -> (E, E, E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    cfg_fold_reduce!(
-        0..left_factor.len(),
-        || (E::zero(), E::zero(), E::zero()),
-        |(mut constant, mut linear, mut quadratic), left_idx| {
-            let left_weight = left_factor[left_idx];
-            let row_base = left_idx * right_len;
-            for pair_idx in 0..half {
-                let s0 = table[row_base + 2 * pair_idx];
-                let s1 = table[row_base + 2 * pair_idx + 1];
-                let f0 = left_weight * right_factor[2 * pair_idx];
-                let f1 = left_weight * right_factor[2 * pair_idx + 1];
-                let ds = s1 - s0;
-                let df = f1 - f0;
-                constant += s0 * f0;
-                linear += s0 * df + ds * f0;
-                quadratic += ds * df;
-            }
-            (constant, linear, quadratic)
-        },
-        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
-    )
-}
-
-fn accumulate_left_round<E: FieldCore>(
-    table: &[E],
-    left_factor: &[E],
-    right_weight: E,
-) -> (E, E, E) {
-    let half = left_factor.len() / 2;
-    cfg_fold_reduce!(
-        0..half,
-        || (E::zero(), E::zero(), E::zero()),
-        |(mut constant, mut linear, mut quadratic), pair_idx| {
-            let s0 = table[2 * pair_idx];
-            let s1 = table[2 * pair_idx + 1];
-            let f0 = left_factor[2 * pair_idx] * right_weight;
-            let f1 = left_factor[2 * pair_idx + 1] * right_weight;
-            let ds = s1 - s0;
-            let df = f1 - f0;
-            constant += s0 * f0;
-            linear += s0 * df + ds * f0;
-            quadratic += ds * df;
-            (constant, linear, quadratic)
-        },
-        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
-    )
-}
-
-fn fold_pair<E: FieldCore>(left: E, right: E, r: E) -> E {
-    left + r * (right - left)
-}
-
-fn fold_right_round<E: FieldCore>(table: &mut Vec<E>, right_factor: &mut Vec<E>, r: E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    let left_len = table.len() / right_len;
-    let mut folded = vec![E::zero(); left_len * half];
-    cfg_chunks_mut!(&mut folded, half)
-        .enumerate()
-        .for_each(|(left_idx, row)| {
-            let row_base = left_idx * right_len;
-            for pair_idx in 0..half {
-                row[pair_idx] = fold_pair(
-                    table[row_base + 2 * pair_idx],
-                    table[row_base + 2 * pair_idx + 1],
-                    r,
-                );
-            }
-        });
-    let folded_right = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(right_factor[2 * idx], right_factor[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    *right_factor = folded_right;
-    *table = folded;
-}
-
-fn fold_left_round<E: FieldCore>(table: &mut Vec<E>, left_factor: &mut Vec<E>, r: E) {
-    let half = left_factor.len() / 2;
-    let folded_table = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    let folded_left = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(left_factor[2 * idx], left_factor[2 * idx + 1], r))
-        .collect::<Vec<_>>();
-    *table = folded_table;
-    *left_factor = folded_left;
 }

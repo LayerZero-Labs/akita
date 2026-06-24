@@ -731,7 +731,7 @@ where
 
             let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
-                opening: root_stage2.next_w_eval(),
+                opening: proof.root.next_w_eval(),
                 #[cfg(feature = "zk")]
                 opening_mask: zk_ext_mask_lc_at::<F, E>(
                     zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,

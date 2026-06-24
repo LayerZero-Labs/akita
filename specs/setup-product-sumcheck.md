@@ -74,6 +74,10 @@ Key abstractions and surfaces:
 - **Transcript determinism.** The stage-3 sumcheck samples its challenges via
   the canonical `CHALLENGE_SUMCHECK_ROUND` label; prover and verifier event
   streams must match (covered by the existing `logging-transcript` checks).
+  In recursive setup mode, Stage 3 batches the Stage-2 next-witness claim with
+  the setup-product claim and reduces both to the Stage-3 point. Non-terminal
+  folds absorb the reduced next-witness claim under
+  `ABSORB_STAGE3_NEXT_W_EVAL` before any successor fold derives challenges.
 
 ### Non-Goals
 
@@ -161,7 +165,12 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   evaluation, and call `verify(...)`. The verifier replays the
   `ExtensionOpeningReductionSumcheck`, then closes the final claim against
   `setup_val * omega * alpha_val`, where `omega` is the succinct `omega_S`
-  evaluation (`SetupEvalPlan::evaluate_bar_omega_with_eq`).
+  evaluation (`SetupEvalPlan::evaluate_bar_omega_with_eq`). When recursive carry
+  batching is active, the same Stage-3 sumcheck also includes the Stage-2
+  next-witness opening reduction over `eq(r_stage2, ·)`, so both prover and
+  verifier carry the derived `W(r_stage3)` into the next suffix fold. After this
+  replay, both sides absorb that reduced handoff under
+  `ABSORB_STAGE3_NEXT_W_EVAL`.
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
 - **Recursion harness** (`profile/akita-recursion`): the `--setup-mode` CLI flag
