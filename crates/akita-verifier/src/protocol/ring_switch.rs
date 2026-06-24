@@ -632,14 +632,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
 
         // ----- E-hat ---------------------------------------------------------
+        // Precompute the high-eq window once and reuse it as an O(1) lookup
+        // inside the slice evaluator. Indexed relative to `e_offset_high`.
+        let e_offset_high = layout.offset_e >> offset_low_bits;
+        let eq_hi_e_table: Vec<E> = (0..=self.num_claims * self.depth_open)
+            .map(|k| akita_algebra::offset_eq::eq_eval_at_index(high_challenges, e_offset_high + k))
+            .collect();
         let e_structured_contribution = {
             let _span = tracing::info_span!("e_structured").entered();
             EStructuredSlicesEvaluator {
-                high_challenges,
-                offset_high: layout.offset_e >> offset_low_bits,
                 gadget_vector: &g1_open,
                 challenge_block_summaries: &challenge_block_summaries,
                 challenge_weight: self.eq_tau1[0],
+                high_eq_table: &eq_hi_e_table,
             }
             .evaluate()
         };
@@ -659,14 +664,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let a_start = 1 + self.n_d_active() + (commit_rows_pg + b_inner_rows_pg);
 
         // ----- T -------------------------------------------------------------
+        let t_offset_high = layout.offset_t >> offset_low_bits;
+        let a_row_count = self.rows.saturating_sub(a_start);
+        let eq_hi_t_table: Vec<E> = (0..=self.num_claims * self.depth_open * a_row_count)
+            .map(|k| akita_algebra::offset_eq::eq_eval_at_index(high_challenges, t_offset_high + k))
+            .collect();
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
             TStructuredSlicesEvaluator {
-                high_challenges,
-                offset_high: layout.offset_t >> offset_low_bits,
                 gadget_vector: &g1_open,
                 challenge_block_summaries: &challenge_block_summaries,
                 a_row_weights: &self.eq_tau1[a_start..self.rows],
+                high_eq_table: &eq_hi_t_table,
             }
             .evaluate()
         };
@@ -689,6 +698,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     layout.offset_t,
                     layout.offset_z,
                     layout.offset_u,
+                    // Reuse the high-eq window tables already built for the
+                    // structured e/t slices instead of recomputing them.
+                    Some(&eq_hi_e_table),
+                    Some(&eq_hi_t_table),
                 );
                 match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
                     SetupEvaluation::Direct(value) => Ok(value),
@@ -713,13 +726,23 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     self.block_len,
                     |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
                 )?];
+                let z_high_challenges = &x_challenges[z_offset_low_bits..];
+                let z_offset_high = layout.offset_z >> z_offset_low_bits;
+                let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
+                let eq_hi_z_table: Vec<E> = (0..=z_hi_len)
+                    .map(|k| {
+                        akita_algebra::offset_eq::eq_eval_at_index(
+                            z_high_challenges,
+                            z_offset_high + k,
+                        )
+                    })
+                    .collect();
                 ZStructuredPow2SlicesEvaluator {
-                    high_challenges: &x_challenges[z_offset_low_bits..],
-                    offset_high: layout.offset_z >> z_offset_low_bits,
                     g1_commit: &g1_commit,
                     fold_gadget: &fold_gadget,
                     a_block_summary: &a_block_summary,
                     consistency_weight: self.eq_tau1[0],
+                    high_eq_table: &eq_hi_z_table,
                 }
                 .evaluate()
             } else {

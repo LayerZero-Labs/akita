@@ -246,6 +246,8 @@ where
         layout.offset_t,
         layout.offset_z,
         layout.offset_u,
+        None,
+        None,
     )?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
