@@ -1,30 +1,32 @@
 # Transcript and instance binding
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
 The Fiat-Shamir layer and the canonical preamble that binds the instance before
 any protocol replay, so prover and verifier squeeze identical challenges.
 
 ## The transcript layer
 
-The spongefish-backed `AkitaTranscript`, the transcript-hardening pillars
-(P0/P2/P3), and the wire-before-squeeze discipline that the logging transcript
-tests enforce.
+Production code uses spongefish-backed `AkitaTranscript` with production-ZST
+labels (labels are diagnostics and must **not** enter production sponge bytes).
 
-**Sources to fold in**
+Active hardening pillars:
 
-- `crates/akita-transcript/README.md`, `crates/akita-transcript/src/`.
-- `AGENTS.md` (Transcript Hardening), `specs/transcript-hardening.md`.
-- `specs/transcript-immediate-fixes.md` (active), `crates/akita-pcs/tests/transcript_hardening.rs`.
+| Pillar | Requirement |
+|--------|-------------|
+| **P0** | Bind canonical `AkitaInstanceDescriptor` bytes through spongefish `DomainSeparator.instance(...)` before protocol replay |
+| **P2** | Use `AkitaTranscript` plus production-ZST labels only as diagnostics |
+| **P3** | `LoggingTranscript` tests enforce prover/verifier event-stream equality and wire-before-squeeze discipline |
+
+Deferred work (prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration): [`specs/transcript-hardening.md`](../../../specs/transcript-hardening.md).
+
+Implementation: `crates/akita-transcript/`.
+Tests: `crates/akita-pcs/tests/transcript_hardening.rs`.
 
 ## AkitaInstanceDescriptor
 
-The canonical descriptor bound through `DomainSeparator.instance(...)`: what it
-binds (algebra, setup, plan, call shape) and the single `bind_transcript_instance_descriptor`
-helper shared by prover and verifier.
+The canonical descriptor binds algebra, setup, plan, and call shape.
+Prover and verifier share one helper:
 
-**Sources to fold in**
+- `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
+- `crates/akita-types/src/instance_descriptor.rs` — descriptor shape and serialization
 
-- `crates/akita-types/src/instance_descriptor.rs:42-55`.
-- `crates/akita-config/src/transcript_binding.rs` (`bind_transcript_instance_descriptor`).
-- Paper §3.5 `sec:akita-one-step` ("Transcript binding").
+Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
