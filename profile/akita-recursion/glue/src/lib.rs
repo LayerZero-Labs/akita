@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, OpeningBatch, PointVariableSelection,
-    RingCommitment, SetupContributionMode, SetupPrefixVerifierRegistry,
+    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
+    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -107,12 +107,10 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> OpeningBatch<'static, F, &'a RingCommitment<F, D>> {
-        OpeningBatch::from_groups(
+    ) -> VerifierOpeningBatch<'static, F, &'a RingCommitment<F, D>> {
+        VerifierOpeningBatch::from_groups(
             self.opening_point.clone(),
             vec![CommitmentGroup {
-                point_vars: PointVariableSelection::prefix(self.opening_point.len(), self.opening_point.len())
-                    .expect("singleton recursion opening batch uses the full point"),
                 claims: openings.to_vec(),
                 commitment: &self.commitment,
             }],
