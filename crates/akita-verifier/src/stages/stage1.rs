@@ -86,6 +86,7 @@ where
         &lp.fold_challenge_shape,
         stage1_fold_challenge_labels(),
         grind_nonce,
+        lp.op_norm_rejection,
     )
 }
 
