@@ -469,7 +469,8 @@ where
     #[cfg(feature = "zk")]
     zk_hiding: ZkHidingProverState<F>,
     m_row_layout: MRowLayout,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&'a CleartextWitnessShape>,
+    #[cfg(not(feature = "zk"))]
+    terminal_direct_witness_shape: Option<&'a CleartextWitnessShape>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation

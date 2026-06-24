@@ -44,9 +44,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<
-        &CleartextWitnessShape,
-    >,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
