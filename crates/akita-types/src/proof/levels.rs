@@ -193,10 +193,7 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupSumcheckProof<L: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
-    pub setup_claim: L,
-    /// Reduced next-witness claim produced by Stage 3 when recursive setup
-    /// batching is active.
-    pub witness_claim: L,
+    pub claim: L,
     /// Degree-two product sumcheck over `S(lambda, y) * omega(lambda) * alpha(y)`.
     pub sumcheck: SumcheckProof<L>,
 }
@@ -609,15 +606,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
     pub fn next_w_eval(&self) -> L {
-        match self {
-            Self::Intermediate {
-                stage3_sumcheck_proof: Some(stage3),
-                ..
-            } => stage3.witness_claim,
-            Self::Intermediate { stage2, .. } | Self::Terminal { stage2, .. } => {
-                stage2.next_w_eval()
-            }
-        }
+        self.stage2().next_w_eval()
     }
 
     /// Scheduled terminal final witness length.
@@ -1100,12 +1089,10 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     ///
     /// Panics on terminal-root and zero-fold batched proofs.
     pub fn next_w_eval(&self) -> L {
-        let fold = self
-            .as_fold()
-            .expect("next_w_eval() called on a non-fold root proof");
-        fold.stage3_sumcheck_proof
-            .as_ref()
-            .map_or_else(|| fold.stage2.next_w_eval(), |stage3| stage3.witness_claim)
+        self.as_fold()
+            .expect("next_w_eval() called on a non-fold root proof")
+            .stage2
+            .next_w_eval()
     }
 }
 

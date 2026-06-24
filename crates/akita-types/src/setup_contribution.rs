@@ -121,7 +121,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .required
             .checked_next_power_of_two()
             .ok_or_else(|| AkitaError::InvalidSetup("setup omega lambda length overflow".into()))?;
-        if eq_lambda.len() < lambda_len || !eq_lambda.len().is_power_of_two() {
+        if eq_lambda.len() != lambda_len {
             return Err(AkitaError::InvalidSize {
                 expected: lambda_len,
                 actual: eq_lambda.len(),

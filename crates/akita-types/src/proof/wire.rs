@@ -222,10 +222,7 @@ where
 {
     if let Some(stage3_sumcheck) = stage3_sumcheck {
         stage3_sumcheck
-            .setup_claim
-            .serialize_with_mode(&mut writer, compress)?;
-        stage3_sumcheck
-            .witness_claim
+            .claim
             .serialize_with_mode(&mut writer, compress)?;
         stage3_sumcheck
             .sumcheck
@@ -242,8 +239,7 @@ where
     L: FieldCore + AkitaSerialize,
 {
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
-        stage3_sumcheck.setup_claim.serialized_size(compress)
-            + stage3_sumcheck.witness_claim.serialized_size(compress)
+        stage3_sumcheck.claim.serialized_size(compress)
             + stage3_sumcheck.sumcheck.serialized_size(compress)
     })
 }
@@ -262,15 +258,10 @@ where
         return Ok(None);
     };
     shape.check()?;
-    let setup_claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let witness_claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
-    Ok(Some(SetupSumcheckProof {
-        setup_claim,
-        witness_claim,
-        sumcheck,
-    }))
+    Ok(Some(SetupSumcheckProof { claim, sumcheck }))
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
@@ -480,8 +471,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
                 #[cfg(feature = "zk")]
                 stage2.sumcheck_proof_masked.check()?;
                 if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
-                    stage3_sumcheck.setup_claim.check()?;
-                    stage3_sumcheck.witness_claim.check()?;
+                    stage3_sumcheck.claim.check()?;
                     stage3_sumcheck.sumcheck.check()?;
                 }
                 stage2.next_w_commitment.check()?;
@@ -887,8 +877,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
         #[cfg(feature = "zk")]
         stage2.sumcheck_proof_masked.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
-            stage3_sumcheck.setup_claim.check()?;
-            stage3_sumcheck.witness_claim.check()?;
+            stage3_sumcheck.claim.check()?;
             stage3_sumcheck.sumcheck.check()?;
         }
         stage2.next_w_commitment.check()?;

@@ -526,6 +526,9 @@ where
             challenges
         }
     };
+    if let AkitaStage2Proof::Intermediate(proof) = stage2 {
+        transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof.next_w_eval());
+    }
     Ok(sumcheck_challenges)
 }
 
@@ -535,8 +538,7 @@ fn verify_stage3<F, E, T, const D: usize>(
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
-    stage2_handoff: Option<(E, &[E])>,
-) -> Result<Option<Vec<E>>, AkitaError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -548,18 +550,9 @@ where
             &sumcheck_challenges[rs.ring_bits..],
             rs.alpha,
         )?;
-        let stage2_handoff = stage2_handoff.ok_or(AkitaError::InvalidProof)?;
-        return verifier
-            .verify::<F, T, D>(
-                setup,
-                next_fold_level_params,
-                proof,
-                stage2_handoff,
-                transcript,
-            )
-            .map(Some);
+        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
     }
-    Ok(None)
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -745,7 +738,7 @@ where
             prepared.trace_claim_scales.as_deref(),
         )?)
     };
-    let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.setup_claim);
+    let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
     #[cfg(feature = "zk")]
     let trace_claim_mask = {
         let mut trace_claim_mask = ZkR1csLinearCombination::<E>::zero();
@@ -777,29 +770,12 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    let stage2_next_w_eval = match prepared.stage2 {
-        AkitaStage2Proof::Intermediate(proof) => Some(proof.next_w_eval()),
-        AkitaStage2Proof::Terminal(_) => None,
-    };
-    let stage3_replay = verify_stage3::<F, E, T, D>(
+    verify_stage3::<F, E, T, D>(
         setup,
         transcript,
         &rs,
         &sumcheck_challenges,
         prepared.stage3,
-        stage2_next_w_eval.map(|opening| (opening, sumcheck_challenges.as_slice())),
     )?;
-    if let Some(stage3_challenges) = stage3_replay {
-        let stage3 = prepared
-            .stage3
-            .as_ref()
-            .map(|(proof, _)| *proof)
-            .ok_or(AkitaError::InvalidProof)?;
-        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &stage3.witness_claim);
-        return Ok(stage3_challenges);
-    }
-    if let Some(next_w_eval) = stage2_next_w_eval {
-        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &next_w_eval);
-    }
     Ok(sumcheck_challenges)
 }

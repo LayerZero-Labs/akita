@@ -81,8 +81,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         })
     }
 
-    /// Verify a setup product sumcheck for the setup contribution, optionally
-    /// batched with the Stage-2 next-witness claim reduction.
+    /// Verify a setup product sumcheck for the setup contribution.
     ///
     /// The sumcheck variable order is ring-coordinate bits first (`y`), followed
     /// by setup-ring index bits (`lambda`).
@@ -91,9 +90,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &LevelParams,
         proof: &SetupSumcheckProof<E>,
-        stage2_handoff: (E, &[E]),
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError>
+    ) -> Result<(), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + AkitaSerialize,
@@ -131,19 +129,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             setup_len
         };
 
-        let (stage2_witness_claim, stage2_point) = stage2_handoff;
-        let input_claim = proof.setup_claim + stage2_witness_claim;
-        let rounds = stage2_point.len();
-        if rounds < self.rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: self.rounds,
-                actual: rounds,
-            });
-        }
-        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
-            input_claim,
-            rounds,
+            proof.claim,
+            self.rounds,
             SETUP_SUMCHECK_DEGREE,
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
@@ -161,20 +150,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        let setup_final_claim = setup_val * omega * alpha_val;
-        if stage2_point.len() != challenges.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: challenges.len(),
-                actual: stage2_point.len(),
-            });
-        }
-        let eq_factor = EqPolynomial::mle(stage2_point, &challenges)?;
-        let inverse = eq_factor.inverse().ok_or(AkitaError::InvalidProof)?;
-        let witness_claim = (final_claim - setup_final_claim) * inverse;
-        if proof.witness_claim != witness_claim {
+        if final_claim != setup_val * omega * alpha_val {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(challenges)
+        Ok(())
     }
 }
 
@@ -182,7 +161,7 @@ fn lambda_eq_table<E: FieldCore>(required: usize, rho_lambda: &[E]) -> Result<Ve
     let lambda_len = required
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
-    if rho_lambda.len() < lambda_len.trailing_zeros() as usize {
+    if rho_lambda.len() != lambda_len.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
     }
     EqPolynomial::evals(rho_lambda)
@@ -239,7 +218,7 @@ where
     let lambda_len = required
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("setup MLE lambda length overflow".into()))?;
-    if eq_lambda.len() < lambda_len || !eq_lambda.len().is_power_of_two() {
+    if eq_lambda.len() != lambda_len {
         return Err(AkitaError::InvalidSize {
             expected: lambda_len,
             actual: eq_lambda.len(),
