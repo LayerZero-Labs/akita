@@ -404,6 +404,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         offset_t: usize,
         offset_z: usize,
         offset_u: usize,
+        // Optional precomputed high-eq window tables (relative to the segment's high
+        // offset): `eq_hi_e[k] == eq_high(e_offset_high + k)` and likewise for `t`.
+        eq_hi_e: Option<&[E]>,
+        eq_hi_t: Option<&[E]>,
     ) -> Result<Self, AkitaError>
     where
         F: FieldCore,
@@ -585,9 +589,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         } else {
             let e_hi_len =
                 checked_mul(inputs.num_claims, inputs.depth_open, "e-hat high-eq width")?;
-            let eq_hi_e_table: Vec<E> = (0..=e_hi_len)
-                .map(|k| eq_eval_at_index(high_challenges, e_offset_high + k))
-                .collect();
+            let eq_hi_e_storage;
+            let eq_hi_e_table: &[E] = if let Some(table) = eq_hi_e {
+                if table.len() <= e_hi_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: e_hi_len + 1,
+                        actual: table.len(),
+                    });
+                }
+                table
+            } else {
+                eq_hi_e_storage = (0..=e_hi_len)
+                    .map(|k| eq_eval_at_index(high_challenges, e_offset_high + k))
+                    .collect::<Vec<E>>();
+                &eq_hi_e_storage
+            };
             cfg_into_iter!(0..n_cols_e)
                 .map(|current_index| {
                     let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
@@ -610,9 +626,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             inputs.n_a,
             "T high-eq width",
         )?;
-        let eq_hi_t_table: Vec<E> = (0..=t_hi_len)
-            .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
-            .collect();
+        let eq_hi_t_storage;
+        let eq_hi_t_table: &[E] = if let Some(table) = eq_hi_t {
+            if table.len() <= t_hi_len {
+                return Err(AkitaError::InvalidSize {
+                    expected: t_hi_len + 1,
+                    actual: table.len(),
+                });
+            }
+            table
+        } else {
+            eq_hi_t_storage = (0..=t_hi_len)
+                .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
+                .collect::<Vec<E>>();
+            &eq_hi_t_storage
+        };
         let t_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_segments)
             .map(|g| {
                 let group_size = inputs.num_polys_per_segment[g];
@@ -1249,6 +1277,8 @@ mod tests {
             64,
             offset_z,
             0,
+            None,
+            None,
         )
         .unwrap();
 
