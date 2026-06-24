@@ -145,6 +145,12 @@ where
                 level,
                 level_params,
                 m_row_layout,
+                #[cfg(not(feature = "zk"))]
+                if is_terminal_level {
+                    Some(terminal_direct_witness_shape)
+                } else {
+                    None
+                },
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -200,6 +206,12 @@ where
                         level,
                         level_params,
                         m_row_layout,
+                        #[cfg(not(feature = "zk"))]
+                        if is_terminal_level {
+                            Some(terminal_direct_witness_shape)
+                        } else {
+                            None
+                        },
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -282,6 +294,9 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     _level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<
+        &akita_types::CleartextWitnessShape,
+    >,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -368,6 +383,8 @@ where
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
         m_row_layout,
+        #[cfg(not(feature = "zk"))]
+        terminal_direct_witness_shape,
     )
 }
 

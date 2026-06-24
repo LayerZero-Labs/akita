@@ -130,6 +130,7 @@ fn plain_root_d_image<const D: usize>(
             &mut transcript,
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
+            None,
         )
         .expect("debug ring relation");
 

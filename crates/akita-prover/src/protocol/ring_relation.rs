@@ -432,6 +432,7 @@ impl RingRelationProver {
         transcript: &mut T,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
+        terminal_direct_witness_shape: Option<&akita_types::CleartextWitnessShape>,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -539,6 +540,12 @@ impl RingRelationProver {
             #[cfg(feature = "zk")]
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
+        let terminal_fold = matches!(m_row_layout, MRowLayout::WithoutDBlock);
+        let terminal_tail_t_vectors = fold_grind::terminal_tail_t_vectors_for_grind(
+            &lp,
+            m_row_layout,
+            terminal_direct_witness_shape,
+        )?;
         let (z_folded_rings, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
@@ -547,6 +554,8 @@ impl RingRelationProver {
                 &polys,
                 &lp,
                 num_claims,
+                terminal_fold,
+                terminal_tail_t_vectors,
             )?;
 
         // Terminal levels drop the D-block from M entirely, so `y` must

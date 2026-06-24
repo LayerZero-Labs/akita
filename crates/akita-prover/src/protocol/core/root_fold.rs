@@ -44,6 +44,9 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
+    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<
+        &CleartextWitnessShape,
+    >,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
@@ -115,6 +118,8 @@ where
         basis,
         BlockOrder::RowMajor,
         m_row_layout,
+        #[cfg(not(feature = "zk"))]
+        terminal_direct_witness_shape,
     )
 }
 
@@ -205,6 +210,8 @@ where
         claims,
         root_params,
         MRowLayout::WithDBlock,
+        #[cfg(not(feature = "zk"))]
+        None,
         #[cfg(feature = "zk")]
         zk_hiding,
         basis,
@@ -316,6 +323,8 @@ where
         claims,
         root_params,
         MRowLayout::WithoutDBlock,
+        #[cfg(not(feature = "zk"))]
+        Some(terminal_direct_witness_shape),
         #[cfg(feature = "zk")]
         owned_zk_hiding,
         basis,
