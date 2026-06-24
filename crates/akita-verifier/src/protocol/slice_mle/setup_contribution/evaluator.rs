@@ -30,6 +30,8 @@ pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     offset_t: usize,
     offset_z: usize,
     offset_u: usize,
+    eq_hi_e: Option<&'a [E]>,
+    eq_hi_t: Option<&'a [E]>,
 }
 
 impl<'a, F, E> SetupEvaluator<'a, F, E>
@@ -49,6 +51,8 @@ where
         offset_t: usize,
         offset_z: usize,
         offset_u: usize,
+        eq_hi_e: Option<&'a [E]>,
+        eq_hi_t: Option<&'a [E]>,
     ) -> Self {
         Self {
             inputs,
@@ -61,6 +65,8 @@ where
             offset_t,
             offset_z,
             offset_u,
+            eq_hi_e,
+            eq_hi_t,
         }
     }
 
@@ -99,6 +105,8 @@ where
             self.offset_t,
             self.offset_z,
             self.offset_u,
+            self.eq_hi_e,
+            self.eq_hi_t,
         )
     }
 }
