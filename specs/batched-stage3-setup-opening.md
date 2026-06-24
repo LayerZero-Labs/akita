@@ -154,8 +154,10 @@ The setup prefix/product is opened at `rho_setup`.
   `SetupContributionMode::Direct`, the next suffix state remains the stage-2
   opening point and claim.
 - **Prover/verifier transcript symmetry.** Both sides absorb the stage-2
-  next-witness opening, sample `eta`, replay batched stage-3 rounds, and derive
-  the same `rho_w`/`rho_setup` projections.
+  next-witness opening, sample `eta`, replay batched stage-3 rounds, absorb the
+  stage-3 `W(rho_w)` opening under `ABSORB_STAGE3_NEXT_W_EVAL`, and derive the
+  same `rho_w`/`rho_setup` projections before the next suffix fold samples any
+  challenges.
 - **No verifier panics.** Mismatched proof shape, bad domain sizes, malformed
   prefix projections, or inconsistent final claims return `AkitaError`.
 
@@ -183,6 +185,8 @@ The setup prefix/product is opened at `rho_setup`.
 - [ ] `SuffixProverState.opening` is set to `W(rho_w)` in recursive setup mode.
 - [ ] The verifier derives the next suffix verifier state from the batched
       stage-3 point, not from the stage-2 point.
+- [ ] Both prover and verifier absorb `W(rho_w)` with
+      `ABSORB_STAGE3_NEXT_W_EVAL` before deriving any next-suffix challenges.
 - [ ] Direct setup mode remains byte-for-byte compatible unless proof-shape
       metadata explicitly changes.
 - [ ] Tampering with either the carried witness opening, the setup claim, or a
@@ -239,7 +243,8 @@ For a non-terminal fold in `SetupContributionMode::Recursive`:
 7. Run batched stage 3 over `batched_vars`.
 8. Let `rho` be the batched stage-3 challenge vector.
 9. Compute/prove `W(rho_w)`.
-10. Store the next suffix state as:
+10. Absorb `W(rho_w)` with `ABSORB_STAGE3_NEXT_W_EVAL`.
+11. Store the next suffix state as:
 
     ```text
     sumcheck_challenges = rho_w
@@ -261,7 +266,8 @@ For a non-terminal fold in `SetupContributionMode::Recursive`:
 6. Verify batched stage 3 over `batched_vars`.
 7. Split the batched challenge vector into `rho_w` and `rho_setup`.
 8. Check the final relation above.
-9. Thread the next suffix verifier state with `opening_point = rho_w` and
+9. Absorb the verified `W(rho_w)` claim with `ABSORB_STAGE3_NEXT_W_EVAL`.
+10. Thread the next suffix verifier state with `opening_point = rho_w` and
    `opening = W(rho_w)`.
 
 #### Proof Shape

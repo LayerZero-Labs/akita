@@ -562,6 +562,7 @@ where
             eta,
             transcript,
         )?;
+        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
         return Ok(Some(rho_w));
     }
     Ok(None)

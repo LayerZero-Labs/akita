@@ -1231,6 +1231,7 @@ where
                 let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
                     sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
                 })?;
+                transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
                 Ok(Some(Stage3ProveOutput {
                     proof: SetupSumcheckProof {
                         claim: output.setup_product_claim,
