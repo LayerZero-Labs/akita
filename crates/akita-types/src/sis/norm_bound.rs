@@ -331,10 +331,10 @@ fn fold_witness_linf_grind_union_ln(
     grind_target_accept_den: u128,
 ) -> Result<u128, AkitaError> {
     let miss = grind_target_accept_den - grind_target_accept_num;
-    let numer = 2u128
+    let numerator = 2u128
         .saturating_mul(num_fold_coeffs)
         .saturating_mul(grind_target_accept_den);
-    Ok(ceil_natural_log(numer.div_ceil(miss)))
+    Ok(ceil_natural_log(numerator.div_ceil(miss)))
 }
 
 /// Conservative integer for
