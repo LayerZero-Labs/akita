@@ -322,10 +322,9 @@ fn op_norm_block_ln_term(num_fold_blocks: u128, p_num: u128, p_den: u128) -> u12
     num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
 }
 
-/// Conservative integer for `ln(2·num_fold_coeffs / (1 - p_grind))` with
-/// `p_grind = grind_target_accept_num / grind_target_accept_den`.
+/// Direct union-bound ln for `ln(2·num_fold_coeffs / (1 - p_grind))`.
 #[inline]
-fn fold_witness_linf_grind_union_ln(
+fn fold_witness_linf_grind_union_ln_direct(
     num_fold_coeffs: u128,
     grind_target_accept_num: u128,
     grind_target_accept_den: u128,
@@ -335,6 +334,57 @@ fn fold_witness_linf_grind_union_ln(
         .saturating_mul(num_fold_coeffs)
         .saturating_mul(grind_target_accept_den);
     Ok(ceil_natural_log(numerator.div_ceil(miss)))
+}
+
+/// Legacy scaled ln used for tail-bound sizing when the operator-norm block
+/// filter does not bind (`p_opnorm = 1`). Shipped `D ∈ {128, 256}` tables were
+/// tuned against this approximation; the direct union ln is required only once
+/// `p_opnorm < 1` at `D = 64`.
+#[inline]
+fn fold_witness_linf_grind_union_ln_legacy(
+    num_fold_coeffs: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+) -> Result<u128, AkitaError> {
+    let ln_half = ceil_natural_log(4u128.saturating_mul(num_fold_coeffs));
+    let miss = grind_target_accept_den - grind_target_accept_num;
+    Ok(ln_half
+        .saturating_mul(grind_target_accept_den)
+        .div_ceil(2u128.saturating_mul(miss)))
+}
+
+#[inline]
+fn fold_witness_linf_grind_union_ln_for_op_norm_binding(
+    op_norm_accept_num: u128,
+    op_norm_accept_den: u128,
+) -> bool {
+    op_norm_accept_num < op_norm_accept_den
+}
+
+/// Conservative integer for `ln(2·num_fold_coeffs / (1 - p_grind))` with
+/// `p_grind = grind_target_accept_num / grind_target_accept_den`.
+#[inline]
+fn fold_witness_linf_grind_union_ln(
+    num_fold_coeffs: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+    op_norm_accept_num: u128,
+    op_norm_accept_den: u128,
+) -> Result<u128, AkitaError> {
+    if fold_witness_linf_grind_union_ln_for_op_norm_binding(op_norm_accept_num, op_norm_accept_den)
+    {
+        fold_witness_linf_grind_union_ln_direct(
+            num_fold_coeffs,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+    } else {
+        fold_witness_linf_grind_union_ln_legacy(
+            num_fold_coeffs,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+    }
 }
 
 /// Conservative integer for
@@ -383,6 +433,8 @@ pub fn fold_witness_linf_ln_term(
         num_fold_coeffs,
         grind_target_accept_num,
         grind_target_accept_den,
+        op_norm_accept_num,
+        op_norm_accept_den,
     )?;
     let ln_inv_p = op_norm_block_ln_term(num_fold_blocks, op_norm_accept_num, op_norm_accept_den);
     Ok(ln_union.saturating_add(ln_inv_p))
@@ -560,17 +612,19 @@ impl FoldWitnessLinfCapConfig {
         grind_target_accept_den: u128,
     ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
+        let (op_norm_accept_p_num, op_norm_accept_p_den) =
+            op_norm_acceptance_for_cap(stage1_config, ring_dimension, op_norm_rejection)?;
         let grind_union_ln = match policy {
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
             FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
                 num_fold_coeffs,
                 grind_target_accept_num,
                 grind_target_accept_den,
+                op_norm_accept_p_num,
+                op_norm_accept_p_den,
             )
             .unwrap_or(u128::MAX),
         };
-        let (op_norm_accept_p_num, op_norm_accept_p_den) =
-            op_norm_acceptance_for_cap(stage1_config, ring_dimension, op_norm_rejection)?;
         Ok(Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
@@ -836,9 +890,27 @@ mod tests {
 
     #[test]
     fn fold_witness_linf_ln_term_grind_eighth_matches_direct_union_ln_at_2_16() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let (op_norm_accept_num, op_norm_accept_den) =
+            shell.operator_norm_acceptance_prob(64).unwrap();
         let n = 1u128 << 16;
-        let eighth = fold_witness_linf_ln_term(n, 16, 1, 8, 1, 1).unwrap();
-        assert_eq!(eighth, 13, "ceil_ln(2·2^16·8/7)");
+        let eighth =
+            fold_witness_linf_ln_term(n, 16, 1, 8, op_norm_accept_num, op_norm_accept_den).unwrap();
+        let grind_only = fold_witness_linf_grind_union_ln_direct(n, 1, 8).unwrap();
+        assert_eq!(
+            eighth,
+            grind_only + op_norm_block_ln_term(16, op_norm_accept_num, op_norm_accept_den)
+        );
+        assert_eq!(grind_only, 13, "ceil_ln(2·2^16·8/7)");
     }
 
     #[test]
