@@ -27,49 +27,43 @@ enum ProductTable<E: FieldCore> {
     },
 }
 
-/// Construct a dense factored product-sumcheck term.
-///
-/// Returns an error if factor lengths are not powers of two, are empty, or if
-/// `table.len() != left_factor.len() * right_factor.len()`.
-pub(super) fn dense_product_term<E>(
-    table: Vec<E>,
-    left_factor: Vec<E>,
-    right_factor: Vec<E>,
-) -> Result<FactoredProductTerm<E>, AkitaError>
-where
-    E: FieldCore + FromPrimitiveInt,
-{
-    FactoredProductTerm::constructor(ProductTable::Dense(table), left_factor, right_factor)
-}
-
-/// Construct the witness-carry term from compact digit storage.
-///
-/// The witness term shares the same factored product identity as the setup term,
-/// but its source table starts as signed gadget digits. Keeping that distinction
-/// outside `AkitaStage3Prover` makes the term state about sumcheck lifecycle,
-/// while this helper owns representation choice.
-pub(super) fn compact_witness_carry_term<E>(
-    digits: Arc<[i8]>,
-    padded_len: usize,
-    left_factor: Vec<E>,
-    right_factor: Vec<E>,
-) -> Result<FactoredProductTerm<E>, AkitaError>
-where
-    E: FieldCore + FromPrimitiveInt,
-{
-    FactoredProductTerm::constructor(
-        ProductTable::CompactWitness {
-            digits,
-            padded_len,
-            pending_right_challenge: None,
-        },
-        left_factor,
-        right_factor,
-    )
-}
-
 impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
-    fn constructor(
+    /// Construct a dense factored product-sumcheck term.
+    ///
+    /// Returns an error if factor lengths are not powers of two, are empty, or if
+    /// `table.len() != left_factor.len() * right_factor.len()`.
+    pub(super) fn new_dense(
+        table: Vec<E>,
+        left_factor: Vec<E>,
+        right_factor: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(ProductTable::Dense(table), left_factor, right_factor)
+    }
+
+    /// Construct the witness-carry term from compact digit storage.
+    ///
+    /// The witness term shares the same factored product identity as the setup term,
+    /// but its source table starts as signed gadget digits. Keeping that distinction
+    /// outside `AkitaStage3Prover` makes the term state about sumcheck lifecycle,
+    /// while this constructor owns representation choice.
+    pub(super) fn new_compact(
+        digits: Arc<[i8]>,
+        padded_len: usize,
+        left_factor: Vec<E>,
+        right_factor: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            ProductTable::CompactWitness {
+                digits,
+                padded_len,
+                pending_right_challenge: None,
+            },
+            left_factor,
+            right_factor,
+        )
+    }
+
+    fn new(
         table: ProductTable<E>,
         left_factor: Vec<E>,
         right_factor: Vec<E>,
@@ -136,6 +130,10 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
         } else {
             self.table.fold_left_round(&mut self.left_factor, r_round);
         }
+    }
+
+    pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
+        self.table.folded_value()
     }
 }
 
@@ -231,6 +229,19 @@ impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
                 debug_assert!(pending_right_challenge.is_none());
                 let folded = fold_compact_left_round(digits, *padded_len, left_factor, r);
                 *self = Self::Dense(folded);
+            }
+        }
+    }
+
+    fn folded_value(&self) -> Result<E, AkitaError> {
+        match self {
+            Self::Dense(table) if table.len() == 1 => Ok(table[0]),
+            Self::Dense(table) => Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: table.len(),
+            }),
+            Self::CompactWitness { digits, .. } => {
+                Ok(super::utils::compact_value_at::<E>(digits, 0))
             }
         }
     }

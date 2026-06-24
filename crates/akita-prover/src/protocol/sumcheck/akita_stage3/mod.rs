@@ -21,19 +21,12 @@ use akita_types::{
     RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-use product_table::{compact_witness_carry_term, dense_product_term, FactoredProductTerm};
+use product_table::FactoredProductTerm;
 use std::sync::Arc;
-
-struct WitnessCarrySource {
-    digits: Arc<[i8]>,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-}
 
 /// Output of the batched stage-3 prover.
 pub struct AkitaStage3ProverOutput<E: FieldCore> {
-    /// Claimed setup-product contribution fed into the stage-2 final row evaluation.
+    /// Unbatched setup-product claim carried in the serialized stage-3 proof.
     pub setup_product_claim: E,
     /// Re-randomized next-witness opening after the batched stage-3 point projection.
     pub next_w_eval: E,
@@ -41,60 +34,6 @@ pub struct AkitaStage3ProverOutput<E: FieldCore> {
     pub next_w_point: Vec<E>,
     /// Degree-two batched setup-product + carried-witness sumcheck.
     pub sumcheck: SumcheckProof<E>,
-}
-
-fn evaluate_witness_at_point<E>(
-    logical_w: &[i8],
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-    point: &[E],
-) -> Result<E, AkitaError>
-where
-    E: FieldCore + FromPrimitiveInt,
-{
-    let num_vars = col_bits
-        .checked_add(ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness eval variable count overflow".into()))?;
-    if point.len() != num_vars {
-        return Err(AkitaError::InvalidSize {
-            expected: num_vars,
-            actual: point.len(),
-        });
-    }
-    let y_len = 1usize
-        .checked_shl(u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidProof)?)
-        .ok_or(AkitaError::InvalidProof)?;
-    let x_len = 1usize
-        .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
-        .ok_or(AkitaError::InvalidProof)?;
-    if live_x_cols > x_len {
-        return Err(AkitaError::InvalidSize {
-            expected: x_len,
-            actual: live_x_cols,
-        });
-    }
-    let live_len = live_x_cols
-        .checked_mul(y_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness eval live length overflow".into()))?;
-    if logical_w.len() != live_len {
-        return Err(AkitaError::InvalidSize {
-            expected: live_len,
-            actual: logical_w.len(),
-        });
-    }
-    let eq_y = EqPolynomial::evals(&point[..ring_bits])?;
-    let eq_x = EqPolynomial::evals(&point[ring_bits..])?;
-    let mut acc = E::zero();
-    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x * y_len;
-        let mut y_eval = E::zero();
-        for (y, &y_weight) in eq_y.iter().enumerate() {
-            y_eval += y_weight * E::from_i64(i64::from(logical_w[base + y]));
-        }
-        acc += x_weight * y_eval;
-    }
-    Ok(acc)
 }
 
 struct BatchedStage3Term<E: FieldCore> {
@@ -112,7 +51,6 @@ struct PendingRound<E: FieldCore> {
 pub struct AkitaStage3Prover<E: FieldCore> {
     setup: BatchedStage3Term<E>,
     witness: BatchedStage3Term<E>,
-    witness_source: WitnessCarrySource,
     eta: E,
     total_rounds: usize,
     setup_product_claim: E,
@@ -169,12 +107,6 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
             stage2_challenges,
             stage2_next_w_eval,
         )?;
-        let witness_source = WitnessCarrySource {
-            digits: witness_digits,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        };
         let setup_rounds = setup_term.num_rounds();
         let witness_rounds = witness_term.num_rounds();
         let total_rounds = setup_rounds.max(witness_rounds);
@@ -189,7 +121,6 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 native_rounds: witness_rounds,
                 term: witness_term,
             },
-            witness_source,
             eta,
             total_rounds,
             setup_product_claim,
@@ -215,13 +146,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 sample_round,
             )?;
         let next_w_point = batched_point[..self.witness.native_rounds].to_vec();
-        let next_w_eval = evaluate_witness_at_point(
-            &self.witness_source.digits,
-            self.witness_source.live_x_cols,
-            self.witness_source.col_bits,
-            self.witness_source.ring_bits,
-            &next_w_point,
-        )?;
+        let next_w_eval = self.witness.term.folded_table_value()?;
         Ok(AkitaStage3ProverOutput {
             setup_product_claim: self.setup_product_claim,
             next_w_eval,
@@ -382,7 +307,7 @@ where
             }
         });
 
-    dense_product_term(setup_table, bar_omega, alpha_pows.to_vec())
+    FactoredProductTerm::new_dense(setup_table, bar_omega, alpha_pows.to_vec())
 }
 
 fn build_witness_carry_term<E>(
@@ -431,7 +356,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
     let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
-    let term = compact_witness_carry_term(logical_w, table_len, left_factor, right_factor)?;
+    let term = FactoredProductTerm::new_compact(logical_w, table_len, left_factor, right_factor)?;
     if term.input_claim() != stage2_next_w_eval {
         return Err(AkitaError::InvalidProof);
     }
