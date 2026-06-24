@@ -6,7 +6,7 @@ use crate::protocol::{SetupEvalPlan, SetupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
@@ -22,8 +22,8 @@ use akita_types::{
 ///
 /// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
 /// evaluation plan and sumcheck round count from the ring-switch row
-/// evaluation, then call [`verify`](Self::verify) with the proof and
-/// transcript.
+/// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
+/// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupEvalPlan<E>,
     alpha_pows: Vec<E>,
@@ -36,7 +36,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// at `x_challenges`.
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
-    /// the ring-switch row evaluation; must be called before [`verify`](Self::verify).
+    /// the ring-switch row evaluation; must be called before
+    /// [`verify_batched_stage3`](Self::verify_batched_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
         prepared: &RingSwitchDeferredRowEval<E>,
@@ -81,27 +82,92 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         })
     }
 
-    /// Verify a setup product sumcheck for the setup contribution.
+    /// Verify the batched setup-product + carried-next-witness stage-3 sumcheck.
     ///
-    /// The sumcheck variable order is ring-coordinate bits first (`y`), followed
-    /// by setup-ring index bits (`lambda`).
-    pub(crate) fn verify<F, T, const D: usize>(
+    /// Returns the projected next-witness opening point `rho_w` to be threaded
+    /// into the next recursive suffix level.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn verify_batched_stage3<F, T, const D: usize>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &LevelParams,
         proof: &SetupSumcheckProof<E>,
+        stage2_next_w_eval: E,
+        stage2_challenges: &[E],
+        witness_rounds: usize,
+        eta: E,
         transcript: &mut T,
-    ) -> Result<(), AkitaError>
+    ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + AkitaSerialize,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
         T: Transcript<F>,
     {
+        if stage2_challenges.len() != witness_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_rounds,
+                actual: stage2_challenges.len(),
+            });
+        }
         let setup_len = setup
             .expanded
             .shared_matrix()
             .total_ring_elements_at::<D>()?;
-        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+        let setup_eval_len =
+            self.setup_eval_len::<F, T, D>(setup, next_fold_level_params, setup_len, transcript)?;
+
+        let batched_rounds = self.rounds.max(witness_rounds);
+        transcript.append_serde(
+            ABSORB_SUMCHECK_CLAIM,
+            &(proof.claim + eta * stage2_next_w_eval),
+        );
+        let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
+            proof.claim + eta * stage2_next_w_eval,
+            batched_rounds,
+            SETUP_SUMCHECK_DEGREE,
+            transcript,
+            |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        let rho_w = challenges[..witness_rounds].to_vec();
+        let rho_setup = &challenges[..self.rounds];
+        let (rho_y, rho_lambda) = rho_setup.split_at(self.ring_bits);
+
+        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
+        let eq_y = ring_eq_table::<E, D>(rho_y)?;
+        let setup_val = setup_mle_at_eq_tables::<F, E, D>(
+            &setup.expanded,
+            self.plan.required(),
+            setup_eval_len,
+            &eq_lambda,
+            &eq_y,
+        )?;
+        let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
+        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
+        let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds);
+        let setup_scale = lift_scale::<E>(batched_rounds - self.rounds);
+        let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
+        let expected = eta * witness_scale * eq_w * proof.next_w_eval
+            + setup_scale * setup_val * omega * alpha_val;
+        if final_claim != expected {
+            return Err(AkitaError::InvalidInput(
+                "batched stage-3 final relation mismatch".to_string(),
+            ));
+        }
+        Ok(rho_w)
+    }
+
+    fn setup_eval_len<F, T, const D: usize>(
+        &self,
+        setup: &AkitaVerifierSetup<F>,
+        next_fold_level_params: &LevelParams,
+        setup_len: usize,
+        transcript: &mut T,
+    ) -> Result<usize, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+    {
+        if D == SETUP_OFFLOAD_D_SETUP {
             let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
                 AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
             })?;
@@ -121,40 +187,21 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             )?;
             if let Some((slot, setup_eval_len)) = setup_prefix_selection {
                 transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-                setup_eval_len
+                Ok(setup_eval_len)
             } else {
-                setup_len
+                Ok(setup_len)
             }
         } else {
-            setup_len
-        };
-
-        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
-        let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
-            proof.claim,
-            self.rounds,
-            SETUP_SUMCHECK_DEGREE,
-            transcript,
-            |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-        )?;
-        let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
-
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
-        let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val = setup_mle_at_eq_tables::<F, E, D>(
-            &setup.expanded,
-            self.plan.required(),
-            setup_eval_len,
-            &eq_lambda,
-            &eq_y,
-        )?;
-        let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
-        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        if final_claim != setup_val * omega * alpha_val {
-            return Err(AkitaError::InvalidProof);
+            Ok(setup_len)
         }
-        Ok(())
     }
+}
+
+fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> E {
+    let inv_two = E::from_u64(2)
+        .inverse()
+        .expect("two must be invertible in Akita fields");
+    (0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two)
 }
 
 fn lambda_eq_table<E: FieldCore>(required: usize, rho_lambda: &[E]) -> Result<Vec<E>, AkitaError> {

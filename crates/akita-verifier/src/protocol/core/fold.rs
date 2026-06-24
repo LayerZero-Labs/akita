@@ -537,22 +537,34 @@ fn verify_stage3<F, E, T, const D: usize>(
     transcript: &mut T,
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
+    stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
-) -> Result<(), AkitaError>
+) -> Result<Option<Vec<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
+        let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F, D>(
             &rs.prepared_row_eval,
             &sumcheck_challenges[rs.ring_bits..],
             rs.alpha,
         )?;
-        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
+        let rho_w = verifier.verify_batched_stage3::<F, T, D>(
+            setup,
+            next_fold_level_params,
+            proof,
+            stage2_next_w_eval,
+            sumcheck_challenges,
+            rs.col_bits + rs.ring_bits,
+            eta,
+            transcript,
+        )?;
+        return Ok(Some(rho_w));
     }
-    Ok(())
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -770,12 +782,18 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    verify_stage3::<F, E, T, D>(
+    let stage2_next_w_eval = if prepared.stage3.is_some() {
+        prepared.stage2.next_w_eval()
+    } else {
+        E::zero()
+    };
+    let stage3_challenges = verify_stage3::<F, E, T, D>(
         setup,
         transcript,
         &rs,
         &sumcheck_challenges,
+        stage2_next_w_eval,
         prepared.stage3,
     )?;
-    Ok(sumcheck_challenges)
+    Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
 }

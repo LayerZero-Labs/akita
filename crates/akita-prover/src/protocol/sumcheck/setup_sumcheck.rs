@@ -29,11 +29,15 @@ pub struct SetupSumcheckProver<E: FieldCore> {
     total_rounds: usize,
 }
 
-/// Output of the setup product sumcheck prover.
-pub struct SetupSumcheckProverOutput<E: FieldCore> {
+/// Output of the batched stage-3 prover.
+pub struct BatchedStage3SumcheckProverOutput<E: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
-    pub claim: E,
-    /// Degree-two product sumcheck over `S(lambda, y) * omega(lambda) * alpha(y)`.
+    pub setup_claim: E,
+    /// Re-randomized next-witness opening after the batched stage-3 point projection.
+    pub next_w_eval: E,
+    /// Batched next-witness opening point.
+    pub next_w_point: Vec<E>,
+    /// Degree-two batched setup-product + carried-witness sumcheck.
     pub sumcheck: SumcheckProof<E>,
 }
 
@@ -78,23 +82,11 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         })
     }
 
-    /// Prove the setup-product sumcheck from packed setup rings and the
-    /// ring-switch row evaluation that determines the factored weights.
+    /// Prove the batched recursive stage-3 sumcheck.
     ///
-    /// Internally derives the `(required, bar_omega, alpha_pows)` factored
-    /// terms from the level parameters and ring relation, then builds the
-    /// `lambda * D + y` setup table (zero-padded up to the next power-of-two
-    /// lambda dimension) and runs the product sumcheck. The factored weights
-    /// come entirely from the ring-switch row evaluation (`bar_omega`) and the
-    /// `alpha` ring challenge; the public per-claim row coefficients are
-    /// already folded into the relation upstream, so this product does not take
-    /// them as a separate input.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the ring-switch row evaluation fails, the setup
-    /// slice is too small, the padded table size overflows, factor dimensions
-    /// are invalid, or any sumcheck round polynomial exceeds its degree bound.
+    /// This carries the stage-2 next-witness opening `W(stage2_point)` to a new
+    /// point that is a prefix/projection of the same batched challenge vector used
+    /// by the setup-product opening.
     #[allow(clippy::too_many_arguments)]
     pub fn prove<F, T, SampleRound, const D: usize>(
         expanded: &AkitaExpandedSetup<F>,
@@ -104,83 +96,370 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         relation: &RingRelationInstance<F, D>,
         tau1: &[E],
         alpha: E,
-        x_challenges: &[E],
+        stage2_challenges: &[E],
+        stage2_next_w_eval: E,
+        logical_w: &[i8],
+        live_x_cols: usize,
+        col_bits: usize,
+        ring_bits: usize,
+        eta: E,
         transcript: &mut T,
         sample_round: SampleRound,
-    ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
+    ) -> Result<BatchedStage3SumcheckProverOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
     {
-        let (required, mut bar_omega, alpha_pows) =
-            prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
-
-        let natural_field_len = required.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-        })?;
-        let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-        if required > setup_len {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for selected setup product".to_string(),
-            ));
-        }
-        let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
-            let setup_prefix_selection = select_setup_prefix_slot(
-                expanded.seed(),
-                setup_len,
-                |slot_id| {
-                    prefix_slots
-                        .get(slot_id)
-                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
-                },
-                next_fold_level_params,
-                natural_field_len,
-                D,
-                "selected setup-prefix slot does not cover setup product",
-            )?;
-            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-                setup_eval_len
-            } else {
-                setup_len
-            }
-        } else {
-            setup_len
-        };
-        let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
-        let setup_entries = setup_view.as_slice();
-
-        let lambda_len = required.checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product lambda length overflow".into())
-        })?;
-        bar_omega.resize(lambda_len, E::zero());
-
-        let table_len = lambda_len.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product table length overflow".into())
-        })?;
-        let mut setup_table = vec![E::zero(); table_len];
-        cfg_chunks_mut!(&mut setup_table, D)
-            .enumerate()
-            .for_each(|(lambda, row)| {
-                if lambda < required {
-                    for (slot, &coeff) in row.iter_mut().zip(setup_entries[lambda].coefficients()) {
-                        *slot = E::lift_base(coeff);
-                    }
-                }
-            });
-
-        let mut prover = Self::new(setup_table, bar_omega, alpha_pows)?;
-        let claim = prover.input_claim();
-        let (sumcheck, _challenges, _final_claim) =
-            <Self as SumcheckInstanceProverExt<E>>::prove::<F, T, _>(
-                &mut prover,
+        let setup_prover = build_setup_product_prover::<F, E, T, D>(
+            expanded,
+            prefix_slots,
+            lp,
+            next_fold_level_params,
+            relation,
+            tau1,
+            alpha,
+            &stage2_challenges[ring_bits..],
+            transcript,
+        )?;
+        let setup_claim = setup_prover.input_claim();
+        let witness_prover = build_witness_carry_prover::<E>(
+            logical_w,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            stage2_challenges,
+            stage2_next_w_eval,
+        )?;
+        let mut batched = BatchedStage3Prover::new(setup_prover, witness_prover, eta)?;
+        let (sumcheck, batched_point, _final_claim) =
+            <BatchedStage3Prover<E> as SumcheckInstanceProverExt<E>>::prove::<F, T, _>(
+                &mut batched,
                 transcript,
                 sample_round,
             )?;
-        Ok(SetupSumcheckProverOutput { claim, sumcheck })
+        let next_w_point = batched_point[..batched.witness.native_rounds].to_vec();
+        let next_w_eval =
+            evaluate_witness_at_point(logical_w, live_x_cols, col_bits, ring_bits, &next_w_point)?;
+        Ok(BatchedStage3SumcheckProverOutput {
+            setup_claim,
+            next_w_eval,
+            next_w_point,
+            sumcheck,
+        })
     }
+}
+
+fn evaluate_witness_at_point<E>(
+    logical_w: &[i8],
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+    point: &[E],
+) -> Result<E, AkitaError>
+where
+    E: FieldCore + FromPrimitiveInt,
+{
+    let num_vars = col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness eval variable count overflow".into()))?;
+    if point.len() != num_vars {
+        return Err(AkitaError::InvalidSize {
+            expected: num_vars,
+            actual: point.len(),
+        });
+    }
+    let y_len = 1usize
+        .checked_shl(u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    let x_len = 1usize
+        .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    if live_x_cols > x_len {
+        return Err(AkitaError::InvalidSize {
+            expected: x_len,
+            actual: live_x_cols,
+        });
+    }
+    let live_len = live_x_cols
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness eval live length overflow".into()))?;
+    if logical_w.len() != live_len {
+        return Err(AkitaError::InvalidSize {
+            expected: live_len,
+            actual: logical_w.len(),
+        });
+    }
+    let eq_y = EqPolynomial::evals(&point[..ring_bits])?;
+    let eq_x = EqPolynomial::evals(&point[ring_bits..])?;
+    let mut acc = E::zero();
+    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+        let base = x * y_len;
+        let mut y_eval = E::zero();
+        for (y, &y_weight) in eq_y.iter().enumerate() {
+            y_eval += y_weight * E::from_i64(i64::from(logical_w[base + y]));
+        }
+        acc += x_weight * y_eval;
+    }
+    Ok(acc)
+}
+
+struct BatchedStage3Term<E: FieldCore> {
+    prover: SetupSumcheckProver<E>,
+    current_claim: E,
+    native_rounds: usize,
+}
+
+struct PendingRound<E: FieldCore> {
+    setup_poly: UniPoly<E>,
+    witness_poly: UniPoly<E>,
+}
+
+struct BatchedStage3Prover<E: FieldCore> {
+    setup: BatchedStage3Term<E>,
+    witness: BatchedStage3Term<E>,
+    eta: E,
+    total_rounds: usize,
+    pending_round: Option<PendingRound<E>>,
+}
+
+impl<E: FieldCore + FromPrimitiveInt> BatchedStage3Prover<E> {
+    fn new(
+        setup_prover: SetupSumcheckProver<E>,
+        witness_prover: SetupSumcheckProver<E>,
+        eta: E,
+    ) -> Result<Self, AkitaError> {
+        let setup_rounds = setup_prover.num_rounds();
+        let witness_rounds = witness_prover.num_rounds();
+        let total_rounds = setup_rounds.max(witness_rounds);
+        Ok(Self {
+            setup: BatchedStage3Term {
+                current_claim: setup_prover.input_claim(),
+                native_rounds: setup_rounds,
+                prover: setup_prover,
+            },
+            witness: BatchedStage3Term {
+                current_claim: witness_prover.input_claim(),
+                native_rounds: witness_rounds,
+                prover: witness_prover,
+            },
+            eta,
+            total_rounds,
+            pending_round: None,
+        })
+    }
+
+    #[inline]
+    fn term_round_poly(term: &mut BatchedStage3Term<E>, round: usize) -> UniPoly<E> {
+        if round < term.native_rounds {
+            term.prover
+                .compute_round_univariate(round, term.current_claim)
+        } else {
+            // The term is independent of this padded variable. The normalized
+            // common-cube lift contributes a constant half-claim polynomial.
+            UniPoly::from_coeffs(vec![half(term.current_claim), E::zero(), E::zero()])
+        }
+    }
+
+    #[inline]
+    fn combine_polys(&self, setup_poly: &UniPoly<E>, witness_poly: &UniPoly<E>) -> UniPoly<E> {
+        let len = setup_poly
+            .coeffs
+            .len()
+            .max(witness_poly.coeffs.len())
+            .max(3);
+        let mut coeffs = vec![E::zero(); len];
+        for (idx, coeff) in setup_poly.coeffs.iter().enumerate() {
+            coeffs[idx] += *coeff;
+        }
+        for (idx, coeff) in witness_poly.coeffs.iter().enumerate() {
+            coeffs[idx] += self.eta * *coeff;
+        }
+        UniPoly::from_coeffs(coeffs)
+    }
+}
+
+impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for BatchedStage3Prover<E> {
+    fn num_rounds(&self) -> usize {
+        self.total_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        SETUP_SUMCHECK_DEGREE
+    }
+
+    fn input_claim(&self) -> E {
+        self.setup.current_claim + self.eta * self.witness.current_claim
+    }
+
+    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
+        let setup_poly = Self::term_round_poly(&mut self.setup, round);
+        let witness_poly = Self::term_round_poly(&mut self.witness, round);
+        let combined = self.combine_polys(&setup_poly, &witness_poly);
+        self.pending_round = Some(PendingRound {
+            setup_poly,
+            witness_poly,
+        });
+        combined
+    }
+
+    fn ingest_challenge(&mut self, round: usize, r_round: E) {
+        let pending = self
+            .pending_round
+            .take()
+            .expect("batched stage-3 challenge ingested before round polynomial");
+        self.setup.current_claim = pending.setup_poly.evaluate(&r_round);
+        self.witness.current_claim = pending.witness_poly.evaluate(&r_round);
+        if round < self.setup.native_rounds {
+            self.setup.prover.ingest_challenge(round, r_round);
+        }
+        if round < self.witness.native_rounds {
+            self.witness.prover.ingest_challenge(round, r_round);
+        }
+    }
+}
+
+#[inline]
+fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
+    let inv_two = E::from_u64(2)
+        .inverse()
+        .expect("two must be invertible in Akita fields");
+    value * inv_two
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_setup_product_prover<F, E, T, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
+    relation: &RingRelationInstance<F, D>,
+    tau1: &[E],
+    alpha: E,
+    x_challenges: &[E],
+    transcript: &mut T,
+) -> Result<SetupSumcheckProver<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let (required, mut bar_omega, alpha_pows) =
+        prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
+
+    let natural_field_len = required.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
+    })?;
+    let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+    if required > setup_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix is too small for selected setup product".to_string(),
+        ));
+    }
+    let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+        let setup_prefix_selection = select_setup_prefix_slot(
+            expanded.seed(),
+            setup_len,
+            |slot_id| {
+                prefix_slots
+                    .get(slot_id)
+                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
+            },
+            next_fold_level_params,
+            natural_field_len,
+            D,
+            "selected setup-prefix slot does not cover setup product",
+        )?;
+        if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+            setup_eval_len
+        } else {
+            setup_len
+        }
+    } else {
+        setup_len
+    };
+    let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
+    let setup_entries = setup_view.as_slice();
+
+    let lambda_len = required
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
+    bar_omega.resize(lambda_len, E::zero());
+
+    let table_len = lambda_len
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product table length overflow".into()))?;
+    let mut setup_table = vec![E::zero(); table_len];
+    cfg_chunks_mut!(&mut setup_table, D)
+        .enumerate()
+        .for_each(|(lambda, row)| {
+            if lambda < required {
+                for (slot, &coeff) in row.iter_mut().zip(setup_entries[lambda].coefficients()) {
+                    *slot = E::lift_base(coeff);
+                }
+            }
+        });
+
+    SetupSumcheckProver::new(setup_table, bar_omega, alpha_pows.to_vec())
+}
+
+fn build_witness_carry_prover<E>(
+    logical_w: &[i8],
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+    stage2_challenges: &[E],
+    stage2_next_w_eval: E,
+) -> Result<SetupSumcheckProver<E>, AkitaError>
+where
+    E: FieldCore + FromPrimitiveInt,
+{
+    let num_vars = col_bits
+        .checked_add(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness carry variable count overflow".into()))?;
+    if stage2_challenges.len() != num_vars {
+        return Err(AkitaError::InvalidSize {
+            expected: num_vars,
+            actual: stage2_challenges.len(),
+        });
+    }
+    let y_len = 1usize
+        .checked_shl(u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    let x_len = 1usize
+        .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    if live_x_cols > x_len {
+        return Err(AkitaError::InvalidSize {
+            expected: x_len,
+            actual: live_x_cols,
+        });
+    }
+    let live_len = live_x_cols
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness carry live length overflow".into()))?;
+    if logical_w.len() != live_len {
+        return Err(AkitaError::InvalidSize {
+            expected: live_len,
+            actual: logical_w.len(),
+        });
+    }
+    let table_len = x_len
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
+    let mut table = vec![E::zero(); table_len];
+    for (dst, &digit) in table.iter_mut().zip(logical_w) {
+        *dst = E::from_i64(i64::from(digit));
+    }
+    let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
+    let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
+    let prover = SetupSumcheckProver::new(table, left_factor, right_factor)?;
+    if prover.input_claim() != stage2_next_w_eval {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(prover)
 }
 
 impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {

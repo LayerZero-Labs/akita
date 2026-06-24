@@ -225,6 +225,9 @@ where
             .claim
             .serialize_with_mode(&mut writer, compress)?;
         stage3_sumcheck
+            .next_w_eval
+            .serialize_with_mode(&mut writer, compress)?;
+        stage3_sumcheck
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
     }
@@ -240,6 +243,7 @@ where
 {
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
         stage3_sumcheck.claim.serialized_size(compress)
+            + stage3_sumcheck.next_w_eval.serialized_size(compress)
             + stage3_sumcheck.sumcheck.serialized_size(compress)
     })
 }
@@ -259,9 +263,14 @@ where
     };
     shape.check()?;
     let claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let next_w_eval = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
-    Ok(Some(SetupSumcheckProof { claim, sumcheck }))
+    Ok(Some(SetupSumcheckProof {
+        claim,
+        next_w_eval,
+        sumcheck,
+    }))
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize

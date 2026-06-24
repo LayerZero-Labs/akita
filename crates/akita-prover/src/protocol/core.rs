@@ -9,7 +9,9 @@ use crate::protocol::extension_opening_reduction::{
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
+#[cfg(not(feature = "zk"))]
+use crate::protocol::sumcheck::SetupSumcheckProver;
+use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
@@ -23,7 +25,7 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
+    HalvingField, Invertible, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]
@@ -294,6 +296,12 @@ pub(in crate::protocol::core) type Stage2ProveResult<L> =
 #[cfg(feature = "zk")]
 pub(in crate::protocol::core) type Stage2ProveResult<L> =
     (SumcheckProofMasked<L>, Vec<L>, AkitaStage2Prover<L>);
+
+pub(in crate::protocol::core) struct Stage3ProveOutput<L: FieldCore> {
+    pub(in crate::protocol::core) proof: SetupSumcheckProof<L>,
+    pub(in crate::protocol::core) next_w_point: Vec<L>,
+    pub(in crate::protocol::core) next_w_eval: L,
+}
 
 fn scalar_opening_from_folded_ring<F, E, const D: usize>(
     folded_ring: &CyclotomicRing<F, D>,

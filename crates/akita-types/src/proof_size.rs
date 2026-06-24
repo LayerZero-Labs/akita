@@ -138,8 +138,9 @@ pub fn stage3_setup_product_bytes(
     let ring_bits = ring_dimension.trailing_zeros() as usize;
     let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
     let rounds = ring_bits + lambda_bits;
-    // Claimed setup contribution + degree-2 product sumcheck rounds.
-    challenge_elem_bytes
+    // Claimed setup contribution + carried next-witness opening + degree-2
+    // fused setup/carry sumcheck rounds.
+    2 * challenge_elem_bytes
         + sumcheck_bytes(rounds, crate::SETUP_SUMCHECK_DEGREE, challenge_elem_bytes)
 }
 
@@ -263,6 +264,7 @@ mod tests {
         let rounds = ring_bits + lambda_bits;
         SetupSumcheckProof {
             claim: F::zero(),
+            next_w_eval: F::zero(),
             sumcheck: akita_sumcheck::SumcheckProof {
                 round_polys: (0..rounds)
                     .map(|_| CompressedUniPoly {
@@ -368,6 +370,7 @@ mod tests {
             for &setup_ring_len in &[1usize, 3, 8, 17, 64, 100] {
                 let proof = dummy_stage3_proof::<F>(d, setup_ring_len);
                 let serialized = proof.claim.serialized_size(Compress::No)
+                    + proof.next_w_eval.serialized_size(Compress::No)
                     + proof.sumcheck.serialized_size(Compress::No);
                 assert_eq!(
                     stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len),
