@@ -1,4 +1,5 @@
 use super::*;
+use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]
@@ -44,8 +45,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
     witness: RingRelationWitness<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    ring_switch_ctx: &OperationCtx<'_, F, B, D>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
 ) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
@@ -56,16 +56,9 @@ where
         + FromPrimitiveInt
         + HalvingField
         + AkitaSerialize,
-    B: RingSwitchComputeBackend<F>,
+    B: RingSwitchProveBackend<F, D>,
 {
     let num_claims = instance.opening_batch().num_claims();
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            "ring_switch_build_w"
-        );
-    }
     let RingRelationWitness {
         z_folded_rings,
         fold_grind_nonce: _,
@@ -87,8 +80,7 @@ where
     let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
-        backend,
-        prepared,
+        ring_switch_ctx,
         lp,
         &instance.challenges,
         e_hat.flat_digits(),
@@ -100,13 +92,11 @@ where
         &recomposed_inner_rows,
         &e_folded,
         instance.ring_multiplier_point(),
-        opening_batch.claim_to_commitment_group(),
-        opening_batch.claim_poly_indices(),
         instance.row_coefficient_rings(),
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,
         instance.y(),
-        opening_batch.num_polys_per_commitment_group(),
+        opening_batch.num_polynomials(),
         lp.num_blocks,
         lp.inner_width(),
         instance.m_row_layout(),

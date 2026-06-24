@@ -8,6 +8,7 @@ use super::montgomery::{
 };
 use super::{avx_ntt_mode, d32, wide512, AvxNttMode};
 use crate::ntt::butterfly::NttTwiddles;
+use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// AVX2 forward negacyclic NTT for one `i32` CRT limb.
@@ -90,7 +91,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         len /= 2;
     }
 
-    if D.is_multiple_of(16) {
+    if forward_dif_tail_eligible::<D>() {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(
@@ -278,7 +279,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
-    if D.is_multiple_of(16) {
+    if forward_dif_tail_eligible::<D>() {
         // SAFETY: guaranteed by this function's safety contract.
         unsafe {
             forward_dif_tail_i32_avx2::<D>(

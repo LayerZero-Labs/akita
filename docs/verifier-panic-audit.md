@@ -3,8 +3,9 @@
 > **Historical snapshot.** This is a point-in-time audit artifact (PR #81), not
 > a maintained reference. It predates the setup-layout rename (it still refers to
 > `setup.seed.max_stride`; runtime uses `max_setup_len`). The durable verifier
-> no-panic contract lives in `AGENTS.md` and the Akita Book
-> (`book/src/how/verification/no-panic-contract.md`). Scheduled to move to
+> no-panic contract lives in the Akita Book
+> ([`book/src/how/verification.md`](../book/src/how/verification.md)) and
+> [`docs/verifier-contract.md`](verifier-contract.md). Scheduled to move to
 > `docs/archive/` in the spec/doc archive pass (see `specs/PRUNING.md`).
 
 This document records the verifier no-panic audit for the security-hardening

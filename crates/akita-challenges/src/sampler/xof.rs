@@ -85,6 +85,22 @@ impl XofCursor {
         b
     }
 
+    /// Copy `out.len()` bytes from the buffered XOF stream in one pass.
+    #[inline]
+    pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
+        let mut off = 0;
+        while off < out.len() {
+            if self.pos >= XOF_BUF_SIZE {
+                self.refill();
+            }
+            let avail = XOF_BUF_SIZE - self.pos;
+            let take = avail.min(out.len() - off);
+            out[off..off + take].copy_from_slice(&self.buf[self.pos..self.pos + take]);
+            self.pos += take;
+            off += take;
+        }
+    }
+
     #[inline]
     fn next_u32(&mut self) -> u32 {
         if self.pos + 4 <= XOF_BUF_SIZE {
@@ -158,16 +174,6 @@ impl XofCursor {
                 *slot = self.next_u8();
             }
             u128::from_le_bytes(bytes)
-        }
-    }
-
-    /// Draw a uniformly random sign in `{-1, +1}`.
-    #[inline]
-    pub(crate) fn next_sign(&mut self) -> i8 {
-        if (self.next_u8() & 1) == 0 {
-            1
-        } else {
-            -1
         }
     }
 }

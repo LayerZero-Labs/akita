@@ -4,8 +4,8 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-10                                                |
-| Status      | implemented (pending merge via #189)                      |
-| PR          | #189 (spec + implementation, targets `main`; spec-only #174 closed as superseded) |
+| Status      | implemented (#189 fold-linf; D64 op-norm rejection cutover [#207](https://github.com/LayerZero-Labs/akita/pull/207)) |
+| PR          | [#189](https://github.com/LayerZero-Labs/akita/pull/189) (fold-linf digit tightening); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from #195) |
 
 ## Summary
 
@@ -134,8 +134,12 @@ The feature introduces or modifies:
   documented second-moment assumption (see Alternatives).
 - **Not** a change to the challenge *sampler* distribution. The reroll is an outer
   loop over fold-challenge derivation; the per-attempt distribution is unchanged.
-- **No** D=64 production preset change (the shell stays `(30, 12)`, `p = 1`); this
-  spec only changes how `K` is sized given the existing shell.
+- **Per-level** operator-norm rejection on fold levels (`LevelParams.op_norm_rejection`):
+  enabled only when Γ collision pricing strictly lowers audited A-rank; otherwise ω
+  pricing and no rejection oracle (no proof-size win). **Potentially enabled only at
+  D=64** under current production presets (`ExactShell (31, 11), T = 18`). D=32
+  (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep the flag false; see
+  [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) § Product scope.
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
   Both continue to size `K` from `β_inf`; their tighter thresholds require a
   separate proof of the accepted-challenge tail bound and descriptor policy.
@@ -170,6 +174,24 @@ The feature introduces or modifies:
   fails.
 - [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
+- [x] D64 production `ExactShell { count_mag1: 31, count_mag2: 11 }` with operator-norm
+  threshold `T = 18`; certified acceptance floor `13/20` on levels with
+  `op_norm_rejection` enabled.
+- [x] Per-level `LevelParams.op_norm_rejection` is enabled only when Γ collision pricing
+  strictly lowers audited A-rank **and** `fold_level_witness_scoring_cost` is strictly
+  cheaper with rejection on **and** the fold draw samples at most `2^12` sparse challenges
+  (flat `2^{r_vars} · num_claims`, or tensor `num_claims · (left_len + right_len)`);
+  otherwise ω pricing and no rejection oracle.
+- [x] `fp128_d64_*` shipped schedule tables regenerated under smart per-level rejection;
+  `generated_schedule_tables_match_find_schedule` and catalog-digest tests pass.
+- [x] Prover `fold_grind` and verifier stage-1 replay pass `op_norm_rejection` into
+  `sample_folding_challenges` / `preview_folding_challenges`; descriptor bytes bind the
+  flag and acceptance rational.
+- [x] Production op-norm predicate: transposed frequency tables with `i64` accumulators
+  (`op_norm_accumulate`), fused 4-wide chunk paths on AVX2 and NEON; legacy nested `i128`
+  loop retained for criterion A/B only.
+- [x] Tiered e2e smoke retargeted to `nv = 29` (witness-cost gating dropped root tiering at
+  `nv = 27/28` under regen'd `fp128_d64_onehot_tiered` schedules).
 
 ### Testing Strategy
 
@@ -206,6 +228,10 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
   levels where `t* < β_inf` crosses a digit boundary.
 - No verifier cost beyond consuming one extra nonce per fold level.
 - A-role rank, setup size, and the L2 pricing are unchanged.
+- Op-norm rejection sampling adds per-sparse-challenge predicate work on enabled levels;
+  the production path uses fused transposed `i64` accumulation (~2.7× faster than the
+  legacy nested `i128` loop in local criterion A/B). Planner `choose_op_norm_rejection`
+  recomputes per geometry during schedule search and drift guards.
 
 ## Design
 
@@ -379,7 +405,8 @@ Pr[‖z‖_inf > t]  ≤  2·num_fold_coeffs·exp(-t²/2V).                    (
 
 Let `p = Pr_c[Γ(c) <= Γ]` be the operator-norm acceptance probability of the
 already-applied witness-independent rejection (`p = 1` when the cap does not bind;
-production `(30,12)` ships with `T = 54 >= ‖c‖_1`, so `p = 1`). Conditioning on
+production `(31,11)` uses `T = 18 < ω`, so `p < 1` on levels with
+`op_norm_rejection` enabled). Conditioning on
 accepted blocks gives
 
 ```text
@@ -397,10 +424,8 @@ ln_term = ln( 2·num_fold_coeffs / (1 - p_grind) ) + num_fold_blocks·ln(1/p_opn
 (`FoldLinfProtocolBinding::grind_target_accept_prob`; shipped `1/8`).
 `p_opnorm` is the operator-norm block-filter acceptance probability (`1` when the cap
 does not bind). The union bound certifies `Pr[‖z‖_inf > t*] <= 1 - p_grind`, so expected
-rerolls are `<= 1/p_grind` (here `<= 8`). At integer `ln` resolution the shipped target
-is applied as a rational tighten relative to the legacy `p_grind = 1/2` reference:
-`ln_union = ceil(ln(4·num_fold_coeffs)) · p_grind_den / (2·(p_grind_den - p_grind_num))`.
-The legacy `p_grind = 1/2` choice is recovered exactly when `p_grind_den = 2·(p_grind_den - p_grind_num)`.
+rerolls are `<= 1/p_grind` (here `<= 8`). The integer `ln` term is
+`ceil(ln(2·num_fold_coeffs·p_grind_den / (p_grind_den - p_grind_num)))`.
 At `p_opnorm = 1` and `p_grind = 1/8`:
 
 ```text
@@ -409,7 +434,7 @@ t* = sqrt(2·num_fold_blocks·challenge_l2_sq_max·witness_linf²·ln(8·num_fol
 
 Against the ω-envelope `β_inf = num_fold_blocks·ω·witness_linf`, the gain ratio is
 `t*/β_inf ≈ sqrt(2·challenge_l2_sq_max·ln_term)/(ω·sqrt(num_fold_blocks))`.
-For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`, `p_grind = 1/4`:
+For `(challenge_l2_sq_max, ω) = (78, 54)`, `num_fold_coeffs ≈ 2^16`, `p_grind = 1/8`:
 gain ratios sit slightly below the `p_grind = 1/2` column (`≈ 0.41, 0.29, 0.20, 0.14`
 at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 
@@ -600,7 +625,15 @@ F10  e2e tamper / termination / ZK parity tests             (all)               
 F11  transcript-seeded grind probe order in ZK prover paths [akita-prover]      landed
      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
 F12  fold grind probe-count observer for profile metrics    [akita-prover]      landed
+F13  D64 operator-norm rejection cutover                     [#207]              landed
+     `(31, 11), T = 18`; `LevelParams.op_norm_rejection`; Γ-vs-ω A-role pricing;
+     witness-scoring gate; `2^12` sparse-draw cap; fused transposed predicate;
+     planner memoization; `fp128_d64_*` schedule regen; descriptor bind
 ```
+
+**Out of scope for F13** (follow-up PRs split from #195):
+L2 certificate geometry (`fold_l2_certificate`, `B_l2_pub`), profile `l2_pub_bound`
+scouting, and planner `B_eff = min(B_l2_pub, d·β_inf²)` pricing.
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
 `β_inf` in the first implementation; `num_fold_coeffs = inner_width · D` under

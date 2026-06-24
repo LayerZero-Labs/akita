@@ -4,16 +4,20 @@
 |-------------|--------------------------------------------|
 | Author(s)   | Quang Dao, Cursor assistant                |
 | Created     | 2026-05-26                                 |
-| Status      | proposed                                   |
-| PR          | [#109](https://github.com/LayerZero-Labs/akita/pull/109), based on `main` |
+| Status      | implemented                                |
+| PR          | [#206](https://github.com/LayerZero-Labs/akita/pull/206) |
 
 ## Summary
 
-`AkitaPolyOps` is currently the main root-polynomial abstraction in
-`akita-prover`, but it mixes several jobs: shape metadata, public polynomial
+`AkitaPolyOps` was the main root-polynomial abstraction in
+`akita-prover`, but it mixed several jobs: shape metadata, public polynomial
 extension, commitment row construction, opening folds, decompose-fold witness
 construction, direct root-witness materialization, and tensor-projection helpers
-for extension openings. The current compute backend split improved setup
+for extension openings. **This cutover is implemented in PR #206:** the trait is
+deleted from crate source; commitment and prove dispatch through borrowed
+**views** and backend **kernels** (`RootCommitSource`, `RootOpeningSource`,
+`RootTensorSource`, `ProverComputeStack`, `LevelProveStacks`, `OperationCtx`).
+The current compute backend split improved setup
 ownership, but its commitment and ring-switch traits are still closed around
 Akita's built-in plan shapes. This spec replaces both layers with an open
 representation boundary: protocol inputs expose borrowed views, and operation
@@ -170,65 +174,66 @@ surface is exactly this built-in list.
 
 ### Acceptance Criteria
 
-- [ ] `rg -n "AkitaPolyOps" crates` returns no matches.
-- [ ] `akita-prover` no longer exports `AkitaPolyOps`, and `akita-pcs` no
+- [x] `rg -n "AkitaPolyOps" crates` returns no matches.
+- [x] `akita-prover` no longer exports `AkitaPolyOps`, and `akita-pcs` no
       longer re-exports it.
-- [ ] `crates/akita-prover/src/lib.rs` no longer contains a root-polynomial
+- [x] `crates/akita-prover/src/lib.rs` no longer contains a root-polynomial
       mega-trait with algorithm default methods.
-- [ ] Public prover/protocol APIs no longer require one monolithic
+- [x] Public prover/protocol APIs no longer require one monolithic
       `B: ProverComputeBackend<F>` that implements every operation cluster.
-      They receive an explicit operation stack or operation contexts.
-- [ ] The public commitment compute boundary is source-typed. It is no longer
+      Heterogeneous `batched_prove` takes `LevelProveStacks` + `ProveStackFor`;
+      internal prove paths route `OperationCtx` per cluster. (Uniform PCS entry
+      still bounds `RecursiveProveBackend` as a convenience umbrella.)
+- [x] The public commitment compute boundary is source-typed. It is no longer
       limited to trait methods named only after Akita's built-in dense,
       one-hot, sparse-ring, and recursive-witness plan shapes.
-- [ ] The public ring-switch compute boundary is source-typed. It is no longer
-      limited to fixed `RingSwitchRelationRowsPlan` and
-      `RingSwitchQuotientRowsPlan` methods as the only extensibility point.
-- [ ] Existing built-in commit/ring-switch plan structs either become standard
+- [x] The public ring-switch compute boundary is source-typed. Relation/quotient
+      protocol code calls `RingSwitchRelationKernel` / `RingSwitchQuotientKernel`;
+      row plan helpers remain CPU implementation details behind kernels.
+- [x] Existing built-in commit/ring-switch plan structs either become standard
       view/helper types consumed by the CPU implementation or are replaced by
       equivalent source views. They must not remain the only public operation
       boundary.
-- [ ] Commit APIs in `akita-prover`, `akita-scheme`, and `akita-pcs` are generic
+- [x] Commit APIs in `akita-prover`, `akita-scheme`, and `akita-pcs` are generic
       over the new root polynomial representation/provider surface, not
       `P: AkitaPolyOps<F, D>`.
-- [ ] Prove APIs and internal flow helpers are generic over the new root
+- [x] Prove APIs and internal flow helpers are generic over the new root
       polynomial representation/provider surface and the backend kernel bounds
       they actually use.
-- [ ] All current built-in root representations compile on the new boundary:
+- [x] All current built-in root representations compile on the new boundary:
       `DensePoly`, `OneHotPoly`, `SparseRingPoly`, `MultilinearPolynomial`, and
       `RootTensorProjectionPoly`.
-- [ ] `RecursiveWitnessView` commit, evaluate/fold, and decompose-fold paths
-      compile without implementing any root polynomial trait.
-- [ ] Tensor extension-opening reduction compiles without calling the former
+- [x] `RecursiveWitnessFlat` / `SuffixWitnessView` commit, evaluate/fold, and
+      decompose-fold paths compile without implementing any root polynomial trait.
+- [x] Tensor extension-opening reduction compiles without calling the former
       operation methods such as `tensor_extension_column_partials` or
       `tensor_packed_extension_sparse_linear_combination` on a polynomial
       object.
-- [ ] `crates/akita-pcs/tests/commitment_contract.rs` is updated so its dummy
+- [x] `crates/akita-pcs/tests/commitment_contract.rs` is updated so its dummy
       downstream-like polynomial uses the new open representation boundary.
       This test remains the canary for out-of-crate custom polynomial support.
-- [ ] All existing tests that covered dense, one-hot, sparse-ring,
+- [x] All existing tests that covered dense, one-hot, sparse-ring,
       root-projection, recursive, zero-knowledge, ring-switch, and extension
       opening flows still pass.
-- [ ] A mixed-backend contract test proves that at least two different backend
+- [x] A mixed-backend contract test proves that at least two different backend
       values can be used for different operation clusters in one prover call.
-      The test may use dummy CPU-equivalent backends, but the type signature
-      must prove the operation stack is heterogeneous.
-- [ ] Lower-level commit APIs compile with a custom source that implements only
+      (`heterogeneous_prove_e2e` + delegating cluster backends.)
+- [x] Lower-level commit APIs compile with a custom source that implements only
       shape plus commit-source capabilities. They must not require opening,
       tensor, or direct-witness capabilities.
-- [ ] Public proving APIs that can select root-direct require
+- [x] Public proving APIs that can select root-direct require
       `DirectRootWitnessSource`, while folded-only helpers or policies can be
       used without that capability after root-direct is rejected.
-- [ ] Operation-stack construction or public API validation rejects a prepared
+- [x] Operation-stack construction or public API validation rejects a prepared
       setup built from a different expanded setup for at least one non-commit
       operation cluster.
-- [ ] Cross-`D` recursive witness commitment validates the newly prepared target
+- [x] Cross-`D` recursive witness commitment validates the newly prepared target
       dimension context before use and rejects a mismatched prepared context.
-- [ ] Implementation review checks include forbidden-pattern greps:
+- [x] Implementation review checks include forbidden-pattern greps:
       `rg -n "AkitaPolyOps" crates`, public protocol/API bounds on
       `ProverComputeBackend`, and public closed input-source enums used as the
       custom polynomial extension point.
-- [ ] The implementation PR includes a short grep/check section in its
+- [x] The implementation PR includes a short grep/check section in its
       description showing that `AkitaPolyOps` is gone from crate source.
 
 ### Testing Strategy
@@ -770,6 +775,20 @@ Result enums such as `TensorPackedWitness::Dense(Vec<E>)` versus
 `TensorPackedWitness::Sparse(SparseExtensionOpeningWitness<E>)` are acceptable
 because the protocol output alternatives are fixed. The prohibited enum is a
 closed input-source enum that downstream users cannot extend.
+
+### Post-cutover naming (views and fields)
+
+After the trait-surface hygiene pass on `quang/po-cutover-v2`:
+
+- **Views:** each representation exposes one single-polynomial view and one batch
+  view (`DenseView` / `DenseBatchView`, `OneHotView` / `OneHotBatchView`, and so
+  on). The kernel trait the view is passed to selects the operation; per-cluster
+  `*CommitView` / `*OpeningView` / `*TensorView` aliases are gone.
+- **Fields:** the protocol uses base field `F` and a single extension field `E`
+  (`CommitmentConfig::ExtField`). The historical claim-field / challenge-field
+  split (`L` vs `C`, `ClaimE` vs `ChallengeE`, separate descriptor degrees) is
+  retired. Prove/commit backend bundles, layout gates, and transcript descriptor
+  algebra all take one `E: ExtField<F>`.
 
 ### Public API Cutover
 
@@ -1375,7 +1394,7 @@ CpuBackend machinery, not things to invent for a streaming consumer.
   at the entry level.
 
 So `CommitTraversal` is not a new subsystem; it is a small generalization of the
-existing `OneHotCommitView` / `commit_plan_blocks()` boundary
+existing `OneHotView` / `commit_plan_blocks()` boundary
 (`backend/onehot/ops.rs`). What is genuinely missing is narrow and splits by
 materialization model:
 
@@ -1444,7 +1463,7 @@ schedule.
 
 The genuine constraint is coherence between the two forms, which makes the
 blanket a now-or-later decision: concrete per-view impls
-(`impl RootCommitKernel<DenseCommitView> for CpuBackend`, etc.) and a later
+(`impl RootCommitKernel<DenseView> for CpuBackend`, etc.) and a later
 blanket `impl<S: CommitTraversal> ...` overlap and cannot coexist. Enabling the
 blanket form later therefore means routing the built-in views through
 `CommitTraversal` too. That is an internal akita-prover refactor (it does not
@@ -1506,7 +1525,7 @@ cheap to add later belong in the cutover PRs.
    blanket-over-traversal extension and is the one irreversible mistake here.
 
 5. (PO-CUTOVER, SHOULD) Note that the entry/block boundary a streaming consumer
-   needs already exists (`OneHotCommitView` / `commit_plan_blocks()` /
+   needs already exists (`OneHotView` / `commit_plan_blocks()` /
    `OneHotBlocks`, see "What already exists in Akita today"); the only coupling is
    that its sole producer is `OneHotPoly::blocks_for` -> `FlatBlocks::from_indices`
    over a materialized index vector. The cheap, real move is to keep the commit

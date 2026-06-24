@@ -227,6 +227,12 @@ Current interim status:
 - `num_commitment_groups` and `num_public_y_rows` are not yet persisted in the
   generated key.
 
+For the production same-point multi-commitment rollout, do not continue this
+older aggregate-incidence plan directly. Follow
+[`multi-group-batching.md`](multi-group-batching.md), which keeps scalar
+same-bundle schedules separate from grouped root keys and requires explicit
+rejects until the grouped descriptor and schedule shape land.
+
 ## Root Witness Size Formula
 
 Replace the legacy aggregate shape formula with a profile-based formula.

@@ -13,11 +13,10 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
@@ -186,7 +185,10 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(norm_s) = rounded_up_collision_norm_s(
+        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+            continue;
+        };
+        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
             family,
             d,
             decomp,
@@ -197,13 +199,8 @@ fn derive_candidate_level_params(
             policy.ring_subfield_norm_bound,
             r,
             1,
+            width_s as u64,
         ) else {
-            continue;
-        };
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
-            continue;
-        };
-        let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
             continue;
         };
         let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -237,7 +234,7 @@ fn derive_candidate_level_params(
             (1, b_key, None)
         };
 
-        let candidate_params = LevelParams {
+        let Ok(candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
             a_key,
@@ -248,6 +245,7 @@ fn derive_candidate_level_params(
             m_vars: reduced_vars - r,
             r_vars: r,
             stage1_config: ring_challenge_cfg.clone(),
+            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -261,12 +259,13 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
         }
-        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1);
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
+            continue;
+        };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             1,
@@ -277,7 +276,6 @@ fn derive_candidate_level_params(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             1,
@@ -388,7 +386,7 @@ fn make_terminal_direct_step(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_commitment_groups: usize,
+    num_segments: usize,
     terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
     let witness_shape = terminal_direct_witness_shape(
@@ -399,7 +397,7 @@ fn make_terminal_direct_step(
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -418,7 +416,7 @@ fn terminal_direct_suffix_cost(
     terminal_fold_level: usize,
     terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_commitment_groups) =
+    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
         terminal_fold_segment_counts(key, terminal_fold_level);
     let direct = make_terminal_direct_step(
         current_w_len,
@@ -427,7 +425,7 @@ fn terminal_direct_suffix_cost(
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_commitment_groups,
+        num_segments,
         terminal_log_basis,
     )?;
     let direct_bytes = direct.direct_bytes;
@@ -685,11 +683,8 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let fold_challenge = FoldChallengeNorms {
-            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&ring_challenge_cfg)
-                as u128,
-            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&ring_challenge_cfg) as u128,
-        };
+        let fold_challenge =
+            akita_types::sis::fold_challenge_norms(&ring_challenge_cfg, TensorChallengeShape::Flat);
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
@@ -703,11 +698,10 @@ fn compute_root_direct_level_params(
             fold_witness,
             &ring_challenge_cfg,
             TensorChallengeShape::Flat,
-            decomp.log_commit_bound,
-            log_basis,
+            decomp,
+            policy.onehot_chunk_size,
             num_vars - alpha,
             0,
-            decomp.field_bits(),
         );
         (m_vars, r_vars)
     } else {
@@ -725,7 +719,10 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(norm_s) = rounded_up_collision_norm_s(
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+        return Ok(None);
+    };
+    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
         sis_family,
         d,
         level_decomp,
@@ -736,13 +733,8 @@ fn compute_root_direct_level_params(
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        width_s as u64,
     ) else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
-        return Ok(None);
-    };
-    let Some(n_a) = min_secure_rank(sis_family, d as u32, norm_s, width_s as u64) else {
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
@@ -796,6 +788,7 @@ fn compute_root_direct_level_params(
         m_vars,
         r_vars,
         stage1_config: ring_challenge_cfg,
+        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -808,7 +801,7 @@ fn compute_root_direct_level_params(
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
     }
-    .with_fold_linf_cap_config(decomp.field_bits(), num_claims);
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
 }
 
@@ -855,18 +848,14 @@ fn find_schedule_inner(
     };
 
     let t_vectors = key.num_t_vectors;
-    let w_vectors = key.num_w_vectors;
     let z_vectors = key.num_z_vectors;
-    if t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    if policy.tiered && z_vectors != 1 {
         return Err(AkitaError::InvalidSetup(
-            "schedule key planner dimensions must be at least 1".into(),
+            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
         ));
     }
-    if z_vectors != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "schedule key must describe one shared opening point and one public row".into(),
-        ));
-    }
+    key.validate_scalar_root_batch()?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -939,7 +928,10 @@ fn find_schedule_inner(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(norm_s) = rounded_up_collision_norm_s(
+            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+                continue;
+            };
+            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
                 family,
                 d,
                 level_decomp,
@@ -950,13 +942,8 @@ fn find_schedule_inner(
                 policy.ring_subfield_norm_bound,
                 r_vars,
                 t_vectors,
+                width_s as u64,
             ) else {
-                continue;
-            };
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-                continue;
-            };
-            let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
                 continue;
             };
             let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -1003,7 +990,7 @@ fn find_schedule_inner(
             } else {
                 (1, b_key, None)
             };
-            let candidate_params = LevelParams {
+            let Ok(candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
                 a_key,
@@ -1014,6 +1001,7 @@ fn find_schedule_inner(
                 m_vars,
                 r_vars,
                 stage1_config: ring_challenge_cfg.clone(),
+                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
@@ -1026,13 +1014,14 @@ fn find_schedule_inner(
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
             }
-            .with_fold_linf_cap_config(field_bits, key.num_t_vectors);
+            .with_fold_linf_cap_config(field_bits, key.num_t_vectors) else {
+                continue;
+            };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    1,
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,

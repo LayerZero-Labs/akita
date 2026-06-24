@@ -9,7 +9,6 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
-use crate::DecompositionParams;
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
 /// per-operand L1/L∞ bounds:
@@ -56,8 +55,7 @@ pub fn isqrt_ceil(v: u128) -> u128 {
     }
 }
 
-/// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
-/// already accounting for the fold-challenge shape (flat vs tensor).
+/// Effective fold-round challenge `(||c||_inf, ||c||_1)` for `beta_inf` sizing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldChallengeNorms {
     /// Effective challenge L∞ norm `||c||_inf`.
@@ -66,7 +64,20 @@ pub struct FoldChallengeNorms {
     pub l1_norm: u128,
 }
 
-/// Per-block committed-witness `(||s||_inf, ||s||_1)` for one fold level.
+/// Build the `beta_inf` envelope norms for one fold level from config and shape.
+#[inline]
+#[must_use]
+pub fn fold_challenge_norms(
+    stage1_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+) -> FoldChallengeNorms {
+    FoldChallengeNorms {
+        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
+        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
+    }
+}
+
+/// Per-row committed-witness `(||s||_inf, ||s||_1)` for one fold level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldWitnessNorms {
     /// Witness L∞ norm `||s||_inf` (1 for one-hot, `b/2` for dense digits).
@@ -131,23 +142,24 @@ impl FoldWitnessNorms {
 /// via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
 ///
 /// ```text
-/// collision_A_inf = 8 · ω · β_inf · ν,
+/// collision_A_inf = 8 · mass · beta_inf · nu,
 /// collision_l2_sq   = ceil_bucket(d · collision_A_inf^2),
-///   ω     = ||c||_1,
-///   β_inf = fold_witness_beta(...),
-///   ν     = ring_subfield_norm_bound.
+///   mass   = ω (L1) or Γ (operator-norm cap) per [`crate::sis::committed_fold_a_role_mass`],
+///   beta_inf = fold_witness_beta(..., omega from l1_mass, ...),
+///   nu     = ring_subfield_norm_bound.
 /// ```
 ///
-/// Operator-norm rejection (`gamma(c) <= Gamma`) is separate; sizing uses `ω`
-/// from the accepted challenge distribution. `β_inf` is the same `‖z‖_inf`
-/// envelope as [`fold_witness_beta`] / `num_digits_fold`, not `‖s‖_2`.
+/// `beta_inf` still uses `||c||_1` from [`FoldChallengeNorms`]; only the Lemma-7
+/// outer multiplier is `op_norm_cap` (`ω` or `Γ` per level policy).
 ///
 /// Returns `None` on overflow or when the collision exceeds every audited bucket
 /// for `(sis_family, d)`.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn committed_fold_collision_l2_sq(
     sis_family: SisModulusFamily,
     d: u32,
+    op_norm_cap: u128,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
     r_vars: usize,
@@ -155,55 +167,12 @@ pub fn committed_fold_collision_l2_sq(
     ring_subfield_norm_bound: u32,
 ) -> Option<u128> {
     let fold_beta = fold_witness_beta(r_vars, num_claims, challenge, witness).ok()?;
-    // 2·κ̄·β̄·ν = 2·(2·ω)·(2·fold_beta)·ν = 8·ω·fold_beta·ν.
+    // 2·κ̄·β̄·ν = 2·(2·mass)·(2·fold_beta)·ν = 8·mass·fold_beta·ν.
     let collision_linf = 8u128
-        .checked_mul(challenge.l1_norm)?
+        .checked_mul(op_norm_cap)?
         .checked_mul(fold_beta)?
         .checked_mul(u128::from(ring_subfield_norm_bound))?;
     collision_l2_sq_for_linf_envelope(sis_family, d, collision_linf)
-}
-
-/// A-role (committed witness `s`) rounded-up SIS collision bucket for one
-/// committed fold level, per the corrected Hachi Lemma 7 weak-binding bound
-/// priced in the L2 MSIS table.
-///
-/// Builds the level's effective challenge `(||c||_inf, ||c||_1)` and witness
-/// `(||s||_inf, ||s||_1)` norms, then converts
-/// `collision_A_inf = 8 · ω · fold_witness_beta · ν` into
-/// [`committed_fold_collision_l2_sq`]. `r_vars` is the level's fold-arity
-/// exponent (`num_blocks = 2^r_vars`); `num_claims` is the batch factor (`> 1`
-/// only at a batched root).
-///
-/// Returns `None` on norm overflow or when the collision exceeds every audited
-/// bucket for `(sis_family, d)`.
-#[allow(clippy::too_many_arguments)]
-pub fn rounded_up_collision_norm_s(
-    sis_family: SisModulusFamily,
-    d: usize,
-    decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
-    is_root: bool,
-    onehot_chunk_size: usize,
-    ring_subfield_norm_bound: u32,
-    r_vars: usize,
-    num_claims: usize,
-) -> Option<u128> {
-    let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge = FoldChallengeNorms {
-        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
-        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
-    };
-    committed_fold_collision_l2_sq(
-        sis_family,
-        d as u32,
-        challenge,
-        witness,
-        r_vars,
-        num_claims,
-        ring_subfield_norm_bound,
-    )
 }
 
 /// B-role (`t̂`) rounded-up SIS collision bucket via `||v||_2^2 <= d·||v||_inf^2`.
@@ -281,8 +250,8 @@ pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 /// acceptance probability on already-filtered blocks.
 ///
 /// `p_grind = 1/2` was the original baked-in default (`ln(4·num_fold_coeffs)`).
-/// Production ships `1/4`: a tighter certificate that still leaves honest grinding
-/// rare in practice because realized `‖z‖_inf` sits well below `t*`.
+/// Production ships `1/8`: a tighter per-challenge grind acceptance target in the
+/// union bound for `t*`.
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
@@ -341,11 +310,38 @@ fn ceil_natural_log(x: u128) -> u128 {
         .div_ceil(LN2_CEIL_DEN)
 }
 
-/// Union-bound ln term at the legacy `p_grind = 1/2` reference (`ln(4·num_fold_coeffs)`),
-/// scaled down for tighter descriptor-bound targets via
-/// `ln((1 - p_ref)/(1 - p_grind))` approximated as `p_grind_den / (2·(p_grind_den - p_grind_num))`.
+/// Per-fold operator-norm block penalty `num_fold_blocks · ln(1/p_opnorm)`,
+/// conservatively rounded. Returns `0` when the cap does not bind
+/// (`p_num >= p_den`), matching `ln(1) = 0`.
 #[inline]
-fn fold_witness_linf_grind_union_ln(
+fn op_norm_block_ln_term(num_fold_blocks: u128, p_num: u128, p_den: u128) -> u128 {
+    if p_num >= p_den {
+        return 0;
+    }
+    let ratio = p_den.div_ceil(p_num);
+    num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
+}
+
+/// Direct union-bound ln for `ln(2·num_fold_coeffs / (1 - p_grind))`.
+#[inline]
+fn fold_witness_linf_grind_union_ln_direct(
+    num_fold_coeffs: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+) -> Result<u128, AkitaError> {
+    let miss = grind_target_accept_den - grind_target_accept_num;
+    let numerator = 2u128
+        .saturating_mul(num_fold_coeffs)
+        .saturating_mul(grind_target_accept_den);
+    Ok(ceil_natural_log(numerator.div_ceil(miss)))
+}
+
+/// Legacy scaled ln used for tail-bound sizing when the operator-norm block
+/// filter does not bind (`p_opnorm = 1`). Shipped `D ∈ {128, 256}` tables were
+/// tuned against this approximation; the direct union ln is required only once
+/// `p_opnorm < 1` at `D = 64`.
+#[inline]
+fn fold_witness_linf_grind_union_ln_legacy(
     num_fold_coeffs: u128,
     grind_target_accept_num: u128,
     grind_target_accept_den: u128,
@@ -355,6 +351,40 @@ fn fold_witness_linf_grind_union_ln(
     Ok(ln_half
         .saturating_mul(grind_target_accept_den)
         .div_ceil(2u128.saturating_mul(miss)))
+}
+
+#[inline]
+fn fold_witness_linf_grind_union_ln_for_op_norm_binding(
+    op_norm_accept_num: u128,
+    op_norm_accept_den: u128,
+) -> bool {
+    op_norm_accept_num < op_norm_accept_den
+}
+
+/// Conservative integer for `ln(2·num_fold_coeffs / (1 - p_grind))` with
+/// `p_grind = grind_target_accept_num / grind_target_accept_den`.
+#[inline]
+fn fold_witness_linf_grind_union_ln(
+    num_fold_coeffs: u128,
+    grind_target_accept_num: u128,
+    grind_target_accept_den: u128,
+    op_norm_accept_num: u128,
+    op_norm_accept_den: u128,
+) -> Result<u128, AkitaError> {
+    if fold_witness_linf_grind_union_ln_for_op_norm_binding(op_norm_accept_num, op_norm_accept_den)
+    {
+        fold_witness_linf_grind_union_ln_direct(
+            num_fold_coeffs,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+    } else {
+        fold_witness_linf_grind_union_ln_legacy(
+            num_fold_coeffs,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+    }
 }
 
 /// Conservative integer for
@@ -403,13 +433,10 @@ pub fn fold_witness_linf_ln_term(
         num_fold_coeffs,
         grind_target_accept_num,
         grind_target_accept_den,
+        op_norm_accept_num,
+        op_norm_accept_den,
     )?;
-    let ln_inv_p = if op_norm_accept_num >= op_norm_accept_den {
-        0
-    } else {
-        let ratio = op_norm_accept_den.div_ceil(op_norm_accept_num);
-        num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
-    };
+    let ln_inv_p = op_norm_block_ln_term(num_fold_blocks, op_norm_accept_num, op_norm_accept_den);
     Ok(ln_union.saturating_add(ln_inv_p))
 }
 
@@ -473,6 +500,23 @@ pub struct FoldWitnessLinfCapConfig {
     pub grind_union_ln: u128,
 }
 
+fn op_norm_acceptance_for_cap(
+    stage1_config: &SparseChallengeConfig,
+    ring_dimension: usize,
+    op_norm_rejection: bool,
+) -> Result<(u128, u128), AkitaError> {
+    if !op_norm_rejection {
+        return Ok((1, 1));
+    }
+    stage1_config
+        .operator_norm_acceptance_prob(ring_dimension)
+        .map_err(|reason| {
+            AkitaError::InvalidSetup(format!(
+                "FoldWitnessLinfCapConfig: unsupported operator-norm acceptance preset ({reason})"
+            ))
+        })
+}
+
 impl FoldWitnessLinfCapConfig {
     /// Worst-case `β_inf` sizing only (no tail certificate).
     #[inline]
@@ -494,71 +538,103 @@ impl FoldWitnessLinfCapConfig {
     ///
     /// The grind acceptance target is read from [`crate::FoldLinfProtocolBinding::CURRENT`]
     /// so planner digit sizing, prover rerolls, and the transcript descriptor agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
     #[inline]
     pub fn for_fold_level(
         stage1_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
+        op_norm_rejection: bool,
         inner_width: usize,
-    ) -> Self {
-        let binding = crate::FoldLinfProtocolBinding::CURRENT;
-        let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+    ) -> Result<Self, AkitaError> {
+        let (grind_target_accept_num, grind_target_accept_den) =
+            crate::FoldLinfProtocolBinding::CURRENT.grind_target_accept_prob();
         let policy =
             fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, ring_dimension);
-        let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
-        let grind_union_ln = match policy {
-            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
-                num_fold_coeffs,
-                grind_target_accept_num,
-                grind_target_accept_den,
-            )
-            .unwrap_or(u128::MAX),
-        };
-        Self {
+        Self::assemble(
             policy,
-            challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
-            num_fold_coeffs,
+            stage1_config,
+            fold_challenge_shape,
+            ring_dimension,
+            op_norm_rejection,
+            inner_width,
             grind_target_accept_num,
             grind_target_accept_den,
-            op_norm_accept_p_num: 1,
-            op_norm_accept_p_den: 1,
-            grind_union_ln,
-        }
+        )
     }
 
     /// Build a tail-aware config for [`crate::layout::digit_math::optimal_m_r_split`] scoring with a known
     /// inner width without re-reading the protocol binding each iteration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
+    /// binding preset without a certified acceptance floor.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn for_fold_level_scoring(
         policy: FoldWitnessLinfCapPolicy,
         stage1_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
+        op_norm_rejection: bool,
         inner_width: usize,
         grind_target_accept_num: u128,
         grind_target_accept_den: u128,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
+        Self::assemble(
+            policy,
+            stage1_config,
+            fold_challenge_shape,
+            ring_dimension,
+            op_norm_rejection,
+            inner_width,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+    }
+
+    /// Shared assembly for both fold-level cap configs given a resolved policy
+    /// and grind target.
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        policy: FoldWitnessLinfCapPolicy,
+        stage1_config: &SparseChallengeConfig,
+        fold_challenge_shape: TensorChallengeShape,
+        ring_dimension: usize,
+        op_norm_rejection: bool,
+        inner_width: usize,
+        grind_target_accept_num: u128,
+        grind_target_accept_den: u128,
+    ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = (inner_width as u128).saturating_mul(ring_dimension as u128);
+        let (op_norm_accept_p_num, op_norm_accept_p_den) =
+            op_norm_acceptance_for_cap(stage1_config, ring_dimension, op_norm_rejection)?;
         let grind_union_ln = match policy {
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 0,
             FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_grind_union_ln(
                 num_fold_coeffs,
                 grind_target_accept_num,
                 grind_target_accept_den,
+                op_norm_accept_p_num,
+                op_norm_accept_p_den,
             )
             .unwrap_or(u128::MAX),
         };
-        Self {
+        Ok(Self {
             policy,
             challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
             num_fold_coeffs,
             grind_target_accept_num,
             grind_target_accept_den,
-            op_norm_accept_p_num: 1,
-            op_norm_accept_p_den: 1,
+            op_norm_accept_p_num,
+            op_norm_accept_p_den,
             grind_union_ln,
-        }
+        })
     }
 }
 
@@ -577,14 +653,11 @@ pub fn fold_witness_linf_cap(
     match config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
         FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let ln_inv_p = if config.op_norm_accept_p_num >= config.op_norm_accept_p_den {
-                0
-            } else {
-                let ratio = config
-                    .op_norm_accept_p_den
-                    .div_ceil(config.op_norm_accept_p_num);
-                num_fold_blocks.saturating_mul(ceil_natural_log(ratio))
-            };
+            let ln_inv_p = op_norm_block_ln_term(
+                num_fold_blocks,
+                config.op_norm_accept_p_num,
+                config.op_norm_accept_p_den,
+            );
             let ln_term = config.grind_union_ln.saturating_add(ln_inv_p);
             let t_sq = fold_witness_linf_tail_bound_sq(
                 num_fold_blocks,
@@ -601,8 +674,6 @@ pub fn fold_witness_linf_cap(
 //
 // A-role table lookup uses Lemma 7 plus [`l2_sq_from_linf`] (see
 // [`committed_fold_collision_l2_sq`]). The same conversion prices B/D roles.
-// Realized `Z_SQUARED = Σ z[row][coeff]²` certificates (S6+) are proved in
-// protocol code, not sized here.
 
 /// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
 /// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
@@ -676,8 +747,17 @@ mod tests {
         let envelope =
             collision_l2_sq_for_linf_envelope(SisModulusFamily::Q32, 64, collision_linf).unwrap();
         assert_eq!(
-            committed_fold_collision_l2_sq(SisModulusFamily::Q32, 64, challenge, witness, 2, 1, 1,)
-                .unwrap(),
+            committed_fold_collision_l2_sq(
+                SisModulusFamily::Q32,
+                64,
+                challenge.l1_norm,
+                challenge,
+                witness,
+                2,
+                1,
+                1,
+            )
+            .unwrap(),
             envelope,
         );
         assert_eq!(
@@ -688,6 +768,47 @@ mod tests {
             envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
             "derived bucket ceilings L∞ before squaring",
         );
+    }
+
+    #[test]
+    fn committed_fold_collision_uses_cap_not_l1_when_binding() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let shape = TensorChallengeShape::Flat;
+        let challenge = fold_challenge_norms(&shell, shape);
+        assert_eq!(challenge.l1_norm, 53);
+        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let cap_collision = committed_fold_collision_l2_sq(
+            SisModulusFamily::Q32,
+            64,
+            shape.effective_operator_norm_cap(&shell) as u128,
+            challenge,
+            witness,
+            2,
+            1,
+            1,
+        )
+        .unwrap();
+        let wasteful_collision = committed_fold_collision_l2_sq(
+            SisModulusFamily::Q32,
+            64,
+            challenge.l1_norm,
+            challenge,
+            witness,
+            2,
+            1,
+            1,
+        )
+        .unwrap();
+        assert!(cap_collision < wasteful_collision);
     }
 
     #[test]
@@ -703,9 +824,9 @@ mod tests {
         use akita_challenges::TensorChallengeShape;
 
         let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            operator_norm_threshold: 54,
+            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
         assert_eq!(
             fold_witness_linf_cap_policy(&shell, TensorChallengeShape::Flat, 64),
@@ -734,6 +855,27 @@ mod tests {
     }
 
     #[test]
+    fn fold_witness_linf_ln_term_includes_op_norm_when_binding() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let (op_norm_accept_num, op_norm_accept_den) =
+            shell.operator_norm_acceptance_prob(64).unwrap();
+        let with_p =
+            fold_witness_linf_ln_term(1 << 16, 16, 1, 8, op_norm_accept_num, op_norm_accept_den)
+                .unwrap();
+        let without_p = fold_witness_linf_ln_term(1 << 16, 16, 1, 8, 1, 1).unwrap();
+        assert!(with_p > without_p);
+    }
+
+    #[test]
     fn fold_witness_linf_ln_term_rejects_zero_grind_target() {
         assert!(fold_witness_linf_ln_term(16, 16, 0, 4, 1, 1).is_err());
     }
@@ -747,9 +889,34 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+    fn fold_witness_linf_ln_term_grind_eighth_matches_direct_union_ln_at_2_16() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        let (op_norm_accept_num, op_norm_accept_den) =
+            shell.operator_norm_acceptance_prob(64).unwrap();
         let n = 1u128 << 16;
-        let blocks = 16u128;
+        let eighth =
+            fold_witness_linf_ln_term(n, 16, 1, 8, op_norm_accept_num, op_norm_accept_den).unwrap();
+        let grind_only = fold_witness_linf_grind_union_ln_direct(n, 1, 8).unwrap();
+        assert_eq!(
+            eighth,
+            grind_only + op_norm_block_ln_term(16, op_norm_accept_num, op_norm_accept_den)
+        );
+        assert_eq!(grind_only, 13, "ceil_ln(2·2^16·8/7)");
+    }
+
+    #[test]
+    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+        let n = 100u128;
+        let blocks = 1u128;
         let half = fold_witness_linf_ln_term(n, blocks, 1, 2, 1, 1).unwrap();
         let eighth = fold_witness_linf_ln_term(n, blocks, 1, 8, 1, 1).unwrap();
         assert!(eighth < half, "eighth={eighth} half={half}");
@@ -777,5 +944,27 @@ mod tests {
         );
         // Digit sizing will use `min(tight_beta, t*)`; here `t*` exceeds the tight bound.
         assert_eq!(t.min(tight_beta), tight_beta);
+    }
+
+    #[test]
+    fn for_fold_level_rejects_binding_op_norm_without_certified_floor() {
+        use akita_challenges::{
+            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+
+        let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(FoldWitnessLinfCapConfig::for_fold_level(
+            &shell,
+            TensorChallengeShape::Flat,
+            32,
+            true,
+            64,
+        )
+        .is_err());
     }
 }
