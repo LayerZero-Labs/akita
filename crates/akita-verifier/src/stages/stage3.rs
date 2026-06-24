@@ -143,8 +143,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds);
-        let setup_scale = lift_scale::<E>(batched_rounds - self.rounds);
+        let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
+        let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;
         let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
         let expected = eta * witness_scale * eq_w * proof.next_w_eval
             + setup_scale * setup_val * omega * alpha_val;
@@ -197,11 +197,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     }
 }
 
-fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> E {
+fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E, AkitaError> {
     let inv_two = E::from_u64(2)
         .inverse()
-        .expect("two must be invertible in Akita fields");
-    (0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two)
+        .ok_or_else(|| AkitaError::InvalidSetup("two is not invertible in Akita fields".into()))?;
+    Ok((0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two))
 }
 
 fn lambda_eq_table<E: FieldCore>(required: usize, rho_lambda: &[E]) -> Result<Vec<E>, AkitaError> {

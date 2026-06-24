@@ -546,10 +546,22 @@ where
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
+        let witness_rounds = rs.col_bits.checked_add(rs.ring_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("stage-3 witness round count overflow".to_string())
+        })?;
+        if sumcheck_challenges.len() != witness_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_rounds,
+                actual: sumcheck_challenges.len(),
+            });
+        }
+        let setup_x_challenges = sumcheck_challenges
+            .get(rs.ring_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F, D>(
             &rs.prepared_row_eval,
-            &sumcheck_challenges[rs.ring_bits..],
+            setup_x_challenges,
             rs.alpha,
         )?;
         let rho_w = verifier.verify_batched_stage3::<F, T, D>(
@@ -558,7 +570,7 @@ where
             proof,
             stage2_next_w_eval,
             sumcheck_challenges,
-            rs.col_bits + rs.ring_bits,
+            witness_rounds,
             eta,
             transcript,
         )?;
@@ -751,6 +763,12 @@ where
             prepared.trace_claim_scales.as_deref(),
         )?)
     };
+    #[cfg(feature = "zk")]
+    if prepared.stage3.is_some() {
+        return Err(AkitaError::InvalidInput(
+            "batched recursive setup stage-3 is not implemented for zk proofs".to_string(),
+        ));
+    }
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
     #[cfg(feature = "zk")]
     let trace_claim_mask = {

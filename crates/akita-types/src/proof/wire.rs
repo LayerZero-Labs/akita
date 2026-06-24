@@ -481,6 +481,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
                 stage2.sumcheck_proof_masked.check()?;
                 if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
                     stage3_sumcheck.claim.check()?;
+                    stage3_sumcheck.next_w_eval.check()?;
                     stage3_sumcheck.sumcheck.check()?;
                 }
                 stage2.next_w_commitment.check()?;
@@ -887,6 +888,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
         stage2.sumcheck_proof_masked.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
             stage3_sumcheck.claim.check()?;
+            stage3_sumcheck.next_w_eval.check()?;
             stage3_sumcheck.sumcheck.check()?;
         }
         stage2.next_w_commitment.check()?;
