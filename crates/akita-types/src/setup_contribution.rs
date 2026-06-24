@@ -404,13 +404,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         offset_t: usize,
         offset_z: usize,
         offset_u: usize,
-        // Optional precomputed high-eq window tables (relative to the segment's
-        // high offset): `eq_hi_e[k] == eq_high(e_offset_high + k)` and likewise
-        // for `t`. When supplied, they are reused instead of being rebuilt here
-        // (the verifier's structured-slice evaluators build the identical
-        // windows; see `ring_switch.rs`). Must be at least
-        // `num_claims * depth_open + 1` (`e`) and
-        // `num_t_vectors * depth_open * n_a + 1` (`t`) long.
+        // Optional precomputed high-eq window tables (relative to the segment's high
+        // offset): `eq_hi_e[k] == eq_high(e_offset_high + k)` and likewise for `t`.
         eq_hi_e: Option<&[E]>,
         eq_hi_t: Option<&[E]>,
     ) -> Result<Self, AkitaError>
