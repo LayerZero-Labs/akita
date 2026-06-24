@@ -332,6 +332,8 @@ impl SetupContributionFixture {
             self.offset_t,
             self.offset_z,
             self.prepared.witness_segment_layout.offset_u,
+            None,
+            None,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
@@ -357,6 +359,8 @@ impl SetupContributionFixture {
             self.offset_t,
             self.offset_z,
             self.prepared.witness_segment_layout.offset_u,
+            None,
+            None,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
@@ -395,6 +399,8 @@ impl SetupContributionFixture {
             self.offset_t,
             self.offset_z,
             self.prepared.witness_segment_layout.offset_u,
+            None,
+            None,
         );
         let plan = evaluator.prepare().unwrap();
         let bar_omega = plan.materialize_bar_omega();
