@@ -4,10 +4,13 @@
 //! structured-slice and zk-blinding equivalence tests.
 
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
+use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    ring_relation_segment_layout_for_opening_shape, LevelParams, MRowLayout, SisModulusFamily,
+    LevelParams, MRowLayout, OpeningBatchShape, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationInstance, RingRelationSegmentLayout, SisModulusFamily,
 };
 
 pub(crate) type FixtureField = Prime128OffsetA7F7;
@@ -34,6 +37,37 @@ fn fixture_lp() -> LevelParams {
     .expect("recursive d32 fixture lp")
 }
 
+fn ring_relation_segment_layout_for_opening_shape(
+    lp: &LevelParams,
+    m_row_layout: MRowLayout,
+    num_polys_per_segment: &[usize],
+) -> Result<RingRelationSegmentLayout, AkitaError> {
+    let opening_batch = OpeningBatchShape::from_commitment_groups(32, num_polys_per_segment)?;
+    let opening_point = RingOpeningPoint {
+        a: vec![FixtureField::zero(); lp.block_len],
+        b: vec![FixtureField::zero(); lp.num_blocks],
+    };
+    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+    let num_claims = opening_batch.num_claims();
+    let challenges = akita_challenges::Challenges::Sparse {
+        challenges: Vec::new(),
+        num_blocks_per_claim: lp.num_blocks,
+        num_claims,
+    };
+    let instance = RingRelationInstance::<FixtureField, FIXTURE_D>::new(
+        m_row_layout,
+        challenges,
+        opening_point,
+        ring_multiplier_point,
+        opening_batch,
+        vec![FixtureField::zero(); num_claims],
+        vec![CyclotomicRing::<FixtureField, FIXTURE_D>::zero(); num_claims],
+        vec![CyclotomicRing::<FixtureField, FIXTURE_D>::zero(); num_claims],
+        Vec::new(),
+    )?;
+    instance.segment_layout(lp)
+}
+
 /// Build the canonical D=32 recursive-multigroup prepared row evaluation.
 pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField> {
     let num_blocks = 8usize;
@@ -54,10 +88,11 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
     let inner_width = block_len * depth_commit;
     let num_t_vectors = num_polys_per_segment.iter().sum();
 
-    let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<
-        FixtureField,
-        FIXTURE_D,
-    >(&fixture_lp(), MRowLayout::WithDBlock, &num_polys_per_segment)
+    let witness_segment_layout = ring_relation_segment_layout_for_opening_shape(
+        &fixture_lp(),
+        MRowLayout::WithDBlock,
+        &num_polys_per_segment,
+    )
     .expect("witness segment layout");
 
     #[cfg(feature = "zk")]

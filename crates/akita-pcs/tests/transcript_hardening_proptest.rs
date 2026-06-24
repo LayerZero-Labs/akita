@@ -7,7 +7,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
-use akita_types::OpeningBatch;
+use akita_types::OpeningBatchShape;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
@@ -26,7 +26,8 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     init_rayon_pool();
 
     let total_claims = batch_shape(shape_index);
-    let opening_batch = OpeningBatch::new(num_vars, total_claims).expect("valid opening batch");
+    let opening_batch =
+        OpeningBatchShape::new(num_vars, total_claims).expect("valid opening batch");
     let layout =
         DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
 
@@ -42,23 +43,21 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let setup =
         <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        &polys,
-    )
-    .expect("batched commit");
+    let (commitment, hint) =
+        <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(&setup, &polys, &stack)
+            .expect("batched commit");
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prove_input(&opening_point, &polys, &commitment, hint),
+        &stack,
         &mut prover_transcript,
         basis_mode,
         akita_types::SetupContributionMode::Direct,

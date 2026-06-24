@@ -139,7 +139,7 @@ pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
 
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
-    pub relation: &'a RingRelationInstance<'a, F, D>,
+    pub relation: &'a RingRelationInstance<F, D>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
 }

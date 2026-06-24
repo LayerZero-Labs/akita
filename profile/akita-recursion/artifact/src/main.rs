@@ -20,7 +20,8 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotPoly,
+    compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
+    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
     ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_recursion_glue::AkitaJoltInputs;
@@ -87,12 +88,16 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn opening_from_poly<P: AkitaPolyOps<F, D>>(
-    poly: &P,
+fn opening_from_poly<'a, I>(
+    poly: &'a OneHotPoly<F, D, I>,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,
-) -> Result<F, String> {
+) -> Result<F, String>
+where
+    I: OneHotIndex,
+    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, D, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
         .checked_add(layout.m_vars)
@@ -118,11 +123,19 @@ fn opening_from_poly<P: AkitaPolyOps<F, D>>(
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view()
+            .map_err(|err| format!("opening view: {err}"))?,
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .map_err(|err| format!("opening fold: {err}"))?;
+    let y_ring = opening.eval;
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
         .map_err(|err| format!("inner opening point should match ring dimension: {err}"))?;
     Ok((y_ring * v.sigma_m1()).coefficients()[0])
@@ -315,6 +328,12 @@ fn run() -> Result<(), String> {
     let prepared = CpuBackend
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend,
+        &prepared,
+        prover_setup.expanded.as_ref(),
+    )
+    .map_err(|err| format!("prover stack validation failed: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"
@@ -323,9 +342,8 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         &prover_setup,
-        &CpuBackend,
-        &prepared,
-        std::slice::from_ref(&&onehot_poly),
+        std::slice::from_ref(&onehot_poly),
+        &stack,
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
@@ -347,9 +365,8 @@ fn run() -> Result<(), String> {
     };
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
-        &CpuBackend,
-        &prepared,
         prove_input,
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         setup_contribution_mode,

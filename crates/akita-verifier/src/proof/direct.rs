@@ -1,7 +1,7 @@
 //! Verifier helpers for zero-fold proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, OpeningBatch};
+use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, VerifierOpeningBatch};
 
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
@@ -56,17 +56,18 @@ where
 /// Returns an error if the opening batch summary is inconsistent with the flattened
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
-pub(crate) fn verify_zero_fold_openings_with_opening_batch<F, E>(
+pub(crate) fn verify_zero_fold_openings_with_opening_batch<F, E, C>(
     witnesses: &[CleartextWitnessProof<F>],
-    opening_point: &[E],
-    openings: &[E],
-    opening_batch: &OpeningBatch,
+    claims: &VerifierOpeningBatch<'_, E, C>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
+    let opening_batch = claims.to_shape();
+    let openings = claims.claims();
+    let opening_point = claims.point();
     let num_claims = opening_batch.num_claims();
     let num_polynomials = opening_batch.num_polynomials();
     if witnesses.len() != num_polynomials || openings.len() != num_claims {
@@ -87,10 +88,21 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_types::FlatRingVec;
+    use akita_types::{CommitmentGroup, FlatRingVec};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
+
+    fn claims(point: &[E], openings: &[E]) -> VerifierOpeningBatch<'static, E, ()> {
+        VerifierOpeningBatch::from_groups(
+            point.to_vec(),
+            vec![CommitmentGroup {
+                claims: openings.to_vec(),
+                commitment: (),
+            }],
+        )
+        .expect("valid verifier claims")
+    }
 
     #[test]
     fn root_direct_openings_accept_opening_batch() {
@@ -99,16 +111,10 @@ mod tests {
         )];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
-        let opening_batch = OpeningBatch::new(1, 1).expect("valid single-point opening_batch");
+        let claims = claims(&point, &opening);
 
-        verify_zero_fold_openings_with_opening_batch(
-            &witnesses,
-            &point,
-            &opening,
-            &opening_batch,
-            BasisMode::Lagrange,
-        )
-        .expect("extension-valued root-direct opening_batch claim should verify");
+        verify_zero_fold_openings_with_opening_batch(&witnesses, &claims, BasisMode::Lagrange)
+            .expect("extension-valued root-direct opening_batch claim should verify");
     }
 
     #[test]
@@ -123,16 +129,10 @@ mod tests {
             E::new(F::from_u64(4), F::from_u64(4)),
             E::new(F::from_u64(4), F::from_u64(4)),
         ];
-        let opening_batch = OpeningBatch::new(1, 2).expect("valid single-point batch");
+        let claims = claims(&point, &openings);
 
-        verify_zero_fold_openings_with_opening_batch(
-            &witnesses,
-            &point,
-            &openings,
-            &opening_batch,
-            BasisMode::Lagrange,
-        )
-        .expect("single-point root-direct batch should verify each witness");
+        verify_zero_fold_openings_with_opening_batch(&witnesses, &claims, BasisMode::Lagrange)
+            .expect("single-point root-direct batch should verify each witness");
     }
 
     #[test]
@@ -168,15 +168,9 @@ mod tests {
             openings[0], openings[1],
             "witnesses must disagree at the point"
         );
-        let opening_batch = OpeningBatch::new(1, 2).expect("two polynomial slots");
+        let claims = claims(&point, &openings);
 
-        verify_zero_fold_openings_with_opening_batch(
-            &witnesses,
-            &point,
-            &openings,
-            &opening_batch,
-            basis,
-        )
-        .expect("flat claim-indexed witnesses should verify");
+        verify_zero_fold_openings_with_opening_batch(&witnesses, &claims, basis)
+            .expect("flat claim-indexed witnesses should verify");
     }
 }

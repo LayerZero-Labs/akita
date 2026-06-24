@@ -118,8 +118,9 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::zk;
     use akita_types::{
-        ring_relation_segment_layout_for_opening_shape, AkitaSetupSeed, FlatMatrix, LevelParams,
-        MRowLayout, SisModulusFamily,
+        AkitaSetupSeed, FlatMatrix, LevelParams, MRowLayout, OpeningBatchShape,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+        RingRelationSegmentLayout, SisModulusFamily,
     };
 
     type F = Prime128OffsetA7F7;
@@ -153,6 +154,37 @@ mod tests {
         .expect("zk blinding fixture lp")
     }
 
+    fn ring_relation_segment_layout_for_opening_shape(
+        lp: &LevelParams,
+        m_row_layout: MRowLayout,
+        num_polys: usize,
+    ) -> Result<RingRelationSegmentLayout, AkitaError> {
+        let opening_batch = OpeningBatchShape::new(32, num_polys)?;
+        let opening_point = RingOpeningPoint {
+            a: vec![F::zero(); lp.block_len],
+            b: vec![F::zero(); lp.num_blocks],
+        };
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let num_claims = opening_batch.num_claims();
+        let challenges = akita_challenges::Challenges::Sparse {
+            challenges: Vec::new(),
+            num_blocks_per_claim: lp.num_blocks,
+            num_claims,
+        };
+        let instance = RingRelationInstance::<F, D>::new(
+            m_row_layout,
+            challenges,
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            Vec::new(),
+        )?;
+        instance.segment_layout(lp)
+    }
+
     fn fixture() -> ZkFixture {
         // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
         // recursive levels with this real D=32 shape.
@@ -179,12 +211,9 @@ mod tests {
         let b_blinding_segment_len = b_blinding_digit_planes_per_point;
         let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
         let lp = fixture_lp();
-        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
-            &lp,
-            MRowLayout::WithDBlock,
-            num_claims,
-        )
-        .expect("witness segment layout");
+        let witness_segment_layout =
+            ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
+                .expect("witness segment layout");
         let total_len = witness_segment_layout.offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
         let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;

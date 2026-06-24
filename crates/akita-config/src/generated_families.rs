@@ -16,7 +16,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::{find_schedule, EmitSpec, PlannerPolicy};
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningBatch, Schedule};
+use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningBatchShape, Schedule};
 
 use crate::proof_optimized::{fp128, fp32, fp64};
 use crate::{policy_of, tensor_verifier, CommitmentConfig};
@@ -82,7 +82,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
     );
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
-            let opening_batch = OpeningBatch::new(nv, num_polys)?;
+            let opening_batch = OpeningBatchShape::new(nv, num_polys)?;
             keys.push(AkitaScheduleLookupKey::new_from_opening_batch(
                 &opening_batch,
             )?);

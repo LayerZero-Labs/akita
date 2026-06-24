@@ -5,7 +5,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
-use akita_types::AkitaScheduleLookupKey;
+use akita_types::{AkitaScheduleLookupKey, OpeningBatchShape};
 
 #[test]
 fn schedule_catalog_none_without_feature_uses_dp() {
@@ -19,7 +19,7 @@ fn schedule_catalog_none_without_feature_uses_dp() {
     );
 
     let key = AkitaScheduleLookupKey::new_from_opening_batch(
-        &akita_types::OpeningBatch::new(28, 1).expect("opening batch"),
+        &OpeningBatchShape::new(28, 1).expect("opening batch"),
     )
     .expect("lookup key");
 

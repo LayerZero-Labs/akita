@@ -52,17 +52,13 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use opening_batch::{
-    append_opening_batch_shape_to_transcript, append_opening_batch_to_transcript,
     batched_eval_target_from_opening_batch, sample_public_row_coefficients, CommitmentGroup,
-    OpeningBatch, OpeningBatchLimits, PointVariableSelection, GROUPED_ROOT_DENSE_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED,
+    OpeningBatchLimits, OpeningBatchShape, OpeningGroupShape, PointVariableSelection,
+    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
-pub use ring_relation::{
-    ring_column_z_first, ring_relation_segment_layout_for_opening_shape, RingRelationInstance,
-    RingRelationSegmentLayout,
-};
+pub use ring_relation::{ring_column_z_first, RingRelationInstance, RingRelationSegmentLayout};
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,

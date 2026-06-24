@@ -1,5 +1,7 @@
 //! Prover core state shared by root orchestration during crate extraction.
 
+#[cfg(feature = "zk")]
+use crate::compute::ZkHidingCommitBackend;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -12,8 +14,8 @@ use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumch
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, FoldInputPoly, ProverComputeBackend, ProverOpeningBatch, ProverTranscriptGrind,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingRelationInstance, RingRelationWitness,
+    ProverOpeningBatch, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
+    RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -41,9 +43,8 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, append_opening_batch_to_transcript, basis_weights,
-    batched_eval_target_from_opening_batch, build_trace_table_scaled,
-    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim,
+    append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
+    build_trace_table_scaled, check_extension_opening_reduction_output,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, folded_root_supports_opening_shape,
     prepare_opening_point, recover_ring_subfield_inner_product, relation_claim_from_rows_extension,
@@ -51,15 +52,16 @@ use akita_types::{
     root_direct_schedule, root_tensor_projection_enabled, sample_public_row_coefficients,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_weight_layout_from_segment, validate_batched_inputs,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
-    BlockOrder, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FlatRingVec, LevelParams, MRowLayout, OpeningBatch, PreparedOpeningPoint, RingCommitment,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
+    trace_public_weights_recursive, trace_public_weights_root_terms,
+    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
+    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
+    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    VerifierOpeningBatch,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, PackedDigits, ZkHidingProof};
@@ -293,16 +295,15 @@ pub(in crate::protocol::core) type Stage2ProveResult<L> =
 pub(in crate::protocol::core) type Stage2ProveResult<L> =
     (SumcheckProofMasked<L>, Vec<L>, AkitaStage2Prover<L>);
 
-fn scalar_opening_from_folded_ring<F, E, L, const D: usize>(
+fn scalar_opening_from_folded_ring<F, E, const D: usize>(
     folded_ring: &CyclotomicRing<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, L, D>,
+    prepared_point: &PreparedOpeningPoint<F, E, D>,
     inner_opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: FpExtEncoding<F>,
-    L: FieldCore,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
         return (*folded_ring * prepared_point.packed_inner_point.sigma_m1())
@@ -316,7 +317,8 @@ where
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(
-            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
+            "extension-field degree must divide the ring dimension into power-of-two slots"
+                .to_string(),
         ));
     }
     let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
@@ -441,9 +443,8 @@ fn append_zk_extension_reduction_slots<F, L>(
 }
 
 #[cfg(feature = "zk")]
-fn build_zk_hiding_context<F, E, L, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+fn build_zk_hiding_context<F, E, B, const D: usize>(
+    commit_ctx: &crate::compute::OperationCtx<'_, F, B, D>,
     schedule: &Schedule,
     root_commit_params: &LevelParams,
     num_vars: usize,
@@ -451,10 +452,9 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     _num_root_points: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F>,
-    L: FpExtEncoding<F> + ExtField<F>,
-    B: ProverComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + 'static,
+    E: FpExtEncoding<F> + ExtField<F>,
+    B: crate::compute::CommitmentComputeBackend<F> + ZkHidingCommitBackend<F, D>,
 {
     let mut rng = OsRng;
     let fold_steps = schedule
@@ -467,10 +467,10 @@ where
         .collect::<Vec<_>>();
     let mut hiding_witness = Vec::new();
 
-    if root_tensor_projection_enabled::<F, E, L, D>(num_vars) {
-        let split_bits = <L as ExtField<F>>::EXT_DEGREE.trailing_zeros() as usize;
-        append_zk_extension_reduction_slots::<F, L>(
-            num_claims * <L as ExtField<F>>::EXT_DEGREE,
+    if root_tensor_projection_enabled::<F, E, D>(num_vars) {
+        let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+        append_zk_extension_reduction_slots::<F, E>(
+            num_claims * E::EXT_DEGREE,
             num_vars - split_bits,
             &mut hiding_witness,
             &mut rng,
@@ -479,7 +479,7 @@ where
     if let Some(root_step) = fold_steps.first() {
         // Terminal folds skip Stage 1 and consume only Stage 2 pads.
         let root_has_stage1 = fold_steps.len() > 1;
-        append_zk_level_pad_slots::<F, L>(
+        append_zk_level_pad_slots::<F, E>(
             &root_step.params,
             root_step.next_w_len,
             root_has_stage1,
@@ -490,15 +490,15 @@ where
             // Root fold scalar: added to the root level's final next-witness
             // evaluation claim (`w_eval`) after Stage 2. Terminal roots have
             // no next witness and therefore consume no next-w eval mask.
-            push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+            push_random_ext_scalar_slots::<F, E>(&mut hiding_witness, &mut rng);
         }
         let mut current_opening_vars =
             sumcheck_rounds(root_step.params.ring_dimension, root_step.next_w_len);
         for (step_idx, step) in fold_steps.iter().enumerate().skip(1) {
-            if <L as ExtField<F>>::EXT_DEGREE > 1 {
-                let split_bits = <L as ExtField<F>>::EXT_DEGREE.trailing_zeros() as usize;
-                append_zk_extension_reduction_slots::<F, L>(
-                    <L as ExtField<F>>::EXT_DEGREE,
+            if E::EXT_DEGREE > 1 {
+                let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+                append_zk_extension_reduction_slots::<F, E>(
+                    E::EXT_DEGREE,
                     current_opening_vars - split_bits,
                     &mut hiding_witness,
                     &mut rng,
@@ -506,7 +506,7 @@ where
             }
             // Terminal recursive folds skip Stage 1 and consume only Stage 2 pads.
             let include_stage1 = step_idx + 1 < fold_steps.len();
-            append_zk_level_pad_slots::<F, L>(
+            append_zk_level_pad_slots::<F, E>(
                 &step.params,
                 step.next_w_len,
                 include_stage1,
@@ -516,17 +516,13 @@ where
             if include_stage1 {
                 // Recursive fold scalar: added to non-terminal levels' final
                 // next-witness evaluation claim (`w_eval`) after Stage 2.
-                push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+                push_random_ext_scalar_slots::<F, E>(&mut hiding_witness, &mut rng);
             }
             current_opening_vars = sumcheck_rounds(step.params.ring_dimension, step.next_w_len);
         }
     }
-    let (u_blind, b_blinding_digits) = commit_zk_hiding_witness::<F, B, D>(
-        backend,
-        prepared,
-        root_commit_params,
-        &hiding_witness,
-    )?;
+    let (u_blind, b_blinding_digits) =
+        commit_zk_hiding_witness::<F, B, D>(commit_ctx, root_commit_params, &hiding_witness)?;
     Ok((
         ZkHidingCommitment {
             u_blind,

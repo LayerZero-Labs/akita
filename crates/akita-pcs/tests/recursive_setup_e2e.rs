@@ -91,7 +91,7 @@ fn prove_onehot_with_setup_mode(
     setup_mode: SetupContributionMode,
 ) -> OnehotProof {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
@@ -115,6 +115,9 @@ fn prove_onehot_with_setup_mode(
     }
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
@@ -123,7 +126,7 @@ fn prove_onehot_with_setup_mode(
     let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
-    >>::commit(&setup, &CpuBackend, &prepared, commit_input)
+    >>::commit(&setup, commit_input, &stack)
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -132,9 +135,8 @@ fn prove_onehot_with_setup_mode(
     let proof =
         <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
-            &CpuBackend,
-            &prepared,
             prove_input(&point[..], &poly_refs[..], &commitment, hint),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             proof_mode,

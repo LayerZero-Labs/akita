@@ -13,31 +13,24 @@ fn batched_commit_matches_individual_commits() {
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| {
-            <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, group)
-        })
+        .map(|group| <Scheme as CommitmentProver<F, D>>::commit(&setup, group, &stack))
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
         .unzip();
-    let (commitment_a, hint_a) = <Scheme as CommitmentProver<F, D>>::commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        std::slice::from_ref(&poly_a),
-    )
-    .unwrap();
-    let (commitment_b, hint_b) = <Scheme as CommitmentProver<F, D>>::commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        std::slice::from_ref(&poly_b),
-    )
-    .unwrap();
+    let (commitment_a, hint_a) =
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly_a), &stack)
+            .unwrap();
+    let (commitment_b, hint_b) =
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly_b), &stack)
+            .unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
@@ -65,14 +58,14 @@ fn batched_root_direct_fast_path_round_trip() {
             DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
         })
         .collect();
-    let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
-            .unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -102,14 +95,13 @@ fn batched_root_direct_fast_path_round_trip() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prover_claims(
             &opening_point[..],
             &poly_group[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -164,14 +156,14 @@ fn batched_root_direct_rejects_wrong_opening() {
             DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
         })
         .collect();
-    let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
-            .unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -183,14 +175,13 @@ fn batched_root_direct_rejects_wrong_opening() {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prover_claims(
             &opening_point[..],
             &poly_group[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -223,11 +214,17 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        &[poly_a.clone(), poly_b.clone()],
+        &stack,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -242,14 +239,13 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prover_claims(
             &opening_point[..],
             &poly_group[..],
             &commitments[0],
             hints.into_iter().next().unwrap(),
         ),
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,

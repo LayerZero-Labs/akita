@@ -143,7 +143,7 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, C, T, const D: usize>(
     challenge_point: &[C],
     openings: &[C],
     row_coefficients: &[C],
-    opening_batch: &OpeningBatch,
+    opening_batch: &OpeningBatchShape,
     basis: BasisMode,
     lp: &LevelParams,
     block_order: BlockOrder,
@@ -342,9 +342,9 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
-    pub(in crate::protocol::core) commitment_rows: &'a [CyclotomicRing<F, D>],
+    pub(in crate::protocol::core) opening_batch:
+        VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
-    pub(in crate::protocol::core) opening_batch: OpeningBatch<'static>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
     pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     pub(in crate::protocol::core) w_len: usize,
@@ -569,9 +569,15 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let opening_shape = prepared.opening_batch.to_shape();
+    let commitment_rows = prepared
+        .opening_batch
+        .single_group_commitment()
+        .copied()
+        .ok_or(AkitaError::InvalidProof)?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
-            prepared.opening_batch.num_claims(),
+            opening_shape.num_claims(),
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?,
         prepared.fold_grind_nonce,
@@ -580,7 +586,7 @@ where
         transcript,
         &prepared.v,
         prepared.lp.num_blocks,
-        prepared.opening_batch.num_claims(),
+        opening_shape.num_claims(),
         prepared.lp,
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
@@ -599,7 +605,7 @@ where
     };
     let relation_y = generate_y::<F, D>(
         y_v_slice,
-        prepared.commitment_rows,
+        commitment_rows,
         n_d_active,
         prepared.lp.effective_commit_rows(),
         prepared.lp.b_inner_rows_per_group(),
@@ -610,7 +616,7 @@ where
         stage1_challenges,
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
-        prepared.opening_batch,
+        opening_shape,
         gamma,
         row_coefficient_rings,
         relation_y,
@@ -648,7 +654,7 @@ where
         &rs.tau1,
         rs.alpha,
         &relation_instance.v,
-        prepared.commitment_rows,
+        commitment_rows,
     )?;
     #[cfg(feature = "zk")]
     let relation_claim_mask = ZkR1csLinearCombination::<E>::zero();

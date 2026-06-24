@@ -1,4 +1,12 @@
 use super::*;
+use crate::compute::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootProvePoly,
+    TensorBackendFor,
+};
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
@@ -30,18 +38,24 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_root<F, E, T, P, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
+    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -50,14 +64,20 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    TS: TensorBackendFor<F, P, E, D>,
+    O: DigitRowsComputeBackend<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+    C: ComputeBackendSetup<F>,
+    R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.to_prover_batch_shape::<F, D>()?;
+    let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_claims();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
-    let needs_extension_reduction = root_tensor_projection_enabled::<F, E, E, D>(opening_num_vars);
+    let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
+
     if claims.point().len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {
             expected: opening_num_vars,
@@ -72,24 +92,12 @@ where
     }
 
     let eor_opening_batch =
-        OpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
-
-    let expected_openings = if needs_extension_reduction {
-        Some({
-            let _span = tracing::info_span!("root_extension_check_openings", num_claims).entered();
-            cfg_iter!(flat_polys)
-                .map(|poly| poly.evaluate_extension(eor_opening_batch.point()))
-                .collect::<Result<Vec<_>, _>>()?
-        })
-    } else {
-        None
-    };
+        VerifierOpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
     let non_eor_protocol_point = claims.point().to_vec();
-    prepare_fold_inner::<F, E, T, P, P, _, B, D>(
-        backend,
-        prepared,
+    prepare_fold_inner::<F, E, T, P, _, C, O, TS, R, D>(
+        stack,
         needs_extension_reduction,
-        claims.into_commitment_rows(),
+        claims,
         &flat_polys,
         &eor_opening_batch,
         #[cfg(feature = "zk")]
@@ -100,7 +108,6 @@ where
         transcript,
         #[cfg(feature = "zk")]
         zk_hiding,
-        expected_openings,
         non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
@@ -124,20 +131,35 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root<F, E, T, P, B, Cfg, const D: usize>(
+pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F, D>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        F,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -146,33 +168,39 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    O: OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + DigitRowsComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
+    TS: TensorBackendFor<F, P, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + ComputeBackendSetup<F>
+        + 'stack,
+    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
-    let opening_batch = claims.to_prover_batch_shape::<F, D>()?;
+    let stack = stacks.prove_stack_at_level(0);
+    let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
-    append_opening_batch_to_transcript::<F, E, _, T>(
-        &opening_batch,
-        &claims.commitments(),
-        claims.point(),
-        transcript,
-    )?;
 
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level = 0usize,
-            num_claims,
-            "prove_root"
-        );
+    if claims.flat_polys().len() != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "invalid root-level inputs".to_string(),
+        ));
     }
 
-    let prepared_fold = prepare_root::<F, E, T, P, B, D>(
-        backend,
-        prepared,
+    claims.append_to_transcript::<T>(transcript)?;
+
+    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
+        stack,
         transcript,
         claims,
         root_params,
@@ -182,11 +210,10 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, B, Cfg, D>(
+    prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
         prefix_slots,
-        backend,
-        prepared,
+        stack,
         transcript,
         0,
         scheduled,
@@ -213,12 +240,19 @@ where
 /// terminal-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
+pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        F,
+        D,
+        Commit = C,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+    >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -226,7 +260,15 @@ pub fn prove_terminal_root_fold_with_params<Cfg, F, E, T, P, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -235,35 +277,41 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: AkitaPolyOps<F, D>,
-    B: ProverComputeBackend<F>,
+    P: RootProvePoly<F, D>,
+    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    O: OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + DigitRowsComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
+    TS: TensorBackendFor<F, P, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + ComputeBackendSetup<F>
+        + 'stack,
+    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
-    let opening_batch = claims.to_prover_batch_shape::<F, D>()?;
+    let stack = stacks.prove_stack_at_level(0);
+    let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_claims();
     let root_params = &scheduled.params;
-    append_opening_batch_to_transcript::<F, E, _, T>(
-        &opening_batch,
-        &claims.commitments(),
-        claims.point(),
-        transcript,
-    )?;
 
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level = 0usize,
-            num_claims,
-            "prove_terminal_root_fold_with_params"
-        );
+    if claims.flat_polys().len() != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "invalid root-level inputs".to_string(),
+        ));
     }
+
+    claims.append_to_transcript::<T>(transcript)?;
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    let prepared_fold = prepare_root::<F, E, T, P, B, D>(
-        backend,
-        prepared,
+    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
+        stack,
         transcript,
         claims,
         root_params,
@@ -273,11 +321,10 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, B, Cfg, D>(
+    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
         &prefix_slots,
-        backend,
-        prepared,
+        stack,
         transcript,
         0,
         scheduled,

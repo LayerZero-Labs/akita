@@ -1,8 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningBatch, RingOpeningPoint};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use crate::{CleartextWitnessShape, LevelParams, OpeningBatchShape};
+use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,48 +69,6 @@ impl ExecutionSchedule {
     }
 }
 
-/// Validate ring-switch opening-point routing against a level layout.
-///
-/// # Errors
-///
-/// Returns an error when there are no opening points, the claim-to-point table
-/// has the wrong length, an opening point does not match `lp`, or a routed
-/// point index is out of range.
-pub fn validate_opening_points_for_claims<F: FieldCore>(
-    opening_points: &[RingOpeningPoint<F>],
-    claim_to_opening_point: &[usize],
-    lp: &LevelParams,
-    num_claims: usize,
-) -> Result<(), AkitaError> {
-    if opening_points.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "ring switch requires at least one opening point".to_string(),
-        ));
-    }
-    if claim_to_opening_point.len() != num_claims {
-        return Err(AkitaError::InvalidSize {
-            expected: num_claims,
-            actual: claim_to_opening_point.len(),
-        });
-    }
-    for opening_point in opening_points {
-        if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
-            return Err(AkitaError::InvalidInput(
-                "ring switch m-eval opening-point layout mismatch".to_string(),
-            ));
-        }
-    }
-    if claim_to_opening_point
-        .iter()
-        .any(|&point_idx| point_idx >= opening_points.len())
-    {
-        return Err(AkitaError::InvalidInput(
-            "ring switch claim-to-point index out of range".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Public runtime key that selects a concrete root schedule context.
 ///
 /// Intentionally narrower than a full schedule table entry: only the public
@@ -156,11 +114,11 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Build a schedule lookup key from a validated [`OpeningBatch`].
+    /// Build a schedule lookup key from a validated [`OpeningBatchShape`].
     ///
     /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
     /// `num_claims`. Assumes the batch was already validated at the claims
-    /// boundary (`OpeningBatch::validate` or an infallible constructor).
+    /// boundary (`OpeningBatchShape::check` or an infallible constructor).
     ///
     /// Folded schedule lookup currently treats every batch as one commitment
     /// group; see `akita_planner::generated_schedule_lookup_key`.
@@ -168,7 +126,7 @@ impl AkitaScheduleLookupKey {
     /// # Errors
     ///
     /// Returns an error if a projected count does not fit the lookup key.
-    pub fn new_from_opening_batch(opening_batch: &OpeningBatch) -> Result<Self, AkitaError> {
+    pub fn new_from_opening_batch(opening_batch: &OpeningBatchShape) -> Result<Self, AkitaError> {
         if opening_batch.num_commitment_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "scalar schedule lookup cannot collapse a multi-commitment batch; use the grouped schedule key from specs/multi-group-batching.md".to_string(),
@@ -1047,7 +1005,7 @@ mod tests {
 
     #[test]
     fn new_from_opening_batch_rejects_multi_group() {
-        let batch = OpeningBatch::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
+        let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
         let err = AkitaScheduleLookupKey::new_from_opening_batch(&batch)
             .expect_err("scalar lookup must reject grouped batches");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));

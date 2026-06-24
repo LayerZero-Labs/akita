@@ -552,7 +552,7 @@ where
 /// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
 /// at the same point are handled by one public row per point, with row-local
 /// extension batching coefficients embedded into the ring relation.
-pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
+pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],
     lp: &LevelParams,
     alpha_bits: usize,
@@ -560,17 +560,14 @@ pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
 where
     F: FieldCore,
     E: ExtField<F>,
-    L: ExtField<F>,
 {
-    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+    if E::EXT_DEGREE == 1 {
         return true;
     }
-    if !D.is_multiple_of(<L as ExtField<F>>::EXT_DEGREE)
-        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
-    {
+    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
         return false;
     }
-    let packed_slots = D / <L as ExtField<F>>::EXT_DEGREE;
+    let packed_slots = D / E::EXT_DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
     if packed_inner_bits > alpha_bits {
         return false;
@@ -595,18 +592,16 @@ where
 }
 
 /// Return whether root tensor projection can represent this field/ring shape.
-pub fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
+pub fn root_tensor_projection_enabled<F, E, const D: usize>(num_vars: usize) -> bool
 where
     F: FieldCore,
     E: ExtField<F>,
-    C: ExtField<F>,
 {
-    let width = C::EXT_DEGREE;
+    let width = E::EXT_DEGREE;
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
     width > 1
-        && width == E::EXT_DEGREE
         && width.is_power_of_two()
         && D.is_power_of_two()
         && D >= double_width
@@ -710,12 +705,12 @@ mod tests {
         let lp = packed_inner_lp();
         let point = [F::from_u64(7), F::from_u64(11)];
 
-        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
+        assert!(folded_root_supports_opening_shape::<F, F, 32>(
             &[&point[..]],
             &lp,
             5,
         ));
-        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
+        assert!(folded_root_supports_opening_shape::<F, F, 32>(
             &[&point[..]],
             &lp,
             5,
@@ -724,9 +719,8 @@ mod tests {
 
     #[test]
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
-        assert!(root_tensor_projection_enabled::<F, L, L, 8>(3));
-        assert!(!root_tensor_projection_enabled::<F, L, L, 4>(2));
-        assert!(!root_tensor_projection_enabled::<F, E, L, 8>(3));
+        assert!(root_tensor_projection_enabled::<F, L, 8>(3));
+        assert!(!root_tensor_projection_enabled::<F, L, 4>(2));
     }
 
     #[test]

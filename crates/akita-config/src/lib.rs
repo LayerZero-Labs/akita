@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, OpeningBatch,
-    Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -81,8 +81,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
 
-    /// Absorb a claim-field element into a base-field transcript.
-    fn append_claim_field<T: Transcript<Self::Field>>(
+    /// Absorb an extension-field element into a base-field transcript.
+    fn append_extension_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
         x: &Self::ExtField,
@@ -90,8 +90,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         append_ext_field::<Self::Field, Self::ExtField, T>(transcript, label, x);
     }
 
-    /// Squeeze a challenge-field element from a base-field transcript.
-    fn sample_challenge_field<T: Transcript<Self::Field>>(
+    /// Squeeze an extension-field element from a base-field transcript.
+    fn sample_extension_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
     ) -> Self::ExtField {
@@ -232,7 +232,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
-    fn get_params_for_prove(opening_batch: &OpeningBatch) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
         Self::runtime_schedule(key)
     }
@@ -252,7 +252,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        opening_batch: &OpeningBatch,
+        opening_batch: &OpeningBatchShape,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::get_params_for_prove(opening_batch)?;
         match schedule.steps.first() {
@@ -338,7 +338,7 @@ mod tests {
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let c1 =
-            SingleExtensionConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
+            SingleExtensionConfig::sample_extension_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
         let c2 = sample_ext_challenge::<Base, BaseExt, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
         assert_eq!(c1, c2);
     }
@@ -364,7 +364,7 @@ mod tests {
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-        SingleExtensionConfig::append_claim_field(
+        SingleExtensionConfig::append_extension_field(
             &mut t1,
             labels::ABSORB_EVALUATION_CLAIMS,
             &opening,
@@ -539,7 +539,7 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatch::new(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatchShape::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {

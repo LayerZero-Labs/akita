@@ -21,6 +21,12 @@ fold-facing wrapper for original witnesses, dense tensor projections, and sparse
 tensor projections, and it implements `AkitaPolyOps` so both root folds and
 recursive suffix witnesses can pass through the same relation-building code.
 
+**Post PO-CUTOVER (#206):** `FoldInputPoly` and `AkitaPolyOps` are removed.
+EOR materialization uses `RootTensorProjectionPoly` plus
+`TensorProjectionKernel` / `TensorProjectionBatchKernel` on borrowed views;
+suffix paths use `RecursiveWitnessFlat` / `SuffixWitnessView` with the same
+kernel family.
+
 ## Intent
 
 ### Goal

@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::OpeningBatch;
+use super::OpeningBatchShape;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
@@ -8,7 +8,7 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, FieldCore, Zero};
+use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
 /// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
@@ -21,8 +21,7 @@ pub fn ring_column_z_first(lp: &LevelParams) -> bool {
 
 /// Witness-column segment offsets for ring-switch evaluation.
 ///
-/// Produced only by [`RingRelationInstance::segment_layout`] (or
-/// [`ring_relation_segment_layout_for_opening_shape`] in tests).
+/// Produced only by [`RingRelationInstance::segment_layout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingRelationSegmentLayout {
     pub offset_e: usize,
@@ -41,19 +40,19 @@ pub struct RingRelationSegmentLayout {
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 #[derive(Debug, Clone)]
-pub struct RingRelationInstance<'a, F: FieldCore, const D: usize> {
+pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     m_row_layout: MRowLayout,
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    opening_batch: OpeningBatch<'a>,
+    opening_batch: OpeningBatchShape,
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     y: Vec<CyclotomicRing<F, D>>,
     pub v: Vec<CyclotomicRing<F, D>>,
 }
 
-impl<'a, F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<'a, F, D> {
+impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     /// Construct a validated ring-relation statement from already-sampled inputs.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
@@ -63,7 +62,7 @@ impl<'a, F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<'a,
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        opening_batch: OpeningBatch<'a>,
+        opening_batch: OpeningBatchShape,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
@@ -99,7 +98,7 @@ impl<'a, F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<'a,
         self.m_row_layout
     }
 
-    pub fn opening_batch(&self) -> &OpeningBatch<'a> {
+    pub fn opening_batch(&self) -> &OpeningBatchShape {
         &self.opening_batch
     }
 
@@ -272,48 +271,6 @@ impl<'a, F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<'a,
     }
 }
 
-/// Derive witness segment layout for unit tests from level params and opening shape.
-///
-/// Production code must use [`RingRelationInstance::segment_layout`].
-///
-/// # Errors
-///
-/// Same as [`RingRelationInstance::segment_layout`].
-pub fn ring_relation_segment_layout_for_opening_shape<
-    F: FieldCore + CanonicalField + Zero,
-    const D: usize,
->(
-    lp: &LevelParams,
-    m_row_layout: MRowLayout,
-    num_polys: usize,
-) -> Result<RingRelationSegmentLayout, AkitaError> {
-    let opening_batch = OpeningBatch::new(32, num_polys)?;
-    let opening_point = RingOpeningPoint {
-        a: vec![F::zero(); lp.block_len],
-        b: vec![F::zero(); lp.num_blocks],
-    };
-    let ring_multiplier_point: RingMultiplierOpeningPoint<F, D> =
-        RingMultiplierOpeningPoint::from_base(&opening_point);
-    let num_claims = opening_batch.num_claims();
-    let challenges = Challenges::Sparse {
-        challenges: Vec::new(),
-        num_blocks_per_claim: lp.num_blocks,
-        num_claims,
-    };
-    let instance = RingRelationInstance::new(
-        m_row_layout,
-        challenges,
-        opening_point,
-        ring_multiplier_point,
-        opening_batch,
-        vec![F::zero(); num_claims],
-        vec![CyclotomicRing::<F, D>::zero(); num_claims],
-        vec![CyclotomicRing::<F, D>::zero(); num_claims],
-        Vec::new(),
-    )?;
-    instance.segment_layout(lp)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,7 +319,7 @@ mod tests {
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatch::new(2, 1).expect("valid opening batch");
+        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
@@ -387,7 +344,7 @@ mod tests {
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatch::new(2, 3).expect("valid batch");
+        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(

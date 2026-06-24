@@ -529,7 +529,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
     Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatch::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout")
 }

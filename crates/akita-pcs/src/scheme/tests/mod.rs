@@ -5,9 +5,9 @@ use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
+use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, DensePoly, OneHotPoly, ProverCommitmentGroup,
-    ProverOpeningBatch,
+    CommitmentProver, DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -26,7 +26,9 @@ use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
-use akita_types::{CommitmentGroup, OpeningBatch, PointVariableSelection};
+use akita_types::{
+    CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,
+};
 use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
@@ -106,7 +108,7 @@ fn expected_same_point_batched_shape(
     proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
-        akita_types::OpeningBatch::new(max_num_vars, num_claims).expect("opening_batch");
+        akita_types::OpeningBatchShape::new(max_num_vars, num_claims).expect("opening_batch");
     let schedule =
         OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -222,20 +224,19 @@ fn expected_same_point_batched_shape(
     shape
 }
 
-fn prover_claims<'a, E: Clone, P, C, H>(
+fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [E],
-    polynomials: &'a [P],
-    commitment: &'a C,
-    hint: H,
-) -> ProverOpeningBatch<'a, E, P, C, H> {
+    polynomials: &'a [&'a P],
+    commitment: &'a RingCommitment<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF, D>,
+) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),
         groups: vec![ProverCommitmentGroup {
             point_vars: PointVariableSelection::prefix(point.len(), point.len())
                 .expect("full-point prover group"),
             polynomials,
-            commitment,
-            hint,
+            commitment: (commitment.clone(), hint),
         }],
     }
 }
@@ -244,12 +245,10 @@ fn verifier_claims<'a, E: FieldCore, C>(
     point: &[E],
     openings: &[E],
     commitment: &'a C,
-) -> OpeningBatch<'static, E, &'a C> {
-    OpeningBatch::from_groups(
+) -> VerifierOpeningBatch<'static, E, &'a C> {
+    VerifierOpeningBatch::from_groups(
         point.to_vec(),
         vec![CommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point verifier group"),
             claims: openings.to_vec(),
             commitment,
         }],
@@ -265,7 +264,7 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let opening_batch = OpeningBatch::new(num_vars, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch");
     C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 
@@ -286,14 +285,13 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        std::slice::from_ref(&poly),
-    )
-    .unwrap();
+    let (commitment, hint) =
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
+            .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -310,9 +308,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        &CpuBackend,
-        &prepared,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+        &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -362,11 +359,11 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
     OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
 }
 
-fn opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
-    poly: &P,
-    point: &[OneHotF],
-    layout: &LevelParams,
-) -> OneHotF {
+fn opening_from_poly<'a, P>(poly: &'a P, point: &[OneHotF], layout: &LevelParams) -> OneHotF
+where
+    P: RootOpeningSource<OneHotF, ONEHOT_D> + RootPolyShape<OneHotF, ONEHOT_D>,
+    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, OneHotF, ONEHOT_D>,
+{
     let alpha_bits = ONEHOT_D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
 
@@ -381,11 +378,18 @@ fn opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
     )
     .expect("opening point shape should match layout");
 
-    let (folded_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
+    let opening = OpeningFoldKernel::<P::OpeningView<'a>, OneHotF, ONEHOT_D>::evaluate_and_fold(
+        &CpuBackend,
+        None,
+        poly.opening_view().expect("opening view"),
+        OpeningFoldPlan::Base {
+            eval_outer_scalars: &ring_opening_point.b,
+            fold_scalars: &ring_opening_point.a,
+            block_len: layout.block_len,
+        },
+    )
+    .expect("evaluate_and_fold");
+    let folded_ring = opening.eval;
     let packed_inner =
         reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(inner_point, BasisMode::Lagrange)
             .expect("inner opening point should match ring dimension");
