@@ -16,8 +16,9 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, SetupContributionMode,
-    SetupPrefixVerifierRegistry, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
+    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -103,17 +104,18 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     /// The recursion profile currently ships exactly one opening for one
     /// commitment. Keeping this projection here prevents host and guest replay
     /// from growing independent claim-shaping code.
-    pub fn verifier_claims<'a>(
+    pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierClaims<'a, F, RingCommitment<F, D>> {
-        (
-            &self.opening_point[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
+    ) -> VerifierOpeningBatch<'static, F, &'a RingCommitment<F, D>> {
+        VerifierOpeningBatch::from_groups(
+            self.opening_point.clone(),
+            vec![CommitmentGroup {
+                claims: openings.to_vec(),
                 commitment: &self.commitment,
             }],
         )
+        .expect("singleton recursion opening batch is valid")
     }
 
     fn validate_blob_header_bounds(

@@ -145,7 +145,7 @@ pub(crate) fn stage2_cleartext_oracle<'a, F, E, const D: usize>(
     witness: &'a CleartextWitnessProof<F>,
     physical_w_len: usize,
     lp: &'a akita_types::LevelParams,
-    num_commitment_groups: usize,
+    num_segments: usize,
 ) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -159,7 +159,7 @@ where
             Stage2CleartextSource::Packed(packed)
         }
         CleartextWitnessProof::SegmentTyped(_) => {
-            let digits = witness.logical_i8_digits::<D>(lp, num_commitment_groups)?;
+            let digits = witness.logical_i8_digits::<D>(lp, num_segments)?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }

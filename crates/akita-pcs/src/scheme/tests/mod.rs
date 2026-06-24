@@ -6,7 +6,9 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
-use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_prover::{
+    CommitmentProver, DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
+};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -14,7 +16,6 @@ use akita_types::stage1_tree_stage_shapes;
 use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
 use akita_types::ExtensionOpeningReductionProof;
-use akita_types::OpeningBatch;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -25,8 +26,11 @@ use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
+use akita_types::{
+    CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,
+};
 use akita_verifier::cleartext_witness_opening_matches;
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Full;
@@ -104,7 +108,7 @@ fn expected_same_point_batched_shape(
     proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
-        akita_types::OpeningBatch::same_point(max_num_vars, num_claims).expect("opening_batch");
+        akita_types::OpeningBatchShape::new(max_num_vars, num_claims).expect("opening_batch");
     let schedule =
         OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -193,7 +197,6 @@ fn expected_same_point_batched_shape(
         1,
         1,
         1,
-        1,
         akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
@@ -221,6 +224,38 @@ fn expected_same_point_batched_shape(
     shape
 }
 
+fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
+    point: &'a [E],
+    polynomials: &'a [&'a P],
+    commitment: &'a RingCommitment<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF, D>,
+) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
+    ProverOpeningBatch {
+        point: point.into(),
+        groups: vec![ProverCommitmentGroup {
+            point_vars: PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
+            polynomials,
+            commitment: (commitment.clone(), hint),
+        }],
+    }
+}
+
+fn verifier_claims<'a, E: FieldCore, C>(
+    point: &[E],
+    openings: &[E],
+    commitment: &'a C,
+) -> VerifierOpeningBatch<'static, E, &'a C> {
+    VerifierOpeningBatch::from_groups(
+        point.to_vec(),
+        vec![CommitmentGroup {
+            claims: openings.to_vec(),
+            commitment,
+        }],
+    )
+    .expect("valid verifier claims")
+}
+
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
     let len = 1usize << num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
@@ -229,7 +264,7 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let opening_batch = OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch");
+    let opening_batch = OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch");
     C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 
@@ -273,14 +308,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        (
-            &opening_point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        ),
+        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,

@@ -220,13 +220,11 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
-    claim_to_commitment_group: &[usize],
-    claim_poly_in_commitment_group: &[usize],
     row_coefficient_rings: &[CyclotomicRing<F, D>],
     z_folded_centered: &[[i32; D]],
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
-    num_polys_per_commitment_group: &[usize],
+    num_polys: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
@@ -238,43 +236,17 @@ where
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    if num_polys_per_commitment_group.is_empty() || num_polys_per_commitment_group.contains(&0) {
+    if num_polys == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_claims = claim_to_commitment_group.len();
-    if claim_poly_in_commitment_group.len() != num_claims {
+    let num_claims = row_coefficient_rings.len();
+    if num_polys != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    // Build a flat (claim → global poly slot) map. `recomposed_inner_rows`
-    // is flattened by polynomial slot (then block), so the global poly
-    // slot is `Σ_{g < group_idx} num_polys_per_commitment_group[g] + poly_idx`. Validate
-    // that every claim references a real `(group, poly)` cell.
-    let mut group_offsets = Vec::with_capacity(num_polys_per_commitment_group.len());
-    let mut acc = 0usize;
-    for &count in num_polys_per_commitment_group {
-        group_offsets.push(acc);
-        acc = acc.checked_add(count).ok_or(AkitaError::InvalidProof)?;
-    }
-    let total_poly_slots = acc;
-    let mut poly_slot_for_claim = Vec::with_capacity(num_claims);
-    for claim_idx in 0..num_claims {
-        let group_idx = claim_to_commitment_group[claim_idx];
-        if group_idx >= num_polys_per_commitment_group.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let poly_idx = claim_poly_in_commitment_group[claim_idx];
-        if poly_idx >= num_polys_per_commitment_group[group_idx] {
-            return Err(AkitaError::InvalidProof);
-        }
-        poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
-    }
-    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len())
-        || row_coefficient_rings.len() != num_claims
-    {
+    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len()) {
         return Err(AkitaError::InvalidProof);
     }
-    let num_commitment_groups = num_polys_per_commitment_group.len();
-    let expected_inner_rows = total_poly_slots
+    let expected_inner_rows = num_polys
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
     if recomposed_inner_rows.len() != expected_inner_rows {
@@ -318,19 +290,9 @@ where
         MRowLayout::WithoutDBlock => 0,
     };
     let tiered = lp.f_key.is_some();
-    if tiered && num_commitment_groups != 1 {
-        // The tiered relation slices the single commitment group's t_hat; grouped
-        // tiering is a follow-up (see specs/tiered-commitment.md edge cases).
-        return Err(AkitaError::InvalidSetup(
-            "tiered relation currently supports a single commitment group".to_string(),
-        ));
-    }
-    let commitment_row_count = n_b
-        .checked_mul(num_commitment_groups)
-        .ok_or(AkitaError::InvalidProof)?;
     // Public-output M rows are enforced by the fused trace term, not M itself.
     const NUM_PUBLIC_M_ROWS: usize = 0;
-    let num_rows = lp.m_row_count_for(num_commitment_groups, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let num_rows = lp.m_row_count_for(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
@@ -339,8 +301,8 @@ where
     // Public openings bind through the fused trace term, not M rows.
     let d_start = lp.d_start(NUM_PUBLIC_M_ROWS)?;
     let f_start = lp.f_start(NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(num_commitment_groups, NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let a_start = lp.a_start(num_commitment_groups, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let b_inner_start = lp.b_inner_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let a_start = lp.a_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -349,7 +311,7 @@ where
     let mut z_segments = z_folded_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let use_relation_b_rows = !tiered && commitment_row_count == n_b && num_commitment_groups == 1;
+    let use_relation_b_rows = !tiered;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
     let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
         t_hat.flat_digits()
@@ -438,12 +400,12 @@ where
             t_hat,
             #[cfg(feature = "zk")]
             b_blinding_digits,
-            num_polys_per_commitment_group,
+            &[num_polys],
             blocks_per_claim,
             lp.log_basis,
         )?
     };
-    if !tiered && commitment_cyclic_rows.len() != commitment_row_count {
+    if !tiered && commitment_cyclic_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -573,18 +535,14 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
 
-            // Iterate `(claim, block)` over the challenge space and route
-            // each cell to its polynomial-slot in `recomposed_inner_rows`
-            // (`poly_slot * num_blocks + block_idx`). Iterating over the
-            // raw `recomposed_inner_rows.len()` would conflate poly slots
-            // with claims and overrun `challenges` whenever a group has
-            // more polynomial slots than opened claims.
+            // In a dense single commitment group, claim order is polynomial
+            // order. Iterate `(claim, block)` over the challenge space and
+            // read the matching committed polynomial block directly.
             let mut quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
                     let claim_idx = i / blocks_per_claim;
                     let block_idx = i % blocks_per_claim;
-                    let poly_slot = poly_slot_for_claim[claim_idx];
-                    let inner_idx = poly_slot * blocks_per_claim + block_idx;
+                    let inner_idx = claim_idx * blocks_per_claim + block_idx;
                     recomposed_inner_rows[inner_idx].get(a_idx).copied()
                 })?;
 

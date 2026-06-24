@@ -5,7 +5,7 @@ use akita_r1cs::zk_ext_mask_lc_at;
 use akita_types::dispatch_ring_dim_result;
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningBatch};
+use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -67,7 +67,7 @@ where
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatch::same_point(num_vars, num_claims)?;
+    let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![L::one()];
     #[cfg(feature = "zk")]
@@ -114,7 +114,7 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+        None => w_ring_element_count_with_counts::<F>(lp, 1, num_claims, num_claims)?
             .checked_mul(D)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
     };
@@ -163,14 +163,21 @@ where
         };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
+    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+        current_state.opening_point.as_slice(),
+        opening_batch,
+        vec![CommitmentGroup {
+            claims: openings,
+            commitment: commitment_u,
+        }],
+    )?;
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
         fold_grind_nonce,
         v: v_typed.to_vec(),
-        commitment_rows: commitment_u,
+        opening_batch: replay_opening_batch,
         row_coefficients,
-        opening_batch,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
         ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
         w_len,
@@ -270,7 +277,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 let computed_next_w_len =
-                    w_ring_element_count_with_counts::<F>(current_lp, 1, 1, 1, 1)?
+                    w_ring_element_count_with_counts::<F>(current_lp, 1, 1, 1)?
                         .checked_mul(level_d)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("next witness length overflow".to_string())

@@ -198,12 +198,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 
     fn get_params_for_prove(
-        opening_batch: &OpeningBatch,
+        opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            1,
             opening_batch.num_polynomials(),
             opening_batch.num_claims(),
             1,
@@ -289,7 +288,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     }
 
     fn get_params_for_prove(
-        opening_batch: &OpeningBatch,
+        opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
         // Single-fold schedule: the root IS the terminal fold, so its
@@ -299,7 +298,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         // length.
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            1,
             opening_batch.num_polynomials(),
             opening_batch.num_claims(),
             1,
@@ -397,14 +395,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        (
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -437,13 +428,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -473,13 +458,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             &malformed_stage2,
             &verifier_setup,
             &mut verifier_transcript,
-            (
-                &point[..],
-                vec![CommittedOpenings {
-                    openings: &openings[..],
-                    commitment: &commitments[0],
-                }],
-            ),
+            verifier_claims(&point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
@@ -493,13 +472,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            vec![CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -512,13 +485,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &wrong_point[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&wrong_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -588,14 +555,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        (
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -625,13 +585,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -644,13 +598,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            vec![CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -721,14 +669,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        (
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        ),
+        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -758,13 +699,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -827,14 +762,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
-        (
-            &point_a[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        ),
+        prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -864,13 +792,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point_a[..],
-            vec![CommittedOpenings {
-                openings: &openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point_a[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -883,13 +805,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &point_a[..],
-            vec![CommittedOpenings {
-                openings: &wrong_openings[..],
-                commitment: &commitments[0],
-            }],
-        ),
+        verifier_claims(&point_a[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );

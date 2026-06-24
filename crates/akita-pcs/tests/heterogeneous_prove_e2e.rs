@@ -4,13 +4,16 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    batched_prove, CommitCluster, CommitmentProver, CommittedPolynomials, ComputeBackendSetup,
-    CpuBackend, DensePoly, OpeningCluster, ProverComputeStack, RingSwitchCluster, TensorCluster,
-    UniformProverStack,
+    batched_prove, CommitCluster, CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly,
+    OpeningCluster, ProverCommitmentGroup, ProverComputeStack, ProverOpeningBatch,
+    RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
-use akita_types::{lagrange_weights, BasisMode, OpeningBatch};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_types::{
+    lagrange_weights, BasisMode, CommitmentGroup, OpeningBatchShape, PointVariableSelection,
+    VerifierOpeningBatch,
+};
+use akita_verifier::CommitmentVerifier;
 use std::any::TypeId;
 
 type Cfg = fp128::D64Full;
@@ -37,7 +40,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_distinct_cluster_types();
 
     const NUM_VARS: usize = 16;
-    let opening_batch = OpeningBatch::same_point(NUM_VARS, 1).expect("opening batch");
+    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
     let alpha = D.trailing_zeros() as usize;
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
@@ -97,14 +100,18 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &setup.expanded,
         &setup.prefix_slots,
         &stack,
-        (
-            &opening_point[..],
-            vec![CommittedPolynomials {
+        ProverOpeningBatch {
+            point: opening_point[..].into(),
+            groups: vec![ProverCommitmentGroup {
+                point_vars: PointVariableSelection::prefix(
+                    opening_point.len(),
+                    opening_point.len(),
+                )
+                .expect("full-point prover group"),
                 polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
+                commitment: (commitments[0].clone(), hint),
             }],
-        ),
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -117,18 +124,18 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     );
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
-    let opening_groups = [[opening]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        (
-            &opening_point[..],
-            vec![CommittedOpenings {
-                openings: &opening_groups[0],
+        VerifierOpeningBatch::from_groups(
+            opening_point.clone(),
+            vec![CommitmentGroup {
+                claims: vec![opening],
                 commitment: &commitments[0],
             }],
-        ),
+        )
+        .expect("valid verifier claims"),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )

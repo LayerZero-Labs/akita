@@ -45,7 +45,7 @@ fn event_stream_equality_small() {
     run_on_large_stack(move || {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -302,7 +302,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -414,7 +414,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     run_on_large_stack(|| {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatch::same_point(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);

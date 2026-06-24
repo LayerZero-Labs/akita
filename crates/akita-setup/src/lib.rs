@@ -730,7 +730,7 @@ mod tests {
                 let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
-                    &akita_types::OpeningBatch::same_point(MAX_VARS, 1)
+                    &akita_types::OpeningBatchShape::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
                 .unwrap();

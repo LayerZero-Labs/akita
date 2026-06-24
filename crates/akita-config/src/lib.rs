@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnredu
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, OpeningBatch,
-    Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -232,7 +232,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
-    fn get_params_for_prove(opening_batch: &OpeningBatch) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
         Self::runtime_schedule(key)
     }
@@ -252,7 +252,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        opening_batch: &OpeningBatch,
+        opening_batch: &OpeningBatchShape,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::get_params_for_prove(opening_batch)?;
         match schedule.steps.first() {
@@ -539,7 +539,7 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatch::same_point(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningBatchShape::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {

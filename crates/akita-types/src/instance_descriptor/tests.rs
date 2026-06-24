@@ -1,5 +1,8 @@
 use super::*;
-use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
+use crate::{
+    CleartextWitnessShape, FoldStep, LevelParams, OpeningBatchShape, OpeningGroupShape,
+    PointVariableSelection, Step,
+};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -21,7 +24,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatch::same_point(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningBatchShape::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -74,11 +77,11 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            182,
+            222,
             [
-                0x8c, 0xab, 0xbf, 0x27, 0x01, 0x9a, 0xaa, 0xfd, 0xc9, 0x75, 0xc4, 0x35, 0x8a, 0xcc,
-                0x85, 0xf6, 0xf8, 0x58, 0x50, 0x84, 0x3e, 0x60, 0x3b, 0x99, 0x23, 0xe6, 0x98, 0x7b,
-                0x79, 0x8f, 0x42, 0x0c,
+                0xfb, 0x65, 0xb1, 0x77, 0x75, 0xa1, 0x98, 0x84, 0xbc, 0xa8, 0xb5, 0xf3, 0x27, 0x51,
+                0xeb, 0x88, 0xd7, 0x91, 0xe6, 0xb0, 0xaa, 0x5a, 0x9d, 0x40, 0xf2, 0x51, 0x0a, 0xbd,
+                0x2a, 0x23, 0x5e, 0x08,
             ]
         )
     );
@@ -93,11 +96,11 @@ fn fold_linf_descriptor_canonical_digest_pinned_zk() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            182,
+            222,
             [
-                0x11, 0xe2, 0x56, 0x90, 0x0b, 0xb2, 0x88, 0xec, 0xd4, 0xb2, 0x25, 0x74, 0xbb, 0xb6,
-                0x75, 0x0d, 0xf5, 0x62, 0xbb, 0x0f, 0x52, 0xed, 0x4c, 0x20, 0xbd, 0xf0, 0x9d, 0x4e,
-                0x99, 0xa6, 0xb8, 0x54,
+                0x88, 0x86, 0xb8, 0x3b, 0x6a, 0x84, 0x7a, 0x4f, 0xbf, 0xbb, 0x6c, 0xcb, 0xfe, 0xd1,
+                0xc4, 0xa8, 0x36, 0x1a, 0x33, 0xbc, 0x8a, 0x0b, 0x8f, 0x70, 0x23, 0x73, 0x91, 0x24,
+                0xef, 0x43, 0xbc, 0x9d,
             ]
         ),
         "update pinned zk digest after collapsing descriptor extension degrees"
@@ -279,10 +282,58 @@ fn algebra_section_binds_prime_and_extension_shape() {
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatch::same_point(4, 2).expect("left");
-    let right = OpeningBatch::same_point(4, 3).expect("right");
+    let left = OpeningBatchShape::new(4, 2).expect("left");
+    let right = OpeningBatchShape::new(4, 3).expect("right");
 
     assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+}
+
+#[test]
+fn opening_batch_digest_binds_group_partition() {
+    let grouped = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningBatchShape::new(4, 3).expect("scalar");
+
+    assert_ne!(
+        digest_opening_batch(&grouped),
+        digest_opening_batch(&scalar)
+    );
+}
+
+#[test]
+fn opening_batch_digest_binds_point_variable_selection_order() {
+    let forward = OpeningBatchShape::from_groups(
+        2,
+        vec![OpeningGroupShape {
+            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
+            num_claims: 1,
+        }],
+    )
+    .expect("forward");
+    let swapped = OpeningBatchShape::from_groups(
+        2,
+        vec![OpeningGroupShape {
+            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
+            num_claims: 1,
+        }],
+    )
+    .expect("swapped");
+
+    assert_ne!(
+        digest_opening_batch(&forward),
+        digest_opening_batch(&swapped)
+    );
+}
+
+#[test]
+fn call_section_exposes_group_partition() {
+    let opening_batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+
+    assert_eq!(call.num_polys, 3);
+    assert_eq!(call.num_claims, 3);
+    assert_eq!(call.num_commitment_groups, 2);
+    assert_eq!(call.num_polys_per_commitment_group, vec![1, 2]);
+    assert_eq!(call.point_variable_selections, vec![vec![0, 1, 2, 3]; 2]);
 }
 
 #[test]

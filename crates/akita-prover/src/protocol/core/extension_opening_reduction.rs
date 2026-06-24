@@ -193,8 +193,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
-    shared_opening_point: &[E],
+    opening_batch: &VerifierOpeningBatch<'_, E>,
     #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     pad_base_evals: bool,
     transcript: &mut T,
@@ -226,8 +225,7 @@ where
         ));
     }
 
-    let mut padded_point = shared_opening_point.to_vec();
-    padded_point.resize(num_vars, E::zero());
+    let padded_point = opening_batch.point().to_vec();
 
     let mut openings = Vec::with_capacity(num_claims);
     let mut partials = Vec::with_capacity(width.saturating_mul(num_claims));
@@ -293,7 +291,8 @@ where
         #[cfg(not(feature = "zk"))]
         let transcript_openings = openings.as_slice();
         append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
-        sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
+        let opening_shape = opening_batch.to_shape();
+        sample_public_row_coefficients::<F, E, T>(&opening_shape, transcript)?
     };
     if row_partials_by_claim.len() != row_coefficients.len() {
         return Err(AkitaError::InvalidSize {
@@ -377,8 +376,7 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B
     tensor_backend: &B,
     tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &OpeningBatch,
-    shared_opening_point: &[E],
+    opening_batch: &VerifierOpeningBatch<'_, E>,
     #[cfg(feature = "zk")] public_openings: Option<&[E]>,
     pad_base_evals: bool,
     transcript: &mut T,
@@ -406,7 +404,6 @@ where
         tensor_prepared,
         polys,
         opening_batch,
-        shared_opening_point,
         #[cfg(feature = "zk")]
         public_openings,
         pad_base_evals,

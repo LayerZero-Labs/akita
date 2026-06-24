@@ -30,12 +30,12 @@ mod wire;
 
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    checked_total_claims, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    checked_total_claims, folded_root_supports_opening_shape, padded_scalar_batch_num_vars,
     prepare_opening_point, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, validate_batched_inputs, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint,
+    root_tensor_projection_enabled, validate_batched_inputs,
+    validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
-pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
+pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
 #[cfg(feature = "zk")]
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
@@ -52,17 +52,14 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use opening_batch::{
-    append_opening_batch_shape_to_transcript, batched_eval_target_from_opening_batch,
-    sample_public_row_coefficients, verifier_claims_to_opening_batch, OpeningBatch,
-    OpeningBatchInput, OpeningBatchLimits, OpeningBatchRow, OpeningClaimKind, OpeningClaimSlot,
-    OpeningClaimSlotShape,
+    batched_eval_target_from_opening_batch, sample_public_row_coefficients, CommitmentGroup,
+    OpeningBatchLimits, OpeningBatchShape, OpeningGroupShape, PointVariableSelection,
+    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
-pub use ring_relation::{
-    ring_column_z_first, ring_relation_segment_layout_for_opening_shape, RingRelationInstance,
-    RingRelationSegmentLayout,
-};
-pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
+pub use ring_relation::{ring_column_z_first, RingRelationInstance, RingRelationSegmentLayout};
+pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,

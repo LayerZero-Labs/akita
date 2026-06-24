@@ -270,7 +270,6 @@ pub fn key_digest(keys: &[GeneratedScheduleKey]) -> u64 {
     sorted.sort_by_key(|k| {
         (
             k.num_vars,
-            k.num_commitment_groups,
             k.num_t_vectors,
             k.num_w_vectors,
             k.num_z_vectors,
@@ -279,7 +278,6 @@ pub fn key_digest(keys: &[GeneratedScheduleKey]) -> u64 {
     let mut h = Fnv64::new();
     for k in sorted {
         h.write_u64(k.num_vars as u64);
-        h.write_u64(k.num_commitment_groups as u64);
         h.write_u64(k.num_t_vectors as u64);
         h.write_u64(k.num_w_vectors as u64);
         h.write_u64(k.num_z_vectors as u64);
@@ -377,7 +375,6 @@ mod tests {
         GeneratedScheduleTableEntry {
             key: GeneratedScheduleKey {
                 num_vars: 16,
-                num_commitment_groups: 1,
                 num_t_vectors: 1,
                 num_w_vectors: 1,
                 num_z_vectors: 1,
