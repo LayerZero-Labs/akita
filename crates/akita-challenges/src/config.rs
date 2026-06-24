@@ -21,12 +21,25 @@ use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
 /// leave each factor brute-forceable).
 pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
 
+/// Production D=64 exact shell `(31, 11)` with operator-norm cap `Gamma = 18`.
+pub const D64_PRODUCTION_EXACT_SHELL_MAG1: usize = 31;
+pub const D64_PRODUCTION_EXACT_SHELL_MAG2: usize = 11;
+pub const D64_PRODUCTION_OPERATOR_NORM_THRESHOLD: u32 = 18;
+
+/// Certified floor on `Pr[strict_accept]` for the production `(31, 11)` shell at
+/// `D = 64` with `T = 18` and the shipped `OpNormTable` predicate
+/// (`accept_strict_parts`, fixed-point scale `q = 48`). Monte Carlo on uniform
+/// shell draws gives `≈ 0.662`; `13/20` undershoots that rate so tail-bound
+/// `ln(1/p_opnorm)` sizing stays conservative.
+pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM: u128 = 13;
+pub const D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN: u128 = 20;
+
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
 /// Different families trade off challenge entropy against the
 /// resulting coefficient mass, which in turn affects the folded witness bounds
 /// used by the protocol.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SparseChallengeConfig {
     /// Uniform sparse challenge over the full ring.
     ///
@@ -44,21 +57,20 @@ pub enum SparseChallengeConfig {
         nonzero_coeffs: Vec<i8>,
     },
 
-    /// Exact-shell sparse challenge over the full ring, with operator-norm
-    /// rejection.
+    /// Exact-shell sparse challenge over the full ring, optionally paired with
+    /// operator-norm rejection by the sampler caller.
     ///
     /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
     /// `0..D`, assigns `count_mag1` of them a random sign with magnitude 1, and
     /// assigns the remaining `count_mag2` a random sign with magnitude 2.
     ///
-    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. A sampled candidate
-    /// is retained only if its negacyclic operator norm satisfies
-    /// `gamma_D(c) <= operator_norm_threshold` (the crate-internal certified
-    /// `OpNormTable` predicate); otherwise it is rejected and the next
-    /// candidate is drawn from the same transcript-derived stream. This is the
-    /// family used for L2 / operator-norm fold pricing, where the accepted cap
-    /// `Gamma` (not `||c||_1`) governs the folded-witness and weak-binding
-    /// bounds.
+    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`. When a caller enables
+    /// operator-norm rejection, a sampled candidate is retained only if its
+    /// negacyclic operator norm satisfies `gamma_D(c) <= operator_norm_threshold`
+    /// (the crate-internal certified `OpNormTable` predicate); otherwise it is
+    /// rejected and the next candidate is drawn from the same transcript-derived
+    /// stream. When rejection is disabled, the sampler draws from the full shell
+    /// and only the deterministic `||c||_1` cap is guaranteed.
     ExactShell {
         /// Number of coefficients with magnitude 1.
         count_mag1: usize,
@@ -121,16 +133,15 @@ impl SparseChallengeConfig {
         }
     }
 
-    /// The challenge -> `Gamma` policy: the operator-norm cap this family
-    /// guarantees for every sampled challenge.
+    /// Per-challenge operator-norm cap `Gamma` guaranteed on every accepted draw.
     ///
-    /// This is the single, reversible knob the L2 / operator-norm pricing reads.
     /// For [`Self::ExactShell`] the sampler rejects any candidate with
     /// `gamma_D(c) > T`, so the cap is `min(T, ||c||_1)` (the `min` makes a
     /// `T >= ||c||_1` setting collapse cleanly to the always-true deterministic
-    /// bound `gamma_D(c) <= ||c||_1`, i.e. no rejection). For the families that
-    /// do not operator-norm reject, the only sound cap is the deterministic
-    /// `gamma_D(c) <= ||c||_1`.
+    /// bound `gamma_D(c) <= ||c||_1`, i.e. no rejection). A-role collision
+    /// sizing reads [`crate::ChallengeShape::effective_operator_norm_cap`]
+    /// (flat `Gamma`, tensor `Gamma^2`). Fold-digit `beta_inf` still uses
+    /// [`Self::l1_norm`] / [`crate::ChallengeShape::effective_l1_mass`].
     ///
     /// To revert the operator-norm policy for a preset, set its `ExactShell`
     /// threshold to `>= ||c||_1`; the cap then becomes `||c||_1` and sampling
@@ -148,6 +159,46 @@ impl SparseChallengeConfig {
             }
             Self::Uniform { .. } | Self::BoundedL1Norm => self.l1_norm() as u32,
         }
+    }
+
+    /// `true` when [`Self::ExactShell`] rejection is binding (`T < ||c||_1`).
+    ///
+    /// Shared by the sampler oracle and tail-bound acceptance-probability lookup.
+    #[inline]
+    pub fn operator_norm_rejection_binds(&self) -> bool {
+        matches!(self, Self::ExactShell { .. }) && self.operator_norm_cap() < self.l1_norm() as u32
+    }
+
+    /// Rational lower bound on `Pr[gamma(c) <= T]` for tail-bound sizing.
+    ///
+    /// Returns `(1, 1)` when [`Self::operator_norm_rejection_binds`] is false.
+    /// When binding, returns a preset-specific certified floor (no live oracle).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_dim` is unsupported for a binding preset.
+    pub fn operator_norm_acceptance_prob(
+        &self,
+        ring_dim: usize,
+    ) -> Result<(u128, u128), &'static str> {
+        if !self.operator_norm_rejection_binds() {
+            return Ok((1, 1));
+        }
+        let binds_production = matches!(
+            self,
+            Self::ExactShell {
+                count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+                count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+                operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+            }
+        );
+        if binds_production && ring_dim == 64 {
+            return Ok((
+                D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+                D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN,
+            ));
+        }
+        Err("unsupported binding exact-shell preset for operator-norm acceptance probability")
     }
 
     /// Worst-case squared ℓ₂ norm `max ‖c‖_2²` over the challenge family.
@@ -405,14 +456,70 @@ mod entropy_tests {
 
     #[test]
     fn full_shell_clears_128_bits() {
-        // The canonical d=64 shell (writeup App. C) clears the floor.
         let shell = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(shell.log2_support_bits::<64>() >= 128.0);
+        assert!(shell.validate_min_entropy::<64>(128).is_ok());
+    }
+
+    #[test]
+    fn production_shell_binding_and_acceptance_prob() {
+        let production = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(production.operator_norm_rejection_binds());
+        assert_eq!(production.operator_norm_cap(), 18);
+        assert_eq!(production.l1_norm(), 53);
+        assert_eq!(
+            production.operator_norm_acceptance_prob(64).unwrap(),
+            (
+                D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
+                D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN
+            )
+        );
+
+        let non_binding = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: 54,
+        };
+        assert!(!non_binding.operator_norm_rejection_binds());
+        assert_eq!(non_binding.operator_norm_cap(), 53);
+        assert_eq!(
+            non_binding.operator_norm_acceptance_prob(64).unwrap(),
+            (1, 1)
+        );
+
+        let legacy = SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
             operator_norm_threshold: 54,
         };
-        assert!(shell.log2_support_bits::<64>() >= 128.0);
-        assert!(shell.validate_min_entropy::<64>(128).is_ok());
+        assert!(!legacy.operator_norm_rejection_binds());
+        assert_eq!(legacy.operator_norm_cap(), 54);
+    }
+
+    #[test]
+    fn operator_norm_acceptance_prob_rejects_unknown_binding_shells() {
+        let production = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+        };
+        assert!(production.operator_norm_acceptance_prob(32).is_err());
+
+        let binding_other = SparseChallengeConfig::ExactShell {
+            count_mag1: 31,
+            count_mag2: 11,
+            operator_norm_threshold: 16,
+        };
+        assert!(binding_other.operator_norm_rejection_binds());
+        assert!(binding_other.operator_norm_acceptance_prob(64).is_err());
     }
 
     #[test]
@@ -458,11 +565,11 @@ mod entropy_tests {
     #[test]
     fn challenge_l2_sq_max_matches_spec_table() {
         let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            operator_norm_threshold: 54,
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
-        assert_eq!(shell.challenge_l2_sq_max(), 78);
+        assert_eq!(shell.challenge_l2_sq_max(), 75);
 
         let uni128 = SparseChallengeConfig::Uniform {
             weight: 31,

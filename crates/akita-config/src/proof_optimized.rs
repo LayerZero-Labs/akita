@@ -41,11 +41,9 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     let cfg = match d {
         32 => akita_challenges::SparseChallengeConfig::BoundedL1Norm,
         64 => akita_challenges::SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-            // `T >= ||c||_1` disables rejection until the S2 support certificate
-            // lands; production keeps the legacy (30, 12) shell unchanged.
-            operator_norm_threshold: 54,
+            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+            operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         },
         128 => akita_challenges::SparseChallengeConfig::Uniform {
             weight: 31,
