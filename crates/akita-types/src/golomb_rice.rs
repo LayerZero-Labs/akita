@@ -145,13 +145,18 @@ pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
         .max(1)
 }
 
-/// Conservative planner bit budget per `z` coordinate from public Rice `k`.
+/// Average-case planner model id bound into [`crate::instance_descriptor::FoldLinfProtocolBinding`].
 ///
-/// `k` is `optimal_rice_k(cap)`; each codeword needs at most `k + 1` unary/Rice
-/// bits for in-range coefficients plus a small margin.
+/// Bump when recalibrating [`golomb_rice_planner_bits_per_z_coord`].
+pub const TAIL_Z_PLANNER_MODEL_ID: u8 = 1;
+
+/// Average-case planner bit budget per `z` coordinate from public Rice `k`.
+///
+/// Public `(k, W)` still cover every coefficient in `[-cap, cap]`; this budget
+/// prices honest witnesses (model v1: `k + 2` bits/coord).
 #[must_use]
 pub fn golomb_rice_planner_bits_per_z_coord(rice_k: u32) -> usize {
-    (rice_k as usize).saturating_add(4)
+    (rice_k as usize).saturating_add(2)
 }
 
 /// Golomb-Rice bit length for one coordinate at public `(k, w)`.
@@ -205,12 +210,18 @@ pub struct ZFoldEncodingStats {
     pub p90_abs: u64,
     pub p99_abs: u64,
     pub zigzag_w: u32,
-    pub rice_k_public: u32,
+    /// Security Rice `k` (`optimal_rice_k(cap)`); audit reference for the old cap→k rule.
+    pub rice_k_security: u32,
+    /// Live Rice `k` on wire ([`crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap`]).
+    pub rice_k_live: u32,
+    /// Witness-optimal `k` minimizing total Golomb bits on this sample (not public).
     pub rice_k_empirical: u32,
-    pub bits_per_coord_k_public: f64,
+    pub bits_per_coord_k_security: f64,
+    pub bits_per_coord_k_live: f64,
     pub bits_per_coord_k_empirical: f64,
     pub bits_per_coord_packed_digits: f64,
-    pub total_bits_k_public: usize,
+    pub total_bits_k_security: usize,
+    pub total_bits_k_live: usize,
     pub total_bits_k_empirical: usize,
     pub total_bits_packed_digits: usize,
     pub actual_payload_bytes: usize,
@@ -239,8 +250,10 @@ pub fn analyze_z_fold_golomb_encoding(
     log_basis: u32,
     actual_payload_bytes: usize,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let rice_k_public = optimal_rice_k(witness_linf_cap);
-    let k_search_hi = rice_k_public.saturating_add(4);
+    let rice_k_security =
+        crate::tail_golomb_cap_to_k::security_rice_k_for_fold_cap(witness_linf_cap);
+    let rice_k_live = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(witness_linf_cap);
+    let k_search_hi = rice_k_security.saturating_add(4);
     let rice_k_empirical = empirical_optimal_rice_k(values, zigzag_w, k_search_hi);
 
     let mut abs_vals: Vec<u64> = values.iter().map(|&n| n.unsigned_abs()).collect();
@@ -253,7 +266,8 @@ pub fn analyze_z_fold_golomb_encoding(
         sum_abs as f64 / values.len() as f64
     };
 
-    let total_bits_k_public = golomb_rice_total_bits(values, rice_k_public, zigzag_w)?;
+    let total_bits_k_security = golomb_rice_total_bits(values, rice_k_security, zigzag_w)?;
+    let total_bits_k_live = golomb_rice_total_bits(values, rice_k_live, zigzag_w)?;
     let total_bits_k_empirical = golomb_rice_total_bits(values, rice_k_empirical, zigzag_w)?;
     let bits_per_digit_plane = log_basis as usize;
     let total_bits_packed_digits = values
@@ -271,16 +285,65 @@ pub fn analyze_z_fold_golomb_encoding(
         p90_abs: percentile_abs(&abs_vals, 90, 100),
         p99_abs: percentile_abs(&abs_vals, 99, 100),
         zigzag_w,
-        rice_k_public,
+        rice_k_security,
+        rice_k_live,
         rice_k_empirical,
-        bits_per_coord_k_public: total_bits_k_public as f64 / n,
+        bits_per_coord_k_security: total_bits_k_security as f64 / n,
+        bits_per_coord_k_live: total_bits_k_live as f64 / n,
         bits_per_coord_k_empirical: total_bits_k_empirical as f64 / n,
         bits_per_coord_packed_digits: total_bits_packed_digits as f64 / n,
-        total_bits_k_public,
+        total_bits_k_security,
+        total_bits_k_live,
         total_bits_k_empirical,
         total_bits_packed_digits,
         actual_payload_bytes,
     })
+}
+
+/// Golomb unary quotient for one coefficient at public `(k, w)`.
+pub fn golomb_rice_quotient_for_coord(n: i64, k: u32, w: u32) -> Result<u64, AkitaError> {
+    let u = zigzag_encode(n, w)?;
+    Ok(if k == 0 { u } else { u >> k })
+}
+
+/// Whether `n` encodes at `(k, w)` without taking the bounded-unary escape path.
+pub fn golomb_rice_coord_encodable_without_escape(
+    n: i64,
+    k: u32,
+    w: u32,
+) -> Result<(), AkitaError> {
+    let quotient = golomb_rice_quotient_for_coord(n, k, w)?;
+    if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
+        return Err(AkitaError::InvalidInput(format!(
+            "golomb-rice coefficient {n} needs escape at k={k} (quotient={quotient})"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether every centered row encodes at live `(k, W)` derived from fold cap `cap`.
+pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
+    rows: &[[i32; D]],
+    cap: u128,
+) -> Result<(), AkitaError> {
+    if cap == 0 && rows.iter().any(|row| row.iter().any(|&n| n != 0)) {
+        return Err(AkitaError::InvalidInput(
+            "golomb-rice encodability check at zero cap".to_string(),
+        ));
+    }
+    let k = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(cap);
+    let w = golomb_rice_zigzag_width(cap);
+    for row in rows {
+        for &n in row {
+            if i128::from(n).unsigned_abs() > cap {
+                return Err(AkitaError::InvalidInput(format!(
+                    "centered coefficient {n} exceeds fold grind cap {cap}"
+                )));
+            }
+            golomb_rice_coord_encodable_without_escape(i64::from(n), k, w)?;
+        }
+    }
+    Ok(())
 }
 
 fn golomb_rice_encode_one_into(
@@ -375,6 +438,52 @@ pub fn golomb_rice_decode_vec(
 mod tests {
     use super::*;
 
+    fn exhaustive_min_sound_k(cap: u128) -> Option<u32> {
+        let w = golomb_rice_zigzag_width(cap);
+        for k in 0..=20 {
+            let mut ok = true;
+            for n in -(cap as i64)..=(cap as i64) {
+                let encoded = match golomb_rice_encode_vec(&[n], k, w) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                };
+                let decoded = match golomb_rice_decode_vec(&encoded, 1, k, w) {
+                    Ok(d) => d,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                };
+                if decoded != [n] {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return Some(k);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn min_sound_k_vs_optimal_rice_k_probe() {
+        for cap in [504u128, 885, 1008, 1568, 6912] {
+            let pub_k = optimal_rice_k(cap);
+            let min_k = exhaustive_min_sound_k(cap).expect("min k");
+            eprintln!(
+                "cap={cap} optimal_rice_k={pub_k} exhaustive_min={min_k} delta={}",
+                pub_k.saturating_sub(min_k)
+            );
+            assert!(pub_k >= min_k, "public k must dominate sound min");
+            // `min_k` is always `0` here: escape makes every k decodable. Do not use it as `k_live`.
+            assert_eq!(min_k, 0, "cap={cap}");
+        }
+    }
+
     #[test]
     fn optimal_rice_k_tracks_per_coefficient_scale() {
         let cap = 6_912u128;
@@ -447,5 +556,27 @@ mod tests {
         assert!(u0 < u64::from(GOLOMB_RICE_Q_MAX));
         let bytes0 = non_canonical_escape_bytes(u0, w0);
         assert!(golomb_rice_decode_vec(&bytes0, 1, k0, w0).is_err());
+    }
+
+    #[test]
+    fn golomb_rice_planner_model_v1_is_k_plus_two() {
+        assert_eq!(golomb_rice_planner_bits_per_z_coord(8), 10);
+        assert_eq!(golomb_rice_planner_bits_per_z_coord(10), 12);
+    }
+
+    #[test]
+    fn golomb_rice_rows_encodable_at_live_k_matches_cap_range() {
+        for &cap in &[504u128, 1008] {
+            let k = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(cap);
+            let w = golomb_rice_zigzag_width(cap);
+            let cap_i64 = cap as i64;
+            for n in -cap_i64..=cap_i64 {
+                golomb_rice_coord_encodable_without_escape(n, k, w)
+                    .unwrap_or_else(|e| panic!("cap={cap} n={n}: {e}"));
+            }
+            let row = [cap_i64 as i32; 4];
+            golomb_rice_rows_encodable_at_live_k(&[row], cap).expect("row encodable");
+        }
+        assert!(golomb_rice_rows_encodable_at_live_k(&[[1009i32; 4]], 1008).is_err());
     }
 }

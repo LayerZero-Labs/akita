@@ -12,12 +12,13 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_planner_bits_per_z_coord, golomb_rice_zigzag_width, optimal_rice_k,
-    ZFoldEncodingStats,
+    golomb_rice_planner_bits_per_z_coord, golomb_rice_rows_encodable_at_live_k,
+    golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 use crate::layout::field_bytes;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
+use crate::tail_golomb_cap_to_k::{live_rice_k_for_fold_cap, security_rice_k_for_fold_cap};
 use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
@@ -440,9 +441,11 @@ where
     Ok(out)
 }
 
-/// Runtime Golomb-Rice parameters for terminal `z` from public schedule data.
+/// Runtime Golomb-Rice **wire** parameters for terminal `z` encode/decode.
 ///
-/// Rice `k` and zigzag width `W` are priced from the per-coefficient fold-response
+/// Uses live `k` ([`live_rice_k_for_fold_cap`]); planner byte budgets use
+/// [`security_rice_k_for_fold_cap`] via [`segment_typed_z_payload_bytes`].
+/// Rice `k` and zigzag width `W` are derived from the per-coefficient fold-response
 /// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
 /// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
 ///
@@ -454,7 +457,7 @@ pub fn tail_golomb_rice_z_params(
     num_t_vectors: usize,
 ) -> Result<(u32, u32), AkitaError> {
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    let k = optimal_rice_k(cap);
+    let k = live_rice_k_for_fold_cap(cap);
     let w = golomb_rice_zigzag_width(cap);
     Ok((k, w))
 }
@@ -513,7 +516,7 @@ pub fn tail_segment_layout(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_segments: usize,
+    num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
     let d = lp.ring_dimension;
@@ -563,7 +566,7 @@ pub fn tail_segment_layout(
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
     let r_plane_rings = lp
-        .m_row_count_for(num_segments, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -575,7 +578,7 @@ pub fn tail_segment_layout(
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
     let r_field_elems = lp
-        .m_row_count_for(num_segments, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
@@ -634,20 +637,21 @@ pub fn tail_segment_multiplicities_from_layout(
     Ok((num_w_vectors, num_t_vectors, num_public_rows))
 }
 
-/// Planner byte budget for the Golomb-coded `z` segment.
+/// Planner byte budget for the Golomb-coded terminal `z` segment.
 ///
-/// Uses the public fold `‖z‖_inf` cap (`k + O(1)` bits per coordinate),
-/// not the legacy packed-digit plane width (`num_digits_fold * bits_per_elem`).
+/// Uses security Rice `k` plus the average-case `k + 2` bits/coord model so schedules
+/// stay conservative across field families; on-wire encode/decode uses [`live_rice_k_for_fold_cap`].
 ///
 /// # Errors
 ///
-/// Propagates [`tail_golomb_rice_z_params`] errors.
+/// Propagates fold cap setup errors.
 pub fn segment_typed_z_payload_bytes(
     lp: &LevelParams,
     layout: &TailSegmentLayout,
     num_t_vectors: usize,
 ) -> Result<usize, AkitaError> {
-    let (rice_k, _) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    let rice_k = security_rice_k_for_fold_cap(cap);
     let bits_per_coord = golomb_rice_planner_bits_per_z_coord(rice_k);
     Ok(layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8))
 }
@@ -742,7 +746,7 @@ pub fn build_segment_typed_witness<const D: usize, F>(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_public_rows: usize,
-    num_segments: usize,
+    num_commitment_groups: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -753,10 +757,12 @@ where
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_segments,
+        num_commitment_groups,
         field_bits,
     )?;
     let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    golomb_rice_rows_encodable_at_live_k(z_folded_centered, cap)?;
     let depth_commit = lp.num_digits_commit;
     let z_payload = encode_z_segment_from_centered(
         z_folded_centered,
@@ -824,7 +830,7 @@ pub fn validate_segment_typed_z_payload<F: FieldCore>(
 pub fn expand_segment_typed_to_i8_digits<const D: usize, F>(
     witness: &SegmentTypedWitness<F>,
     lp: &LevelParams,
-    num_segments: usize,
+    num_commitment_groups: usize,
 ) -> Result<Vec<i8>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -840,7 +846,7 @@ where
         num_w_vectors,
         num_t_vectors,
         num_public_rows,
-        num_segments,
+        num_commitment_groups,
         field_bits,
     )?;
     if expected_layout != witness.layout {

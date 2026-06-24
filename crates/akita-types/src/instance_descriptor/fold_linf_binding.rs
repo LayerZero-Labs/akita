@@ -1,5 +1,6 @@
 //! Fold-l∞ rejection protocol identity bound into every transcript preamble.
 
+use crate::golomb_rice::TAIL_Z_PLANNER_MODEL_ID;
 use crate::sis::{
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
@@ -31,6 +32,8 @@ pub struct FoldLinfProtocolBinding {
     pub grind_entropy_bits_per_level: u8,
     /// Prover grind search order (`FOLD_GRIND_PROBE_ORDER_*`).
     pub grind_probe_order: u8,
+    /// Terminal `z` Golomb average-case planner model (`TAIL_Z_PLANNER_MODEL_ID`).
+    pub tail_z_planner_model_id: u8,
 }
 
 impl FoldLinfProtocolBinding {
@@ -52,6 +55,7 @@ impl FoldLinfProtocolBinding {
                 FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN
             }
         },
+        tail_z_planner_model_id: TAIL_Z_PLANNER_MODEL_ID,
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
@@ -95,6 +99,8 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.grind_probe_order
             .serialize_with_mode(&mut writer, compress)?;
+        self.tail_z_planner_model_id
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -106,6 +112,7 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             + self.grind_nonce_wire_bytes.serialized_size(compress)
             + self.grind_entropy_bits_per_level.serialized_size(compress)
             + self.grind_probe_order.serialized_size(compress)
+            + self.tail_z_planner_model_id.serialized_size(compress)
     }
 }
 
@@ -146,6 +153,12 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
                 &(),
             )?,
             grind_probe_order: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            tail_z_planner_model_id: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

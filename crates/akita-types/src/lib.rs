@@ -17,6 +17,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
+pub mod tail_golomb_cap_to_k;
 pub mod trace_weight;
 pub mod transcript;
 #[cfg(feature = "zk")]
@@ -41,7 +42,10 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
     SubfieldParams,
 };
-pub use golomb_rice::ZFoldEncodingStats;
+pub use golomb_rice::{
+    golomb_rice_coord_encodable_without_escape, golomb_rice_rows_encodable_at_live_k,
+    ZFoldEncodingStats, TAIL_Z_PLANNER_MODEL_ID,
+};
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
@@ -117,6 +121,10 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
+pub use tail_golomb_cap_to_k::{
+    live_rice_k_for_fold_cap, security_rice_k_for_fold_cap, TAIL_GOLOMB_CAP_TO_K_RULE_ID,
+    TAIL_GOLOMB_LIVE_K_DELTA,
+};
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
