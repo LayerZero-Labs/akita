@@ -18,7 +18,7 @@ This spec defines a comprehensive tail wire encoding built on one principle: **e
 It composes four levers, three of which are commitment/quotient *elision* (do not send objects whose information the verifier can reconstruct or check directly) and one of which is *entropy coding* (send norm-bounded witness segments at their true entropy, not at a worst-case fixed width).
 The verifier reconstructs every elided or de-decomposed quantity deterministically, so soundness is unchanged and the wire shrinks to the realized information content.
 
-**Implementation scope (#190).** This PR lands the **transparent non-zk encoding slice** only: `CleartextWitnessProof::SegmentTyped` with Golomb–Rice `z` (`β_inf -> k`), raw field segments for `e`/`t`/`r`, a length-prefixed `z` payload, planner upper-bound sizing, and non-zk production cutover. Commitment elision (`r`-drop, terminal `t`-state / `u`-elision), descriptor binding, zk tail cutover, and Jolt decode measurement remain deferred per Execution below.
+**Implementation scope (#190).** This PR lands the **transparent non-zk encoding slice** only: `CleartextWitnessProof::SegmentTyped` with Golomb–Rice `z` (cap-derived `wire_rice_low_bits`), raw field segments for `e`/`t`/`r`, a length-prefixed `z` payload, planner upper-bound sizing, and non-zk production cutover. Wire tightening (`wire = cap - 2`) and planner `cap + 2` model ship in #209. Commitment elision (`r`-drop, terminal `t`-state / `u`-elision), descriptor binding, zk tail cutover, and Jolt decode measurement remain deferred per Execution below.
 
 ## Intent
 
@@ -28,9 +28,9 @@ Replace the single fixed-width `PackedDigits` terminal witness with a segment-ty
 
 The feature introduces or modifies:
 
-- A **segment-typed tail witness** representation replacing the single-width `PackedDigits` blob on the transparent recursive terminal tail: **`Gaussian{k}` Golomb–Rice for `z` only**; **`RawField` for `e`/`t`/`r`** (full base-field coefficients per ring element). Boundaries derive from the schedule/shape (headerless wire). Rice parameter `k` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
-- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and a bounded-unary escape, parameterized by the derived integer Rice parameter `k`. **#190 applies it to `z` only.**
-- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic `cap -> k` rule for the folded-response `z` segment.
+- A **segment-typed tail witness** representation replacing the single-width `PackedDigits` blob on the transparent recursive terminal tail: **`Gaussian{rice_low_bits}` Golomb–Rice for `z` only**; **`RawField` for `e`/`t`/`r`** (full base-field coefficients per ring element). Boundaries derive from the schedule/shape (headerless wire). Wire `rice_low_bits` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
+- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
+- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
 - **Terminal `t`-state cutover** *(umbrella S2, deferred)*: the penultimate fold stops sending outer `u = B * t_hat` and binds inner `t = A * w_terminal` as the terminal public state.
 - **`r`-elision and terminal-stage-2 elision** *(umbrella S1, deferred)* via PR #141 direct-terminal mode. **#190 still carries `r` on the wire** as a raw field segment.
 - **Descriptor binding** *(umbrella S5, deferred)* of the tail-encoding policy in `AkitaInstanceDescriptor`. **#190** updates planner proof-size accounting and regenerates non-zk shipped tables under segment-typed sizing.
@@ -38,9 +38,9 @@ The feature introduces or modifies:
 ### Invariants
 
 1. **Lossless and soundness-neutral.** Every elided object (`u`, `v`, `r`) is reconstructed or checked directly by the verifier; every entropy-coded segment decodes bit-exactly to the same integer vector a fixed-width encoding would carry. The terminal relation `M_terminal * z == y_terminal` in `F[X]/(X^D+1)` and the digit-range / norm bounds the extractor relies on are unchanged. Protected by: existing terminal direct-relation row tests (PR #141), new round-trip codec tests, and an e2e tamper test that a witness violating the digit/norm bound cannot produce an accepting transcript.
-2. **Canonical encoding.** Each integer vector has exactly one valid byte encoding under a fixed `(model, k)`; a non-canonical or malformed encoding is rejected with `AkitaError`/`SerializationError`, never decoded ambiguously. Protected by: a canonicality unit test (encode-decode-encode fixpoint) and a malformed-bytes rejection test.
-3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string (bounded unary via the escape), allocates only the schedule-declared element count, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
-4. **Public models, zero side info.** Segment boundaries and the Golomb parameters for `z` (`cap`, `k`) are derivable by the verifier from `LevelParams` + transcript before decode; `e`/`t`/`r` carry no separate model tag. Protected by: a prover/verifier `cap`/`k` agreement test for `z` and a `LoggingTranscript` event-stream equality test.
+2. **Canonical encoding.** Each integer vector has exactly one valid byte encoding under a fixed `(model, rice_low_bits)`; a non-canonical or malformed encoding is rejected with `AkitaError`/`SerializationError`, never decoded ambiguously. Protected by: a canonicality unit test (encode-decode-encode fixpoint) and a malformed-bytes rejection test.
+3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string, rejects unary quotients above the cap-derived maximum, allocates only the schedule-declared element count, rejects non-minimal trailing byte padding, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
+4. **Public models, zero side info.** Segment boundaries and Golomb wire low bits for `z` (`cap`, `wire_rice_low_bits`) are derivable by the verifier from `LevelParams` + transcript before decode; `e`/`t`/`r` carry no separate model tag. Protected by: a prover/verifier cap/wire low-bits agreement test for `z` and a `LoggingTranscript` event-stream equality test.
 5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from the outer image `u = B * t_hat` to the inner image `t = A * w_terminal`. Soundness does **not** come from simply deleting B rows while keeping `u` as the statement; that would be unsound. It comes from making `t` the transcript-bound public terminal state and checking, in the direct terminal relation, that the revealed clear witness maps to that exact `t` under the A rows. Protected by: the soundness paragraph in Design, plus terminal-root / suffix-terminal row tests extended to the `t`-state layout.
 6. **Descriptor binding distinguishes the policy.** A proof produced under one tail-encoding policy (codec, models, terminal-state mode, r-drop flags) must not verify under another. Protected by: a pinned descriptor-bytes test and a cross-policy verify-fails test.
 7. **Transparent-only.** Entropy coding applies only to the transparent tail. **#190:** non-zk builds emit `SegmentTyped`; `feature = "zk"` keeps `PackedDigits` via compile-time gating (`#[cfg(feature = "zk")]`). Umbrella acceptance of `InvalidSetup` on zk policy selection is deferred to the zk tail slice.
@@ -62,11 +62,11 @@ The feature introduces or modifies:
 
 Encoding slice (#190):
 
-- [x] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint), total (terminates and is no-panic on malformed/truncated bytes), and bijective on the admitted integer range, verified by unit tests including the escape path.
-- [x] `fold_witness_linf_cap_for_claims` and the deterministic `cap -> k` rule (`k = optimal_rice_k(cap)`) return integers pinned against a reference calculation; prover and verifier derive the same `k` for `z`.
+- [x] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint, minimal byte length), total (terminates and is no-panic on malformed/truncated bytes), and bijective on `[-cap, cap]` at wire low bits, verified by cap-range round-trip tests.
+- [x] `fold_witness_linf_cap_for_claims` and the deterministic cap→low-bits rules (`cap_rice_low_bits`, `wire_rice_low_bits`) return integers pinned against reference calculations; prover and verifier derive the same wire low bits for `z`.
 - [x] The transparent non-zk terminal `final_witness` serializes as segment-typed payloads (`z` length-prefixed Golomb bytes, then raw `e`/`t`/`r` field segments); `CleartextWitnessShape::admits_realized` accepts exact `z` payloads up to the schedule upper bound; `segment_typed_expand_matches_logical_w` proves expand matches legacy digit layout.
 - [x] Non-zk shipped schedule tables regenerated under segment-typed terminal sizing; `generated_schedule_tables_match_find_schedule` passes for affected families.
-- [x] Net `z` entropy win on cited `onehot_fp128_d64` cells (Golomb at `k = optimal_rice_k(β_inf)` beats legacy `PackedDigits`); profile emits structured tail breakdown (`proof tail summary`, Golomb vs packed `z` stats).
+- [x] Net `z` entropy win on cited `onehot_fp128_d64` cells (Golomb at `wire_rice_low_bits(cap)` beats legacy `PackedDigits`); profile emits structured tail breakdown (`proof tail summary`, Golomb vs packed `z` stats).
 
 Umbrella items (deferred past #190):
 
@@ -82,8 +82,8 @@ Must keep passing: all `akita-types` proof/shape/serialization tests, the termin
 
 New tests:
 
-- `akita-types`: Golomb-Rice round-trip, canonicality, malformed/escape edge cases, no-panic over random bytes; `β_inf`/`k` reference pins; segment layout decode boundaries; `TerminalLevelProofShape` round-trips the segment-typed tail and rejects cross-policy shapes.
-- `akita-prover`/`akita-verifier`: prover/verifier `β_inf`/`k` agreement; terminal `t`-state row check (send `t`, check revealed witness maps to `t`, no terminal B/COMMIT block) for suffix-terminal and terminal-root; verifier no-panic on malformed tail bytes; tiered terminal layouts reject or route through the same `t`-state path without `û_concat`.
+- `akita-types`: Golomb-Rice round-trip, canonicality (minimal byte length), malformed/unary-above-cap edge cases, no-panic over random bytes; cap/wire low-bits reference pins; segment layout decode boundaries; `TerminalLevelProofShape` round-trips the segment-typed tail and rejects cross-policy shapes.
+- `akita-prover`/`akita-verifier`: prover/verifier cap/wire low-bits agreement; terminal `t`-state row check (send `t`, check revealed witness maps to `t`, no terminal B/COMMIT block) for suffix-terminal and terminal-root; verifier no-panic on malformed tail bytes; tiered terminal layouts reject or route through the same `t`-state path without `û_concat`.
 - e2e: tamper tests for `z`, `e`, `t`, segment shape, and `y_rings`; descriptor cross-policy reject; ZK rejection; post-decode norm-bound violation reject.
 - `LoggingTranscript`: event-stream equality across the new tail schedule.
 
@@ -97,7 +97,7 @@ Per-lever, at the affected tail modes (verified by `AKITA_MODE=onehot_fp128_d64 
 
 - **r-drop + terminal stage-2 drop** (PR #141 direct mode): **deferred**; projected **5.25%–6.15%** proof reduction on np1 profiles (secondary citation from PR #141 / JL analysis).
 - **u-drop (terminal `t`-state)**: **deferred**; projected ~1 KB savings on cited fp128 D64 profiles (one `n_b`-ring-element `next_w_commitment` elided).
-- **z entropy coding** *(landed in #190; cap-aligned on fold-linf #189)*: `z` coordinate cost drops from fixed `depth_fold * log_basis` bits/coord (packed digits) to `k + O(1)` bits/coord at public `k = optimal_rice_k(cap)` (~13 bits/coord on fp128 D64 vs 15 packed when `cap = β_inf`). Realized random witnesses average ~9.7–10 bits/coord; the public `k` prices the same fold `‖z‖_inf` cap as `num_digits_fold` and grind acceptance, not the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` (which would imply `k ≈ 22`).
+- **z entropy coding** *(landed in #190; cap-aligned on fold-linf #189; wire tightened in #209)*: `z` coordinate cost drops from fixed `depth_fold * log_basis` bits/coord (packed digits) to `rice_low_bits + O(1)` bits/coord on wire at `wire_rice_low_bits(cap) = cap_rice_low_bits(cap) - 2` (~10 bits/coord on fp128 D64 vs 15 packed when `cap = β_inf`). Realized random witnesses average ~9.7–10 bits/coord. Planner budgets use `cap_rice_low_bits(cap) + 2` bits/coord ([`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]). Both wire and planner reference the same fold `‖z‖_inf` cap as `num_digits_fold` and grind acceptance, not the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` (which would imply `cap_rice_low_bits ≈ 22`).
 - **`e`/`t`/`r` as `RawField`** *(landed in #190)*: wire carries full ring/base-field coefficients for partial-evaluation `e_folded`, inner state `t`, and quotient `r`. No entropy coding; planner charges `field_bytes` per coefficient. Legacy `PackedDigits` unfairly priced `e_hat` digit planes at the same width as `z`.
 
 A-role rank, setup size, and L2 pricing are unchanged.
@@ -112,7 +112,7 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 |---|---|---|---|
 | `v = D * e_hat` | auxiliary D image | do not send; reveal `e` at the tail | D-drop (done, PR #88) |
 | terminal input `u = B * t_hat` | outer commitment to terminal witness | do not send `u`; send inner state `t = A * w_terminal` and check it directly | terminal `t`-state (this spec, S2) |
-| `z` (folded response) | norm-bounded per coefficient (`cap`) | Golomb-Rice keyed by `k = optimal_rice_k(cap)` | this spec (S4) |
+| `z` (folded response) | norm-bounded per coefficient (`cap`) | Golomb-Rice keyed by `wire_rice_low_bits(cap)` | this spec (S4) |
 | `e` (`e_folded`, partial evaluation) | full ring element per block (not sparse) | raw field coefficients (`RawField`) | **#190** |
 | `t` (inner commitment image) | full field entropy | raw field coefficients (`RawField`) | **#190** |
 | tiered `û_concat` | outer-commitment artifact | absent under terminal `t`-state | umbrella S2 (deferred) |
@@ -120,7 +120,7 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 
 Affected surfaces:
 
-- `akita-types`: the codec, the segment-typed `CleartextWitnessProof` variant and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/`k` accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims`), and the descriptor policy fields.
+- `akita-types`: the codec, the segment-typed `CleartextWitnessProof` variant and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/low-bits accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims` and `tail_golomb_rice_low_bits`), and the descriptor policy fields.
 - `akita-prover`: emit the tail as typed segments (Golomb `z` on centered fold-response integers; `RawField` for `e_folded`/`t`/`r`), send terminal `t` as the next-state payload at the last recursive transition *(umbrella S2)*, and skip the parent `u = B * t_hat`.
 - `akita-verifier`: decode typed segments (no-panic), expand `z` to digit planes and decompose `e`/`t` field segments to digit planes for row checks, verify terminal A rows against transcript-bound state.
 - `akita-planner`/`akita-config`: codec-aware tail byte accounting, regenerate shipped tables under the new tail policy, bind the policy in the descriptor.
@@ -171,8 +171,8 @@ The transparent tail witness becomes an ordered list of typed segments, replacin
 
 ```rust
 pub enum TailSegmentModel {
-    /// Norm-bounded folded-response integers; Golomb-Rice with public k = optimal_rice_k(β_inf).
-    Gaussian { k: u32 },
+    /// Norm-bounded folded-response integers; Golomb-Rice with wire `rice_low_bits = wire_rice_low_bits(cap)`.
+    Gaussian { rice_low_bits: u32 },
     /// Full field/base coefficients for one ring element (e_folded, t, r).
     RawField,
 }
@@ -195,7 +195,7 @@ r_field_elems  = m_row_count(WithoutDBlock) * D                       (RawField;
 
 `z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
 The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
-Segments appear in `z_first`-dependent order for the `z`/`e` split; `r_hat` planes are absent under PR #141 direct mode.
+Segments appear in wire order `z ‖ e ‖ t ‖ r`; `r_hat` planes are absent under PR #141 direct mode.
 Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
@@ -204,18 +204,19 @@ The verifier decodes `z` via Golomb–Rice into centered integers and expands to
 
 ### Golomb-Rice for the Gaussian z segment
 
-For a signed integer `n` admitted by the `z` segment's public bound, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` where `W` is the signed-integer bit width from the fold cap (`golomb_rice_zigzag_width`). Rice-code `u` with parameter `k`; bounded-unary escape when `q >= Q_MAX`.
+For a signed integer `n` admitted by the `z` segment's public bound, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` where `W` is the signed-integer bit width from the fold cap (`golomb_rice_zigzag_width`). Rice-code `u` with low-bit width `rice_low_bits` as standard Golomb: unary quotient prefix + stop + remainder. Decode rejects unary length above `golomb_rice_max_quotient_for_cap(cap, rice_low_bits, W)`.
 
-`k` for the `z` segment is derived deterministically from the public per-coefficient fold `‖z‖_inf` cap:
+Wire low bits for the `z` segment are derived deterministically from the public per-coefficient fold `‖z‖_inf` cap:
 
 ```text
-cap     = fold_witness_linf_cap_for_claims(num_claims)   (= min(β_inf, t*) or β_inf alone)
-k       = optimal_rice_k(cap)                            (= max(0, floor(log2(cap))), pinned by test)
+cap              = fold_witness_linf_cap_for_claims(num_claims)   (= min(β_inf, t*) or β_inf alone)
+cap_rice_low_bits = rice_low_bits_for_cap(cap)                   (= max(0, floor(log2(cap))), pinned by test)
+wire_rice_low_bits = cap_rice_low_bits - WIRE_RICE_LOW_BITS_DELTA  (= cap low bits - 2 today)
 ```
 
-`cap` is the same bound already used by [`num_digits_fold`](crates/akita-types/src/sis/decomposition_digits.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `k ≈ 22` on fp128 D64 where `k = 12` suffices).
+`cap` is the same bound already used by [`num_digits_fold`](crates/akita-types/src/sis/decomposition_digits.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
 
-`optimal_rice_k` is the integer Rice parameter that covers every admitted `z` coefficient magnitude. The codec is canonical because Rice coding is bijective for a fixed `k` and the escape branch is bijective on its range.
+`rice_low_bits_for_cap` is the cap-derived Rice low-bit width covering every admitted `z` coefficient magnitude at the planner reference. `wire_rice_low_bits` is what prover and verifier use on the wire (#209). The codec is canonical because standard Rice is bijective for a fixed `rice_low_bits` on `[-cap, cap]`, and wire payloads must use the minimal byte length (partial-byte zero padding only). Decode and grind use the cap-derived maximum quotient; no alternate wire shape exists.
 
 ### RawField segments (`e`, `t`, `r`)
 
@@ -227,24 +228,24 @@ Tail encoding uses three layers:
 
 | Layer | Source | Carries |
 |-------|--------|---------|
-| **Policy** | `AkitaInstanceDescriptor` (new tail section + version bump) | codec id, `cap -> k` rule id, per-role segment models, terminal-state mode, r-drop flag |
+| **Policy** | `AkitaInstanceDescriptor` (new tail section + version bump) | codec id, cap→wire low-bits rule id, per-role segment models, terminal-state mode, r-drop flag |
 | **Layout** | `CleartextWitnessShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
-| **Derived** | both sides at runtime | `cap`, `k`, segment order (`z_first`), decode bounds |
+| **Derived** | both sides at runtime | `cap`, `wire_rice_low_bits`, segment order (`z ‖ e ‖ t ‖ r`), decode bounds |
 
 The tail-encoding policy is bound in `AkitaInstanceDescriptor` (same pattern as PR #141's terminal proof mode and PR #174's threshold policy):
 
-- codec identity (Golomb-Rice variant id for `z`, `Q_MAX`, zigzag width rule `W_z`),
-- the `cap -> k` rule identity for the `z` segment only,
+- codec identity (Golomb-Rice variant id for `z`, cap-derived max-quotient rule, zigzag width rule `W_z`),
+- the cap→wire low-bits rule identity for the `z` segment only,
 - per-segment model assignment: `Gaussian` for `z`, `RawField` for `e`/`t`/`r`,
 - the terminal-state mode (`OuterCommitmentU` legacy vs `InnerImageT` tail policy) and r-drop flags.
 
-The proof shape carries segment **counts** (and, for variable-length entropy segments, the realized payload byte length). Model tags and `k` are **not** duplicated on the shape; the verifier checks `shape.counts == derive_counts(policy, level_params, incidence)` before decode.
+The proof shape carries segment **counts** (and, for variable-length entropy segments, the realized payload byte length). Model tags and wire low bits are **not** duplicated on the shape; the verifier checks `shape.counts == derive_counts(policy, level_params, incidence)` before decode.
 Prover, verifier, schedule digest, and descriptor must agree; any disagreement rejects before hot arithmetic.
 Transcript binding (S3 acceptance): absorb **canonical encoded segment bytes** in the same logical order as today's `ABSORB_TERMINAL_E_HAT` / `ABSORB_TERMINAL_W_REMAINDER` events (`terminal_witness.rs`), updated for segment boundaries.
 
 ### Proof-size accounting
 
-`direct_witness_bytes` (`crates/akita-types/src/layout/proof_size.rs:32-41`) gains a segment-typed arm: runtime sizing sums exact encoded segment sizes; **planner** sizing uses a conservative upper bound on entropy segments (`~num_coords * (k + 4)` bits for Gaussian `z` at public `k = optimal_rice_k(β_inf)`), consistent with the repo's `actual <= planned + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` profile gate.
+`direct_witness_bytes` (`crates/akita-types/src/layout/proof_size.rs:32-41`) gains a segment-typed arm: runtime sizing sums exact encoded segment sizes; **planner** sizing uses a conservative upper bound on entropy segments (`~num_coords * (cap_rice_low_bits + 2)` bits for Gaussian `z` under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]), consistent with the repo's `actual <= planned + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` profile gate.
 `level_proof_bytes` (`crates/akita-types/src/proof_size.rs:72-106`) drops `next_commit_bytes` for the last recursive transition and charges the raw `t` payload on the terminal direct witness instead (the terminal layout already drops `v_bytes`/stage-1 at `WithoutDBlock`).
 Shipped schedule tables are regenerated under the new tail policy in S5; the drift guard `generated_schedule_tables_match_find_schedule` must pass after regen.
 
@@ -253,7 +254,7 @@ Shipped schedule tables are regenerated under the new tail policy in S5; the dri
 - **rANS / range coding against the discrete-Gaussian CDF.** Within ~0.01 bit of entropy vs Golomb-Rice's ~0.1-0.5 bit, but the decoder is a heavier state machine to make canonical, total, and cheap in-guest. Golomb-Rice captures nearly all the win at a fraction of the verifier/Jolt complexity; rANS is a future opt-in if the residual bits justify it.
 - **Keep `PackedDigits`, only add per-segment widths.** Still leaves the `z` worst-case-width slack; segment-typed `RawField` for `e` is the correct model (partial evaluation is full field), not digit-plane packing at `z`'s width.
 - **Transmit a small histogram/model.** Unnecessary: `β_inf` is public/transcript-derivable, so a parametric model costs zero wire bytes.
-- **Single fixed Rice `k` across all modes.** Simpler but loses per-level `β_inf` matching for `z`; the `β_inf -> k` rule is descriptor-bound for the `z` segment only.
+- **Single fixed Rice low-bit width across all modes.** Simpler but loses per-level `β_inf` matching for `z`; the `cap -> wire_rice_low_bits` rule is descriptor-bound for the `z` segment only.
 - **BoundedSmall / Golomb for `e`.** Rejected: `e` is `e_folded` partial evaluation (full ring elements). Witness sparsity does not shrink `e` on the wire.
 - **Apply entropy coding at intermediate levels.** Impossible: intermediate witnesses are committed, not revealed; only the tail is cleartext.
 
@@ -274,8 +275,9 @@ S2  Terminal t-state / u-elision (+ soundness paragraph).          deferred (dep
 S3  Segment-typed tail framing (replace single PackedDigits with    landed in #190 (non-zk)
     typed segments; raw e/t/r + Golomb z; length-prefixed z)
 S4  Golomb-Rice codec + cap/k for z segment only                  landed (#190 + #189 cap align)
-S5  Descriptor binding + Jolt decode measurement + full S5 polish   partially landed in #190
-    (non-zk planner regen + profile tail accounting only)
+S5  Descriptor binding + Jolt decode measurement + full S5 polish   partially landed (#190 + #209)
+    (planner regen, profile tail accounting, wire low-bits rule in `FoldLinfProtocolBinding`,
+    verifier `decode_terminal_z_golomb_payload` admissibility, grind planner budget gate)
 ```
 
 **#190** is the first implementation PR under this umbrella. It is independently shippable: measurable `z` entropy win on non-zk folded terminals without waiting for S1/S2 elision.
@@ -284,7 +286,7 @@ Risks for remaining umbrella slices:
 
 - The S2 soundness paragraph must state the terminal statement cutover precisely: `u` is no longer the terminal state, `t` is transcript-bound instead, and the terminal A rows check the revealed witness against `t`.
 - S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
-- S5 descriptor binding and Jolt cycle measurement remain open.
+- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) and Jolt cycle measurement remain partially open.
 
 ## References
 

@@ -573,7 +573,7 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+        let key = AkitaScheduleLookupKey::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

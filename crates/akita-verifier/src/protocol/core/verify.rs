@@ -154,7 +154,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_claims() != witnesses.len() {
+    if opening_batch.num_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -234,7 +234,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_len = params.b_key.row_len();
-    let row_width = akita_types::zk::blinding_column_count::<F>(row_len, D, params.log_basis);
+    let row_width =
+        akita_types::lhl_blinding::blinding_column_count::<F>(row_len, D, params.log_basis);
     let expected_digits = row_width.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
     if blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
@@ -486,7 +487,7 @@ where
     let opening_batch = claims
         .validate(OpeningBatchLimits {
             max_num_vars: setup.expanded.seed().max_num_vars,
-            max_num_claims: setup.expanded.seed().max_num_batched_polys,
+            max_num_polynomials: setup.expanded.seed().max_num_batched_polys,
         })
         .map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
@@ -728,10 +729,14 @@ where
             if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
+            let root_next_opening = proof
+                .root
+                .fold_stage3_sumcheck_proof(setup_contribution_mode)?
+                .map_or_else(|| root_stage2.next_w_eval(), |proof| proof.next_w_eval);
 
             let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
-                opening: root_stage2.next_w_eval(),
+                opening: root_next_opening,
                 #[cfg(feature = "zk")]
                 opening_mask: zk_ext_mask_lc_at::<F, E>(
                     zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,

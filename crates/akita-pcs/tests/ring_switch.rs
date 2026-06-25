@@ -359,6 +359,7 @@ mod tests {
                 &mut transcript,
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
+                None,
             )
             .expect("ring relation");
 
@@ -491,6 +492,7 @@ mod tests {
                 &mut transcript,
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
+                None,
             )
             .expect("ring relation");
 
@@ -658,6 +660,7 @@ mod tests {
                 &mut transcript,
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
+                None,
             )
             .expect("ring relation");
 
@@ -809,6 +812,7 @@ mod tests {
                 &mut transcript,
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithoutDBlock,
+                None,
             )
             .expect("ring relation");
 

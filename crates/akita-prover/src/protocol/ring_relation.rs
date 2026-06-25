@@ -432,6 +432,7 @@ impl RingRelationProver {
         transcript: &mut T,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
+        terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -471,7 +472,7 @@ impl RingRelationProver {
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
-        let num_claims = opening_batch.num_claims();
+        let num_claims = opening_batch.num_polynomials();
         if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
@@ -547,6 +548,7 @@ impl RingRelationProver {
                 &polys,
                 &lp,
                 num_claims,
+                terminal_tail_t_vectors,
             )?;
 
         // Terminal levels drop the D-block from M entirely, so `y` must

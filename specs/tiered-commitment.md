@@ -727,8 +727,8 @@ Threading (each must add the `u_len` term; all are no-ops when `f_key == None`):
   add `pub offset_u: usize`. Place the `û_concat` segment immediately after the
   `t̂` segment (`offset_u = offset_t + t_len`) and **before** the ZK blinding
   segments and `offset_r`. `segment_layout` recomputes `b_blinding_offset`,
-  `d_blinding_offset`, and `offset_r` shifted by `u_len`. For `z_first` and
-  non-`z_first` orderings the `u` segment travels with the `t̂` segment.
+  `d_blinding_offset`, and `offset_r` shifted by `u_len`. The `u` segment follows
+  `t̂` in the witness layout.
 - **`w_ring_element_count_with_counts_for_layout_bits`**
   ([`schedule.rs:252`](crates/akita-types/src/schedule.rs)): add a `u_count`
   term to the sum `e_hat + t_hat + (+u_count) + z_pre + r`. The existing `r`

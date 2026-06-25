@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::offset_eq::eval_offset_eq_tensor;
+use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -18,6 +18,17 @@ pub(super) const CARRY0: usize = 0;
 
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
 pub(super) const CARRY1: usize = 1;
+
+/// Build `table[k] = eq_high(offset_high + k)` for `k ∈ [0, hi_len]`.
+pub(crate) fn high_eq_window<E: FieldCore>(
+    high_challenges: &[E],
+    offset_high: usize,
+    hi_len: usize,
+) -> Vec<E> {
+    (0..=hi_len)
+        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
+        .collect()
+}
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
@@ -393,7 +404,7 @@ mod tests {
             b: vec![F::zero(); lp.num_blocks],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let num_claims = opening_batch.num_claims();
+        let num_claims = opening_batch.num_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
             num_blocks_per_claim: lp.num_blocks,

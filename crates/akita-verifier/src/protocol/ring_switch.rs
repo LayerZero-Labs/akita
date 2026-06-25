@@ -12,7 +12,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
-use akita_types::zk;
+use akita_types::lhl_blinding;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
@@ -22,8 +22,8 @@ use akita_types::{
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, EStructuredSlicesEvaluator, SetupEvaluation, SetupEvaluator,
-    SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
+    compute_r_contribution, high_eq_window, EStructuredSlicesEvaluator, SetupEvaluation,
+    SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
@@ -223,7 +223,7 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_claims = relation.opening_batch().num_claims();
+    let num_claims = relation.opening_batch().num_polynomials();
     if relation.opening_point().a.len() < lp.block_len
         || relation.opening_point().b.len() != lp.num_blocks
     {
@@ -367,11 +367,12 @@ where
     let num_t_vectors = num_polys;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::WithDBlock => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::WithDBlock => lhl_blinding::blinding_digit_plane_count::<F>(n_d, D, log_basis),
         MRowLayout::WithoutDBlock => 0,
     };
     #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+    let b_blinding_digit_planes_per_point =
+        lhl_blinding::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
     let b_blinding_segment_len = b_blinding_digit_planes_per_point;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
@@ -632,12 +633,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
 
         // ----- E-hat ---------------------------------------------------------
-        // Precompute the high-eq window once and reuse it as an O(1) lookup
-        // inside the slice evaluator. Indexed relative to `e_offset_high`.
         let e_offset_high = layout.offset_e >> offset_low_bits;
-        let eq_hi_e_table: Vec<E> = (0..=self.num_claims * self.depth_open)
-            .map(|k| akita_algebra::offset_eq::eq_eval_at_index(high_challenges, e_offset_high + k))
-            .collect();
+        let eq_hi_e_table = high_eq_window(
+            high_challenges,
+            e_offset_high,
+            self.num_claims * self.depth_open,
+        );
         let e_structured_contribution = {
             let _span = tracing::info_span!("e_structured").entered();
             EStructuredSlicesEvaluator {
@@ -666,9 +667,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- T -------------------------------------------------------------
         let t_offset_high = layout.offset_t >> offset_low_bits;
         let a_row_count = self.rows.saturating_sub(a_start);
-        let eq_hi_t_table: Vec<E> = (0..=self.num_claims * self.depth_open * a_row_count)
-            .map(|k| akita_algebra::offset_eq::eq_eval_at_index(high_challenges, t_offset_high + k))
-            .collect();
+        let eq_hi_t_table = high_eq_window(
+            high_challenges,
+            t_offset_high,
+            self.num_claims * self.depth_open * a_row_count,
+        );
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
             TStructuredSlicesEvaluator {
@@ -698,8 +701,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     layout.offset_t,
                     layout.offset_z,
                     layout.offset_u,
-                    // Reuse the high-eq window tables already built for the
-                    // structured e/t slices instead of recomputing them.
                     Some(&eq_hi_e_table),
                     Some(&eq_hi_t_table),
                 );
@@ -726,17 +727,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     self.block_len,
                     |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
                 )?];
-                let z_high_challenges = &x_challenges[z_offset_low_bits..];
                 let z_offset_high = layout.offset_z >> z_offset_low_bits;
                 let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
-                let eq_hi_z_table: Vec<E> = (0..=z_hi_len)
-                    .map(|k| {
-                        akita_algebra::offset_eq::eq_eval_at_index(
-                            z_high_challenges,
-                            z_offset_high + k,
-                        )
-                    })
-                    .collect();
+                let eq_hi_z_table =
+                    high_eq_window(&x_challenges[z_offset_low_bits..], z_offset_high, z_hi_len);
                 ZStructuredPow2SlicesEvaluator {
                     g1_commit: &g1_commit,
                     fold_gadget: &fold_gadget,

@@ -189,12 +189,14 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
     pub sumcheck_proof_masked: SumcheckProofMasked<L>,
 }
 
-/// Product-sumcheck proof for the public setup contribution.
+/// Fused stage-3 proof for the public setup contribution and carried witness opening.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupSumcheckProof<L: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
     pub claim: L,
-    /// Degree-two product sumcheck over `S(lambda, y) * omega(lambda) * alpha(y)`.
+    /// Claimed next-witness opening after the batched stage-3 point projection.
+    pub next_w_eval: L,
+    /// Degree-two batched product sumcheck carrying setup and next-witness terms.
     pub sumcheck: SumcheckProof<L>,
 }
 
