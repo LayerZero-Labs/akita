@@ -4,8 +4,8 @@
 |---------------|--------------------------------|
 | Author(s)     | Quang Dao                      |
 | Created       | 2026-06-25                     |
-| Status        | proposed                       |
-| PR            |                                |
+| Status        | in-progress (slices 0–3 landed) |
+| PR            | [#218](https://github.com/LayerZero-Labs/akita/pull/218) |
 | Supersedes    |                                |
 | Superseded-by |                                |
 | Book-chapter  | roadmap/zero-knowledge.md      |
@@ -31,6 +31,33 @@ This spec removes all ZK from `main` into a preserved `zk-wip` branch + tag
 (LHL sizing math) always-on as `lhl_blinding`, and sequences the removal into
 verifiable slices that **provably do not change transparent proof bytes,
 transcript bytes, or verification behavior**.
+
+### Implementation status (PR #218)
+
+**Landed in [#218](https://github.com/LayerZero-Labs/akita/pull/218)** (mergeable
+milestone; transparent path only):
+
+| Slice | Scope | Status |
+|-------|-------|--------|
+| 0 | Preservation refs + golden tripwire | Done |
+| 1 | `lhl_blinding` always-on | Done |
+| 2 | ZK-only tests + `*_zk.rs` schedules | Done |
+| 3 | Setup `zkB`/`zkD` matrices + drop `akita-r1cs` | Done |
+| CI | Drop `all-features` / zk schedule-drift legs; transparent merge gate | Done (slice 5 partial) |
+
+**Follow-up PR(s):**
+
+| Slice | Scope | Status |
+|-------|-------|--------|
+| 4 | Core protocol orchestration (`fold`, masked sumcheck, `zk_hiding`, blinding hints, etc.) | Not started |
+| 5 | Delete `zk` Cargo features; final CI grep gate | Partial (CI only) |
+
+After #218 merges, `main` still carries ~650 `#[cfg(feature = "zk")]` sites in
+prover/verifier/types/sumcheck (dead on the default build). `--features zk` does
+not build. Auditors reviewing transparent code can use `main`; full "zero ZK in
+tree" waits for slices 4–5.
+
+Preservation: branch `zk-wip` and tag `zk-prefix-snapshot-2026-06` at `2c6b6b1f`.
 
 ## Intent
 
@@ -104,22 +131,24 @@ Affected surfaces:
 - [ ] `rg -n 'feature *= *"zk"' crates/ -g '*.rs'` returns **0** matches on `main`.
 - [ ] No crate's `Cargo.toml` defines a `zk` feature; `akita-r1cs` is removed from
       `[workspace] members` and from all `optional`/`dep:` references.
-- [ ] `cargo check --workspace` and `cargo check --workspace --no-default-features --features parallel,disk-persistence` both succeed with no `zk` feature in existence.
-- [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass.
-- [ ] The Slice-0 golden-byte digest (transparent proof for a fixed small
-      instance + fixed seed) is **byte-identical** before the first slice and after
-      the last.
-- [ ] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
+- [x] `cargo check --workspace --no-default-features --features parallel,disk-persistence`
+      succeeds (transparent merge gate; #218).
+- [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
+- [x] The Slice-0 golden-byte digests (transparent folded proofs for fixed
+      instances + fixed seeds) are **byte-identical** across slices 0–3:
+      `fp128::D64Full` nv=15 → `7d860d0b…cfb0a` (90,007 bytes);
+      `fp128::D64OneHot` nv=20 → `d0df7b19…c88c` (86,324 bytes).
+- [x] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
       no longer behind any `cfg`.
-- [ ] A `zk-wip` branch and an annotated tag (e.g. `zk-prefix-snapshot-2026-06`)
-      exist at the pre-strip commit; `git log zk-wip` shows the full ZK tree.
-- [ ] CI: the `test-all-features` / zk schedule-drift legs are removed; the
-      `test-non-zk` (now the only) test leg remains the merge gate.
+- [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
+      exist at the pre-strip commit.
+- [x] CI: the `test-all-features` / zk schedule-drift legs are removed; the
+      `test` leg is the merge gate (#218).
 - [ ] No `todo!`/`unimplemented!`/dead `let _ = (zk…)` shims remain from the strip.
 
 ### Testing Strategy
 
-**Authoritative gate after every slice** (mirrors CI `test-non-zk`):
+**Authoritative gate after every slice** (mirrors CI `test` job):
 
 ```bash
 cargo nextest run --no-default-features --features parallel,disk-persistence
@@ -127,16 +156,14 @@ cargo check --workspace --no-default-features --features parallel,disk-persisten
 cargo clippy --all --all-targets --no-default-features -- -D warnings
 ```
 
-**Slice-0 tripwire** (added on `main` *before* any deletion): a
-`#[cfg(test)]` test that builds a transparent proof for a fixed small instance +
-fixed seed, hashes the serialized bytes, and asserts a committed digest constant.
-Generate the constant on `main` first so it pins bytes across the whole cutover.
-Suggested home: `crates/akita-pcs/tests/transparent_proof_golden.rs`. Pair with a
-transcript-determinism assertion for the same instance.
+**Slice-0 tripwire** (added before any deletion): `crates/akita-pcs/tests/transparent_proof_golden.rs`
+pins SHA-256 of serialized transparent proofs for two **folded** (not root-direct)
+instances: `fp128::D64Full` nv=15 and `fp128::D64OneHot` nv=20. Pair with
+transcript-determinism assertions in the same file.
 
-**`--features zk` leg** (run only on Slices 0–2, to confirm we have not broken the
-feature *before* we intend to): `cargo nextest run --all-features -E 'not (package(akita-field))'`.
-Drop it once Slice 4 deletes the `zk` source and Slice 5 deletes the feature.
+**`--features zk` leg:** was run on slices 0–2 only. After slice 3 (`akita-r1cs`
+removed) and slice 2 (zk schedules deleted), `cargo … --all-features` is expected
+to fail until slice 4–5 finish. CI no longer runs this leg (#218).
 
 **Schedule drift** (critical for Slice 2):
 
@@ -254,16 +281,16 @@ build is already the transparent path.
 ### Execution — sequenced slices
 
 Each slice is independently committable and gated by the transparent test run +
-the Slice-0 golden digest. Slices 1–3 are largely independent (parallelizable);
-Slice 4 depends on 1–3; Slice 5 is the final cleanup.
+the Slice-0 golden digest. Slices 1–3 landed in [#218](https://github.com/LayerZero-Labs/akita/pull/218).
+Slice 4 depends on 1–3; slice 5 finishes feature removal and CI grep gates.
 
-**Slice 0 — Preserve + tripwire (prerequisite).**
+**Slice 0 — Preserve + tripwire.** ✅ *Landed #218*
 - `git branch zk-wip` at current `main`; `git tag -a zk-prefix-snapshot-2026-06`.
 - Add the transparent golden-byte test + transcript-determinism test on `main`;
   commit the pinned digest constant. This is the tripwire for I1/I2.
 - *Verify:* default test run green; record the digest.
 
-**Slice 1 — Promote LHL math to always-on (`lhl_blinding`).**
+**Slice 1 — Promote LHL math to always-on (`lhl_blinding`).** ✅ *Landed #218*
 - `git mv crates/akita-types/src/zk.rs crates/akita-types/src/lhl_blinding.rs`.
 - In `lib.rs`: replace `#[cfg(feature = "zk")] pub mod zk;` with un-gated
   `pub mod lhl_blinding;` and add the doc note.
@@ -271,7 +298,7 @@ Slice 4 depends on 1–3; Slice 5 is the final cleanup.
   (they stay zk-gated for now — an always-on module is visible to gated code).
 - *Verify:* default + `--features zk` both green (consumers still exist this slice).
 
-**Slice 2 — Delete zk-only tests + reconcile generated schedules.**
+**Slice 2 — Delete zk-only tests + reconcile generated schedules.** ✅ *Landed #218*
 - Delete `crates/akita-pcs/tests/{zk.rs,fold_linf_zk.rs}`, the `zk_*` fns in
   `single_poly_tensor_e2e.rs`, the ~24 inline `#[cfg(feature="zk")]` test modules.
 - Delete the `*_zk.rs` files under `crates/akita-schedules/src/generated/` and
@@ -280,18 +307,17 @@ Slice 4 depends on 1–3; Slice 5 is the final cleanup.
 - *Verify:* default green; `--features zk` may now fail to *find* deleted tables —
   acceptable; schedule-drift test green on the transparent leg.
 
-**Slice 3 — Tear down setup blinding (`zk_b`/`zk_d`) + remove `akita-r1cs`.**
+**Slice 3 — Tear down setup blinding (`zk_b`/`zk_d`) + remove `akita-r1cs`.** ✅ *Landed #218*
 - Delete `zk_b_matrix`/`zk_d_matrix` fields, `derive_zk_*`, `validate_*zk*`,
   `ZK_*_LABEL`, `max_zk_b_len`/`max_zk_d_len`, and their serde/`Valid` arms in
   `proof/setup.rs`; reconcile the two non-test construction sites
-  (`api/setup.rs`, `akita-setup/src/lib.rs`) and the
-  `AkitaCommitmentHint::singleton_with_recomposed_inner_rows` arity (3→2) across
-  all callers **in lockstep**.
+  (`api/setup.rs`, `akita-setup/src/lib.rs`). `AkitaCommitmentHint` blinding-digit
+  arity cleanup deferred to slice 4 (still cfg-gated on the default build).
 - Remove `akita-r1cs` from `[workspace] members` and from `dep:`/feature lines in
   `akita-verifier` and `akita-sumcheck`.
 - *Verify:* default green + setup serde roundtrip; golden digest unchanged.
 
-**Slice 4 — Tear down core orchestration (the heart).**
+**Slice 4 — Tear down core orchestration (the heart).** ⏳ *Follow-up PR*
 - Prover: delete `ZkHidingProverState`, `build_zk_hiding_context`, pad helpers
   (`core.rs`); the prove.rs construction/writeback; B/D blinding in
   `ring_switch/{commit,evals}.rs`; `masking.rs`; `zk_hiding_commit.rs`.
@@ -309,10 +335,10 @@ Slice 4 depends on 1–3; Slice 5 is the final cleanup.
   full transparent e2e. (Run `--features zk` once *before* this slice to confirm
   the pre-strip feature still worked; do not expect it after.)
 
-**Slice 5 — Delete the `zk` feature + CI cleanup.**
-- Remove every `zk = [...]` line from the 13 Cargo.toml files and the leaf stubs.
+**Slice 5 — Delete the `zk` feature + CI cleanup.** ⏳ *Partial (#218: CI only)*
 - Remove the `test-all-features` job and the `zk` schedule-drift line from
-  `.github/workflows/ci.yml`; keep `test-non-zk` as the (now sole) merge gate.
+  `.github/workflows/ci.yml`; keep `test` as the merge gate. ✅ *Done #218*
+- Remove every `zk = [...]` line from the 13 Cargo.toml files and the leaf stubs.
 - Grep gate: `rg 'feature *= *"zk"' crates/` → 0.
 - *Verify:* full default CI green; `cargo check --workspace` errors out on any
   stray `--features zk` (proves the feature is gone).
@@ -394,7 +420,7 @@ follow-up. `schedule_terminal_direct_witness_shape` is already unconditional.
   `crates/akita-sumcheck/src/{types.rs,drivers/standard.rs}`,
   `crates/akita-types/src/zk.rs` (→ `lhl_blinding.rs`).
 - Verify commands: `cargo nextest run --no-default-features --features parallel,disk-persistence`;
-  CI `test-non-zk` job (`.github/workflows/ci.yml`).
+  CI `test` job (`.github/workflows/ci.yml`).
 
 ## Open Questions
 

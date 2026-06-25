@@ -234,7 +234,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_len = params.b_key.row_len();
-    let row_width = akita_types::zk::blinding_column_count::<F>(row_len, D, params.log_basis);
+    let row_width =
+        akita_types::lhl_blinding::blinding_column_count::<F>(row_len, D, params.log_basis);
     let expected_digits = row_width.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
     if blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);

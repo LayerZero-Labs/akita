@@ -331,83 +331,6 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
 }
 
 #[test]
-#[cfg(feature = "zk")]
-fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
-    use akita_challenges::SparseChallengeConfig;
-    use akita_types::SisModulusFamily;
-
-    type Cfg = fp128::D128Full;
-    let sparse = SparseChallengeConfig::Uniform {
-        weight: 1,
-        nonzero_coeffs: vec![-1, 1],
-    };
-    let lp = LevelParams::params_only(SisModulusFamily::Q128, Cfg::D, 5, 2, 3, 5, sparse)
-        .with_decomp(4, 3, 2, 6, 0)
-        .unwrap();
-
-    let mut got = 1usize;
-    accumulate_matrix_envelope_for_level::<Cfg>(&lp, &mut got).unwrap();
-
-    let expected = (lp.a_key.row_len() * lp.inner_width())
-        .max(lp.b_key.row_len() * lp.outer_width())
-        .max(lp.d_key.row_len() * lp.d_matrix_width());
-    assert_eq!(got, expected);
-
-    let b_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
-        lp.b_key.row_len(),
-        lp.ring_dimension,
-        lp.log_basis,
-    );
-    let d_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
-        lp.d_key.row_len(),
-        lp.ring_dimension,
-        lp.log_basis,
-    );
-    let old_tail_inflated = (lp.a_key.row_len() * lp.inner_width())
-        .max(lp.b_key.row_len() * (lp.outer_width() + b_tail))
-        .max(lp.d_key.row_len() * (lp.d_matrix_width() + d_tail));
-    assert!(
-        old_tail_inflated > expected,
-        "test fixture must catch accidental ZK tail columns in setup envelope"
-    );
-}
-
-#[test]
-#[cfg(feature = "zk")]
-fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
-    type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatchShape::new(26, 1).expect("singleton opening batch");
-    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .unwrap()
-        .expect("batched root schedule should carry commit params");
-    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &opening_batch).unwrap();
-    let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
-    let hiding_params = root_params
-        .with_decomp(
-            num_ring.trailing_zeros() as usize,
-            0,
-            root_params.num_digits_commit,
-            root_params.num_digits_open,
-            num_ring,
-        )
-        .unwrap();
-    let blinding_cols =
-        akita_types::zk::blinding_digit_plane_count::<<Cfg as CommitmentConfig>::Field>(
-            hiding_params.b_key.row_len(),
-            hiding_params.ring_dimension,
-            hiding_params.log_basis,
-        );
-    let required = hiding_params.b_key.row_len() * blinding_cols;
-
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
-    assert!(runtime_envelope.max_zk_b_len >= required);
-
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1).unwrap();
-    assert!(setup_envelope.max_zk_b_len >= required);
-}
-
-#[test]
 #[cfg(not(feature = "zk"))]
 fn presets_select_expected_sis_modulus_family() {
     assert_eq!(
@@ -704,28 +627,6 @@ fn batched_root_plan_matches_runtime_next_w_len() {
     );
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
-}
-
-#[test]
-#[cfg(feature = "zk")]
-fn batched_4x15_terminal_witness_is_packed_digits() {
-    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape, Step};
-    let key = AkitaScheduleLookupKey::new(15, 4, 4, 1);
-    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
-        .expect("config schedule should succeed");
-    let terminal_log_basis = match schedule.steps.last() {
-        Some(Step::Direct(direct)) => {
-            direct.log_basis(fp128::D64OneHot::decomposition().field_bits())
-        }
-        _ => panic!("zk schedule should end in a terminal direct step"),
-    };
-    match schedule_terminal_direct_witness_shape(&schedule).expect("terminal direct") {
-        CleartextWitnessShape::PackedDigits((len, bits)) => {
-            assert_eq!(*bits, terminal_log_basis);
-            assert!(*len > 0, "terminal witness len must be positive");
-        }
-        other => panic!("expected packed terminal witness for zk build, got {other:?}"),
-    }
 }
 
 #[test]
