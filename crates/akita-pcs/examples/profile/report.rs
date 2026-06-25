@@ -111,7 +111,6 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             final_w_encoding = "segment_typed",
             final_w_policy = "non_zk_default",
             tail_log_basis = segment.layout.log_basis,
-            tail_z_first = segment.layout.z_first as u8,
             tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -170,9 +169,8 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
 
         eprintln!(
             "[{label}]   final_w: encoding=segment_typed (non-zk default), total={tail_bytes} bytes, \
-             logical_elems={num_elems}, log_basis={}, z_first={}{}",
+             logical_elems={num_elems}, log_basis={}{}",
             segment.layout.log_basis,
-            segment.layout.z_first,
             golomb_line,
         );
         eprintln!(

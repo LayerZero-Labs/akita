@@ -404,8 +404,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         offset_t: usize,
         offset_z: usize,
         offset_u: usize,
-        // Optional precomputed high-eq window tables (relative to the segment's high
-        // offset): `eq_hi_e[k] == eq_high(e_offset_high + k)` and likewise for `t`.
         eq_hi_e: Option<&[E]>,
         eq_hi_t: Option<&[E]>,
     ) -> Result<Self, AkitaError>
@@ -1240,7 +1238,7 @@ mod tests {
         let depth_fold = 2;
         let num_points = 1;
         let z_range = block_len * depth_commit;
-        let offset_z = 192;
+        let offset_z = 0;
         let full_vec_randomness = (0..9)
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();

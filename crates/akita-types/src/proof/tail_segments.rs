@@ -20,7 +20,7 @@ use crate::golomb_rice::{
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
 use crate::proof::CleartextWitnessShape;
-use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
+use crate::proof::{FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
 use crate::{LevelParams, MRowLayout};
@@ -30,7 +30,6 @@ use crate::{LevelParams, MRowLayout};
 pub struct TailSegmentLayout {
     pub ring_dimension: usize,
     pub log_basis: u32,
-    pub z_first: bool,
     pub z_coords: usize,
     pub e_field_elems: usize,
     pub t_field_elems: usize,
@@ -64,7 +63,6 @@ impl TailSegmentLayout {
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.ring_dimension);
         push_u32(bytes, self.log_basis);
-        bytes.push(u8::from(self.z_first));
         push_usize(bytes, self.z_coords);
         push_usize(bytes, self.e_field_elems);
         push_usize(bytes, self.t_field_elems);
@@ -93,7 +91,6 @@ impl AkitaSerialize for TailSegmentLayout {
         self.ring_dimension
             .serialize_with_mode(&mut writer, compress)?;
         self.log_basis.serialize_with_mode(&mut writer, compress)?;
-        u8::from(self.z_first).serialize_with_mode(&mut writer, compress)?;
         self.z_coords.serialize_with_mode(&mut writer, compress)?;
         self.e_field_elems
             .serialize_with_mode(&mut writer, compress)?;
@@ -109,7 +106,6 @@ impl AkitaSerialize for TailSegmentLayout {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.ring_dimension.serialized_size(compress)
             + self.log_basis.serialized_size(compress)
-            + u8::from(self.z_first).serialized_size(compress)
             + self.z_coords.serialized_size(compress)
             + self.e_field_elems.serialized_size(compress)
             + self.t_field_elems.serialized_size(compress)
@@ -129,7 +125,6 @@ impl AkitaDeserialize for TailSegmentLayout {
     ) -> Result<Self, SerializationError> {
         let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let z_first = u8::deserialize_with_mode(&mut reader, compress, validate, &())? != 0;
         let z_coords = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let e_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let t_field_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -138,7 +133,6 @@ impl AkitaDeserialize for TailSegmentLayout {
         let out = Self {
             ring_dimension,
             log_basis,
-            z_first,
             z_coords,
             e_field_elems,
             t_field_elems,
@@ -281,50 +275,25 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             )));
         }
         let mut z_payload = vec![0u8; z_len];
-        let e_fields;
-        let t_fields;
-        let r_fields;
-        if ctx.layout.z_first {
-            reader.read_exact(&mut z_payload)?;
-            e_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.e_field_elems,
-            )?;
-            t_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.t_field_elems,
-            )?;
-            r_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.r_field_elems,
-            )?;
-        } else {
-            e_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.e_field_elems,
-            )?;
-            reader.read_exact(&mut z_payload)?;
-            t_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.t_field_elems,
-            )?;
-            r_fields = FlatRingVec::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.layout.r_field_elems,
-            )?;
-        }
+        reader.read_exact(&mut z_payload)?;
+        let e_fields = FlatRingVec::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.layout.e_field_elems,
+        )?;
+        let t_fields = FlatRingVec::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.layout.t_field_elems,
+        )?;
+        let r_fields = FlatRingVec::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.layout.r_field_elems,
+        )?;
         let out = Self {
             layout: ctx.layout,
             z_payload,
@@ -340,7 +309,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
-    /// Canonical segment bytes in wire order (`z`/`e` permuted by `z_first`).
+    /// Canonical segment bytes in wire order (`z ‖ e ‖ t ‖ r`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.append_wire_segments(&mut out, Compress::No)
@@ -353,24 +322,13 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
         writer: &mut W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let write_z = |writer: &mut W| -> Result<(), SerializationError> {
-            self.z_payload
-                .len()
-                .serialize_with_mode(&mut *writer, compress)?;
-            writer.write_all(&self.z_payload)?;
-            Ok(())
-        };
-        if self.layout.z_first {
-            write_z(writer)?;
-            append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
-            append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
-            append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
-        } else {
-            append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
-            write_z(writer)?;
-            append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
-            append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
-        }
+        self.z_payload
+            .len()
+            .serialize_with_mode(&mut *writer, compress)?;
+        writer.write_all(&self.z_payload)?;
+        append_field_coeffs(writer, self.e_fields.coeffs(), compress)?;
+        append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
+        append_field_coeffs(writer, self.r_fields.coeffs(), compress)?;
         Ok(())
     }
 
@@ -666,7 +624,6 @@ pub fn tail_segment_layout(
     Ok(TailSegmentLayout {
         ring_dimension: d,
         log_basis: lp.log_basis,
-        z_first: ring_column_z_first(lp),
         z_coords,
         e_field_elems,
         t_field_elems,
@@ -1019,39 +976,16 @@ where
     }
 
     let mut out = Vec::with_capacity(witness.layout.logical_num_elems);
-    if witness.layout.z_first {
-        emit_witness_z_folded_planes_inner::<D>(
-            &mut out,
-            &all_z_planes,
-            lp.block_len,
-            depth_commit,
-            num_digits_fold,
-            total_z_elems,
-        );
-        emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_witness_planes_block_inner::<D>(
-            &mut out,
-            &t_planes,
-            t_block_count,
-            t_planes_per_block,
-        );
-    } else {
-        emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-        emit_witness_planes_block_inner::<D>(
-            &mut out,
-            &t_planes,
-            t_block_count,
-            t_planes_per_block,
-        );
-        emit_witness_z_folded_planes_inner::<D>(
-            &mut out,
-            &all_z_planes,
-            lp.block_len,
-            depth_commit,
-            num_digits_fold,
-            total_z_elems,
-        );
-    }
+    emit_witness_z_folded_planes_inner::<D>(
+        &mut out,
+        &all_z_planes,
+        lp.block_len,
+        depth_commit,
+        num_digits_fold,
+        total_z_elems,
+    );
+    emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
+    emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
     for plane in &r_planes_flat {
         out.extend_from_slice(plane);
     }
