@@ -11,8 +11,7 @@ use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, Tr
 use akita_types::{
     golomb_rice_rows_encodable_at_live_k,
     sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
-    tail_segment_multiplicities_from_layout, CleartextWitnessShape, FoldLinfProtocolBinding,
-    LevelParams, MRowLayout, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
+    FoldLinfProtocolBinding, LevelParams, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
@@ -41,43 +40,66 @@ where
 {
 }
 
-/// `num_t_vectors` for terminal Golomb cap alignment with segment-typed tail encode.
-pub(crate) fn terminal_tail_t_vectors_for_grind(
-    lp: &LevelParams,
-    m_row_layout: MRowLayout,
-    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
-) -> Result<Option<usize>, AkitaError> {
-    if !matches!(m_row_layout, MRowLayout::WithoutDBlock) {
-        return Ok(None);
+/// Terminal fold grind inputs for Golomb encodability alignment with segment-typed tails.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FoldGrindTerminal {
+    /// Segment-typed `num_t_vectors` when the terminal fold uses Golomb-Rice `z`.
+    pub tail_t_vectors: Option<usize>,
+}
+
+impl FoldGrindTerminal {
+    #[must_use]
+    pub(crate) const fn from_tail_t_vectors(tail_t_vectors: Option<usize>) -> Self {
+        match tail_t_vectors {
+            Some(n) => Self::segment_typed(n),
+            None => Self::absent(),
+        }
     }
-    let Some(shape) = terminal_direct_witness_shape else {
-        return Ok(None);
-    };
-    let CleartextWitnessShape::SegmentTyped(scheduled) = shape else {
-        return Ok(None);
-    };
-    let (_, num_t_vectors, _) = tail_segment_multiplicities_from_layout(lp, &scheduled.layout)?;
-    Ok(Some(num_t_vectors))
+
+    #[must_use]
+    pub(crate) const fn absent() -> Self {
+        Self {
+            tail_t_vectors: None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn segment_typed(tail_t_vectors: usize) -> Self {
+        Self {
+            tail_t_vectors: Some(tail_t_vectors),
+        }
+    }
 }
 
 fn accepts_fold_witness<const D: usize>(
     contract: &FoldWitnessGrindContract,
     witness: &DecomposeFoldWitness<impl CanonicalField, D>,
     witness_linf_cap: u128,
-    terminal_golomb_cap: Option<u128>,
+    terminal: FoldGrindTerminal,
 ) -> bool {
     if contract.policy != FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
         && u128::from(witness.centered_inf_norm) > witness_linf_cap
     {
         return false;
     }
-    let Some(golomb_cap) = terminal_golomb_cap else {
-        return true;
-    };
-    if contract.policy == FoldWitnessLinfCapPolicy::WorstCaseBetaOnly {
+    if terminal.tail_t_vectors.is_none()
+        || contract.policy == FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
+    {
         return true;
     }
-    golomb_rice_rows_encodable_at_live_k(&witness.centered_coeffs, golomb_cap).is_ok()
+    golomb_rice_rows_encodable_at_live_k(&witness.centered_coeffs, witness_linf_cap).is_ok()
+}
+
+fn grind_caps(
+    lp: &LevelParams,
+    contract: &FoldWitnessGrindContract,
+    terminal: FoldGrindTerminal,
+) -> Result<(u128, FoldGrindTerminal), AkitaError> {
+    let Some(num_t_vectors) = terminal.tail_t_vectors else {
+        return Ok((contract.witness_linf_cap, terminal));
+    };
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    Ok((cap, terminal))
 }
 
 fn grind_probe_nonces(
@@ -110,9 +132,8 @@ fn grind_probe_nonces(
 /// with tail-bound grind use a transcript-seeded uniform permutation of the same
 /// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
 ///
-/// On the terminal fold only, tail-bound presets also reject witnesses whose
-/// centered coefficients would need the Golomb escape path at live `k`.
-#[allow(clippy::too_many_arguments)]
+/// When [`FoldGrindTerminal::tail_t_vectors`] is set, tail-bound presets also reject
+/// witnesses whose centered coefficients would need the Golomb escape path at live `k`.
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup<D>>,
@@ -120,8 +141,7 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     polys: &[&P],
     lp: &LevelParams,
     num_claims: usize,
-    terminal_fold: bool,
-    terminal_tail_t_vectors: Option<usize>,
+    terminal: FoldGrindTerminal,
 ) -> Result<(DecomposeFoldWitness<F, D>, Challenges, u32), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -133,18 +153,7 @@ where
 {
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
-    let (witness_linf_cap, terminal_golomb_cap) = if terminal_fold {
-        if let Some(num_t_vectors) = terminal_tail_t_vectors {
-            let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-            (cap, Some(cap))
-        } else {
-            // ZK `PackedDigits` terminal tails (and unit tests without a scheduled
-            // segment shape) do not use Golomb-Rice; keep the level grind contract cap.
-            (contract.witness_linf_cap, None)
-        }
-    } else {
-        (contract.witness_linf_cap, None)
-    };
+    let (witness_linf_cap, terminal) = grind_caps(lp, &contract, terminal)?;
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
@@ -170,7 +179,7 @@ where
             &point_indices,
             lp,
         )?;
-        if !accepts_fold_witness(&contract, &witness, witness_linf_cap, terminal_golomb_cap) {
+        if !accepts_fold_witness(&contract, &witness, witness_linf_cap, terminal) {
             continue;
         }
         super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);

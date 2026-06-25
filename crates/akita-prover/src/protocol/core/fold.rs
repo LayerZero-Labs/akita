@@ -292,7 +292,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     basis: BasisMode,
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -369,8 +369,7 @@ where
                 #[cfg(feature = "zk")]
                 zk_hiding,
                 m_row_layout,
-                #[cfg(not(feature = "zk"))]
-                terminal_direct_witness_shape,
+                terminal_tail_t_vectors,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -409,8 +408,7 @@ where
                     #[cfg(feature = "zk")]
                     zk_hiding,
                     m_row_layout,
-                    #[cfg(not(feature = "zk"))]
-                    terminal_direct_witness_shape,
+                    terminal_tail_t_vectors,
                 },
             )
         }
@@ -435,8 +433,7 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
             m_row_layout,
-            #[cfg(not(feature = "zk"))]
-            terminal_direct_witness_shape,
+            terminal_tail_t_vectors,
         })
     }
 }
@@ -469,8 +466,7 @@ where
     #[cfg(feature = "zk")]
     zk_hiding: ZkHidingProverState<F>,
     m_row_layout: MRowLayout,
-    #[cfg(not(feature = "zk"))]
-    terminal_direct_witness_shape: Option<&'a CleartextWitnessShape>,
+    terminal_tail_t_vectors: Option<usize>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -515,8 +511,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
         m_row_layout,
-        #[cfg(not(feature = "zk"))]
-        terminal_direct_witness_shape,
+        terminal_tail_t_vectors,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -568,10 +563,7 @@ where
         transcript,
         row_coefficient_rings,
         m_row_layout,
-        #[cfg(not(feature = "zk"))]
-        terminal_direct_witness_shape,
-        #[cfg(feature = "zk")]
-        None,
+        terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {

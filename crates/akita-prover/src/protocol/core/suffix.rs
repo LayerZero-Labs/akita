@@ -11,6 +11,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+use akita_types::terminal_golomb_grind_tail_t_vectors;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -125,6 +126,16 @@ where
 
     #[cfg(not(feature = "zk"))]
     let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
+    #[cfg(not(feature = "zk"))]
+    let terminal_tail_t_vectors = {
+        let terminal_level = planned_num_levels - 1;
+        let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
+        terminal_golomb_grind_tail_t_vectors(
+            &terminal_scheduled.params,
+            MRowLayout::WithoutDBlock,
+            Some(terminal_direct_witness_shape),
+        )?
+    };
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
@@ -136,6 +147,18 @@ where
         } else {
             MRowLayout::WithDBlock
         };
+        let tail_t_vectors = if is_terminal_level {
+            #[cfg(not(feature = "zk"))]
+            {
+                terminal_tail_t_vectors
+            }
+            #[cfg(feature = "zk")]
+            {
+                None
+            }
+        } else {
+            None
+        };
         let out = if level_d == D {
             let stack = stacks.prove_stack_at_level(level);
             let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, D>(
@@ -146,11 +169,7 @@ where
                 level_params,
                 m_row_layout,
                 #[cfg(not(feature = "zk"))]
-                if is_terminal_level {
-                    Some(terminal_direct_witness_shape)
-                } else {
-                    None
-                },
+                tail_t_vectors,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -207,11 +226,7 @@ where
                         level_params,
                         m_row_layout,
                         #[cfg(not(feature = "zk"))]
-                        if is_terminal_level {
-                            Some(terminal_direct_witness_shape)
-                        } else {
-                            None
-                        },
+                        tail_t_vectors,
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -294,9 +309,7 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     _level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<
-        &akita_types::CleartextWitnessShape,
-    >,
+    terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -384,7 +397,7 @@ where
         BlockOrder::ColumnMajor,
         m_row_layout,
         #[cfg(not(feature = "zk"))]
-        terminal_direct_witness_shape,
+        terminal_tail_t_vectors,
     )
 }
 

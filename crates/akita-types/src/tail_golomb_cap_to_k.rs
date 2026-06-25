@@ -2,8 +2,11 @@
 
 use crate::golomb_rice::optimal_rice_k;
 
-/// Audit id when the cap→live-`k` map changes (logs/tests only; not transcript-bound).
-pub const TAIL_GOLOMB_CAP_TO_K_RULE_ID: u8 = 1;
+/// Live-`k` rule tag for logs/tests (not transcript-bound).
+pub const TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA: u8 = 1;
+
+/// Active cap→live-`k` rule ([`TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA`] today).
+pub const TAIL_GOLOMB_LIVE_K_ACTIVE_RULE: u8 = TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA;
 
 /// Profile-calibrated tightening vs [`optimal_rice_k`]: honest tails sit ~2 Rice bits below
 /// the security `floor(log2(cap))` remainder width on CI profile cells.
@@ -22,13 +25,16 @@ pub fn security_rice_k_for_fold_cap(cap: u128) -> u32 {
 /// `min_sound_k` search: the codec round-trips every `n ∈ [-cap, cap]` even at `k = 0`
 /// via the escape path, so `min_sound_k` is always `0` and carries no pricing signal.
 ///
-/// Rule v1: `optimal_rice_k(cap) - δ` with δ = [`TAIL_GOLOMB_LIVE_K_DELTA`]. Typical
-/// coefficients pay `k_live` fixed remainder bits; coefficients near `±cap` pay longer
-/// unary runs but stay below [`crate::golomb_rice::GOLOMB_RICE_Q_MAX`] at shipping caps.
+/// Under [`TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA`]: `optimal_rice_k(cap) - δ` with
+/// δ = [`TAIL_GOLOMB_LIVE_K_DELTA`]. Typical coefficients pay `k_live` fixed remainder bits;
+/// coefficients near `±cap` pay longer unary runs but stay below
+/// [`crate::golomb_rice::GOLOMB_RICE_Q_MAX`] at shipping caps.
 #[must_use]
 pub fn live_rice_k_for_fold_cap(cap: u128) -> u32 {
-    match TAIL_GOLOMB_CAP_TO_K_RULE_ID {
-        1 => security_rice_k_for_fold_cap(cap).saturating_sub(TAIL_GOLOMB_LIVE_K_DELTA),
+    match TAIL_GOLOMB_LIVE_K_ACTIVE_RULE {
+        TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA => {
+            security_rice_k_for_fold_cap(cap).saturating_sub(TAIL_GOLOMB_LIVE_K_DELTA)
+        }
         _ => security_rice_k_for_fold_cap(cap),
     }
 }
@@ -37,14 +43,15 @@ pub fn live_rice_k_for_fold_cap(cap: u128) -> u32 {
 mod tests {
     use super::*;
     use crate::golomb_rice::{
-        golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_zigzag_width, GOLOMB_RICE_Q_MAX,
+        golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_zigzag_width, zigzag_encode,
+        GOLOMB_RICE_Q_MAX,
     };
 
     fn max_quotient_in_cap_range(cap: u128, k: u32, w: u32) -> u64 {
         let cap_i64 = cap as i64;
         (-cap_i64..=cap_i64)
             .map(|n| {
-                let u = crate::golomb_rice::zigzag_encode(n, w).unwrap();
+                let u = zigzag_encode(n, w).unwrap();
                 if k == 0 {
                     u
                 } else {

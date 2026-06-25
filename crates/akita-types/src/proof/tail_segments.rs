@@ -16,6 +16,7 @@ use crate::golomb_rice::{
     golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 use crate::layout::field_bytes;
+use crate::proof::CleartextWitnessShape;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_cap_to_k::{live_rice_k_for_fold_cap, security_rice_k_for_fold_cap};
@@ -439,6 +440,32 @@ where
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
     Ok(out)
+}
+
+/// `num_t_vectors` for terminal fold grind when Golomb encodability must match witness build.
+///
+/// Returns `None` for non-terminal layouts, non-segment-typed tails, or callers without a
+/// scheduled shape (ZK packed-digit tails, unit tests).
+///
+/// # Errors
+///
+/// Propagates layout multiplicity errors.
+pub fn terminal_golomb_grind_tail_t_vectors(
+    lp: &LevelParams,
+    m_row_layout: MRowLayout,
+    witness_shape: Option<&CleartextWitnessShape>,
+) -> Result<Option<usize>, AkitaError> {
+    if !matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+        return Ok(None);
+    }
+    let Some(shape) = witness_shape else {
+        return Ok(None);
+    };
+    let CleartextWitnessShape::SegmentTyped(scheduled) = shape else {
+        return Ok(None);
+    };
+    let (_, num_t_vectors, _) = tail_segment_multiplicities_from_layout(lp, &scheduled.layout)?;
+    Ok(Some(num_t_vectors))
 }
 
 /// Runtime Golomb-Rice **wire** parameters for terminal `z` encode/decode.

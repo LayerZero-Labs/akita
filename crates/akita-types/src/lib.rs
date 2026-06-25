@@ -44,7 +44,7 @@ pub use field_reduction::{
 };
 pub use golomb_rice::{
     golomb_rice_coord_encodable_without_escape, golomb_rice_rows_encodable_at_live_k,
-    ZFoldEncodingStats, TAIL_Z_PLANNER_MODEL_ID,
+    ZFoldEncodingStats, TAIL_Z_PLANNER_MODEL_K_PLUS_TWO,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
@@ -83,16 +83,17 @@ pub use proof::{
     setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
     tail_segment_multiplicities_from_layout, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, terminal_e_hat_bytes_from_blocks,
-    terminal_fold_segment_counts, terminal_witness_segment_layout,
-    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
-    validate_batched_inputs, validate_public_matrix_matches_seed,
-    validate_scalar_point_matches_poly_arity, validate_segment_typed_z_payload,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot,
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
-    CleartextWitnessProof, CleartextWitnessShape, CommitmentGroup, CommitmentVerifier, DummyProof,
+    terminal_fold_segment_counts, terminal_golomb_grind_tail_t_vectors,
+    terminal_witness_segment_layout, terminal_witness_segment_layout_from_counts,
+    terminal_witness_transcript_parts, validate_batched_inputs,
+    validate_public_matrix_matches_seed, validate_scalar_point_matches_poly_arity,
+    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot, AkitaBatchedProof,
+    AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaProofStepShape,
+    AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape,
+    AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup, CleartextWitnessProof,
+    CleartextWitnessShape, CommitmentGroup, CommitmentVerifier, DummyProof,
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatchLimits, OpeningBatchShape,
     OpeningGroupShape, OpeningPoints, PackedDigits, PointVariableSelection, PreparedOpeningPoint,
@@ -122,8 +123,8 @@ pub use schedule::{
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use tail_golomb_cap_to_k::{
-    live_rice_k_for_fold_cap, security_rice_k_for_fold_cap, TAIL_GOLOMB_CAP_TO_K_RULE_ID,
-    TAIL_GOLOMB_LIVE_K_DELTA,
+    live_rice_k_for_fold_cap, security_rice_k_for_fold_cap, TAIL_GOLOMB_LIVE_K_DELTA,
+    TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,

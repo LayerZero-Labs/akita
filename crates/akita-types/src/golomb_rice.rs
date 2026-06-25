@@ -2,6 +2,8 @@
 
 use akita_field::AkitaError;
 
+use crate::tail_golomb_cap_to_k::{live_rice_k_for_fold_cap, security_rice_k_for_fold_cap};
+
 /// Maximum unary quotient before the bounded escape literal.
 pub const GOLOMB_RICE_Q_MAX: u32 = 32;
 
@@ -145,15 +147,16 @@ pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
         .max(1)
 }
 
-/// Average-case planner model id bound into [`crate::instance_descriptor::FoldLinfProtocolBinding`].
+/// Average-case tail-`z` planner model bound into [`crate::instance_descriptor::FoldLinfProtocolBinding`].
 ///
-/// Bump when recalibrating [`golomb_rice_planner_bits_per_z_coord`].
-pub const TAIL_Z_PLANNER_MODEL_ID: u8 = 1;
+/// `K_PLUS_TWO`: budget `k_security + 2` bits per coordinate. Bump when recalibrating
+/// [`golomb_rice_planner_bits_per_z_coord`].
+pub const TAIL_Z_PLANNER_MODEL_K_PLUS_TWO: u8 = 1;
 
-/// Average-case planner bit budget per `z` coordinate from public Rice `k`.
+/// Average-case planner bit budget per `z` coordinate from security Rice `k`.
 ///
 /// Public `(k, W)` still cover every coefficient in `[-cap, cap]`; this budget
-/// prices honest witnesses (model v1: `k + 2` bits/coord).
+/// prices honest witnesses under [`TAIL_Z_PLANNER_MODEL_K_PLUS_TWO`] (`k + 2` bits/coord).
 #[must_use]
 pub fn golomb_rice_planner_bits_per_z_coord(rice_k: u32) -> usize {
     (rice_k as usize).saturating_add(2)
@@ -250,9 +253,8 @@ pub fn analyze_z_fold_golomb_encoding(
     log_basis: u32,
     actual_payload_bytes: usize,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let rice_k_security =
-        crate::tail_golomb_cap_to_k::security_rice_k_for_fold_cap(witness_linf_cap);
-    let rice_k_live = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(witness_linf_cap);
+    let rice_k_security = security_rice_k_for_fold_cap(witness_linf_cap);
+    let rice_k_live = live_rice_k_for_fold_cap(witness_linf_cap);
     let k_search_hi = rice_k_security.saturating_add(4);
     let rice_k_empirical = empirical_optimal_rice_k(values, zigzag_w, k_search_hi);
 
@@ -331,7 +333,7 @@ pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
             "golomb-rice encodability check at zero cap".to_string(),
         ));
     }
-    let k = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(cap);
+    let k = live_rice_k_for_fold_cap(cap);
     let w = golomb_rice_zigzag_width(cap);
     for row in rows {
         for &n in row {
@@ -437,6 +439,7 @@ pub fn golomb_rice_decode_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap;
 
     fn exhaustive_min_sound_k(cap: u128) -> Option<u32> {
         let w = golomb_rice_zigzag_width(cap);
@@ -559,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn golomb_rice_planner_model_v1_is_k_plus_two() {
+    fn golomb_rice_planner_k_plus_two_bits_per_coord() {
         assert_eq!(golomb_rice_planner_bits_per_z_coord(8), 10);
         assert_eq!(golomb_rice_planner_bits_per_z_coord(10), 12);
     }
@@ -567,7 +570,7 @@ mod tests {
     #[test]
     fn golomb_rice_rows_encodable_at_live_k_matches_cap_range() {
         for &cap in &[504u128, 1008] {
-            let k = crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap(cap);
+            let k = live_rice_k_for_fold_cap(cap);
             let w = golomb_rice_zigzag_width(cap);
             let cap_i64 = cap as i64;
             for n in -cap_i64..=cap_i64 {
