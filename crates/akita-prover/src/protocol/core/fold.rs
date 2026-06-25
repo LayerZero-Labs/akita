@@ -827,6 +827,8 @@ where
         None
     };
     let ring_bits = rs.ring_bits;
+    let col_bits = rs.col_bits;
+    let live_x_cols = rs.live_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     #[cfg(feature = "zk")]
@@ -892,9 +894,19 @@ where
             &tau1,
             alpha,
             &sumcheck_challenges,
+            w_eval,
+            logical_w.as_i8_digits(),
+            live_x_cols,
+            col_bits,
             ring_bits,
             transcript,
         )?;
+        let (stage3_sumcheck_proof, next_opening_point, next_opening) =
+            if let Some(stage3) = stage3_sumcheck_proof {
+                (Some(stage3.proof), stage3.next_w_point, stage3.next_w_eval)
+            } else {
+                (None, sumcheck_challenges, w_eval)
+            };
         let stage1_proof = stage1_proof.ok_or_else(|| {
             AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
         })?;
@@ -938,8 +950,8 @@ where
                 commitment: committed_commitment,
                 hint: committed_hint,
                 log_basis: scheduled.next_params.log_basis,
-                sumcheck_challenges,
-                opening: w_eval,
+                sumcheck_challenges: next_opening_point,
+                opening: next_opening,
                 #[cfg(feature = "zk")]
                 opening_public: proof_w_eval,
                 #[cfg(feature = "zk")]
@@ -1172,32 +1184,76 @@ pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     tau1: &[L],
     alpha: L,
     sumcheck_challenges: &[L],
+    stage2_next_w_eval: L,
+    logical_w: &[i8],
+    live_x_cols: usize,
+    col_bits: usize,
     ring_bits: usize,
     transcript: &mut T,
-) -> Result<Option<SetupSumcheckProof<L>>, AkitaError>
+) -> Result<Option<Stage3ProveOutput<L>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    L: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                expanded,
-                prefix_slots,
-                lp,
-                next_level_params,
-                instance,
-                tau1,
-                alpha,
-                &sumcheck_challenges[ring_bits..],
-                transcript,
-                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-            )?;
-            Ok(Some(SetupSumcheckProof {
-                claim: output.claim,
-                sumcheck: output.sumcheck,
-            }))
+            #[cfg(feature = "zk")]
+            {
+                let _ = (
+                    expanded,
+                    prefix_slots,
+                    lp,
+                    next_level_params,
+                    instance,
+                    tau1,
+                    alpha,
+                    sumcheck_challenges,
+                    stage2_next_w_eval,
+                    logical_w,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    transcript,
+                );
+                Err(AkitaError::InvalidInput(
+                    "batched recursive setup stage-3 is not implemented for zk proofs".to_string(),
+                ))
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                let eta = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+                let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
+                    expanded,
+                    prefix_slots,
+                    lp,
+                    next_level_params,
+                    instance,
+                    tau1,
+                    alpha,
+                    sumcheck_challenges,
+                    stage2_next_w_eval,
+                    logical_w,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    eta,
+                    transcript,
+                )?;
+                let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
+                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                })?;
+                transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
+                Ok(Some(Stage3ProveOutput {
+                    proof: SetupSumcheckProof {
+                        claim: output.setup_product_claim,
+                        next_w_eval: output.next_w_eval,
+                        sumcheck: output.sumcheck,
+                    },
+                    next_w_point: output.next_w_point,
+                    next_w_eval: output.next_w_eval,
+                }))
+            }
         }
         SetupContributionMode::Direct => Ok(None),
     }
