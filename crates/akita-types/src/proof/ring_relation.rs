@@ -11,14 +11,6 @@ use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
-/// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
-/// before ê/t̂; otherwise ê/t̂ precede ẑ (see
-/// `book/src/how/verifying/matrix_evaluation.md`).
-#[inline]
-pub fn ring_column_z_first(lp: &LevelParams) -> bool {
-    lp.m_vars >= lp.r_vars
-}
-
 /// Witness-column segment offsets for ring-switch evaluation.
 ///
 /// Produced only by [`RingRelationInstance::segment_layout`].
@@ -36,6 +28,95 @@ pub struct RingRelationSegmentLayout {
     pub b_blinding_offset: usize,
     #[cfg(feature = "zk")]
     pub d_blinding_offset: usize,
+}
+
+/// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingRelationSegmentLengths {
+    pub z_len: usize,
+    pub e_len: usize,
+    pub t_len: usize,
+    pub u_len: usize,
+    #[cfg(feature = "zk")]
+    pub b_blinding_len: usize,
+    #[cfg(feature = "zk")]
+    pub d_blinding_len: usize,
+}
+
+/// Opening-batch counts that determine witness segment widths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingRelationOpeningCounts {
+    pub num_claims: usize,
+    pub num_t_vectors: usize,
+}
+
+/// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
+#[cfg_attr(not(feature = "zk"), allow(unused_variables))]
+pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usize>(
+    lp: &LevelParams,
+    opening_counts: RingRelationOpeningCounts,
+    m_row_layout: MRowLayout,
+) -> Result<RingRelationSegmentLengths, AkitaError> {
+    let num_blocks = lp.num_blocks;
+    if num_blocks == 0 || !num_blocks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "num_blocks must be a non-zero power of two".to_string(),
+        ));
+    }
+    let depth_open = lp.num_digits_open;
+    let depth_commit = lp.num_digits_commit;
+    let RingRelationOpeningCounts {
+        num_claims,
+        num_t_vectors,
+    } = opening_counts;
+    let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits())?;
+    if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "prepared ring-switch layout has zero width".to_string(),
+        ));
+    }
+    let total_blocks = num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
+    let t_total_blocks = num_blocks
+        .checked_mul(num_t_vectors)
+        .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
+
+    let e_len = depth_open
+        .checked_mul(total_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
+    let t_len = depth_open
+        .checked_mul(lp.a_key.row_len())
+        .and_then(|len| len.checked_mul(t_total_blocks))
+        .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
+    let z_len = depth_fold
+        .checked_mul(depth_commit)
+        .and_then(|len| len.checked_mul(lp.block_len))
+        .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
+
+    #[cfg(feature = "zk")]
+    let d_blinding_len = match m_row_layout {
+        MRowLayout::WithDBlock => {
+            crate::zk::blinding_digit_plane_count::<F>(lp.d_key.row_len(), D, lp.log_basis)
+        }
+        MRowLayout::WithoutDBlock => 0,
+    };
+    #[cfg(feature = "zk")]
+    let b_blinding_len =
+        crate::zk::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
+
+    let u_len = lp.u_concat_ring_len_per_group();
+
+    Ok(RingRelationSegmentLengths {
+        z_len,
+        e_len,
+        t_len,
+        u_len,
+        #[cfg(feature = "zk")]
+        b_blinding_len,
+        #[cfg(feature = "zk")]
+        d_blinding_len,
+    })
 }
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
@@ -160,102 +241,49 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self,
         lp: &LevelParams,
     ) -> Result<RingRelationSegmentLayout, AkitaError> {
-        let num_blocks = lp.num_blocks;
-        if num_blocks == 0 || !num_blocks.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "num_blocks must be a non-zero power of two".to_string(),
-            ));
-        }
-        let depth_open = lp.num_digits_open;
-        let depth_commit = lp.num_digits_commit;
+        let lens = ring_relation_segment_lengths::<F, D>(
+            lp,
+            RingRelationOpeningCounts {
+                num_claims: self.opening_batch.num_claims(),
+                num_t_vectors: self.opening_batch.num_polynomials(),
+            },
+            self.m_row_layout,
+        )?;
+        let RingRelationSegmentLengths {
+            z_len,
+            e_len,
+            t_len,
+            u_len,
+            #[cfg(feature = "zk")]
+            b_blinding_len,
+            #[cfg(feature = "zk")]
+            d_blinding_len,
+        } = lens;
 
-        let num_claims = self.opening_batch.num_claims();
-        let total_blocks = num_blocks
-            .checked_mul(num_claims)
-            .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-        let num_t_vectors = self.opening_batch.num_polynomials();
-        let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits())?;
-        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "prepared ring-switch layout has zero width".to_string(),
-            ));
-        }
-        let t_total_blocks = num_blocks
-            .checked_mul(num_t_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
-
-        let e_len = depth_open
-            .checked_mul(total_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
-        let t_len = depth_open
-            .checked_mul(lp.a_key.row_len())
-            .and_then(|len| len.checked_mul(t_total_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
-        let z_len = depth_fold
-            .checked_mul(depth_commit)
-            .and_then(|len| len.checked_mul(1))
-            .and_then(|len| len.checked_mul(lp.block_len))
-            .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
-
-        #[cfg(feature = "zk")]
-        let d_blinding_segment_len = match self.m_row_layout {
-            MRowLayout::WithDBlock => {
-                crate::zk::blinding_digit_plane_count::<F>(lp.d_key.row_len(), D, lp.log_basis)
-            }
-            MRowLayout::WithoutDBlock => 0,
-        };
-        #[cfg(not(feature = "zk"))]
-        let d_blinding_segment_len = 0usize;
-        #[cfg(not(feature = "zk"))]
-        let b_blinding_segment_len = 0usize;
-        #[cfg(feature = "zk")]
-        let b_blinding_digit_planes_per_point =
-            crate::zk::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
-        #[cfg(feature = "zk")]
-        let b_blinding_segment_len = b_blinding_digit_planes_per_point;
-
-        // Tiered `û_concat` segment length (per the single commitment bundle);
-        // `0` for single-tier levels.
-        let u_len = lp.u_concat_ring_len_per_group();
-        let z_first = ring_column_z_first(lp);
-        let offset_z = if z_first {
-            0
-        } else {
-            e_len
-                .checked_add(t_len)
-                .and_then(|offset| offset.checked_add(u_len))
-                .and_then(|offset| offset.checked_add(b_blinding_segment_len))
-                .and_then(|offset| offset.checked_add(d_blinding_segment_len))
-                .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
-        };
-        let offset_e = if z_first { z_len } else { 0 };
-        let offset_t = if z_first {
-            z_len
-                .checked_add(e_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?
-        } else {
-            e_len
-        };
-        // `û_concat` is emitted immediately after `t̂` in both orderings.
+        let offset_z = 0;
+        let offset_e = z_len;
+        let offset_t = z_len
+            .checked_add(e_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?;
         let offset_u = offset_t
             .checked_add(t_len)
             .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
+        #[cfg(feature = "zk")]
         let b_blinding_offset = offset_u
             .checked_add(u_len)
             .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
+        #[cfg(feature = "zk")]
         let d_blinding_offset = b_blinding_offset
-            .checked_add(b_blinding_segment_len)
+            .checked_add(b_blinding_len)
             .ok_or_else(|| AkitaError::InvalidSetup("D blinding offset overflow".to_string()))?;
-        let offset_r_base = d_blinding_offset
-            .checked_add(d_blinding_segment_len)
+        #[cfg(feature = "zk")]
+        let offset_r = d_blinding_offset
+            .checked_add(d_blinding_len)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-        let offset_r = if z_first {
-            offset_r_base
-        } else {
-            offset_r_base
-                .checked_add(z_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?
-        };
+        #[cfg(not(feature = "zk"))]
+        let offset_r = offset_u
+            .checked_add(u_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
 
         Ok(RingRelationSegmentLayout {
             offset_e,
@@ -361,22 +389,23 @@ mod tests {
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp).expect("layout");
-        assert!(ring_column_z_first(&lp));
+        let lens = ring_relation_segment_lengths::<F, D>(
+            &lp,
+            RingRelationOpeningCounts {
+                num_claims: instance.opening_batch().num_claims(),
+                num_t_vectors: instance.opening_batch().num_polynomials(),
+            },
+            instance.m_row_layout(),
+        )
+        .expect("segment lengths");
         assert_eq!(layout.offset_z, 0);
-        let num_t_vectors = instance.opening_batch().num_polynomials();
-        let depth_fold = lp
-            .num_digits_fold(num_t_vectors, F::modulus_bits())
-            .unwrap();
-        let num_claims = instance.opening_batch().num_claims();
-        let z_len = depth_fold * lp.num_digits_commit * lp.block_len;
-        let e_len = lp.num_digits_open * lp.num_blocks * num_claims;
-        assert_eq!(layout.offset_e, z_len);
-        assert_eq!(layout.offset_t, z_len + e_len);
+        assert_eq!(layout.offset_e, lens.z_len);
+        assert_eq!(layout.offset_t, lens.z_len + lens.e_len);
         #[cfg(not(feature = "zk"))]
-        {
-            let t_len = lp.num_digits_open * lp.a_key.row_len() * lp.num_blocks * num_t_vectors;
-            assert_eq!(layout.offset_r, z_len + e_len + t_len);
-        }
+        assert_eq!(
+            layout.offset_r,
+            lens.z_len + lens.e_len + lens.t_len + lens.u_len
+        );
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");

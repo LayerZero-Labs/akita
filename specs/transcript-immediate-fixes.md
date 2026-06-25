@@ -301,10 +301,13 @@ num_w_vectors = descriptor-bound number of opened W vectors
 num_t_vectors = descriptor-bound number of T/relation vectors
 num_z_vectors = descriptor-bound number of public/folded Z rows
 
-e_field_count = num_w_vectors * num_blocks * ring_dim
-t_field_count = num_t_vectors * num_blocks * a_key_row_len * ring_dim
-z_coord_count = num_z_vectors * inner_width * ring_dim
-z_first = m_vars >= r_vars
+w_hat_ring_count = num_w_vectors * num_blocks * num_digits_open
+t_hat_ring_count = num_t_vectors * num_blocks * a_key_row_len * num_digits_open
+z_pre_ring_count = num_z_vectors * inner_width * num_digits_fold
+
+w_hat_digit_count = w_hat_ring_count * ring_dim
+# w_hat always follows the leading z_pre segment.
+w_hat_digit_offset = z_pre_ring_count * ring_dim
 ```
 
 `num_z_vectors` is the explicit public-row count carried by witness-layout
@@ -315,8 +318,20 @@ descriptor-bound shape. For current transparent non-zk tails, that shape is
 `CleartextWitnessProof::SegmentTyped`: the transcript `e` bytes are the raw
 field coefficients of the `e_fields` segment, and the remainder is the canonical
 `z_payload`, `t_fields`, and, in `RingSwitchSumcheck` mode, `r_fields`.
-ZK tails keep the packed-digits representation and use the legacy logical digit
-range.
+
+For packed-digit (ZK) tails, the verifier decodes and validates the packed
+terminal witness into the canonical logical final-witness digit stream, then
+extracts:
+
+```text
+[w_hat_digit_offset, w_hat_digit_offset + w_hat_digit_count)
+```
+
+The verifier must not slice raw `PackedDigits` bytes. The representation is
+bit-packed, and logical digit boundaries need not be byte boundaries. The
+remainder is every terminal witness digit outside the logical `w_hat` range, in
+canonical final-witness order. This avoids relying on a prefix convention:
+`z_pre` always precedes `w_hat`.
 
 Verifier replay rejects malformed terminal proofs whose packed witness is too
 short for the derived range in ZK mode, whose segment lengths do not match the

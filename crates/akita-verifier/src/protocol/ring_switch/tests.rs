@@ -3,7 +3,10 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
 use akita_types::{RingRelationSegmentLayout, SisModulusFamily};
 
-fn dummy_witness_segment_layout() -> RingRelationSegmentLayout {
+/// Placeholder layout for prepare-path rejection tests. These cases fail before
+/// any layout-dependent evaluation runs, so the offsets are not required to
+/// match the witness column geometry.
+fn reject_test_segment_layout() -> RingRelationSegmentLayout {
     RingRelationSegmentLayout {
         offset_e: 0,
         offset_t: 0,
@@ -39,7 +42,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         0,
         &[],
         MRowLayout::WithDBlock,
-        dummy_witness_segment_layout(),
+        reject_test_segment_layout(),
     ) {
         Ok(_) => panic!("invalid log_basis should be rejected"),
         Err(err) => err,
@@ -59,7 +62,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         0,
         &[],
         MRowLayout::WithDBlock,
-        dummy_witness_segment_layout(),
+        reject_test_segment_layout(),
     ) {
         Ok(_) => panic!("zero num_blocks should be rejected"),
         Err(err) => err,
