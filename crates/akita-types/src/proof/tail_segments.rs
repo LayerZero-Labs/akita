@@ -12,7 +12,8 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_rows_admit_terminal_wire, golomb_rice_total_wire_bits_quotient_below_max,
+    golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_total_wire_bits,
     golomb_rice_values_admissible_at_wire, golomb_rice_zigzag_width,
     tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
@@ -498,9 +499,8 @@ pub fn tail_golomb_rice_z_params(
 
 /// Decode terminal `z` Golomb payload and enforce public admissibility.
 ///
-/// Rejects coefficients outside the fold `‖z‖_∞` cap, coordinates with quotient ≥
-/// [`crate::golomb_rice::GOLOMB_RICE_MAX_QUOTIENT`] at wire low bits, non-minimal byte
-/// padding, and payloads exceeding the optional schedule byte budget.
+/// Rejects coefficients outside the fold `‖z‖_∞` cap, unary quotients above the cap-derived
+/// maximum, non-minimal byte padding, and payloads exceeding the optional schedule byte budget.
 ///
 /// # Errors
 ///
@@ -520,7 +520,14 @@ pub fn decode_terminal_z_golomb_payload(
         binding.wire_rice_low_bits_delta,
     )?;
     let zigzag_w = golomb_rice_zigzag_width(cap);
-    let values = golomb_rice_decode_vec(payload, z_coords, rice_low_bits, zigzag_w)?;
+    let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
+    let values = golomb_rice_decode_vec(
+        payload,
+        z_coords,
+        rice_low_bits,
+        zigzag_w,
+        max_quotient,
+    )?;
     golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)?;
     if let Some(budget_bytes) = budget_bytes {
         if payload.len() > budget_bytes {
@@ -529,8 +536,7 @@ pub fn decode_terminal_z_golomb_payload(
         let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(cap))
             .checked_mul(z_coords)
             .ok_or(AkitaError::InvalidProof)?;
-        let total_bits =
-            golomb_rice_total_wire_bits_quotient_below_max(&values, rice_low_bits, zigzag_w)?;
+        let total_bits = golomb_rice_total_wire_bits(&values, rice_low_bits, zigzag_w)?;
         if total_bits > budget_bits {
             return Err(AkitaError::InvalidProof);
         }

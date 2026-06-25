@@ -1,16 +1,12 @@
 //! Canonical Golomb-Rice codec for terminal tail `z` segments.
+//!
+//! Wire format is standard Rice only: unary quotient prefix + stop bit + low-bit remainder.
+//! Decode rejects unary runs longer than the cap-derived maximum quotient.
 
 use akita_field::AkitaError;
 
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule};
-
-/// Maximum Golomb unary quotient encoded in the standard (quotient + remainder) form.
-///
-/// When `quotient >= GOLOMB_RICE_MAX_QUOTIENT`, the codec uses a fixed-width literal
-/// fallback instead of a longer unary prefix. Terminal tail `z` rejects that fallback
-/// at the wire low-bit width (see [`golomb_rice_coord_quotient_below_max`]).
-pub const GOLOMB_RICE_MAX_QUOTIENT: u32 = 32;
 
 /// Bit cursor over a byte slice for no-panic decode.
 #[derive(Debug, Clone)]
@@ -337,43 +333,42 @@ pub fn golomb_rice_quotient_for_coord(
     })
 }
 
-/// Whether `n` encodes at `(rice_low_bits, zigzag_w)` with quotient `< GOLOMB_RICE_MAX_QUOTIENT`.
-pub fn golomb_rice_coord_quotient_below_max(
-    n: i64,
+/// Maximum Golomb quotient among coefficients in `[-cap, cap]` at public `(rice_low_bits, zigzag_w)`.
+///
+/// Used as the decode unary-run bound for terminal tail `z`: any wire with a longer unary prefix
+/// is rejected before reading the remainder.
+pub fn golomb_rice_max_quotient_for_cap(
+    cap: u128,
     rice_low_bits: u32,
     zigzag_w: u32,
-) -> Result<(), AkitaError> {
-    let quotient = golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w)?;
-    if quotient >= u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
-        return Err(AkitaError::InvalidInput(format!(
-            "golomb-rice coefficient {n} has quotient {quotient} >= GOLOMB_RICE_MAX_QUOTIENT at rice_low_bits={rice_low_bits}"
-        )));
-    }
-    Ok(())
+) -> Result<u64, AkitaError> {
+    let cap_i64 = i64::try_from(cap).map_err(|_| {
+        AkitaError::InvalidSetup(format!(
+            "fold witness linf cap {cap} exceeds i64 for golomb quotient bound"
+        ))
+    })?;
+    golomb_rice_quotient_for_coord(cap_i64, rice_low_bits, zigzag_w)
 }
 
-/// Closed-form Golomb wire bits for one coefficient with quotient `< GOLOMB_RICE_MAX_QUOTIENT`.
-pub fn golomb_rice_coord_wire_bits_quotient_below_max(
+/// Closed-form standard Golomb wire bits for one coefficient.
+pub fn golomb_rice_coord_wire_bits(
     n: i64,
     rice_low_bits: u32,
     zigzag_w: u32,
 ) -> Result<usize, AkitaError> {
     let quotient = golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w)?;
-    if quotient >= u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
-        return Err(AkitaError::InvalidProof);
-    }
     let unary = quotient as usize + 1;
     Ok(unary.saturating_add(rice_low_bits as usize))
 }
 
-/// Total Golomb wire bits for a vector when every coordinate has quotient below max.
-pub fn golomb_rice_total_wire_bits_quotient_below_max(
+/// Total standard Golomb wire bits for a coefficient vector.
+pub fn golomb_rice_total_wire_bits(
     values: &[i64],
     rice_low_bits: u32,
     zigzag_w: u32,
 ) -> Result<usize, AkitaError> {
     values.iter().try_fold(0usize, |acc, &n| {
-        golomb_rice_coord_wire_bits_quotient_below_max(n, rice_low_bits, zigzag_w)?
+        golomb_rice_coord_wire_bits(n, rice_low_bits, zigzag_w)?
             .checked_add(acc)
             .ok_or(AkitaError::InvalidSetup(
                 "golomb-rice total wire bits overflow".to_string(),
@@ -381,19 +376,17 @@ pub fn golomb_rice_total_wire_bits_quotient_below_max(
     })
 }
 
-/// Whether every coefficient lies in `[-cap, cap]` with quotient below max at wire low bits.
+/// Whether every coefficient lies in `[-cap, cap]`.
 pub fn golomb_rice_values_admissible_at_wire(
     values: &[i64],
     cap: u128,
-    rice_low_bits: u32,
-    zigzag_w: u32,
+    _rice_low_bits: u32,
+    _zigzag_w: u32,
 ) -> Result<(), AkitaError> {
     for &n in values {
         if i128::from(n).unsigned_abs() > cap {
             return Err(AkitaError::InvalidProof);
         }
-        golomb_rice_coord_quotient_below_max(n, rice_low_bits, zigzag_w)
-            .map_err(|_| AkitaError::InvalidProof)?;
     }
     Ok(())
 }
@@ -410,8 +403,7 @@ pub fn golomb_rice_values_fit_planner_wire_budget(
         .ok_or(AkitaError::InvalidSetup(
             "terminal z planner bit budget overflow".to_string(),
         ))?;
-    let total_bits =
-        golomb_rice_total_wire_bits_quotient_below_max(values, rice_low_bits, zigzag_w)?;
+    let total_bits = golomb_rice_total_wire_bits(values, rice_low_bits, zigzag_w)?;
     if total_bits > budget_bits {
         return Err(AkitaError::InvalidInput(format!(
             "terminal z golomb payload needs {total_bits} bits, planner budget is {budget_bits}"
@@ -420,7 +412,7 @@ pub fn golomb_rice_values_fit_planner_wire_budget(
     Ok(())
 }
 
-/// Whether every centered row is encodable at wire low bits with quotient below max.
+/// Whether every centered row coefficient lies in `[-cap, cap]`.
 pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
     rows: &[[i32; D]],
     cap: u128,
@@ -446,7 +438,7 @@ pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
     golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)
         .map_err(|_| {
             AkitaError::InvalidInput(format!(
-                "centered coefficient exceeds fold cap {cap} or quotient >= GOLOMB_RICE_MAX_QUOTIENT at wire low bits"
+                "centered coefficient exceeds fold cap {cap}"
             ))
         })
 }
@@ -490,17 +482,13 @@ fn golomb_rice_encode_one_into(
     } else {
         u & ((1u64 << rice_low_bits) - 1)
     };
-    if quotient >= u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
-        for _ in 0..GOLOMB_RICE_MAX_QUOTIENT {
-            writer.write_bit(true);
-        }
-        writer.write_bit(false);
-        writer.write_bits(u, zigzag_w);
+    for _ in 0..quotient {
+        writer.write_bit(true);
+    }
+    writer.write_bit(false);
+    if rice_low_bits == 0 {
+        // quotient carries the full zigzag value when rice_low_bits = 0.
     } else {
-        for _ in 0..quotient {
-            writer.write_bit(true);
-        }
-        writer.write_bit(false);
         writer.write_bits(remainder, rice_low_bits);
     }
     Ok(())
@@ -510,6 +498,7 @@ fn golomb_rice_decode_one_from(
     reader: &mut BitReader<'_>,
     rice_low_bits: u32,
     zigzag_w: u32,
+    max_quotient: u64,
 ) -> Result<i64, AkitaError> {
     let mut quotient = 0u64;
     loop {
@@ -518,20 +507,14 @@ fn golomb_rice_decode_one_from(
         }
         if reader.read_bit()? {
             quotient += 1;
-            if quotient > u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
+            if quotient > max_quotient {
                 return Err(AkitaError::InvalidProof);
             }
             continue;
         }
         break;
     }
-    let u = if quotient >= u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
-        let u = reader.read_bits(zigzag_w)?;
-        if (u >> rice_low_bits) < u64::from(GOLOMB_RICE_MAX_QUOTIENT) {
-            return Err(AkitaError::InvalidProof);
-        }
-        u
-    } else if rice_low_bits == 0 {
+    let u = if rice_low_bits == 0 {
         quotient
     } else {
         let remainder = reader.read_bits(rice_low_bits)?;
@@ -570,13 +553,14 @@ pub fn golomb_rice_encode_vec(
 
 /// Decode a fixed number of Golomb-Rice integers from `bytes`.
 ///
-/// Rejects non-zero trailing bits and any byte padding beyond the minimal length for the
-/// encoded bitstream (partial-byte zero padding in the last byte is allowed).
+/// Rejects unary quotients above `max_quotient`, non-zero trailing bits, and any byte padding
+/// beyond the minimal length for the encoded bitstream.
 pub fn golomb_rice_decode_vec(
     bytes: &[u8],
     count: usize,
     rice_low_bits: u32,
     zigzag_w: u32,
+    max_quotient: u64,
 ) -> Result<Vec<i64>, AkitaError> {
     let mut reader = BitReader::new(bytes);
     let mut out = Vec::with_capacity(count);
@@ -585,6 +569,7 @@ pub fn golomb_rice_decode_vec(
             &mut reader,
             rice_low_bits,
             zigzag_w,
+            max_quotient,
         )?);
     }
     golomb_rice_consume_canonical_padding(&mut reader)?;
@@ -596,52 +581,35 @@ mod tests {
     use super::*;
     use crate::tail_golomb_rice_low_bits::wire_rice_low_bits;
 
-    fn exhaustive_min_sound_low_bits(cap: u128) -> Option<u32> {
-        let zigzag_w = golomb_rice_zigzag_width(cap);
-        for rice_low_bits in 0..=20 {
-            let mut ok = true;
-            for n in -(cap as i64)..=(cap as i64) {
-                let encoded = match golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        ok = false;
-                        break;
-                    }
-                };
-                let decoded = match golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w) {
-                    Ok(d) => d,
-                    Err(_) => {
-                        ok = false;
-                        break;
-                    }
-                };
-                if decoded != [n] {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                return Some(rice_low_bits);
-            }
-        }
-        None
+    fn max_quotient_for_values(values: &[i64], rice_low_bits: u32, zigzag_w: u32) -> u64 {
+        values
+            .iter()
+            .map(|&n| golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w).expect("quotient"))
+            .max()
+            .unwrap_or(0)
     }
 
     #[test]
-    fn min_sound_low_bits_vs_cap_rice_low_bits_probe() {
-        for cap in [504u128, 885, 1008, 1568, 6912] {
-            let cap_low_bits = rice_low_bits_for_cap(cap);
-            let min_low_bits = exhaustive_min_sound_low_bits(cap).expect("min low bits");
-            eprintln!(
-                "cap={cap} cap_rice_low_bits={cap_low_bits} exhaustive_min={min_low_bits} delta={}",
-                cap_low_bits.saturating_sub(min_low_bits)
-            );
-            assert!(
-                cap_low_bits >= min_low_bits,
-                "cap low bits must dominate sound min"
-            );
-            // Literal fallback makes every low-bit width decodable; do not use min as wire low bits.
-            assert_eq!(min_low_bits, 0, "cap={cap}");
+    fn golomb_rice_round_trips_cap_range_at_wire_low_bits() {
+        for cap in [504u128, 1008, 1568, 2016] {
+            let rice_low_bits = wire_rice_low_bits(cap);
+            let zigzag_w = golomb_rice_zigzag_width(cap);
+            let max_quotient =
+                golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w).expect("max q");
+            let cap_i64 = cap as i64;
+            for n in -cap_i64..=cap_i64 {
+                let encoded =
+                    golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
+                let decoded = golomb_rice_decode_vec(
+                    &encoded,
+                    1,
+                    rice_low_bits,
+                    zigzag_w,
+                    max_quotient,
+                )
+                .expect("decode");
+                assert_eq!(decoded, [n], "cap={cap} n={n}");
+            }
         }
     }
 
@@ -661,72 +629,78 @@ mod tests {
         let rice_low_bits = 3u32;
         let zigzag_w = 12u32;
         let values = [-100i64, -1, 0, 1, 42, 500];
+        let max_quotient = max_quotient_for_values(&values, rice_low_bits, zigzag_w);
         let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
-        let decoded =
-            golomb_rice_decode_vec(&encoded, values.len(), rice_low_bits, zigzag_w).unwrap();
+        let decoded = golomb_rice_decode_vec(
+            &encoded,
+            values.len(),
+            rice_low_bits,
+            zigzag_w,
+            max_quotient,
+        )
+        .unwrap();
         assert_eq!(decoded, values);
         let reencoded = golomb_rice_encode_vec(&decoded, rice_low_bits, zigzag_w).unwrap();
         assert_eq!(encoded, reencoded);
     }
 
     #[test]
-    fn golomb_rice_literal_fallback_path_round_trip() {
-        let rice_low_bits = 0u32;
-        let zigzag_w = 16u32;
-        let values = vec![200i64; 1];
-        let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
-        let decoded = golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w).unwrap();
-        assert_eq!(decoded, values);
-    }
-
-    #[test]
     fn golomb_rice_decode_rejects_trailing_garbage() {
         let rice_low_bits = 2u32;
         let zigzag_w = 8u32;
-        let mut encoded = golomb_rice_encode_vec(&[3i64, 5i64], rice_low_bits, zigzag_w).unwrap();
+        let values = [3i64, 5i64];
+        let max_quotient = max_quotient_for_values(&values, rice_low_bits, zigzag_w);
+        let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0xff);
-        assert!(golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w).is_err());
+        assert!(golomb_rice_decode_vec(
+            &encoded,
+            2,
+            rice_low_bits,
+            zigzag_w,
+            max_quotient
+        )
+        .is_err());
     }
 
     #[test]
     fn golomb_rice_decode_rejects_trailing_zero_byte() {
         let rice_low_bits = 3u32;
         let zigzag_w = 12u32;
-        let mut encoded = golomb_rice_encode_vec(&[-1i64, 0, 42], rice_low_bits, zigzag_w).unwrap();
+        let values = [-1i64, 0, 42];
+        let max_quotient = max_quotient_for_values(&values, rice_low_bits, zigzag_w);
+        let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0x00);
-        assert!(golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w).is_err());
+        assert!(golomb_rice_decode_vec(
+            &encoded,
+            3,
+            rice_low_bits,
+            zigzag_w,
+            max_quotient
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn golomb_rice_decode_rejects_unary_above_cap_derived_max() {
+        let cap = 1008u128;
+        let rice_low_bits = wire_rice_low_bits(cap);
+        let zigzag_w = golomb_rice_zigzag_width(cap);
+        let max_quotient =
+            golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w).expect("max q");
+        assert!(max_quotient < 32, "test expects cap-derived max below legacy 32");
+        let mut writer = BitWriter::default();
+        for _ in 0..32 {
+            writer.write_bit(true);
+        }
+        writer.write_bit(false);
+        writer.write_bits(0, rice_low_bits);
+        let bytes = writer.finish();
+        assert!(golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w, max_quotient).is_err());
     }
 
     #[test]
     fn golomb_rice_decode_is_total_on_empty_prefix() {
-        assert!(golomb_rice_decode_vec(&[], 1, 0, 4).is_err());
-    }
-
-    fn non_canonical_literal_fallback_bytes(u: u64, zigzag_w: u32) -> Vec<u8> {
-        let mut writer = BitWriter::default();
-        for _ in 0..GOLOMB_RICE_MAX_QUOTIENT {
-            writer.write_bit(true);
-        }
-        writer.write_bit(false);
-        writer.write_bits(u, zigzag_w);
-        writer.finish()
-    }
-
-    #[test]
-    fn golomb_rice_decode_rejects_non_canonical_literal_fallback() {
-        let rice_low_bits = 3u32;
-        let zigzag_w = 12u32;
-        let u = 2u64;
-        assert!(u >> rice_low_bits < u64::from(GOLOMB_RICE_MAX_QUOTIENT));
-        let bytes = non_canonical_literal_fallback_bytes(u, zigzag_w);
-        assert!(golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w).is_err());
-
-        let rice_low_bits0 = 0u32;
-        let zigzag_w0 = 16u32;
-        let u0 = 5u64;
-        assert!(u0 < u64::from(GOLOMB_RICE_MAX_QUOTIENT));
-        let bytes0 = non_canonical_literal_fallback_bytes(u0, zigzag_w0);
-        assert!(golomb_rice_decode_vec(&bytes0, 1, rice_low_bits0, zigzag_w0).is_err());
+        assert!(golomb_rice_decode_vec(&[], 1, 0, 4, 0).is_err());
     }
 
     #[test]
@@ -738,14 +712,7 @@ mod tests {
     #[test]
     fn golomb_rice_rows_encodable_at_wire_low_bits_matches_cap_range() {
         for &cap in &[504u128, 1008] {
-            let rice_low_bits = wire_rice_low_bits(cap);
-            let zigzag_w = golomb_rice_zigzag_width(cap);
-            let cap_i64 = cap as i64;
-            for n in -cap_i64..=cap_i64 {
-                golomb_rice_coord_quotient_below_max(n, rice_low_bits, zigzag_w)
-                    .unwrap_or_else(|e| panic!("cap={cap} n={n}: {e}"));
-            }
-            let row = [cap_i64 as i32; 4];
+            let row = [cap as i32; 4];
             golomb_rice_rows_encodable_at_wire_low_bits(&[row], cap).expect("row encodable");
         }
         assert!(golomb_rice_rows_encodable_at_wire_low_bits(&[[1009i32; 4]], 1008).is_err());
@@ -755,7 +722,7 @@ mod tests {
     fn golomb_rice_rows_admit_terminal_wire_rejects_planner_budget_overflow() {
         let cap = 1008u128;
         let row = [[cap as i32; 4]];
-        golomb_rice_rows_encodable_at_wire_low_bits(&row, cap).expect("quotient below max");
+        golomb_rice_rows_encodable_at_wire_low_bits(&row, cap).expect("within cap");
         assert!(golomb_rice_rows_admit_terminal_wire(&row, cap).is_err());
     }
 }

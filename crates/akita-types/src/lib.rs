@@ -43,9 +43,9 @@ pub use field_reduction::{
     SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_coord_quotient_below_max, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits_quotient_below_max,
-    GOLOMB_RICE_MAX_QUOTIENT, ZFoldEncodingStats, TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
+    golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits, ZFoldEncodingStats,
+    TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,

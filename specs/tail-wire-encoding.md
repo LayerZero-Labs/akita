@@ -29,7 +29,7 @@ Replace the single fixed-width `PackedDigits` terminal witness with a segment-ty
 The feature introduces or modifies:
 
 - A **segment-typed tail witness** representation replacing the single-width `PackedDigits` blob on the transparent recursive terminal tail: **`Gaussian{rice_low_bits}` Golomb–Rice for `z` only**; **`RawField` for `e`/`t`/`r`** (full base-field coefficients per ring element). Boundaries derive from the schedule/shape (headerless wire). Wire `rice_low_bits` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
-- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and a literal fallback when Golomb quotient ≥ `GOLOMB_RICE_MAX_QUOTIENT`, parameterized by derived integer Rice low-bit width. **#190 applies it to `z` only.**
+- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
 - A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
 - **Terminal `t`-state cutover** *(umbrella S2, deferred)*: the penultimate fold stops sending outer `u = B * t_hat` and binds inner `t = A * w_terminal` as the terminal public state.
 - **`r`-elision and terminal-stage-2 elision** *(umbrella S1, deferred)* via PR #141 direct-terminal mode. **#190 still carries `r` on the wire** as a raw field segment.
@@ -39,7 +39,7 @@ The feature introduces or modifies:
 
 1. **Lossless and soundness-neutral.** Every elided object (`u`, `v`, `r`) is reconstructed or checked directly by the verifier; every entropy-coded segment decodes bit-exactly to the same integer vector a fixed-width encoding would carry. The terminal relation `M_terminal * z == y_terminal` in `F[X]/(X^D+1)` and the digit-range / norm bounds the extractor relies on are unchanged. Protected by: existing terminal direct-relation row tests (PR #141), new round-trip codec tests, and an e2e tamper test that a witness violating the digit/norm bound cannot produce an accepting transcript.
 2. **Canonical encoding.** Each integer vector has exactly one valid byte encoding under a fixed `(model, rice_low_bits)`; a non-canonical or malformed encoding is rejected with `AkitaError`/`SerializationError`, never decoded ambiguously. Protected by: a canonicality unit test (encode-decode-encode fixpoint) and a malformed-bytes rejection test.
-3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string (literal fallback when quotient ≥ max), allocates only the schedule-declared element count, rejects non-minimal trailing byte padding, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
+3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string, rejects unary quotients above the cap-derived maximum, allocates only the schedule-declared element count, rejects non-minimal trailing byte padding, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
 4. **Public models, zero side info.** Segment boundaries and Golomb wire low bits for `z` (`cap`, `wire_rice_low_bits`) are derivable by the verifier from `LevelParams` + transcript before decode; `e`/`t`/`r` carry no separate model tag. Protected by: a prover/verifier cap/wire low-bits agreement test for `z` and a `LoggingTranscript` event-stream equality test.
 5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from the outer image `u = B * t_hat` to the inner image `t = A * w_terminal`. Soundness does **not** come from simply deleting B rows while keeping `u` as the statement; that would be unsound. It comes from making `t` the transcript-bound public terminal state and checking, in the direct terminal relation, that the revealed clear witness maps to that exact `t` under the A rows. Protected by: the soundness paragraph in Design, plus terminal-root / suffix-terminal row tests extended to the `t`-state layout.
 6. **Descriptor binding distinguishes the policy.** A proof produced under one tail-encoding policy (codec, models, terminal-state mode, r-drop flags) must not verify under another. Protected by: a pinned descriptor-bytes test and a cross-policy verify-fails test.
@@ -62,7 +62,7 @@ The feature introduces or modifies:
 
 Encoding slice (#190):
 
-- [x] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint, minimal byte length), total (terminates and is no-panic on malformed/truncated bytes), and bijective on the admitted integer range, verified by unit tests including the literal-fallback path.
+- [x] A `GolombRice` codec in `akita-types` is canonical (encode-decode-encode fixpoint, minimal byte length), total (terminates and is no-panic on malformed/truncated bytes), and bijective on `[-cap, cap]` at wire low bits, verified by cap-range round-trip tests.
 - [x] `fold_witness_linf_cap_for_claims` and the deterministic cap→low-bits rules (`cap_rice_low_bits`, `wire_rice_low_bits`) return integers pinned against reference calculations; prover and verifier derive the same wire low bits for `z`.
 - [x] The transparent non-zk terminal `final_witness` serializes as segment-typed payloads (`z` length-prefixed Golomb bytes, then raw `e`/`t`/`r` field segments); `CleartextWitnessShape::admits_realized` accepts exact `z` payloads up to the schedule upper bound; `segment_typed_expand_matches_logical_w` proves expand matches legacy digit layout.
 - [x] Non-zk shipped schedule tables regenerated under segment-typed terminal sizing; `generated_schedule_tables_match_find_schedule` passes for affected families.
@@ -82,7 +82,7 @@ Must keep passing: all `akita-types` proof/shape/serialization tests, the termin
 
 New tests:
 
-- `akita-types`: Golomb-Rice round-trip, canonicality (minimal byte length), malformed/literal-fallback edge cases, no-panic over random bytes; cap/wire low-bits reference pins; segment layout decode boundaries; `TerminalLevelProofShape` round-trips the segment-typed tail and rejects cross-policy shapes.
+- `akita-types`: Golomb-Rice round-trip, canonicality (minimal byte length), malformed/unary-above-cap edge cases, no-panic over random bytes; cap/wire low-bits reference pins; segment layout decode boundaries; `TerminalLevelProofShape` round-trips the segment-typed tail and rejects cross-policy shapes.
 - `akita-prover`/`akita-verifier`: prover/verifier cap/wire low-bits agreement; terminal `t`-state row check (send `t`, check revealed witness maps to `t`, no terminal B/COMMIT block) for suffix-terminal and terminal-root; verifier no-panic on malformed tail bytes; tiered terminal layouts reject or route through the same `t`-state path without `û_concat`.
 - e2e: tamper tests for `z`, `e`, `t`, segment shape, and `y_rings`; descriptor cross-policy reject; ZK rejection; post-decode norm-bound violation reject.
 - `LoggingTranscript`: event-stream equality across the new tail schedule.
@@ -204,7 +204,7 @@ The verifier decodes `z` via Golomb–Rice into centered integers and expands to
 
 ### Golomb-Rice for the Gaussian z segment
 
-For a signed integer `n` admitted by the `z` segment's public bound, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` where `W` is the signed-integer bit width from the fold cap (`golomb_rice_zigzag_width`). Rice-code `u` with low-bit width `rice_low_bits`; literal fallback when quotient `q >= GOLOMB_RICE_MAX_QUOTIENT`.
+For a signed integer `n` admitted by the `z` segment's public bound, zigzag to a non-negative `u = (n << 1) ^ (n >> (W-1))` where `W` is the signed-integer bit width from the fold cap (`golomb_rice_zigzag_width`). Rice-code `u` with low-bit width `rice_low_bits` as standard Golomb: unary quotient prefix + stop + remainder. Decode rejects unary length above `golomb_rice_max_quotient_for_cap(cap, rice_low_bits, W)`.
 
 Wire low bits for the `z` segment are derived deterministically from the public per-coefficient fold `‖z‖_inf` cap:
 
@@ -216,7 +216,7 @@ wire_rice_low_bits = cap_rice_low_bits - WIRE_RICE_LOW_BITS_DELTA  (= cap low bi
 
 `cap` is the same bound already used by [`num_digits_fold`](crates/akita-types/src/sis/decomposition_digits.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
 
-`rice_low_bits_for_cap` is the cap-derived Rice low-bit width covering every admitted `z` coefficient magnitude at the planner reference. `wire_rice_low_bits` is what prover and verifier use on the wire (#209). The codec is canonical because Rice coding is bijective for a fixed `rice_low_bits` on the quotient-below-max path, and wire payloads must use the minimal byte length (partial-byte zero padding only). Grind rejects witnesses with any coordinate whose Golomb quotient ≥ `GOLOMB_RICE_MAX_QUOTIENT` at wire low bits.
+`rice_low_bits_for_cap` is the cap-derived Rice low-bit width covering every admitted `z` coefficient magnitude at the planner reference. `wire_rice_low_bits` is what prover and verifier use on the wire (#209). The codec is canonical because standard Rice is bijective for a fixed `rice_low_bits` on `[-cap, cap]`, and wire payloads must use the minimal byte length (partial-byte zero padding only). Decode and grind use the cap-derived maximum quotient; no alternate wire shape exists.
 
 ### RawField segments (`e`, `t`, `r`)
 
@@ -234,7 +234,7 @@ Tail encoding uses three layers:
 
 The tail-encoding policy is bound in `AkitaInstanceDescriptor` (same pattern as PR #141's terminal proof mode and PR #174's threshold policy):
 
-- codec identity (Golomb-Rice variant id for `z`, `GOLOMB_RICE_MAX_QUOTIENT`, zigzag width rule `W_z`),
+- codec identity (Golomb-Rice variant id for `z`, cap-derived max-quotient rule, zigzag width rule `W_z`),
 - the cap→wire low-bits rule identity for the `z` segment only,
 - per-segment model assignment: `Gaussian` for `z`, `RawField` for `e`/`t`/`r`,
 - the terminal-state mode (`OuterCommitmentU` legacy vs `InnerImageT` tail policy) and r-drop flags.
