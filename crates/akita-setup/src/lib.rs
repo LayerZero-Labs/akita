@@ -152,17 +152,13 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = AkitaScheduleLookupKey::new(
-        max_num_vars,
-        max_num_batched_polys,
-        max_num_batched_polys,
-        1,
-    );
+    let schedule_lookup_key = AkitaScheduleLookupKey::new(max_num_vars, max_num_batched_polys);
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
-    // `digest_effective_schedule`.
+    // `digest_effective_schedule`. The `planner_v7_` prefix marks the
+    // two-field lookup key cutover; old `planner_v6_*` files are not reused.
     let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
         Ok(schedule) => {
             let digest = digest_effective_schedule(&schedule);
@@ -171,21 +167,13 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                 let _ = write!(hex, "{byte:02x}");
             }
             format!(
-                "planner_v6_nv{}_g{}_t{}_w{}_z{}_{hex}",
-                schedule_lookup_key.num_vars,
-                1,
-                schedule_lookup_key.num_t_vectors,
-                schedule_lookup_key.num_w_vectors,
-                schedule_lookup_key.num_z_vectors,
+                "planner_v7_nv{}_batch{}_{hex}",
+                schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
             )
         }
         Err(_) => format!(
-            "miss_nv{}_g{}_t{}_w{}_z{}",
-            schedule_lookup_key.num_vars,
-            1,
-            schedule_lookup_key.num_t_vectors,
-            schedule_lookup_key.num_w_vectors,
-            schedule_lookup_key.num_z_vectors,
+            "miss_nv{}_batch{}",
+            schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
         ),
     };
     let schedule = raw_schedule

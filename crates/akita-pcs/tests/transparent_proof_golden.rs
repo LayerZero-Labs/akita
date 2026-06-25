@@ -26,9 +26,9 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 const GOLDEN_D64_FULL_NV15_SHA256: &str =
-    "affaf7b40bce960207685e168c214d38233169dde547c527f1b3d174ad2cae96";
+    "c99fcc1867742d10ac4b9c1bc0aa62081085ef5abd37a6f813ec59563b767072";
 const GOLDEN_D64_ONEHOT_NV20_SHA256: &str =
-    "84881ff6c9b652d0be459ed0844fa151e585bf53b07d29328dc0ad29c9735fbc";
+    "4849bef9b51c9327e39044960abb6c477756ff5a2fa8f0e3d00a8db1cd0daf1b";
 
 fn fixed_opening_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);

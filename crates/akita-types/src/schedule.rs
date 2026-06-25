@@ -71,21 +71,15 @@ impl ExecutionSchedule {
 
 /// Public runtime key that selects a concrete root schedule context.
 ///
-/// Intentionally narrower than a full schedule table entry: only the public
-/// inputs that pick a root plan, not the resulting plan data.
-///
-/// Opening batches use one shared evaluation point. The folded production path
-/// currently assumes one commitment group bundling `N` polynomials.
+/// Describes the supported scalar same-point opening batch: `num_vars`
+/// coordinates in the shared point and `num_polynomials` committed polynomials
+/// opened at that point (one claim per polynomial).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
-    /// Root polynomial arity.
+    /// Root polynomial variable count.
     pub num_vars: usize,
-    /// Number of commitment-side `t` protocol vectors.
-    pub num_t_vectors: usize,
-    /// Number of root relation `w` protocol vectors.
-    pub num_w_vectors: usize,
-    /// Number of distinct `z` protocol vectors.
-    pub num_z_vectors: usize,
+    /// Number of polynomials in the single commitment group.
+    pub num_polynomials: usize,
 }
 
 impl AkitaScheduleLookupKey {
@@ -93,65 +87,47 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
-            num_t_vectors: 1,
-            num_w_vectors: 1,
-            num_z_vectors: 1,
+            num_polynomials: 1,
         }
     }
 
-    /// General root-opening context.
-    pub const fn new(
-        num_vars: usize,
-        num_t_vectors: usize,
-        num_w_vectors: usize,
-        num_z_vectors: usize,
-    ) -> Self {
+    /// General root-opening context for a scalar same-point batch.
+    pub const fn new(num_vars: usize, num_polynomials: usize) -> Self {
         Self {
             num_vars,
-            num_t_vectors,
-            num_w_vectors,
-            num_z_vectors,
+            num_polynomials,
         }
     }
 
     /// Build a schedule lookup key from a validated [`OpeningBatchShape`].
     ///
-    /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
-    /// `num_claims`. Assumes the batch was already validated at the claims
-    /// boundary (`OpeningBatchShape::check` or an infallible constructor).
+    /// Projects `num_vars` and the total polynomial count. Assumes the batch
+    /// was already validated at the opening boundary (`OpeningBatchShape::check`
+    /// or an infallible constructor).
     ///
     /// Folded schedule lookup currently treats every batch as one commitment
     /// group; see `akita_planner::generated_schedule_lookup_key`.
     ///
     /// # Errors
     ///
-    /// Returns an error if a projected count does not fit the lookup key.
+    /// Returns an error if the batch is multi-group.
     pub fn new_from_opening_batch(opening_batch: &OpeningBatchShape) -> Result<Self, AkitaError> {
         if opening_batch.num_commitment_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "scalar schedule lookup cannot collapse a multi-commitment batch; use the grouped schedule key from specs/multi-group-batching.md".to_string(),
             ));
         }
-        let num_t_vectors = opening_batch.num_polynomials();
         Ok(Self::new(
             opening_batch.num_vars(),
-            num_t_vectors,
-            opening_batch.num_claims(),
-            1,
+            opening_batch.num_polynomials(),
         ))
     }
 
-    /// Validate that this key is a scalar same-point batch key, not a grouped
-    /// root key that would need the multi-group schedule shape.
-    pub fn validate_scalar_root_batch(self) -> Result<(), AkitaError> {
-        if self.num_t_vectors == 0 || self.num_w_vectors == 0 || self.num_z_vectors == 0 {
+    /// Validate that the key dimensions are usable.
+    pub fn validate(self) -> Result<(), AkitaError> {
+        if self.num_vars == 0 || self.num_polynomials == 0 {
             return Err(AkitaError::InvalidSetup(
-                "schedule key planner dimensions must be at least 1".to_string(),
-            ));
-        }
-        if self.num_z_vectors != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "multi-group root schedule keys are not supported by scalar schedule lookup; see specs/multi-group-batching.md".to_string(),
+                "schedule lookup key dimensions must be at least 1".to_string(),
             ));
         }
         Ok(())
@@ -176,20 +152,21 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 ///
 /// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
+    w_ring_element_count_with_counts::<F>(lp, 1, 1)
 }
 
-/// Total ring elements in a recursive witness polynomial for explicit batch counts.
+/// Total ring elements in a recursive witness polynomial for an explicit batch.
+///
+/// The scalar same-point batch opens one claim per polynomial, so a single
+/// `num_polynomials` drives both the `e`/`t` witness widths.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
+    num_polynomials: usize,
     num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts_for_layout::<F>(
         lp,
-        num_t_vectors,
-        num_w_vectors,
+        num_polynomials,
         num_public_rows,
         crate::layout::MRowLayout::WithDBlock,
     )
@@ -201,8 +178,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
+    num_polynomials: usize,
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
@@ -211,8 +187,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_t_vectors,
-        num_w_vectors,
+        num_polynomials,
         num_public_rows,
         layout,
     )
@@ -223,15 +198,13 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
 pub fn w_ring_element_count_with_counts_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
+    num_polynomials: usize,
     num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts_for_layout_bits(
         field_bits,
         lp,
-        num_t_vectors,
-        num_w_vectors,
+        num_polynomials,
         num_public_rows,
         crate::layout::MRowLayout::WithDBlock,
     )
@@ -243,22 +216,21 @@ pub fn w_ring_element_count_with_counts_bits(
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
+    num_polynomials: usize,
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
-    let e_hat_count = num_w_vectors
+    let e_hat_count = num_polynomials
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
-    let t_hat_count = num_t_vectors
+    let t_hat_count = num_polynomials
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
     let u_concat_count = lp.u_concat_ring_len_per_group();
-    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
+    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
@@ -1014,11 +986,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_scalar_root_batch_rejects_grouped_key() {
-        let key = AkitaScheduleLookupKey::new(20, 4, 2, 2);
-        let err = key
-            .validate_scalar_root_batch()
-            .expect_err("grouped schedule key must reject scalar lookup");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    fn validate_rejects_zero_dimensions() {
+        assert!(AkitaScheduleLookupKey::new(0, 1).validate().is_err());
+        assert!(AkitaScheduleLookupKey::new(20, 0).validate().is_err());
+        assert!(AkitaScheduleLookupKey::new(20, 4).validate().is_ok());
     }
 }

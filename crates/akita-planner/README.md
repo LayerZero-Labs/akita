@@ -18,13 +18,18 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: AkitaScheduleLookupKey` describes the root opening shape:
+`key: AkitaScheduleLookupKey` describes the supported scalar same-point root
+opening shape with two fields:
 
-- `num_vars`: the number of Boolean variables in the opened polynomial domain.
-- `num_points`: the number of distinct opening points.
-- `num_t_vectors`: the number of committed polynomial vectors at the root.
-- `num_w_vectors`: the number of opening-point witness vectors.
-- `num_z_vectors`: the number of root relation/output vectors.
+- `num_vars`: the number of Boolean variables in the opened polynomial domain
+  (shared opening-point arity).
+- `num_polynomials`: the number of polynomials in the single commitment group,
+  opened at the shared point (one claim per polynomial).
+
+Root witness multiplicities are not stored in the key. For the scalar
+same-point batch, the `t` and `w` multiplicities are just `num_polynomials` and
+the `z` multiplicity is always `1`; call sites pass those directly where the
+width helpers need them.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
@@ -78,7 +83,7 @@ At the root, the planner iterates over the configured `log_basis` range and over
 - The SIS-secure ranks `n_a`, `n_b`, and `n_d`.
 - The next witness length with a D block and without a D block.
 
-Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_t_vectors` count.
+Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
 The planner also considers the root-direct case, where the schedule ships the original witness directly. That gives the DP a baseline: folding is selected only if the fold proof plus its suffix is smaller than direct shipping.
 

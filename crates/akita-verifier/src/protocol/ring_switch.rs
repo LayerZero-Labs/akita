@@ -223,7 +223,7 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_claims = relation.opening_batch().num_claims();
+    let num_claims = relation.opening_batch().num_polynomials();
     if relation.opening_point().a.len() < lp.block_len
         || relation.opening_point().b.len() != lp.num_blocks
     {

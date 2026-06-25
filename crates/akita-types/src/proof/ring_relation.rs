@@ -152,8 +152,8 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         v: Vec<CyclotomicRing<F, D>>,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
-        if gamma.len() != opening_batch.num_claims()
-            || row_coefficient_rings.len() != opening_batch.num_claims()
+        if gamma.len() != opening_batch.num_polynomials()
+            || row_coefficient_rings.len() != opening_batch.num_polynomials()
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation gamma/row coefficients length mismatch".to_string(),
@@ -246,7 +246,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let lens = ring_relation_segment_lengths::<F, D>(
             lp,
             RingRelationOpeningCounts {
-                num_claims: self.opening_batch.num_claims(),
+                num_claims: self.opening_batch.num_polynomials(),
                 num_t_vectors: self.opening_batch.num_polynomials(),
             },
             self.m_row_layout,
@@ -354,7 +354,7 @@ mod tests {
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
-            test_challenges(&lp, opening_batch.num_claims()),
+            test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
@@ -379,7 +379,7 @@ mod tests {
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
             MRowLayout::WithDBlock,
-            test_challenges(&lp, opening_batch.num_claims()),
+            test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
@@ -394,7 +394,7 @@ mod tests {
         let lens = ring_relation_segment_lengths::<F, D>(
             &lp,
             RingRelationOpeningCounts {
-                num_claims: instance.opening_batch().num_claims(),
+                num_claims: instance.opening_batch().num_polynomials(),
                 num_t_vectors: instance.opening_batch().num_polynomials(),
             },
             instance.m_row_layout(),

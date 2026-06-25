@@ -212,10 +212,8 @@ impl PlanSection {
 /// Per commit-and-open call descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSection {
-    /// Total number of committed polynomials addressed by the call.
+    /// Total number of opened polynomials addressed by the call.
     pub num_polys: u32,
-    /// Total number of claimed openings addressed by the call.
-    pub num_claims: u32,
     /// Number of commitment groups opened by the call.
     pub num_commitment_groups: u32,
     /// Per-group polynomial counts in descriptor/transcript order.
@@ -245,7 +243,7 @@ impl CallSection {
         let num_polys_per_commitment_group = opening_batch
             .groups
             .iter()
-            .map(|group| usize_to_u32(group.num_claims, "num_polys_per_commitment_group"))
+            .map(|group| usize_to_u32(group.num_polynomials, "num_polys_per_commitment_group"))
             .collect::<Result<Vec<_>, _>>()?;
         let point_variable_selections = opening_batch
             .groups
@@ -261,7 +259,6 @@ impl CallSection {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             num_polys: usize_to_u32(opening_batch.num_polynomials(), "num_polys")?,
-            num_claims: usize_to_u32(opening_batch.num_claims(), "num_claims")?,
             num_commitment_groups: usize_to_u32(
                 opening_batch.num_commitment_groups(),
                 "num_commitment_groups",
@@ -292,10 +289,10 @@ pub fn digest_serializable<S: AkitaSerialize>(
 pub fn digest_opening_batch(summary: &OpeningBatchShape) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, summary.num_vars());
-    push_usize(&mut bytes, summary.num_claims());
+    push_usize(&mut bytes, summary.num_polynomials());
     push_usize(&mut bytes, summary.num_commitment_groups());
     for group in &summary.groups {
-        push_usize(&mut bytes, group.num_claims);
+        push_usize(&mut bytes, group.num_polynomials);
         push_usize_vec(&mut bytes, group.point_vars.indices());
     }
     blake2b_256(&bytes)
@@ -600,7 +597,7 @@ impl AkitaDeserialize for PlanSection {
 
 impl Valid for CallSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.num_polys == 0 || self.num_claims == 0 || self.num_commitment_groups == 0 {
+        if self.num_polys == 0 || self.num_commitment_groups == 0 {
             return Err(SerializationError::InvalidData(
                 "descriptor call counts must be non-zero".to_string(),
             ));
@@ -630,7 +627,7 @@ impl Valid for CallSection {
                         )
                     })
                 })?;
-        if total_group_polys != self.num_polys || total_group_polys != self.num_claims {
+        if total_group_polys != self.num_polys {
             return Err(SerializationError::InvalidData(
                 "descriptor group sizes do not match call counts".to_string(),
             ));
@@ -656,7 +653,6 @@ impl AkitaSerialize for CallSection {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.num_polys.serialize_with_mode(&mut writer, compress)?;
-        self.num_claims.serialize_with_mode(&mut writer, compress)?;
         self.num_commitment_groups
             .serialize_with_mode(&mut writer, compress)?;
         let group_count =
@@ -697,7 +693,6 @@ impl AkitaSerialize for CallSection {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.num_polys.serialized_size(compress)
-            + self.num_claims.serialized_size(compress)
             + self.num_commitment_groups.serialized_size(compress)
             + 0u32.serialized_size(compress)
             + self
@@ -733,7 +728,6 @@ impl AkitaDeserialize for CallSection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let num_polys = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let num_claims = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let num_commitment_groups =
             u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -763,7 +757,6 @@ impl AkitaDeserialize for CallSection {
         }
         let out = Self {
             num_polys,
-            num_claims,
             num_commitment_groups,
             num_polys_per_commitment_group,
             point_variable_selections,

@@ -75,7 +75,7 @@ where
     let alpha_evals_y = scalar_powers(alpha, D);
 
     let challenges = &instance.challenges;
-    if gamma.len() != instance.opening_batch().num_claims() {
+    if gamma.len() != instance.opening_batch().num_polynomials() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));

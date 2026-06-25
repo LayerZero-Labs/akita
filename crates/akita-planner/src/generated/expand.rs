@@ -41,7 +41,7 @@ impl GeneratedFoldStep {
     /// and prover (D) matrix widths — the root commits `num_claims`
     /// polynomials. `num_claims == 1` is the singleton root (and every
     /// recursive level); a batched root passes the lookup key's
-    /// `num_t_vectors`. There is no separate per-claim-then-scale pass: the
+    /// `num_polynomials`. There is no separate per-claim-then-scale pass: the
     /// width helpers receive `num_claims` as the `t_vectors` factor.
     ///
     /// The A/B/D widths and audited collision buckets are derived by the

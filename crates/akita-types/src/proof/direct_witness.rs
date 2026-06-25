@@ -178,47 +178,41 @@ impl CleartextWitnessShape {
     }
 }
 
-/// Batch multiplicities for segment layout at the terminal fold predecessor.
-pub fn terminal_fold_segment_counts(
+/// Polynomial multiplicity entering the terminal fold predecessor.
+///
+/// The scalar same-point root fold opens one claim per polynomial, so the
+/// terminal `e`/`t` segments scale with the polynomial count at the root
+/// (`terminal_fold_level == 0`) and collapse to `1` at recursive levels.
+fn terminal_fold_num_polynomials(
     key: crate::AkitaScheduleLookupKey,
     terminal_fold_level: usize,
-) -> (usize, usize, usize, usize) {
+) -> usize {
     if terminal_fold_level == 0 {
-        (key.num_w_vectors, key.num_t_vectors, key.num_z_vectors, 1)
+        key.num_polynomials
     } else {
-        (1, 1, 1, 1)
+        1
     }
 }
 
 /// Canonical terminal direct witness shape for planner and table materialization.
 ///
 /// Non-zk builds use segment-typed encoding; zk builds keep legacy `PackedDigits`.
+/// The scalar same-point terminal fold has one public row and one commitment
+/// group, so only the polynomial multiplicity varies.
 ///
 /// # Errors
 ///
 /// Propagates [`segment_typed_witness_shape`] errors on the non-zk path.
-#[allow(clippy::too_many_arguments)]
 pub fn terminal_direct_witness_shape(
     terminal_lp: &LevelParams,
     field_bits: u32,
     current_w_len: usize,
     terminal_log_basis: u32,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_public_rows: usize,
-    num_segments: usize,
+    num_polynomials: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     #[cfg(feature = "zk")]
     {
-        let _ = (
-            terminal_lp,
-            field_bits,
-            current_w_len,
-            num_w_vectors,
-            num_t_vectors,
-            num_public_rows,
-            num_segments,
-        );
+        let _ = (terminal_lp, field_bits, current_w_len, num_polynomials);
         Ok(CleartextWitnessShape::PackedDigits((
             current_w_len,
             terminal_log_basis,
@@ -227,18 +221,20 @@ pub fn terminal_direct_witness_shape(
     #[cfg(not(feature = "zk"))]
     {
         let _ = (current_w_len, terminal_log_basis);
+        // Single public row, single commitment group for the scalar same-point
+        // batch; `e`/`t` segments both scale with `num_polynomials`.
         segment_typed_witness_shape(
             terminal_lp,
             field_bits,
-            num_w_vectors,
-            num_t_vectors,
-            num_public_rows,
-            num_segments,
+            num_polynomials,
+            num_polynomials,
+            1,
+            1,
         )
     }
 }
 
-/// [`terminal_direct_witness_shape`] with multiplicities derived from a schedule key.
+/// [`terminal_direct_witness_shape`] with the polynomial count derived from a schedule key.
 ///
 /// # Errors
 ///
@@ -251,17 +247,12 @@ pub fn terminal_direct_witness_shape_for_key(
     current_w_len: usize,
     terminal_log_basis: u32,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
-        terminal_fold_segment_counts(key, terminal_fold_level);
     terminal_direct_witness_shape(
         terminal_lp,
         field_bits,
         current_w_len,
         terminal_log_basis,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_segments,
+        terminal_fold_num_polynomials(key, terminal_fold_level),
     )
 }
 

@@ -183,12 +183,12 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
     }
 }
 
-/// Worst-case opening batch for a `(num_vars, num_claims)` shape.
+/// Worst-case opening batch for a `(num_vars, num_polynomials)` shape.
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,
-    num_claims: usize,
+    num_polynomials: usize,
 ) -> Result<OpeningBatchShape, AkitaError> {
-    OpeningBatchShape::new(num_vars, num_claims)
+    OpeningBatchShape::new(num_vars, num_polynomials)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -309,7 +309,7 @@ fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
     opening_batch: &OpeningBatchShape,
 ) -> Result<usize, AkitaError> {
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let max_group_poly_count = opening_batch.num_polynomials();
     let d_width = lp
         .num_blocks

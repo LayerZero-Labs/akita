@@ -114,7 +114,7 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts::<F>(lp, 1, num_claims, num_claims)?
+        None => w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims)?
             .checked_mul(D)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
     };
@@ -276,12 +276,11 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len =
-                    w_ring_element_count_with_counts::<F>(current_lp, 1, 1, 1)?
-                        .checked_mul(level_d)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("next witness length overflow".to_string())
-                        })?;
+                let computed_next_w_len = w_ring_element_count_with_counts::<F>(current_lp, 1, 1)?
+                    .checked_mul(level_d)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("next witness length overflow".to_string())
+                    })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,

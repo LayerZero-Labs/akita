@@ -48,7 +48,7 @@ fn ring_relation_segment_layout_for_opening_shape(
         b: vec![FixtureField::zero(); lp.num_blocks],
     };
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let challenges = akita_challenges::Challenges::Sparse {
         challenges: Vec::new(),
         num_blocks_per_claim: lp.num_blocks,

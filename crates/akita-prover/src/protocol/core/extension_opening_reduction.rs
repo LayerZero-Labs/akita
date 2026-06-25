@@ -208,7 +208,7 @@ where
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
         + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let num_vars = opening_batch.num_vars();
     let _span =
         tracing::info_span!("prepare_extension_opening_reduction", num_claims, num_vars).entered();
@@ -395,7 +395,7 @@ where
     let _span = tracing::info_span!(
         "prove_extension_opening_reduction",
         path,
-        num_claims = opening_batch.num_claims()
+        num_claims = opening_batch.num_polynomials()
     )
     .entered();
     let backend = tensor_backend;

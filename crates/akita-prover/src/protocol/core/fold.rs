@@ -73,7 +73,7 @@ where
 {
     let num_trace_blocks = instance
         .opening_batch()
-        .num_claims()
+        .num_polynomials()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
@@ -219,7 +219,7 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_claims() == 1 {
+        if opening_batch.num_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
@@ -244,7 +244,7 @@ where
         .map_or(trace_eval_target, |reduction| reduction.final_claim_public);
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_claims()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -1051,7 +1051,7 @@ where
                 ));
             let terminal_layout = terminal_witness_segment_layout(
                 lp,
-                instance.opening_batch().num_claims(),
+                instance.opening_batch().num_polynomials(),
                 1,
                 F::modulus_bits(),
             )?;
