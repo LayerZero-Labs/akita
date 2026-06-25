@@ -322,7 +322,8 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
   sumcheck's *direct* `ring_view`, never a cache key (see Setup-prefix offload).
 - `setup_active_ring_elems_at(ℓ)` (the offload-decision count) is a pure function of
   `(schedule, level, setup envelope, relation shape)` — challenge-independent (see
-  Normative contracts) and **identical on prover and verifier**.
+  Normative contracts) and **identical on prover and verifier**. It **fails closed**
+  (`InvalidSetup`) when `required > envelope total at ring_d`; it never silently caps.
 
 **Descriptor / transcript**
 
@@ -538,9 +539,20 @@ pub fn setup_active_ring_elems_at<F>(
     expanded: &AkitaExpandedSetup<F>,
     relation_shape: &SetupRelationShape,
 ) -> Result<usize, AkitaError> {
+    let ring_d   = schedule.fold_level(level)?.params.ring_dimension;
     let required = setup_geometry_at(level, schedule, relation_shape)?.required;
-    let setup_len = expanded.shared_matrix().total_ring_elements_at::</*ring_d*/>()?; // via dispatch
-    Ok(required.min(setup_len))
+    let setup_len = expanded.shared_matrix().total_ring_elements_at_dyn(ring_d)?;
+    // FAIL CLOSED — do NOT `min`. Today's setup sumcheck errors here
+    // (setup_sumcheck.rs: `if required > setup_len { InvalidSetup }`), and a silent
+    // cap would (a) read fewer setup rows than the product needs and (b) make the
+    // `context_at` feasibility comparison vacuous (capped value is ≤ envelope by
+    // construction). Preserve the guard.
+    if required > setup_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix is too small for selected setup product".into(),
+        ));
+    }
+    Ok(required) // == min(required, setup_len) after the guard, but overflow is rejected
 }
 ```
 
@@ -678,10 +690,13 @@ builds the same plan from the same schedule + seed. Per-level contexts are compu
 | Cross-level lengths | `next_w_len` consistent with digit layout at `ring_d` and the next level's `ring_d` when they differ |
 | Root layout | `ring_dims[0]` matches committed polynomial ring layout (validated at PCS commit entry) |
 
-Active-prefix feasibility (`setup_active_ring_elems ≤ envelope total at ring_d`) is a
-**runtime** check inside `context_at` (it depends on the live relation shape), not a
-`from_schedule` check; offload-slot coverage is checked where offload is decided (setup
-sumcheck / stage 3). Mixed-D schedules that bypass generated expansion (hand-built
+Active-prefix feasibility is a **runtime** check (it depends on the live relation
+shape), not a `from_schedule` check: `setup_active_ring_elems_at` itself **fails closed**
+with `InvalidSetup` when `required > total_ring_elements_at(ring_d)` — the same guard
+today's setup sumcheck applies — and `context_at` surfaces that error. (Do **not** model
+this as `min(required, setup_len)`: capping silently truncates an under-provisioned setup
+and makes the comparison vacuous.) Offload-slot coverage is checked where offload is
+decided (setup sumcheck / stage 3). Mixed-D schedules that bypass generated expansion (hand-built
 fixtures, the mixed-D fixture) must still satisfy this catalog.
 
 ### Warm-cache policy
@@ -821,8 +836,51 @@ one full-envelope cache per distinct `ring_d`.
 `ensure_ntt_slot` at prove entry (`&mut`). Cardinality = number of distinct `ring_d` in
 the plan: **1 for uniform-`D`**, ≤ 4 in principle. Offload adds no entries (it never
 touches the cache). A `HashMap` (rather than a fixed 4-slot table) is used only so the
-key type stays forward-compatible with a future prefix-sized cache; today there is
+key type stays forward-compatible with the prefix-sized cache below; today there is
 exactly one entry per `ring_d`.
+
+### Deferred optimization: prefix-sized NTT caches (mixed-D memory) — TRACKED FOLLOW-UP
+
+The baseline keeps one **full-envelope** cache per distinct `ring_d`. For mixed-D this is
+correct but memory-heavy: a proof that uses `D1` at the root and `D2 < D1` only for late,
+small folds still carries a **second whole-matrix** transform at `D2`, even though the
+`D2` folds touch only a small prefix. Worked example — root at `D1 = 128`, later folds at
+`D2 = 64`, envelope `gen_ring_dim = 128` with `N` ring elements:
+
+| Cache | Elements | Total transformed size |
+|-------|----------|------------------------|
+| `D1 = 128`, full envelope | `N` | `∝ N·128·K·2` |
+| `D2 = 64`, full envelope (**baseline**) | `2N` | `∝ N·128·K·2` — same magnitude; the whole matrix again |
+| `D2 = 64`, prefix-sized (**this optimization**) | `k` (touched prefix), `k ≪ 2N` | `∝ k·64·K·2` ≪ full |
+
+Both full caches span the entire matrix (the field-element count is invariant) and cannot
+share bytes (distinct transform domains — see NTT cache today), so the baseline pays ~one
+extra whole-matrix transform per extra `ring_d`.
+
+**The optimization.** Size each `ring_d`’s cache to the **maximum commit footprint across
+the levels at that `ring_d`** (`max(row_len · row_width)`), not the full envelope:
+
+```
+num_ring_elements(d) = max over levels ℓ with dim_at(ℓ)==d of commit_footprint(ℓ)   // ≤ total_at_d
+```
+
+That footprint is a function of the schedule + opening-batch shape — challenge-free and
+known up front — so the warm loop can size each entry precisely. No new key type is
+needed (`NttCacheKey` already carries `num_ring_elements`; only the warmed value changes).
+
+**Correctness requirement (the subtle part).** Every consumer at `ring_d` — root commit,
+`commit_next_w`, matvec, quotient at each level — must fit inside the sized prefix, so the
+warmed value must be the **max** request, not any single level’s. The existing
+`validate_digit_row_request` check already fails closed if a request exceeds the cached
+length, so an under-sizing bug surfaces as `InvalidSetup`, never as silent corruption.
+
+**Why deferred (not in this PR).** It needs the commit-footprint projection and a proof
+that the warmed bound covers every consumer at each `ring_d`; the cutover prioritizes
+byte-identical uniform-`D` behavior (where this collapses to the single full-envelope
+entry anyway, so there is nothing to gain there). It is orthogonal to both the `ring_d`
+keying and the Phase-4 planner. **Track it as the first mixed-D memory follow-up** once
+mixed-D schedules actually ship — that is when the second whole-matrix cache starts to
+cost real memory.
 
 ### Flat ring storage
 
@@ -1145,7 +1203,8 @@ Phase 4 (planner DP, field-element envelope sizing) is a **separate** PR, out of
 - No change to envelope **sizing/generation** policy: setup is still generated at one
   `gen_ring_dim == Cfg::D`. (Wave 5 only removes the now-redundant *type-level*
   `gen_ring_dim != D` comparison; it does not change how the buffer is sized — see W5e.)
-- No prefix-sized NTT caches (caches stay full-envelope per `ring_d`).
+- No prefix-sized NTT caches (caches stay full-envelope per `ring_d`) — tracked as a
+  follow-up; see "Deferred optimization: prefix-sized NTT caches".
 - No preset-family consolidation (`fp128_d64` + `fp128_d128`).
 - No cross-`ring_d` NTT sharing.
 
@@ -1173,7 +1232,9 @@ oracle the cutover must reproduce.
   `m_row_layout`, tier dims — **no** `eq_tau1`, **no** `RingCommitment`).
 - `setup_geometry_at(level, schedule, &SetupRelationShape) -> SetupGeometry { required }`
   — the shape-only row-layout footprint (`a_end`), challenge-free.
-- `setup_active_ring_elems_at(...) = min(required, total_ring_elements_at::<ring_d>())`.
+- `setup_active_ring_elems_at(...)` returns `required`, but **fails closed**
+  (`InvalidSetup`) when `required > total_ring_elements_at(ring_d)` — preserve today's
+  setup-sumcheck guard; do **not** silently `min`.
 - Refactor `SetupContributionPlan::prepare` to obtain `required`/endpoints from
   `setup_geometry_at` (weights layer on top, unchanged).
 - `FoldRingPlan`, `RingLevelContext`, `FoldRingPlan::from_schedule(schedule, &AkitaSetupSeed)`
