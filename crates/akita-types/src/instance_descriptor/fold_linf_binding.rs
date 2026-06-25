@@ -1,6 +1,9 @@
 //! Fold-l∞ rejection protocol identity bound into every transcript preamble.
 
 use crate::golomb_rice::TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO;
+use crate::tail_golomb_rice_low_bits::{
+    WIRE_RICE_LOW_BITS_DELTA, WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
+};
 use crate::sis::{
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
@@ -34,6 +37,10 @@ pub struct FoldLinfProtocolBinding {
     pub grind_probe_order: u8,
     /// Terminal `z` Golomb average-case planner model (e.g. [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]).
     pub tail_z_planner_model_id: u8,
+    /// Cap→wire Rice low-bits rule for terminal `z` Golomb decode (e.g. [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`]).
+    pub wire_rice_low_bits_rule_id: u8,
+    /// Subtrahend δ when [`wire_rice_low_bits_rule_id`] is [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`].
+    pub wire_rice_low_bits_delta: u8,
 }
 
 impl FoldLinfProtocolBinding {
@@ -56,6 +63,8 @@ impl FoldLinfProtocolBinding {
             }
         },
         tail_z_planner_model_id: TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
+        wire_rice_low_bits_rule_id: WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
+        wire_rice_low_bits_delta: WIRE_RICE_LOW_BITS_DELTA,
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
@@ -101,6 +110,10 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.tail_z_planner_model_id
             .serialize_with_mode(&mut writer, compress)?;
+        self.wire_rice_low_bits_rule_id
+            .serialize_with_mode(&mut writer, compress)?;
+        self.wire_rice_low_bits_delta
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -113,6 +126,8 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             + self.grind_entropy_bits_per_level.serialized_size(compress)
             + self.grind_probe_order.serialized_size(compress)
             + self.tail_z_planner_model_id.serialized_size(compress)
+            + self.wire_rice_low_bits_rule_id.serialized_size(compress)
+            + self.wire_rice_low_bits_delta.serialized_size(compress)
     }
 }
 
@@ -154,6 +169,18 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
             )?,
             grind_probe_order: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
             tail_z_planner_model_id: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            wire_rice_low_bits_rule_id: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            wire_rice_low_bits_delta: u8::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

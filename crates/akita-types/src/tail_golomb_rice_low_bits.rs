@@ -1,16 +1,15 @@
-//! Cap-derived Rice low-bit width for terminal Golomb `z` (code-constant rule; not descriptor-bound).
+//! Cap-derived Rice low-bit width for terminal Golomb `z` (descriptor-bound wire rule).
+
+use akita_field::AkitaError;
 
 use crate::golomb_rice::rice_low_bits_for_cap;
 
-/// Wire low-bits rule tag for logs/tests (not transcript-bound).
+/// Wire low-bits rule: `wire = cap_rice_low_bits - delta`.
 pub const WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA: u8 = 1;
-
-/// Active cap→wire low-bits rule ([`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`] today).
-pub const WIRE_RICE_LOW_BITS_ACTIVE_RULE: u8 = WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA;
 
 /// Profile-calibrated tightening vs [`rice_low_bits_for_cap`]: honest tails sit ~2 low bits below
 /// `floor(log2(cap))` on CI profile cells.
-pub const WIRE_RICE_LOW_BITS_DELTA: u32 = 2;
+pub const WIRE_RICE_LOW_BITS_DELTA: u8 = 2;
 
 /// Cap-derived Rice low-bit width: `floor(log2(cap))` for worst-case `|n| ≤ cap`.
 #[must_use]
@@ -25,18 +24,40 @@ pub fn cap_rice_low_bits(cap: u128) -> u32 {
 /// `min_sound_low_bits` search: the codec round-trips every `n ∈ [-cap, cap]` even at `0`
 /// via the escape path, so `min_sound_low_bits` is always `0` and carries no pricing signal.
 ///
+/// Wire Rice low-bit width from a descriptor-bound cap→wire rule.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `rule_id` is unsupported.
+pub fn wire_rice_low_bits_from_rule(
+    cap: u128,
+    rule_id: u8,
+    delta: u8,
+) -> Result<u32, AkitaError> {
+    match rule_id {
+        WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA => {
+            Ok(cap_rice_low_bits(cap).saturating_sub(u32::from(delta)))
+        }
+        other => Err(AkitaError::InvalidSetup(format!(
+            "unsupported terminal z wire rice low-bits rule id {other}"
+        ))),
+    }
+}
+
+/// Wire Rice low-bit width under [`crate::FoldLinfProtocolBinding::CURRENT`].
+///
 /// Under [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`]: `rice_low_bits_for_cap(cap) - δ` with
 /// δ = [`WIRE_RICE_LOW_BITS_DELTA`]. Typical coefficients pay `wire_rice_low_bits` fixed low
 /// bits; coefficients near `±cap` pay longer unary runs but stay below
 /// [`crate::golomb_rice::GOLOMB_RICE_Q_MAX`] at shipping caps.
 #[must_use]
 pub fn wire_rice_low_bits(cap: u128) -> u32 {
-    match WIRE_RICE_LOW_BITS_ACTIVE_RULE {
-        WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA => {
-            cap_rice_low_bits(cap).saturating_sub(WIRE_RICE_LOW_BITS_DELTA)
-        }
-        _ => cap_rice_low_bits(cap),
-    }
+    wire_rice_low_bits_from_rule(
+        cap,
+        WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
+        WIRE_RICE_LOW_BITS_DELTA,
+    )
+    .expect("active wire rule is valid")
 }
 
 #[cfg(test)]
@@ -67,7 +88,7 @@ mod tests {
         for cap in [504u128, 1008, 1568, 2016] {
             assert_eq!(
                 wire_rice_low_bits(cap),
-                cap_rice_low_bits(cap).saturating_sub(WIRE_RICE_LOW_BITS_DELTA),
+                cap_rice_low_bits(cap).saturating_sub(u32::from(WIRE_RICE_LOW_BITS_DELTA)),
                 "cap={cap}"
             );
         }

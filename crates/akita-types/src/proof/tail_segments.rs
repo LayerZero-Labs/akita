@@ -12,14 +12,16 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_zigzag_width,
+    golomb_rice_rows_admit_terminal_wire, golomb_rice_total_wire_bits_no_escape,
+    golomb_rice_values_admissible_at_wire, golomb_rice_zigzag_width,
     tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
+use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
 use crate::proof::CleartextWitnessShape;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
-use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
+use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
 use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
@@ -484,9 +486,55 @@ pub fn tail_golomb_rice_z_params(
     num_t_vectors: usize,
 ) -> Result<(u32, u32), AkitaError> {
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    let rice_low_bits = wire_rice_low_bits(cap);
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        cap,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
     let w = golomb_rice_zigzag_width(cap);
     Ok((rice_low_bits, w))
+}
+
+/// Decode terminal `z` Golomb payload and enforce public admissibility.
+///
+/// Rejects coefficients outside the fold `‖z‖_∞` cap, escape encodings at wire low bits, and
+/// payloads exceeding the optional schedule byte budget.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when the payload is inadmissible.
+pub fn decode_terminal_z_golomb_payload(
+    payload: &[u8],
+    z_coords: usize,
+    lp: &LevelParams,
+    num_t_vectors: usize,
+    budget_bytes: Option<usize>,
+) -> Result<Vec<i64>, AkitaError> {
+    let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        cap,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
+    let zigzag_w = golomb_rice_zigzag_width(cap);
+    let values = golomb_rice_decode_vec(payload, z_coords, rice_low_bits, zigzag_w)?;
+    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)?;
+    if let Some(budget_bytes) = budget_bytes {
+        if payload.len() > budget_bytes {
+            return Err(AkitaError::InvalidProof);
+        }
+        let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(cap))
+            .checked_mul(z_coords)
+            .ok_or(AkitaError::InvalidProof)?;
+        let total_bits =
+            golomb_rice_total_wire_bits_no_escape(&values, rice_low_bits, zigzag_w)?;
+        if total_bits > budget_bits {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    Ok(values)
 }
 
 /// Decode centered fold-response `z` coefficients from a segment-typed witness.
@@ -499,12 +547,12 @@ pub fn z_fold_decoded_from_segment<F: FieldCore>(
     lp: &LevelParams,
     num_t_vectors: usize,
 ) -> Result<Vec<i64>, AkitaError> {
-    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
-    golomb_rice_decode_vec(
+    decode_terminal_z_golomb_payload(
         &witness.z_payload,
         witness.layout.z_coords,
-        rice_low_bits,
-        zigzag_w,
+        lp,
+        num_t_vectors,
+        None,
     )
 }
 
@@ -789,7 +837,7 @@ where
     )?;
     let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    golomb_rice_rows_encodable_at_wire_low_bits(z_folded_centered, cap)?;
+    golomb_rice_rows_admit_terminal_wire(z_folded_centered, cap)?;
     let depth_commit = lp.num_digits_commit;
     let z_payload = encode_z_segment_from_centered(
         z_folded_centered,
@@ -827,6 +875,8 @@ where
         t_fields,
         r_fields,
     };
+    let budget_bytes = segment_typed_z_payload_bytes(lp, &layout, num_t_vectors)?;
+    validate_segment_typed_z_payload(&witness, lp, num_t_vectors, budget_bytes)?;
     Ok(witness)
 }
 
@@ -835,17 +885,33 @@ where
 /// # Errors
 ///
 /// Returns an error when the encoded `z` payload exceeds the schedule budget.
+/// Check a segment witness `z` payload against the schedule-bound byte budget and public
+/// Golomb admissibility.
+///
+/// # Errors
+///
+/// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
 pub fn validate_segment_typed_z_payload<F: FieldCore>(
     witness: &SegmentTypedWitness<F>,
+    lp: &LevelParams,
+    num_t_vectors: usize,
     budget_bytes: usize,
 ) -> Result<(), AkitaError> {
-    if witness.z_payload.len() > budget_bytes {
-        return Err(AkitaError::InvalidInput(format!(
-            "segment-typed z payload {} bytes exceeds schedule budget {budget_bytes}",
+    decode_terminal_z_golomb_payload(
+        &witness.z_payload,
+        witness.layout.z_coords,
+        lp,
+        num_t_vectors,
+        Some(budget_bytes),
+    )
+    .map(|_| ())
+    .map_err(|err| match err {
+        AkitaError::InvalidProof => AkitaError::InvalidInput(format!(
+            "segment-typed z payload {} bytes inadmissible or exceeds schedule budget {budget_bytes}",
             witness.z_payload.len()
-        )));
-    }
-    Ok(())
+        )),
+        other => other,
+    })
 }
 
 /// Expand a segment-typed witness into the legacy digit stream consumed by
@@ -884,13 +950,13 @@ where
     let depth_commit = lp.num_digits_commit;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let levels = compute_num_digits_full_field(field_bits, log_basis);
-    let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
-
-    let z_values = golomb_rice_decode_vec(
+    let budget_bytes = segment_typed_z_payload_bytes(lp, &witness.layout, num_t_vectors)?;
+    let z_values = decode_terminal_z_golomb_payload(
         &witness.z_payload,
         witness.layout.z_coords,
-        rice_low_bits,
-        zigzag_w_z,
+        lp,
+        num_t_vectors,
+        Some(budget_bytes),
     )?;
     let inner_width = lp.block_len * depth_commit;
     let total_z_elems = z_values.len() / D;
@@ -1148,5 +1214,38 @@ mod tests {
         )
         .expect("deserialize with scheduled z budget");
         assert_eq!(decoded, witness);
+    }
+
+    #[test]
+    fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
+        use crate::golomb_rice::golomb_rice_encode_vec;
+
+        let lp = test_lp();
+        let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
+        let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
+        let over_cap = cap as i64 + 1;
+        let payload =
+            golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w).expect("zigzag covers cap+1");
+        assert!(decode_terminal_z_golomb_payload(&payload, 1, &lp, 1, None).is_err());
+    }
+
+    #[test]
+    fn expand_segment_typed_rejects_inadmissible_z_payload() {
+        use crate::golomb_rice::golomb_rice_encode_vec;
+
+        let lp = test_lp();
+        let field_bits = F::modulus_bits();
+        let layout = tail_segment_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
+        let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
+        let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
+        let z_payload = golomb_rice_encode_vec(&[cap as i64 + 1], rice_low_bits, zigzag_w).unwrap();
+        let witness = SegmentTypedWitness {
+            layout,
+            z_payload,
+            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+        };
+        assert!(expand_segment_typed_to_i8_digits::<8, F>(&witness, &lp, 1).is_err());
     }
 }

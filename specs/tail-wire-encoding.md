@@ -275,8 +275,9 @@ S2  Terminal t-state / u-elision (+ soundness paragraph).          deferred (dep
 S3  Segment-typed tail framing (replace single PackedDigits with    landed in #190 (non-zk)
     typed segments; raw e/t/r + Golomb z; length-prefixed z)
 S4  Golomb-Rice codec + cap/k for z segment only                  landed (#190 + #189 cap align)
-S5  Descriptor binding + Jolt decode measurement + full S5 polish   partially landed in #190
-    (non-zk planner regen + profile tail accounting only)
+S5  Descriptor binding + Jolt decode measurement + full S5 polish   partially landed (#190 + #209)
+    (planner regen, profile tail accounting, wire low-bits rule in `FoldLinfProtocolBinding`,
+    verifier `decode_terminal_z_golomb_payload` admissibility, grind planner budget gate)
 ```
 
 **#190** is the first implementation PR under this umbrella. It is independently shippable: measurable `z` entropy win on non-zk folded terminals without waiting for S1/S2 elision.
@@ -285,7 +286,7 @@ Risks for remaining umbrella slices:
 
 - The S2 soundness paragraph must state the terminal statement cutover precisely: `u` is no longer the terminal state, `t` is transcript-bound instead, and the terminal A rows check the revealed witness against `t`.
 - S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
-- S5 descriptor binding and Jolt cycle measurement remain open.
+- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) and Jolt cycle measurement remain partially open.
 
 ## References
 

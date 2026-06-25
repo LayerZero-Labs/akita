@@ -1016,7 +1016,12 @@ where
                         "segment-typed witness layout does not match schedule".to_string(),
                     ));
                 }
-                validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
+                validate_segment_typed_z_payload(
+                    &segment,
+                    lp,
+                    num_t_vectors,
+                    scheduled_shape.z_payload_bytes,
+                )?;
                 let parts = segment.terminal_transcript_parts()?;
                 transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
                 return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));

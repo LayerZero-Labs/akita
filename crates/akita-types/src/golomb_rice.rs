@@ -2,7 +2,8 @@
 
 use akita_field::AkitaError;
 
-use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
+use crate::instance_descriptor::FoldLinfProtocolBinding;
+use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule};
 
 /// Maximum unary quotient before the bounded escape literal.
 pub const GOLOMB_RICE_Q_MAX: u32 = 32;
@@ -343,7 +344,74 @@ pub fn golomb_rice_coord_encodable_without_escape(
     Ok(())
 }
 
-/// Whether every centered row encodes at wire `(rice_low_bits, zigzag_w)` derived from fold cap.
+/// Closed-form Golomb wire bits for one coefficient on the no-escape path.
+pub fn golomb_rice_coord_wire_bits_no_escape(
+    n: i64,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<usize, AkitaError> {
+    let quotient = golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w)?;
+    if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let unary = quotient as usize + 1;
+    Ok(unary.saturating_add(rice_low_bits as usize))
+}
+
+/// Total Golomb wire bits for a coefficient vector on the no-escape path.
+pub fn golomb_rice_total_wire_bits_no_escape(
+    values: &[i64],
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<usize, AkitaError> {
+    values.iter().try_fold(0usize, |acc, &n| {
+        golomb_rice_coord_wire_bits_no_escape(n, rice_low_bits, zigzag_w)?
+            .checked_add(acc)
+            .ok_or(AkitaError::InvalidSetup(
+                "golomb-rice total wire bits overflow".to_string(),
+            ))
+    })
+}
+
+/// Whether every coefficient lies in `[-cap, cap]` and encodes without escape at wire low bits.
+pub fn golomb_rice_values_admissible_at_wire(
+    values: &[i64],
+    cap: u128,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<(), AkitaError> {
+    for &n in values {
+        if i128::from(n).unsigned_abs() > cap {
+            return Err(AkitaError::InvalidProof);
+        }
+        golomb_rice_coord_encodable_without_escape(n, rice_low_bits, zigzag_w)
+            .map_err(|_| AkitaError::InvalidProof)?;
+    }
+    Ok(())
+}
+
+/// Whether total no-escape wire bits fit the planner budget (`cap_rice_low_bits + 2` per coord).
+pub fn golomb_rice_values_fit_planner_wire_budget(
+    values: &[i64],
+    cap: u128,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<(), AkitaError> {
+    let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(cap))
+        .checked_mul(values.len())
+        .ok_or(AkitaError::InvalidSetup(
+            "terminal z planner bit budget overflow".to_string(),
+        ))?;
+    let total_bits = golomb_rice_total_wire_bits_no_escape(values, rice_low_bits, zigzag_w)?;
+    if total_bits > budget_bits {
+        return Err(AkitaError::InvalidInput(format!(
+            "terminal z golomb payload needs {total_bits} bits, planner budget is {budget_bits}"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether every centered row encodes at wire low bits without escape and within `cap`.
 pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
     rows: &[[i32; D]],
     cap: u128,
@@ -353,19 +421,47 @@ pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
             "golomb-rice encodability check at zero cap".to_string(),
         ));
     }
-    let rice_low_bits = wire_rice_low_bits(cap);
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        cap,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
     let zigzag_w = golomb_rice_zigzag_width(cap);
+    let mut values = Vec::with_capacity(rows.len().saturating_mul(D));
     for row in rows {
         for &n in row {
-            if i128::from(n).unsigned_abs() > cap {
-                return Err(AkitaError::InvalidInput(format!(
-                    "centered coefficient {n} exceeds fold grind cap {cap}"
-                )));
-            }
-            golomb_rice_coord_encodable_without_escape(i64::from(n), rice_low_bits, zigzag_w)?;
+            values.push(i64::from(n));
         }
     }
-    Ok(())
+    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)
+        .map_err(|_| {
+            AkitaError::InvalidInput(format!(
+                "centered coefficient exceeds fold cap {cap} or needs escape at wire low bits"
+            ))
+        })
+}
+
+/// Whether every centered row is admissible at wire low bits and fits the planner bit budget.
+pub fn golomb_rice_rows_admit_terminal_wire<const D: usize>(
+    rows: &[[i32; D]],
+    cap: u128,
+) -> Result<(), AkitaError> {
+    golomb_rice_rows_encodable_at_wire_low_bits(rows, cap)?;
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        cap,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
+    let zigzag_w = golomb_rice_zigzag_width(cap);
+    let mut values = Vec::with_capacity(rows.len().saturating_mul(D));
+    for row in rows {
+        for &n in row {
+            values.push(i64::from(n));
+        }
+    }
+    golomb_rice_values_fit_planner_wire_budget(&values, cap, rice_low_bits, zigzag_w)
 }
 
 fn golomb_rice_encode_one_into(
@@ -621,5 +717,13 @@ mod tests {
             golomb_rice_rows_encodable_at_wire_low_bits(&[row], cap).expect("row encodable");
         }
         assert!(golomb_rice_rows_encodable_at_wire_low_bits(&[[1009i32; 4]], 1008).is_err());
+    }
+
+    #[test]
+    fn golomb_rice_rows_admit_terminal_wire_rejects_planner_budget_overflow() {
+        let cap = 1008u128;
+        let row = [[cap as i32; 4]];
+        golomb_rice_rows_encodable_at_wire_low_bits(&row, cap).expect("in cap and no escape");
+        assert!(golomb_rice_rows_admit_terminal_wire(&row, cap).is_err());
     }
 }

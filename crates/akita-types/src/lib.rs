@@ -43,8 +43,9 @@ pub use field_reduction::{
     SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_coord_encodable_without_escape, golomb_rice_rows_encodable_at_wire_low_bits,
-    ZFoldEncodingStats, TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
+    golomb_rice_coord_encodable_without_escape, golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_rows_encodable_at_wire_low_bits, ZFoldEncodingStats,
+    TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
@@ -80,7 +81,7 @@ pub use proof::{
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
-    setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
+    setup_prefix_slot_id, decode_terminal_z_golomb_payload, tail_golomb_rice_z_params, tail_segment_layout,
     tail_segment_multiplicities_from_layout, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, terminal_e_hat_bytes_from_blocks,
     terminal_fold_segment_counts, terminal_golomb_grind_tail_t_vectors,
@@ -123,8 +124,8 @@ pub use schedule::{
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use tail_golomb_rice_low_bits::{
-    cap_rice_low_bits, wire_rice_low_bits, WIRE_RICE_LOW_BITS_DELTA,
-    WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
+    cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule,
+    WIRE_RICE_LOW_BITS_DELTA, WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
