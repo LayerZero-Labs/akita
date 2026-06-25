@@ -48,7 +48,7 @@ fn ring_relation_segment_layout_for_opening_shape(
         b: vec![FixtureField::zero(); lp.num_blocks],
     };
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let challenges = akita_challenges::Challenges::Sparse {
         challenges: Vec::new(),
         num_blocks_per_claim: lp.num_blocks,
@@ -97,7 +97,7 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
 
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point =
-        akita_types::zk::blinding_digit_plane_count::<FixtureField>(n_b, FIXTURE_D, log_basis);
+        akita_types::lhl_blinding::blinding_digit_plane_count::<FixtureField>(n_b, FIXTURE_D, log_basis);
 
     RingSwitchDeferredRowEval {
         c_alphas: PreparedChallengeEvals::Flat(
@@ -115,7 +115,7 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
         depth_commit,
         depth_fold,
         #[cfg(feature = "zk")]
-        d_blinding_segment_len: akita_types::zk::blinding_digit_plane_count::<FixtureField>(
+        d_blinding_segment_len: akita_types::lhl_blinding::blinding_digit_plane_count::<FixtureField>(
             n_d, FIXTURE_D, log_basis,
         ),
         #[cfg(feature = "zk")]

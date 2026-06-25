@@ -7,8 +7,6 @@ use akita_types::{
     AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
-#[cfg(feature = "zk")]
-use akita_types::{derive_zk_b_matrix, derive_zk_d_matrix};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -49,10 +47,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             max_num_batched_polys,
             gen_ring_dim: D,
             max_setup_len: setup_envelope.max_setup_len,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: setup_envelope.max_zk_b_len,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: setup_envelope.max_zk_d_len,
             public_matrix_seed,
         };
         seed.check().map_err(|err| {
@@ -61,21 +55,8 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
 
         let shared_flat =
             derive_public_matrix_flat::<F, D>(setup_envelope.max_setup_len, &public_matrix_seed);
-        #[cfg(feature = "zk")]
-        let zk_b_matrix =
-            derive_zk_b_matrix::<F, D>(setup_envelope.max_zk_b_len, &public_matrix_seed);
-        #[cfg(feature = "zk")]
-        let zk_d_matrix =
-            derive_zk_d_matrix::<F, D>(setup_envelope.max_zk_d_len, &public_matrix_seed);
         let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                seed,
-                shared_flat,
-                #[cfg(feature = "zk")]
-                zk_b_matrix,
-                #[cfg(feature = "zk")]
-                zk_d_matrix,
-            ),
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
         );
 
         Ok(Self {
@@ -155,48 +136,8 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
                 "expanded setup matrix length does not match setup seed".to_string(),
             ));
         }
-        #[cfg(feature = "zk")]
-        {
-            expanded.zk_b_matrix().check().map_err(|err| {
-                AkitaError::InvalidSetup(format!(
-                    "expanded setup zkB matrix validation failed: {err}"
-                ))
-            })?;
-            expanded.zk_d_matrix().check().map_err(|err| {
-                AkitaError::InvalidSetup(format!(
-                    "expanded setup zkD matrix validation failed: {err}"
-                ))
-            })?;
-            if expanded.zk_b_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
-                return Err(AkitaError::InvalidSetup(
-                    "expanded setup zkB matrix generation dimension does not match setup seed"
-                        .to_string(),
-                ));
-            }
-            if expanded.zk_d_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
-                return Err(AkitaError::InvalidSetup(
-                    "expanded setup zkD matrix generation dimension does not match setup seed"
-                        .to_string(),
-                ));
-            }
-            if expanded.zk_b_matrix().total_ring_elements() != expanded.seed().max_zk_b_len {
-                return Err(AkitaError::InvalidSetup(
-                    "expanded setup zkB matrix length does not match setup seed".to_string(),
-                ));
-            }
-            if expanded.zk_d_matrix().total_ring_elements() != expanded.seed().max_zk_d_len {
-                return Err(AkitaError::InvalidSetup(
-                    "expanded setup zkD matrix length does not match setup seed".to_string(),
-                ));
-            }
-        }
         let expanded = Arc::new(expanded);
         expanded.shared_matrix().total_ring_elements_at::<D>()?;
-        #[cfg(feature = "zk")]
-        {
-            expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
-            expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
-        }
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixProverRegistry::new(),
@@ -235,13 +176,7 @@ mod tests {
         let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(
             8,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate D=64 setup");
         let expanded = (*setup.expanded).clone();
@@ -257,13 +192,7 @@ mod tests {
         let zero_len = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
             8,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 0,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            SetupMatrixEnvelope { max_setup_len: 0 },
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("max_setup_len"));
@@ -280,24 +209,11 @@ mod tests {
         let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
             8,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate setup");
         let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
         let recomposed = vec![Vec::new()];
-        #[cfg(feature = "zk")]
-        let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-            decomposed,
-            recomposed,
-            FlatDigitBlocks::empty(),
-        );
-        #[cfg(not(feature = "zk"))]
         let hint =
             AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
         setup

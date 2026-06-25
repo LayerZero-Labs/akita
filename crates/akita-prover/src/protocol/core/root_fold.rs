@@ -8,6 +8,8 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
+use akita_types::terminal_golomb_grind_tail_t_vectors;
+#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
@@ -44,6 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
@@ -73,7 +76,7 @@ where
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
@@ -115,6 +118,7 @@ where
         basis,
         BlockOrder::RowMajor,
         m_row_layout,
+        terminal_tail_t_vectors,
     )
 }
 
@@ -188,7 +192,7 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -205,6 +209,7 @@ where
         claims,
         root_params,
         MRowLayout::WithDBlock,
+        None,
         #[cfg(feature = "zk")]
         zk_hiding,
         basis,
@@ -297,7 +302,7 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -310,12 +315,22 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
+    #[cfg(not(feature = "zk"))]
+    let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
+        root_params,
+        MRowLayout::WithoutDBlock,
+        Some(terminal_direct_witness_shape),
+    )?;
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
         stack,
         transcript,
         claims,
         root_params,
         MRowLayout::WithoutDBlock,
+        #[cfg(not(feature = "zk"))]
+        terminal_tail_t_vectors,
+        #[cfg(feature = "zk")]
+        None,
         #[cfg(feature = "zk")]
         owned_zk_hiding,
         basis,

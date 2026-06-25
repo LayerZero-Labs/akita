@@ -753,7 +753,7 @@ fn active_setup_role_widths(
         .block_len
         .checked_mul(level_params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let max_group_poly_count = opening_batch.num_polynomials();
     let w_d = num_claims
         .checked_mul(level_params.num_blocks)

@@ -2,7 +2,7 @@ use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    golomb_rice::{golomb_rice_k_sweep_payload_bytes, optimal_rice_k},
+    golomb_rice::{golomb_rice_low_bits_sweep_payload_bytes, rice_low_bits_for_cap},
     layout::proof_size::field_bytes,
     schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
@@ -87,11 +87,12 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
         let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
-        let z_rice_k = z_stats.as_ref().map(|s| s.rice_k_public).unwrap_or(0);
+        let z_rice_low_bits_wire = z_stats.as_ref().map(|s| s.rice_low_bits_wire).unwrap_or(0);
+        let z_rice_low_bits_cap = z_stats.as_ref().map(|s| s.rice_low_bits_cap).unwrap_or(0);
         let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
-            .map(|s| s.bits_per_coord_k_public)
+            .map(|s| s.bits_per_coord_at_wire)
             .unwrap_or(0.0);
         let z_bits_per_coord_packed = z_stats
             .as_ref()
@@ -127,7 +128,8 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
             tail_t_bytes = t_bytes,
             tail_r_bytes = r_bytes,
             z_witness_linf_cap,
-            z_rice_k,
+            z_rice_low_bits_wire,
+            z_rice_low_bits_cap,
             z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
             z_bits_per_coord_packed,
@@ -139,17 +141,18 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: witness_linf_cap={} k_public={} k_empirical={} ring_elems={z_ring_elems} field_coeffs={} \
-                     {:.2} bits/coord@k_public vs {:.2}@k_emp vs packed {:.2} bits/field_coeff \
+                    " Golomb z: witness_linf_cap={} wire_low_bits={} cap_low_bits={} sample_low_bits={} ring_elems={z_ring_elems} field_coeffs={} \
+                     {:.2} bits/coord@wire vs {:.2}@sample vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
                      dist max={} median={} p90={} p99={}",
                     stats.witness_linf_cap,
-                    stats.rice_k_public,
-                    stats.rice_k_empirical,
+                    stats.rice_low_bits_wire,
+                    stats.rice_low_bits_cap,
+                    stats.rice_low_bits_sample,
                     stats.coord_count,
-                    stats.bits_per_coord_k_public,
-                    stats.bits_per_coord_k_empirical,
+                    stats.bits_per_coord_at_wire,
+                    stats.bits_per_coord_at_sample,
                     stats.bits_per_coord_packed_digits,
                     stats.total_bits_packed_digits.div_ceil(8),
                     stats
@@ -245,38 +248,45 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     else {
         return;
     };
-    let k_hi = stats
-        .rice_k_public
+    let low_bits_hi = stats
+        .rice_low_bits_cap
         .saturating_add(4)
-        .max(stats.rice_k_empirical);
-    let Ok(sweep) = golomb_rice_k_sweep_payload_bytes(&z_values, stats.zigzag_w, k_hi) else {
+        .max(stats.rice_low_bits_sample);
+    let Ok(sweep) =
+        golomb_rice_low_bits_sweep_payload_bytes(&z_values, stats.zigzag_w, low_bits_hi)
+    else {
         return;
     };
-    let k_observed = optimal_rice_k(u128::from(stats.observed_max_abs));
-    eprintln!("[{label}]   z_golomb_k_sweep (coords={}):", z_values.len());
-    for &(k, bytes) in &sweep {
-        let marker = if k == stats.rice_k_public {
-            "  <-- public k (sound)"
-        } else if k == stats.rice_k_empirical {
-            "  <-- empirical min on this witness"
-        } else if k == k_observed {
-            "  <-- k from observed max only (NOT sound)"
+    let low_bits_observed = rice_low_bits_for_cap(u128::from(stats.observed_max_abs));
+    eprintln!(
+        "[{label}]   z_golomb_low_bits_sweep (coords={}):",
+        z_values.len()
+    );
+    for &(rice_low_bits, bytes) in &sweep {
+        let marker = if rice_low_bits == stats.rice_low_bits_wire {
+            "  <-- wire low bits"
+        } else if rice_low_bits == stats.rice_low_bits_cap {
+            "  <-- cap low bits (planner reference)"
+        } else if rice_low_bits == stats.rice_low_bits_sample {
+            "  <-- sample-optimal on this witness"
+        } else if rice_low_bits == low_bits_observed {
+            "  <-- low bits from observed max only (NOT sound)"
         } else {
             ""
         };
         let delta = bytes as i64 - actual_z_payload_bytes as i64;
         eprintln!(
-            "[{label}]     k={k:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
+            "[{label}]     low_bits={rice_low_bits:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
             (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
         );
     }
-    if let Some((k, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
+    if let Some((rice_low_bits, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
         let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
         eprintln!(
-            "[{label}]   z_golomb_sweep_summary: best k={k} -> {bytes} B \
-             (vs actual {actual_z_payload_bytes} B at k_public={}, delta {save_vs_beta} B; \
-             sound tightening needs public k <= k_public)",
-            stats.rice_k_public,
+            "[{label}]   z_golomb_sweep_summary: best low_bits={rice_low_bits} -> {bytes} B \
+             (vs actual {actual_z_payload_bytes} B at wire_low_bits={}, delta {save_vs_beta} B; \
+             wire low bits must be >= best for honest encodes)",
+            stats.rice_low_bits_wire,
         );
     }
 }
