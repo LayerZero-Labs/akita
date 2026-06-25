@@ -6,7 +6,9 @@
 use akita_field::AkitaError;
 
 use crate::instance_descriptor::FoldLinfProtocolBinding;
-use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule};
+use crate::tail_golomb_rice_low_bits::{
+    cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule,
+};
 
 /// Bit cursor over a byte slice for no-panic decode.
 #[derive(Debug, Clone)]
@@ -435,12 +437,9 @@ pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
             values.push(i64::from(n));
         }
     }
-    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)
-        .map_err(|_| {
-            AkitaError::InvalidInput(format!(
-                "centered coefficient exceeds fold cap {cap}"
-            ))
-        })
+    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w).map_err(|_| {
+        AkitaError::InvalidInput(format!("centered coefficient exceeds fold cap {cap}"))
+    })
 }
 
 /// Whether every centered row is admissible at wire low bits and fits the planner bit budget.
@@ -600,14 +599,9 @@ mod tests {
             for n in -cap_i64..=cap_i64 {
                 let encoded =
                     golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
-                let decoded = golomb_rice_decode_vec(
-                    &encoded,
-                    1,
-                    rice_low_bits,
-                    zigzag_w,
-                    max_quotient,
-                )
-                .expect("decode");
+                let decoded =
+                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient)
+                        .expect("decode");
                 assert_eq!(decoded, [n], "cap={cap} n={n}");
             }
         }
@@ -652,14 +646,9 @@ mod tests {
         let max_quotient = max_quotient_for_values(&values, rice_low_bits, zigzag_w);
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0xff);
-        assert!(golomb_rice_decode_vec(
-            &encoded,
-            2,
-            rice_low_bits,
-            zigzag_w,
-            max_quotient
-        )
-        .is_err());
+        assert!(
+            golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w, max_quotient).is_err()
+        );
     }
 
     #[test]
@@ -670,14 +659,9 @@ mod tests {
         let max_quotient = max_quotient_for_values(&values, rice_low_bits, zigzag_w);
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0x00);
-        assert!(golomb_rice_decode_vec(
-            &encoded,
-            3,
-            rice_low_bits,
-            zigzag_w,
-            max_quotient
-        )
-        .is_err());
+        assert!(
+            golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w, max_quotient).is_err()
+        );
     }
 
     #[test]
@@ -687,7 +671,10 @@ mod tests {
         let zigzag_w = golomb_rice_zigzag_width(cap);
         let max_quotient =
             golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w).expect("max q");
-        assert!(max_quotient < 32, "test expects cap-derived max below legacy 32");
+        assert!(
+            max_quotient < 32,
+            "test expects cap-derived max below legacy 32"
+        );
         let mut writer = BitWriter::default();
         for _ in 0..32 {
             writer.write_bit(true);

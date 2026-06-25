@@ -13,8 +13,7 @@ use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
     golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_total_wire_bits,
-    golomb_rice_values_admissible_at_wire, golomb_rice_zigzag_width,
+    golomb_rice_total_wire_bits, golomb_rice_values_admissible_at_wire, golomb_rice_zigzag_width,
     tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
@@ -431,8 +430,8 @@ pub fn terminal_golomb_grind_tail_t_vectors(
 
 /// Runtime Golomb-Rice **wire** parameters for terminal `z` encode/decode.
 ///
-/// Uses wire low bits ([`wire_rice_low_bits`]); planner byte budgets use
-/// [`cap_rice_low_bits`] via [`segment_typed_z_payload_bytes`].
+/// Uses wire low bits ([`crate::wire_rice_low_bits`]); planner byte budgets use
+/// [`crate::cap_rice_low_bits`] via [`segment_typed_z_payload_bytes`].
 /// Rice `k` and zigzag width `W` are derived from the per-coefficient fold-response
 /// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
 /// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
@@ -479,13 +478,7 @@ pub fn decode_terminal_z_golomb_payload(
     )?;
     let zigzag_w = golomb_rice_zigzag_width(cap);
     let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
-    let values = golomb_rice_decode_vec(
-        payload,
-        z_coords,
-        rice_low_bits,
-        zigzag_w,
-        max_quotient,
-    )?;
+    let values = golomb_rice_decode_vec(payload, z_coords, rice_low_bits, zigzag_w, max_quotient)?;
     golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)?;
     if let Some(budget_bytes) = budget_bytes {
         if payload.len() > budget_bytes {
@@ -679,7 +672,7 @@ pub fn tail_segment_multiplicities_from_layout(
 /// Planner byte budget for the Golomb-coded terminal `z` segment.
 ///
 /// Uses cap-derived low bits plus the average-case `cap_rice_low_bits + 2` bits/coord model so schedules
-/// stay conservative across field families; on-wire encode/decode uses [`wire_rice_low_bits`].
+/// stay conservative across field families; on-wire encode/decode uses [`crate::wire_rice_low_bits`].
 ///
 /// # Errors
 ///
@@ -1165,8 +1158,8 @@ mod tests {
         let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
         let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
         let over_cap = cap as i64 + 1;
-        let payload =
-            golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w).expect("zigzag covers cap+1");
+        let payload = golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w)
+            .expect("zigzag covers cap+1");
         assert!(decode_terminal_z_golomb_payload(&payload, 1, &lp, 1, None).is_err());
     }
 

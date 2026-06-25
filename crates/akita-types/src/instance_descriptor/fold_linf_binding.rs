@@ -1,12 +1,12 @@
 //! Fold-l∞ rejection protocol identity bound into every transcript preamble.
 
 use crate::golomb_rice::TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO;
-use crate::tail_golomb_rice_low_bits::{
-    WIRE_RICE_LOW_BITS_DELTA, WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
-};
 use crate::sis::{
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
+};
+use crate::tail_golomb_rice_low_bits::{
+    WIRE_RICE_LOW_BITS_DELTA, WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -39,7 +39,7 @@ pub struct FoldLinfProtocolBinding {
     pub tail_z_planner_model_id: u8,
     /// Cap→wire Rice low-bits rule for terminal `z` Golomb decode (e.g. [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`]).
     pub wire_rice_low_bits_rule_id: u8,
-    /// Subtrahend δ when [`wire_rice_low_bits_rule_id`] is [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`].
+    /// Subtrahend δ when [`Self::wire_rice_low_bits_rule_id`] is [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`].
     pub wire_rice_low_bits_delta: u8,
 }
 

@@ -22,11 +22,7 @@ pub fn cap_rice_low_bits(cap: u128) -> u32 {
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `rule_id` is unsupported.
-pub fn wire_rice_low_bits_from_rule(
-    cap: u128,
-    rule_id: u8,
-    delta: u8,
-) -> Result<u32, AkitaError> {
+pub fn wire_rice_low_bits_from_rule(cap: u128, rule_id: u8, delta: u8) -> Result<u32, AkitaError> {
     match rule_id {
         WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA => {
             Ok(cap_rice_low_bits(cap).saturating_sub(u32::from(delta)))
@@ -102,14 +98,9 @@ mod tests {
             for n in [-cap_i64, -1, 0, 1, cap_i64] {
                 let encoded =
                     golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
-                let decoded = golomb_rice_decode_vec(
-                    &encoded,
-                    1,
-                    rice_low_bits,
-                    zigzag_w,
-                    max_quotient,
-                )
-                .expect("decode");
+                let decoded =
+                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient)
+                        .expect("decode");
                 assert_eq!(decoded, [n], "cap={cap} n={n}");
             }
         }
