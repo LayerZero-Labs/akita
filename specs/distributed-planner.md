@@ -22,7 +22,7 @@ and $\widehat t$ plus a **full-size** $\widehat z$, with a shared $r$-tail.
 The planner today assumes the opposite everywhere: one $\widehat z$ segment
 (`ComponentMajor`), and witness width computed by
 [`w_ring_element_count_with_counts_for_layout_bits`](../crates/akita-types/src/schedule.rs)
-with `num_public_rows = 1`. Distributed proving therefore **mis-prices** fold
+with `num_public_rows = 1`. Distributed proving therefore **misprices** fold
 schedules: `next_w_len`, sum-check round counts, terminal tail sizing, and
 optimal fold depth are all wrong once $W > 1$.
 
