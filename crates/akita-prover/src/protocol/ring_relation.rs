@@ -540,7 +540,6 @@ impl RingRelationProver {
             #[cfg(feature = "zk")]
             absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
         }
-        let terminal = fold_grind::FoldGrindTerminal::from_tail_t_vectors(terminal_tail_t_vectors);
         let (z_folded_rings, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
@@ -549,7 +548,7 @@ impl RingRelationProver {
                 &polys,
                 &lp,
                 num_claims,
-                terminal,
+                terminal_tail_t_vectors,
             )?;
 
         // Terminal levels drop the D-block from M entirely, so `y` must

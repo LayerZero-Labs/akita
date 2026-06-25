@@ -232,11 +232,8 @@ pub struct ZFoldEncodingStats {
     pub p90_abs: u64,
     pub p99_abs: u64,
     pub zigzag_w: u32,
-    /// Cap-derived Rice low-bit width (`rice_low_bits_for_cap(cap)`); planner/audit reference.
     pub rice_low_bits_cap: u32,
-    /// Wire Rice low-bit width ([`crate::tail_golomb_rice_low_bits::wire_rice_low_bits`]).
     pub rice_low_bits_wire: u32,
-    /// Witness-sample optimal low-bit width (profiling only; not public).
     pub rice_low_bits_sample: u32,
     pub bits_per_coord_at_cap: f64,
     pub bits_per_coord_at_wire: f64,
@@ -379,18 +376,29 @@ pub fn golomb_rice_total_wire_bits(
 }
 
 /// Whether every coefficient lies in `[-cap, cap]`.
-pub fn golomb_rice_values_admissible_at_wire(
-    values: &[i64],
-    cap: u128,
-    _rice_low_bits: u32,
-    _zigzag_w: u32,
-) -> Result<(), AkitaError> {
+pub fn golomb_rice_values_within_cap(values: &[i64], cap: u128) -> Result<(), AkitaError> {
     for &n in values {
         if i128::from(n).unsigned_abs() > cap {
             return Err(AkitaError::InvalidProof);
         }
     }
     Ok(())
+}
+
+fn terminal_z_wire_rice_params(cap: u128) -> Result<(u32, u32), AkitaError> {
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let rice_low_bits = wire_rice_low_bits_from_rule(
+        cap,
+        binding.wire_rice_low_bits_rule_id,
+        binding.wire_rice_low_bits_delta,
+    )?;
+    Ok((rice_low_bits, golomb_rice_zigzag_width(cap)))
+}
+
+fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
+    rows.iter()
+        .flat_map(|row| row.iter().map(|&n| i64::from(n)))
+        .collect()
 }
 
 /// Whether total wire bits fit the planner budget (`cap_rice_low_bits + 2` per coord).
@@ -424,20 +432,7 @@ pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
             "golomb-rice encodability check at zero cap".to_string(),
         ));
     }
-    let binding = FoldLinfProtocolBinding::CURRENT;
-    let rice_low_bits = wire_rice_low_bits_from_rule(
-        cap,
-        binding.wire_rice_low_bits_rule_id,
-        binding.wire_rice_low_bits_delta,
-    )?;
-    let zigzag_w = golomb_rice_zigzag_width(cap);
-    let mut values = Vec::with_capacity(rows.len().saturating_mul(D));
-    for row in rows {
-        for &n in row {
-            values.push(i64::from(n));
-        }
-    }
-    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w).map_err(|_| {
+    golomb_rice_values_within_cap(&centered_rows_to_i64(rows), cap).map_err(|_| {
         AkitaError::InvalidInput(format!("centered coefficient exceeds fold cap {cap}"))
     })
 }
@@ -448,19 +443,8 @@ pub fn golomb_rice_rows_admit_terminal_wire<const D: usize>(
     cap: u128,
 ) -> Result<(), AkitaError> {
     golomb_rice_rows_encodable_at_wire_low_bits(rows, cap)?;
-    let binding = FoldLinfProtocolBinding::CURRENT;
-    let rice_low_bits = wire_rice_low_bits_from_rule(
-        cap,
-        binding.wire_rice_low_bits_rule_id,
-        binding.wire_rice_low_bits_delta,
-    )?;
-    let zigzag_w = golomb_rice_zigzag_width(cap);
-    let mut values = Vec::with_capacity(rows.len().saturating_mul(D));
-    for row in rows {
-        for &n in row {
-            values.push(i64::from(n));
-        }
-    }
+    let values = centered_rows_to_i64(rows);
+    let (rice_low_bits, zigzag_w) = terminal_z_wire_rice_params(cap)?;
     golomb_rice_values_fit_planner_wire_budget(&values, cap, rice_low_bits, zigzag_w)
 }
 

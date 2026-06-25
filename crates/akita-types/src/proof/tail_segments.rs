@@ -13,7 +13,7 @@ use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
     golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_total_wire_bits, golomb_rice_values_admissible_at_wire, golomb_rice_zigzag_width,
+    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
     tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
@@ -479,7 +479,7 @@ pub fn decode_terminal_z_golomb_payload(
     let zigzag_w = golomb_rice_zigzag_width(cap);
     let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
     let values = golomb_rice_decode_vec(payload, z_coords, rice_low_bits, zigzag_w, max_quotient)?;
-    golomb_rice_values_admissible_at_wire(&values, cap, rice_low_bits, zigzag_w)?;
+    golomb_rice_values_within_cap(&values, cap)?;
     if let Some(budget_bytes) = budget_bytes {
         if payload.len() > budget_bytes {
             return Err(AkitaError::InvalidProof);
@@ -837,11 +837,6 @@ where
     Ok(witness)
 }
 
-/// Pad a segment witness `z` bitstream to the schedule-bound byte length.
-///
-/// # Errors
-///
-/// Returns an error when the encoded `z` payload exceeds the schedule budget.
 /// Check a segment witness `z` payload against the schedule-bound byte budget and public
 /// Golomb admissibility.
 ///
