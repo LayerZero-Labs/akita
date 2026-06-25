@@ -1,12 +1,19 @@
 //! Pure protocol description for the Akita sumcheck stack.
 //!
 //! This crate holds only protocol *description*: the concrete identifier types,
-//! the per-stage formula constructors that build concrete sumcheck descriptors,
+//! per-level-stage formula constructors that build concrete sumcheck descriptors,
 //! and the per-level protocol plan (instances, batching, carried openings, and
 //! the transcript schedule) with its feature gates. Every building block (the
 //! `Source`/`Term`/`Expr`/`SumcheckInstanceDescriptor` algebra and the generic
 //! descriptor evaluator) is imported from `akita-sumcheck`; this crate holds no
 //! engine code.
+//!
+//! **Vocabulary:** use named **level stages** (norm, fold, setup), not stage
+//! numbers. A norm stage contains **norm tree nodes** (each an eq-factored
+//! sumcheck; legacy `AkitaStage1Proof::stages` becomes `::nodes`).
+//! [`plan::StagePlan`] is a **scheduled sumcheck batch**, not a level stage.
+//! See [`naming`] and
+//! `specs/akita-sumcheck-level-naming.md`.
 //!
 //! The same description is consumed by both sides of the protocol. The verifier
 //! evaluates a stage descriptor via the panic-free
@@ -19,6 +26,7 @@
 //! Verifier-reachable: every entry point here is fallible and panic-free.
 
 pub mod ids;
+pub mod naming;
 pub mod plan;
 pub mod stage2;
 

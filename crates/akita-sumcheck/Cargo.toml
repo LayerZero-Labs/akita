@@ -20,6 +20,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+akita-witness = { version = "0.1.0", path = "../akita-witness" }
 tracing = "0.1"
 
 [features]

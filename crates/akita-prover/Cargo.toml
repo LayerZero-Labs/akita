@@ -20,6 +20,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-protocol = { version = "0.1.0", path = "../akita-protocol" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
@@ -33,6 +34,7 @@ sha3 = "0.10.8"
 tracing = "0.1"
 
 [dev-dependencies]
+akita-witness = { version = "0.1.0", path = "../akita-witness" }
 rand = "0.8"
 
 [features]

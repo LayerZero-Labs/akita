@@ -5,6 +5,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
+use akita_protocol::ids::{AkitaChallengeId, AkitaOpeningId, AkitaPublicId};
+use akita_protocol::{stage2_descriptor, LevelRole};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
@@ -201,6 +203,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
+    level_role: LevelRole,
     trace: Option<TraceClaim<F, E, D>>,
     _marker: PhantomData<([F; D], E)>,
 }
@@ -232,6 +235,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
+        level_role: LevelRole,
         trace: Option<TraceClaim<F, E, D>>,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
@@ -278,6 +282,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
+            level_role,
             trace,
             _marker: PhantomData,
         })
@@ -309,6 +314,40 @@ where
             self.setup_claim,
         )
     }
+
+    fn expected_output_from_descriptor(&self, challenges: &[E]) -> Result<E, AkitaError> {
+        let descriptor = stage2_descriptor(self.num_rounds(), self.level_role);
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+
+        descriptor.try_evaluate(
+            |opening| match opening {
+                AkitaOpeningId::Witness => self.witness_eval(challenges),
+            },
+            |challenge| match challenge {
+                AkitaChallengeId::BatchingCoeff => Ok(self.batching_coeff),
+            },
+            |public| match public {
+                AkitaPublicId::EqStage1Point => EqPolynomial::mle(&self.stage1_point, challenges),
+                AkitaPublicId::Alpha => multilinear_eval(&self.alpha_evals_y, y_challenges),
+                AkitaPublicId::RelationRow => self.row_eval(x_challenges),
+            },
+        )
+    }
+
+    fn trace_oracle_at(&self, challenges: &[E]) -> Result<E, AkitaError> {
+        let Some(trace) = &self.trace else {
+            return Ok(E::zero());
+        };
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let w_eval = self.witness_eval(challenges)?;
+        let trace_weight = eval_trace_terms_closed::<F, E, D>(
+            &trace.layout,
+            y_challenges,
+            x_challenges,
+            &trace.trace_terms,
+        )?;
+        Ok(trace.trace_coeff * w_eval * trace_weight)
+    }
 }
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
@@ -334,39 +373,10 @@ where
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        let w_eval = {
-            let _span = tracing::info_span!("stage2_witness_eval").entered();
-            self.witness_eval(challenges)?
-        };
-
-        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let row_val = {
-            let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
-            self.row_eval(x_challenges)?
-        };
-        let relation_oracle = w_eval * alpha_val * row_val;
-        let trace_oracle = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.trace_terms,
-            )?;
-            trace.trace_coeff * w_eval * trace_weight
-        } else {
-            E::zero()
-        };
-
-        // Terminal levels run with `batching_coeff = 0`, which zeros the
-        // virtual half regardless of `stage1_point` / `w_eval`. Skip the
-        // EqPolynomial eval and the `w * (w + 1)` round in that case.
-        if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle + trace_oracle);
-        }
-        let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
-        let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
+        let _span = tracing::info_span!("stage2_descriptor_eval").entered();
+        let fused = self.expected_output_from_descriptor(challenges)?;
+        let trace_oracle = self.trace_oracle_at(challenges)?;
+        Ok(fused + trace_oracle)
     }
 }
 
@@ -457,11 +467,13 @@ where
 mod tests {
     use super::{cleartext_source_eval, Stage2CleartextSource};
     use akita_field::{AkitaError, FieldCore};
-    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
+    use akita_field::{FpExt2, NegOneNr, Prime128OffsetA7F7};
+    use akita_protocol::ids::AkitaPublicId;
+    use akita_protocol::{stage2_descriptor, LevelRole};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
-    type F = Prime128Offset275;
+    type F = Prime128OffsetA7F7;
     type E = FpExt2<F, NegOneNr>;
     const D: usize = 4;
 
@@ -598,5 +610,53 @@ mod tests {
         let err = cleartext_source_eval::<F, E, D>(4, &source, &challenges, 1, 1)
             .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn terminal_descriptor_evaluates_relation_only_without_virtual_sources() {
+        let descriptor = stage2_descriptor(3, LevelRole::Terminal);
+        let got = descriptor
+            .try_evaluate(
+                |_opening| Ok(F::from_u64(7)),
+                |_challenge| {
+                    Err(AkitaError::InvalidInput(
+                        "batching coeff must not resolve at terminal".to_string(),
+                    ))
+                },
+                |public| match public {
+                    AkitaPublicId::EqStage1Point => Err(AkitaError::InvalidInput(
+                        "eq must not resolve at terminal".to_string(),
+                    )),
+                    AkitaPublicId::Alpha => Ok(F::from_u64(11)),
+                    AkitaPublicId::RelationRow => Ok(F::from_u64(13)),
+                },
+            )
+            .expect("relation-only summand resolves");
+        assert_eq!(got, F::from_u64(7) * F::from_u64(11) * F::from_u64(13));
+    }
+
+    #[test]
+    fn intermediate_descriptor_matches_legacy_fused_equation() {
+        let gamma = F::from_u64(17);
+        let w = F::from_u64(7);
+        let eq = F::from_u64(11);
+        let alpha = F::from_u64(13);
+        let row = F::from_u64(19);
+
+        let descriptor = stage2_descriptor(3, LevelRole::Intermediate);
+        let via_descriptor = descriptor
+            .try_evaluate(
+                |_opening| Ok(w),
+                |_challenge| Ok(gamma),
+                |public| match public {
+                    AkitaPublicId::EqStage1Point => Ok(eq),
+                    AkitaPublicId::Alpha => Ok(alpha),
+                    AkitaPublicId::RelationRow => Ok(row),
+                },
+            )
+            .expect("fused descriptor resolves");
+
+        let legacy = gamma * eq * w * (w + F::one()) + w * alpha * row;
+        assert_eq!(via_descriptor, legacy);
     }
 }

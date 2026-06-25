@@ -3,8 +3,8 @@
 //! A [`WitnessProvider`] resolves an opening identifier to a borrowed
 //! [`PolynomialView`]. It is the single seam where a sumcheck descriptor's
 //! `Source::Opening(id)` becomes a concrete witness table on the prover side:
-//! the Tier-A kernel reads the resulting view while walking the declared
-//! expression. Resolution is fallible so unknown openings or malformed backing
+//! [`SumcheckEngine`] reads the resulting view while evaluating the declared
+//! summand. Resolution is fallible so unknown openings or malformed backing
 //! tables are rejected with [`AkitaError`] instead of panicking.
 
 use akita_field::{AkitaError, FieldCore};
@@ -37,9 +37,9 @@ pub trait WitnessProvider<F: FieldCore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp64;
+    use akita_field::Prime128OffsetA7F7;
 
-    type F = Fp64<4294967197>;
+    type F = Prime128OffsetA7F7;
 
     struct PairProvider {
         left: Vec<F>,

@@ -97,8 +97,8 @@ pub fn stage2_summand(role: LevelRole) -> AkitaSummand {
 
 /// Whether `descriptor` is the fused intermediate stage-2 instance.
 ///
-/// Optimized stage-2 provers use this predicate to confirm a descriptor matches
-/// the intermediate fused shape before taking a hand-tuned code path.
+/// [`OptimizedProverRegistry`](akita_sumcheck::OptimizedProverRegistry) uses this
+/// to select `AkitaStage2Prover` without re-deriving the summand shape.
 pub fn matches_stage2_intermediate_descriptor(descriptor: &AkitaSumcheckDescriptor) -> bool {
     descriptor.label == "stage2-fused-virtual-relation"
         && descriptor.degree == 3
@@ -135,9 +135,9 @@ pub fn stage2_descriptor(num_rounds: usize, role: LevelRole) -> AkitaSumcheckDes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, Prime64Offset59};
+    use akita_field::{AkitaError, Prime128OffsetA7F7};
 
-    type F = Prime64Offset59;
+    type F = Prime128OffsetA7F7;
 
     fn f(v: u64) -> F {
         F::from_u64(v)

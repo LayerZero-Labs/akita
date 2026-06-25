@@ -1,6 +1,7 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
+use akita_protocol::LevelRole;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
@@ -479,6 +480,10 @@ where
             mask: zk_ext_mask_lc_at::<F, E>(stage2_next_w_eval_mask_cursor),
         },
     };
+    let level_role = match stage2 {
+        AkitaStage2Proof::Terminal(_) => LevelRole::Terminal,
+        AkitaStage2Proof::Intermediate(_) => LevelRole::Intermediate,
+    };
     let stage2_verifier = AkitaStage2Verifier::new(
         stage1.batching_coeff,
         stage1.s_claim,
@@ -500,6 +505,7 @@ where
         rs.alpha,
         rs.col_bits,
         rs.ring_bits,
+        level_role,
         trace,
     )?;
 

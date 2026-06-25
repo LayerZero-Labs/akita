@@ -1,7 +1,7 @@
-//! Sumcheck proof driver functions.
+//! Sumcheck proof driver traits and verifier replay.
 //!
-//! Contains the generic prove/verify loops for standard and eq-factored
-//! sumchecks.
+//! Clear prove loops live in [`crate::sink`]; these extensions delegate there
+//! and retain verify-side replay plus ZK masked prove paths.
 
 mod eq_factored;
 mod standard;

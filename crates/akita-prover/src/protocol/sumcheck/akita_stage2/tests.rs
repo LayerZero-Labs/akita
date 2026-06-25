@@ -2,11 +2,11 @@ mod trace_prefix;
 
 use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
-use akita_field::Prime128Offset275;
+use akita_field::Prime128OffsetA7F7;
 use akita_sumcheck::multilinear_eval;
 use akita_types::{TraceSparseColumn, TraceTable};
 
-type F = Prime128Offset275;
+type F = Prime128OffsetA7F7;
 
 #[derive(Clone, Copy)]
 pub(super) struct Stage2Params<'a> {
@@ -968,3 +968,13 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     assert_eq!(prefix_claim, padded_claim);
     assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
 }
+
+#[path = "descriptor_engine_equivalence.rs"]
+mod descriptor_engine_equivalence;
+
+#[path = "pilot_byte_equality.rs"]
+mod pilot_byte_equality;
+
+#[cfg(feature = "logging-transcript")]
+#[path = "pilot_logging_transcript.rs"]
+mod pilot_logging_transcript;
