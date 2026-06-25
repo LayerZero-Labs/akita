@@ -182,11 +182,8 @@ impl SetupContributionFixture {
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        // û_concat witness segment (tiered only): `num_points · f_stride` planes
-        // placed between `t` and `z`. For single-tier `u_len == 0` and the layout
-        // is unchanged.
+        // û_concat witness segment (tiered only): `num_points · f_stride` planes after `t`.
         let u_len = if tiered { num_points * f_stride } else { 0 };
-        // Fixed z-first witness column order: z ‖ e ‖ t ‖ [û_concat] ‖ r.
         let offset_z = 0usize;
         let offset_e = z_len;
         let offset_t = z_len + e_len;

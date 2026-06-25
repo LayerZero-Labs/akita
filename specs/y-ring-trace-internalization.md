@@ -296,7 +296,7 @@ target.
 - Changing the extension-opening reduction partials or its degree-two sum-check. However, `K > 1` implementation must still redesign the EOR final binding, because the verifier currently recovers the EOR output from on-wire `y_ring`.
 - The zero-fold (`AkitaBatchedRootProof::ZeroFold`) fast path, which sends no `y_ring`.
 - Committing `y_ring` explicitly (the "commit the ring element" framing). That variant is recorded under Alternatives Considered and is deliberately not the chosen design.
-- The witness column ordering. **Resolved by `specs/remove-z-first.md`:** the adaptive `z_first` knob has been removed and the witness now always uses the fixed z-first column order (`ẑ` first), so this work neither depends on nor changes the ordering. Removing `y_ring` only drops a materialized *row* family (no column-alignment constraint), and the fused trace term reuses the same offset/carry treatment on the `e_hat` column segment.
+- The witness column ordering. The adaptive `z_first` knob has been removed; the witness always uses the fixed z-first column order (`ẑ` first), so this work neither depends on nor changes the ordering. Removing `y_ring` only drops a materialized *row* family (no column-alignment constraint), and the fused trace term reuses the same offset/carry treatment on the `e_hat` column segment.
 - Any change to setup, SIS sizing, or the security floor.
 
 ## Evaluation

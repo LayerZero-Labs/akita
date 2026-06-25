@@ -404,8 +404,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         offset_t: usize,
         offset_z: usize,
         offset_u: usize,
-        // Optional precomputed high-eq window tables (relative to the segment's high
-        // offset): `eq_hi_e[k] == eq_high(e_offset_high + k)` and likewise for `t`.
         eq_hi_e: Option<&[E]>,
         eq_hi_t: Option<&[E]>,
     ) -> Result<Self, AkitaError>

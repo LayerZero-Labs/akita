@@ -499,7 +499,6 @@ where
         })
         .collect();
 
-    // Fixed z-first segment order: z ‖ w ‖ t ‖ u ‖ [b_zk] ‖ [d_zk] ‖ r_tail.
     out.extend(z_segment);
     out.extend(w_segment);
     out.extend(t_segment);

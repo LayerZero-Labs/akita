@@ -304,7 +304,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
-    /// Canonical segment bytes in fixed z-first wire order (`z ‖ e ‖ t ‖ r`).
+    /// Canonical segment bytes in wire order (`z ‖ e ‖ t ‖ r`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.append_wire_segments(&mut out, Compress::No)

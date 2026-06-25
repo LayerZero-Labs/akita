@@ -237,8 +237,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 
 /// Build the committed witness polynomial from ring-domain digit planes.
 ///
-/// Emits field-domain coefficients in digit-major order (block index innermost)
-/// with the fixed z-first segment ordering:
+/// Emits field-domain coefficients in digit-major order (block index innermost):
 /// z-hat, e-hat + t-hat, û_concat, blinding, r-hat.
 ///
 /// Within each segment, the power-of-2 block index is the fastest-varying
