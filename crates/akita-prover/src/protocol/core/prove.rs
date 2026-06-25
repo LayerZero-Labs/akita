@@ -343,7 +343,7 @@ where
             schedule,
             &root_scheduled.params,
             opening_batch.num_vars(),
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             1,
         )?;
     #[cfg(feature = "zk")]

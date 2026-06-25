@@ -20,10 +20,9 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape, terminal_fold_segment_counts,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, Step,
+    terminal_direct_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -268,7 +267,6 @@ fn derive_candidate_level_params(
             &candidate_params,
             1,
             1,
-            1,
             MRowLayout::WithDBlock,
         )?
         .checked_mul(policy.ring_dimension)
@@ -276,7 +274,6 @@ fn derive_candidate_level_params(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             MRowLayout::WithoutDBlock,
@@ -326,7 +323,7 @@ fn extension_opening_reduction_level_bytes(
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
-        (width.saturating_mul(key.num_w_vectors), key.num_vars)
+        (width.saturating_mul(key.num_polynomials), key.num_vars)
     } else {
         (width, padded_boolean_vars(current_w_len)?)
     };
@@ -378,15 +375,11 @@ impl SuffixResult {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_terminal_direct_step(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_public_rows: usize,
-    num_segments: usize,
+    num_polynomials: usize,
     terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
     let witness_shape = terminal_direct_witness_shape(
@@ -394,10 +387,7 @@ fn make_terminal_direct_step(
         field_bits,
         current_w_len,
         terminal_log_basis,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_segments,
+        num_polynomials,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -416,16 +406,17 @@ fn terminal_direct_suffix_cost(
     terminal_fold_level: usize,
     terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
-        terminal_fold_segment_counts(key, terminal_fold_level);
+    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
+    let num_polynomials = if terminal_fold_level == 0 {
+        key.num_polynomials
+    } else {
+        1
+    };
     let direct = make_terminal_direct_step(
         current_w_len,
         terminal_lp,
         field_bits,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_segments,
+        num_polynomials,
         terminal_log_basis,
     )?;
     let direct_bytes = direct.direct_bytes;
@@ -847,15 +838,7 @@ fn find_schedule_inner(
         key,
     };
 
-    let t_vectors = key.num_t_vectors;
-    let z_vectors = key.num_z_vectors;
-    if policy.tiered && z_vectors != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
-    }
-    key.validate_scalar_root_batch()?;
+    key.validate()?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -870,8 +853,8 @@ fn find_schedule_inner(
         level: 0,
         current_w_len: witness_len,
     });
-    // The level-0 fold-challenge shape and the `num_claims = t_vectors` batch
-    // factor are folded directly into the committed B/D widths, so a table
+    // The level-0 fold-challenge shape and the `num_claims = num_polynomials`
+    // batch factor are folded directly into the committed B/D widths, so a table
     // miss reproduces the exact root commit layout the table-hit expansion
     // (`expand_to_level_params`) builds — no separate per-claim-then-scale
     // pass. `Ok(None)` is the uncommittable (large-`num_vars`) edge.
@@ -881,7 +864,7 @@ fn find_schedule_inner(
         key.num_vars,
         policy.decomposition.log_basis,
         fold_challenge_shape,
-        t_vectors,
+        key.num_polynomials,
     )?;
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: witness_len,
@@ -941,7 +924,7 @@ fn find_schedule_inner(
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
                 r_vars,
-                t_vectors,
+                key.num_polynomials,
                 width_s as u64,
             ) else {
                 continue;
@@ -951,7 +934,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(width_t) =
-                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, t_vectors)
+                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials)
             else {
                 continue;
             };
@@ -962,7 +945,8 @@ fn find_schedule_inner(
             let Some(norm_w) = rounded_up_collision_norm_w(family, d, candidate_log_basis) else {
                 continue;
             };
-            let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, t_vectors)
+            let Some(width_w) =
+                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials)
             else {
                 continue;
             };
@@ -1014,7 +998,7 @@ fn find_schedule_inner(
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
             }
-            .with_fold_linf_cap_config(field_bits, key.num_t_vectors) else {
+            .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
                 continue;
             };
 
@@ -1022,9 +1006,8 @@ fn find_schedule_inner(
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    key.num_t_vectors,
-                    key.num_w_vectors,
-                    key.num_z_vectors,
+                    key.num_polynomials,
+                    1,
                     layout,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
@@ -1082,7 +1065,7 @@ fn find_schedule_inner(
                     &candidate_params,
                     None,
                     next_w_len_terminal,
-                    z_vectors,
+                    1,
                     MRowLayout::WithoutDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
@@ -1107,7 +1090,7 @@ fn find_schedule_inner(
                     &candidate_params,
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
-                    z_vectors,
+                    1,
                     MRowLayout::WithDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;

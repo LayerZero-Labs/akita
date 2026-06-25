@@ -95,13 +95,13 @@ impl PointVariableSelection {
 pub struct OpeningGroupShape {
     /// Coordinates of [`OpeningBatchShape::num_vars`] used by this group.
     pub point_vars: PointVariableSelection,
-    /// Number of polynomial openings in this group.
-    pub num_claims: usize,
+    /// Polynomials opened in this commitment group.
+    pub num_polynomials: usize,
 }
 
 impl OpeningGroupShape {
     fn check(&self, point_len: usize) -> Result<(), AkitaError> {
-        if self.num_claims == 0 {
+        if self.num_polynomials == 0 {
             return Err(AkitaError::InvalidProof);
         }
         self.point_vars.check(point_len)
@@ -146,7 +146,7 @@ impl OpeningBatchShape {
             }
             groups.push(OpeningGroupShape {
                 point_vars: PointVariableSelection::prefix(num_vars, num_vars)?,
-                num_claims: group_size,
+                num_polynomials: group_size,
             });
         }
         let shape = Self { num_vars, groups };
@@ -166,7 +166,7 @@ impl OpeningBatchShape {
 
     /// Validate that routing and count tables are internally consistent.
     pub fn check(&self) -> Result<(), AkitaError> {
-        if self.groups.is_empty() || self.num_claims() == 0 {
+        if self.groups.is_empty() || self.num_polynomials() == 0 {
             return Err(AkitaError::InvalidProof);
         }
         for group in &self.groups {
@@ -185,11 +185,6 @@ impl OpeningBatchShape {
         &self.groups
     }
 
-    /// Number of individual claimed openings.
-    pub fn num_claims(&self) -> usize {
-        self.groups.iter().map(|group| group.num_claims).sum()
-    }
-
     /// Number of commitment groups represented by the batch.
     pub fn num_commitment_groups(&self) -> usize {
         self.groups.len()
@@ -197,12 +192,15 @@ impl OpeningBatchShape {
 
     /// Number of polynomials committed in each commitment group.
     pub fn num_polys_per_commitment_group(&self) -> Vec<usize> {
-        self.groups.iter().map(|group| group.num_claims).collect()
+        self.groups
+            .iter()
+            .map(|group| group.num_polynomials)
+            .collect()
     }
 
-    /// Total number of committed polynomials addressed by the batch.
+    /// Total number of polynomials opened across all commitment groups.
     pub fn num_polynomials(&self) -> usize {
-        self.num_claims()
+        self.groups.iter().map(|group| group.num_polynomials).sum()
     }
     /// Absorb normalized opening-batch shape and routing into the transcript.
     pub fn append_to_transcript<F, T>(&self, transcript: &mut T) -> Result<(), AkitaError>
@@ -213,10 +211,10 @@ impl OpeningBatchShape {
         self.check()?;
 
         transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_claims());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_polynomials());
         transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_commitment_groups());
         for group in self.groups() {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_claims);
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials);
             transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars.num_vars());
             for &index in group.point_vars.indices() {
                 transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
@@ -240,8 +238,8 @@ pub struct CommitmentGroup<F, C = ()> {
 pub struct OpeningBatchLimits {
     /// Maximum supported number of variables in the shared opening point.
     pub max_num_vars: usize,
-    /// Maximum supported number of claimed openings.
-    pub max_num_claims: usize,
+    /// Maximum supported number of opened polynomials.
+    pub max_num_polynomials: usize,
 }
 
 /// Verifier-side shared opening point plus public claims and commitments.
@@ -260,7 +258,7 @@ impl<'a, F: FieldCore> VerifierOpeningBatch<'a, F, ()> {
     pub fn with_padded_point(
         point: &[F],
         num_vars: usize,
-        num_claims: usize,
+        num_polynomials: usize,
     ) -> Result<Self, AkitaError> {
         if point.len() > num_vars {
             return Err(AkitaError::InvalidPointDimension {
@@ -268,7 +266,7 @@ impl<'a, F: FieldCore> VerifierOpeningBatch<'a, F, ()> {
                 actual: point.len(),
             });
         }
-        if num_claims == 0 {
+        if num_polynomials == 0 {
             return Err(AkitaError::InvalidInput(
                 "opening batch commitment groups must be nonempty".to_string(),
             ));
@@ -279,7 +277,7 @@ impl<'a, F: FieldCore> VerifierOpeningBatch<'a, F, ()> {
         Self::from_groups(
             padded_point,
             vec![CommitmentGroup {
-                claims: vec![F::zero(); num_claims],
+                claims: vec![F::zero(); num_polynomials],
                 commitment: (),
             }],
         )
@@ -331,11 +329,11 @@ impl<'a, F: Clone, C> VerifierOpeningBatch<'a, F, C> {
                 actual: self.point.as_ref().len(),
             });
         }
-        let num_claims = self.num_claims();
-        if num_claims > limits.max_num_claims {
+        let num_polynomials = self.num_polynomials();
+        if num_polynomials > limits.max_num_polynomials {
             return Err(AkitaError::InvalidSize {
-                expected: limits.max_num_claims,
-                actual: num_claims,
+                expected: limits.max_num_polynomials,
+                actual: num_polynomials,
             });
         }
         self.check()?;
@@ -407,7 +405,7 @@ impl<'a, F: Clone, C> VerifierOpeningBatch<'a, F, C> {
             if group.claims.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            if group.claims.len() != shape.num_claims {
+            if group.claims.len() != shape.num_polynomials {
                 return Err(AkitaError::InvalidProof);
             }
         }
@@ -417,11 +415,6 @@ impl<'a, F: Clone, C> VerifierOpeningBatch<'a, F, C> {
     /// Number of variables in the shared padded opening point.
     pub fn num_vars(&self) -> usize {
         self.shape.num_vars()
-    }
-
-    /// Number of individual claimed openings.
-    pub fn num_claims(&self) -> usize {
-        self.shape.num_claims()
     }
 
     /// Number of commitment groups represented by the batch.
@@ -434,9 +427,9 @@ impl<'a, F: Clone, C> VerifierOpeningBatch<'a, F, C> {
         self.shape.num_polys_per_commitment_group()
     }
 
-    /// Total number of committed polynomials addressed by the batch.
+    /// Total number of polynomials opened across all commitment groups.
     pub fn num_polynomials(&self) -> usize {
-        self.num_claims()
+        self.shape.num_polynomials()
     }
 }
 
@@ -451,10 +444,10 @@ where
     T: Transcript<F>,
 {
     shape.check()?;
-    if shape.num_claims() == 1 {
+    if shape.num_polynomials() == 1 {
         return Ok(vec![L::one()]);
     }
-    Ok((0..shape.num_claims())
+    Ok((0..shape.num_polynomials())
         .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_EVAL_BATCH))
         .collect())
 }
@@ -468,15 +461,15 @@ pub fn batched_eval_target_from_opening_batch<E>(
 where
     E: FieldCore,
 {
-    if row_coefficients.len() != shape.num_claims() {
+    if row_coefficients.len() != shape.num_polynomials() {
         return Err(AkitaError::InvalidSize {
-            expected: shape.num_claims(),
+            expected: shape.num_polynomials(),
             actual: row_coefficients.len(),
         });
     }
-    if openings.len() != shape.num_claims() {
+    if openings.len() != shape.num_polynomials() {
         return Err(AkitaError::InvalidSize {
-            expected: shape.num_claims(),
+            expected: shape.num_polynomials(),
             actual: openings.len(),
         });
     }
@@ -498,7 +491,7 @@ mod tests {
     fn generous_limits() -> OpeningBatchLimits {
         OpeningBatchLimits {
             max_num_vars: 8,
-            max_num_claims: 16,
+            max_num_polynomials: 16,
         }
     }
 
@@ -516,7 +509,7 @@ mod tests {
         let summary = batch.validate(generous_limits()).expect("valid shape");
 
         assert_eq!(summary.num_vars(), 2);
-        assert_eq!(summary.num_claims(), 2);
+        assert_eq!(summary.num_polynomials(), 2);
         assert_eq!(summary.num_commitment_groups(), 1);
         assert_eq!(summary.num_polys_per_commitment_group(), vec![2]);
         assert_eq!(summary.groups[0].point_vars.indices(), &[0, 1]);
@@ -529,8 +522,8 @@ mod tests {
 
         assert_eq!(batch.num_commitment_groups(), 2);
         assert_eq!(batch.num_polys_per_commitment_group(), vec![1, 2]);
-        assert_eq!(batch.groups[0].num_claims, 1);
-        assert_eq!(batch.groups[1].num_claims, 2);
+        assert_eq!(batch.groups[0].num_polynomials, 1);
+        assert_eq!(batch.groups[1].num_polynomials, 2);
     }
 
     #[test]
@@ -539,7 +532,7 @@ mod tests {
 
         assert_eq!(batch.num_commitment_groups(), 1);
         assert_eq!(batch.num_polys_per_commitment_group(), vec![2]);
-        assert_eq!(batch.groups[0].num_claims, 2);
+        assert_eq!(batch.groups[0].num_polynomials, 2);
     }
 
     #[test]
@@ -549,7 +542,7 @@ mod tests {
             3,
             vec![OpeningGroupShape {
                 point_vars: selection,
-                num_claims: 1,
+                num_polynomials: 1,
             }],
         )
         .expect("valid custom shape");
@@ -588,7 +581,7 @@ mod tests {
             2,
             vec![OpeningGroupShape {
                 point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward vars"),
-                num_claims: 1,
+                num_polynomials: 1,
             }],
         )
         .expect("forward shape");
@@ -606,7 +599,7 @@ mod tests {
             2,
             vec![OpeningGroupShape {
                 point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped vars"),
-                num_claims: 1,
+                num_polynomials: 1,
             }],
         )
         .expect("swapped shape");

@@ -73,7 +73,7 @@ where
 {
     let num_trace_blocks = instance
         .opening_batch()
-        .num_claims()
+        .num_polynomials()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
@@ -219,7 +219,7 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_claims() == 1 {
+        if opening_batch.num_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
@@ -244,7 +244,7 @@ where
         .map_or(trace_eval_target, |reduction| reduction.final_claim_public);
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_claims()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -292,6 +292,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     basis: BasisMode,
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -368,6 +369,7 @@ where
                 #[cfg(feature = "zk")]
                 zk_hiding,
                 m_row_layout,
+                terminal_tail_t_vectors,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -406,6 +408,7 @@ where
                     #[cfg(feature = "zk")]
                     zk_hiding,
                     m_row_layout,
+                    terminal_tail_t_vectors,
                 },
             )
         }
@@ -430,6 +433,7 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
             m_row_layout,
+            terminal_tail_t_vectors,
         })
     }
 }
@@ -462,6 +466,7 @@ where
     #[cfg(feature = "zk")]
     zk_hiding: ZkHidingProverState<F>,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -506,6 +511,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
         m_row_layout,
+        terminal_tail_t_vectors,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -557,6 +563,7 @@ where
         transcript,
         row_coefficient_rings,
         m_row_layout,
+        terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {
@@ -1021,7 +1028,12 @@ where
                         "segment-typed witness layout does not match schedule".to_string(),
                     ));
                 }
-                validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
+                validate_segment_typed_z_payload(
+                    &segment,
+                    lp,
+                    num_t_vectors,
+                    scheduled_shape.z_payload_bytes,
+                )?;
                 let parts = segment.terminal_transcript_parts()?;
                 transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
                 return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
@@ -1039,7 +1051,7 @@ where
                 ));
             let terminal_layout = terminal_witness_segment_layout(
                 lp,
-                instance.opening_batch().num_claims(),
+                instance.opening_batch().num_polynomials(),
                 1,
                 F::modulus_bits(),
             )?;

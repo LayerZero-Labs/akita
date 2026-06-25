@@ -306,7 +306,7 @@ mod tests {
                 max_zk_b_len: level_params
                     .b_key
                     .row_len()
-                    .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+                    .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
                         level_params.b_key.row_len(),
                         D,
                         level_params.log_basis,

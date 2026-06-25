@@ -120,13 +120,13 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
 
     #[cfg(feature = "zk")]
     {
-        let d_blinding_count = crate::zk::blinding_column_count_from_bits(
+        let d_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
             lp.d_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,
             field_bits as usize,
         );
-        let b_blinding_count = crate::zk::blinding_column_count_from_bits(
+        let b_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,

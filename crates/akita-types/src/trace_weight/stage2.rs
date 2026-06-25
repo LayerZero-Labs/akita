@@ -190,16 +190,16 @@ struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
 fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
     inputs: &RootTraceClaimInputs<'_, F, E, D>,
 ) -> Result<(), AkitaError> {
-    if inputs.row_coefficients.len() != inputs.opening_batch.num_claims() {
+    if inputs.row_coefficients.len() != inputs.opening_batch.num_polynomials() {
         return Err(AkitaError::InvalidSize {
-            expected: inputs.opening_batch.num_claims(),
+            expected: inputs.opening_batch.num_polynomials(),
             actual: inputs.row_coefficients.len(),
         });
     }
     if let Some(scales) = inputs.claim_scales {
-        if scales.len() != inputs.opening_batch.num_claims() {
+        if scales.len() != inputs.opening_batch.num_polynomials() {
             return Err(AkitaError::InvalidSize {
-                expected: inputs.opening_batch.num_claims(),
+                expected: inputs.opening_batch.num_polynomials(),
                 actual: scales.len(),
             });
         }
@@ -211,7 +211,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize
     inputs: &'a RootTraceClaimInputs<'a, F, E, D>,
 ) -> Result<Vec<RootTraceClaimItem<'a, F, E, D>>, AkitaError> {
     validate_root_trace_claim_inputs(inputs)?;
-    let mut items = Vec::with_capacity(inputs.opening_batch.num_claims());
+    let mut items = Vec::with_capacity(inputs.opening_batch.num_polynomials());
     for (claim_idx, &coefficient) in inputs.row_coefficients.iter().enumerate() {
         let scale = inputs
             .claim_scales

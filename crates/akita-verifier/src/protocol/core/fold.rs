@@ -159,7 +159,7 @@ where
     C: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     if openings.len() != num_claims || row_coefficients.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -247,7 +247,7 @@ where
         for (claim_idx, &row_coefficient) in row_coefficients
             .iter()
             .enumerate()
-            .take(opening_batch.num_claims())
+            .take(opening_batch.num_polynomials())
         {
             let partial_start = claim_idx * shape.width;
             let mut partial_masks = Vec::with_capacity(shape.width);
@@ -602,7 +602,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
-            opening_shape.num_claims(),
+            opening_shape.num_polynomials(),
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?,
         prepared.fold_grind_nonce,
@@ -611,7 +611,7 @@ where
         transcript,
         &prepared.v,
         prepared.lp.num_blocks,
-        opening_shape.num_claims(),
+        opening_shape.num_polynomials(),
         prepared.lp,
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
@@ -734,7 +734,7 @@ where
         let segment = relation_instance.segment_layout(prepared.lp)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
-            .num_claims()
+            .num_polynomials()
             .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(

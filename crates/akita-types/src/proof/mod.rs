@@ -41,8 +41,8 @@ pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
-    terminal_direct_witness_shape_for_key, terminal_fold_segment_counts, CleartextWitnessProof,
-    CleartextWitnessShape, PackedDigits,
+    terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
+    PackedDigits,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -68,8 +68,6 @@ pub use setup::{
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
-#[cfg(feature = "zk")]
-pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
     setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
@@ -88,10 +86,11 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use tail_segments::{
-    build_segment_typed_witness, e_folded_segment_bytes, emit_witness_planes_block_inner,
-    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
-    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
-    tail_golomb_rice_z_params, tail_segment_layout, tail_segment_multiplicities_from_layout,
+    build_segment_typed_witness, decode_terminal_z_golomb_payload, e_folded_segment_bytes,
+    emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
+    expand_segment_typed_to_i8_digits, segment_typed_witness_upper_bound_bytes,
+    segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout,
+    tail_segment_multiplicities_from_layout, terminal_golomb_grind_tail_t_vectors,
     validate_segment_typed_z_payload, z_fold_decoded_from_segment,
     z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessShape,
     TailSegmentLayout,
