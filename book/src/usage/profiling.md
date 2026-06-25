@@ -51,13 +51,14 @@ When adding a bench case, extend the mode→feature table in
 
 Committed-fold A-role pricing (every cell folds securely):
 
-| Case | nv | np |
-|------|----|----|
-| `onehot_fp32_d128` | 28 | 1 |
-| `onehot_fp64_d128` | 28 | 1 |
-| `dense_fp128_d64` | 24 | 1 |
-| `onehot_fp128_d64` | 32 | 1 |
-| `onehot_fp128_d64` | 30 | 4 |
+| Case | nv | np | Setup mode |
+|------|----|----|------------|
+| `onehot_fp32_d128` | 28 | 1 | `direct` |
+| `onehot_fp64_d128` | 28 | 1 | `direct` |
+| `dense_fp128_d64` | 24 | 1 | `direct` |
+| `onehot_fp128_d64` | 32 | 1 | `direct` |
+| `onehot_fp128_d64` | 32 | 1 | `recursive` |
+| `onehot_fp128_d64` | 30 | 4 | `direct` |
 
 fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
