@@ -535,7 +535,7 @@ No behavioral change to which `(nv, num_polys)` pairs are emitted.
 | [`crates/akita-planner/src/resolve.rs`](crates/akita-planner/src/resolve.rs) (tests) | Update/remove grouped-key rejection test |
 | [`crates/akita-prover/src/protocol/core/tests.rs`](crates/akita-prover/src/protocol/core/tests.rs) | Key from opening batch (likely unchanged call path) |
 | [`crates/akita-pcs/tests/akita_e2e.rs`](crates/akita-pcs/tests/akita_e2e.rs) | `singleton` call sites unchanged |
-| [`crates/akita-pcs/examples/profile/modes.rs`](crates/akita-pcs/examples/profile/modes.rs) | `(protocol_nv, num_polys)` instead of four-tuple |
+| [`crates/akita-pcs/examples/profile/modes.rs`](crates/akita-pcs/examples/profile/modes.rs) | **Drop** the `EXT_DEGREE > 1` Frobenius four-tuple `(nv, 1, width, width)`; report against the same `new_from_opening_batch`-derived key (`singleton(nv)` for `np=1`) the prover actually resolves. This is **not** a mechanical `(protocol_nv, num_polys)` rewrite — see [Resolved decisions](#resolved-decisions) |
 | [`crates/akita-pcs/examples/profile/report.rs`](crates/akita-pcs/examples/profile/report.rs) | If it prints key fields |
 
 ### Tier 4 — documentation (same PR or immediate follow-up)
@@ -592,7 +592,11 @@ For every opening batch constructible via
 
 Keys that were **only** reachable via the deleted four-tuple API and do not
 correspond to a valid `OpeningBatchShape` (e.g. `(20, 4, 2, 2)`) are
-intentionally dropped.
+intentionally dropped. The dense-extension profile key
+`(nv, 1, [E:F], [E:F])` built in `run_dense_mode_for` is one such key; it is a
+**reporting-only proof-size estimate** that the prover never consumes, and it
+models a protocol route that no longer exists (see
+[Resolved decisions](#resolved-decisions)).
 
 `CallSection` on-disk / serialized layout **will change** when `num_claims` is
 removed from the struct; refresh any fixture bytes in descriptor tests in the
@@ -650,6 +654,49 @@ Grouped-root rejection for tiered presets remains where it already lives:
 - future `GroupBatchAkitaScheduleLookupKey` per
   [`multi-group-batching.md`](multi-group-batching.md)
 
+### Dense-extension profile four-tuple — drop (stale estimate)
+
+`run_dense_mode_for` in [`crates/akita-pcs/examples/profile/modes.rs`](crates/akita-pcs/examples/profile/modes.rs)
+is the **only** place that builds a key whose vector counts are genuinely
+independent of `OpeningBatchShape`. For `Cfg::EXT_DEGREE > 1` it constructs
+
+```rust
+let width = 1usize << Cfg::EXT_DEGREE.trailing_zeros(); // = [E:F] = 2^kappa
+AkitaScheduleLookupKey::new(nv, /*t*/ 1, /*w*/ width, /*z*/ width);
+```
+
+This `(t=1, w=[E:F], z=[E:F])` shape **cannot** be expressed by the two-field
+key (which forces `t == w == num_polynomials`, `z == 1`), so it deserves an
+explicit decision rather than a mechanical rewrite.
+
+The decision is to **drop it**, for two reasons:
+
+1. **It is reporting-only.** The harness uses this `plan` solely for
+   `report_proof_size_against_planner` / `emit_runtime_schedule_summary` /
+   `emit_proof_tail_report`. The actual proof comes from `batched_prove`, which
+   takes no schedule argument and resolves its own schedule from the real
+   opening batch (`get_params_for_prove → new_from_opening_batch`, hence
+   `z == 1`) or the root-direct fallback. `run_prove` already prints a warning
+   that "folded planner byte estimates do not apply" for `EXT_DEGREE > 1`.
+2. **It models a removed protocol route.** The `w = z = 2^kappa` factor is the
+   Phase 5B Frobenius / product-coordinate estimate from
+   [`extension-field-opening-batching.md`](extension-field-opening-batching.md)
+   (`opening width = 2^t`), where an `[E:F]`-degree opening was carried as
+   `2^kappa` conjugate openings. That route has been removed from the live
+   prover; Phase 5C reprices the reduced path to **one** carried opening
+   (`carried opening width = 1`, `tensor partial count = [E:F]`), with the
+   `[E:F]` multiplicity living in `ExtensionOpeningReductionProof` partials, not
+   in root `w`/`z` vector counts.
+
+Replacement: report the dense-extension profile against the same
+`new_from_opening_batch`-derived key the prover uses (`singleton(nv)` for the
+single-polynomial dense case). If an `[E:F]`-aware byte estimate is still
+wanted, account for it through the EOR partial-byte path, not through phantom
+`w`/`z` vectors. Net effect: the dense-extension profile's *printed* byte
+estimate may change (it was already non-representative of the live root-direct /
+tensor-reduced path); real prove/verify behavior is unaffected because it never
+used this key.
+
 ### Disk-cache version bump — do it
 
 When updating [`akita-setup/src/lib.rs`](crates/akita-setup/src/lib.rs)
@@ -679,3 +726,4 @@ per repo no-compat policy); the version prefix makes the cutover explicit.
 - [`planner-incidence-generalization.md`](planner-incidence-generalization.md) — historical; four-field key and separate `num_claims` vocabulary superseded by this spec for scalar paths.
 - [`multi-group-batching.md`](multi-group-batching.md) — future grouped lookup key; per-group counts will use `num_polynomials`, not `num_claims`.
 - [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) — table regen workflow unchanged aside from slimmer keys.
+- [`extension-field-opening-batching.md`](extension-field-opening-batching.md) — explains why the dense-extension profile's `(nv, 1, [E:F], [E:F])` four-tuple is a stale Phase 5B Frobenius estimate (superseded by the Phase 5C width-1 tensor reduction), justifying its removal here.
