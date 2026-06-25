@@ -103,8 +103,6 @@ pub use proof::{
     GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
     SETUP_SUMCHECK_DEGREE,
 };
-#[cfg(feature = "zk")]
-pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
