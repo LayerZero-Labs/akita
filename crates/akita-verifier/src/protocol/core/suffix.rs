@@ -285,7 +285,9 @@ where
                 scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
+                    opening: level_proof
+                        .stage3_sumcheck_proof()
+                        .map_or_else(|| level_proof.next_w_eval(), |proof| proof.next_w_eval),
                     #[cfg(feature = "zk")]
                     opening_mask: zk_ext_mask_lc_at::<F, L>(
                         *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
