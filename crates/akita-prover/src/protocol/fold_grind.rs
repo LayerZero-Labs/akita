@@ -133,7 +133,7 @@ fn grind_probe_nonces(
 /// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
 ///
 /// When [`FoldGrindTerminal::tail_t_vectors`] is set, tail-bound presets also reject
-/// witnesses whose centered coefficients would need the Golomb escape path at live `k`.
+/// witnesses whose centered coefficients have Golomb quotient ≥ max at wire low bits.
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup<D>>,
