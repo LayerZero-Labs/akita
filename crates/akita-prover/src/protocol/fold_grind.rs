@@ -227,11 +227,6 @@ mod tests {
             centered_coeffs: vec![[cap as i32; D]],
             centered_inf_norm: cap as u32,
         };
-        assert!(!accepts_fold_witness(
-            &contract,
-            &witness,
-            cap,
-            Some(1),
-        ));
+        assert!(!accepts_fold_witness(&contract, &witness, cap, Some(1),));
     }
 }
