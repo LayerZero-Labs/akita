@@ -143,12 +143,12 @@ Affected surfaces:
 - [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
       exist at the pre-strip commit.
 - [x] CI: the `test-all-features` / zk schedule-drift legs are removed; the
-      `test-non-zk` leg is the merge gate (#218).
+      `test` leg is the merge gate (#218).
 - [ ] No `todo!`/`unimplemented!`/dead `let _ = (zk…)` shims remain from the strip.
 
 ### Testing Strategy
 
-**Authoritative gate after every slice** (mirrors CI `test-non-zk`):
+**Authoritative gate after every slice** (mirrors CI `test` job):
 
 ```bash
 cargo nextest run --no-default-features --features parallel,disk-persistence
@@ -337,7 +337,7 @@ Slice 4 depends on 1–3; slice 5 finishes feature removal and CI grep gates.
 
 **Slice 5 — Delete the `zk` feature + CI cleanup.** ⏳ *Partial (#218: CI only)*
 - Remove the `test-all-features` job and the `zk` schedule-drift line from
-  `.github/workflows/ci.yml`; keep `test-non-zk` as the merge gate. ✅ *Done #218*
+  `.github/workflows/ci.yml`; keep `test` as the merge gate. ✅ *Done #218*
 - Remove every `zk = [...]` line from the 13 Cargo.toml files and the leaf stubs.
 - Grep gate: `rg 'feature *= *"zk"' crates/` → 0.
 - *Verify:* full default CI green; `cargo check --workspace` errors out on any
@@ -420,7 +420,7 @@ follow-up. `schedule_terminal_direct_witness_shape` is already unconditional.
   `crates/akita-sumcheck/src/{types.rs,drivers/standard.rs}`,
   `crates/akita-types/src/zk.rs` (→ `lhl_blinding.rs`).
 - Verify commands: `cargo nextest run --no-default-features --features parallel,disk-persistence`;
-  CI `test-non-zk` job (`.github/workflows/ci.yml`).
+  CI `test` job (`.github/workflows/ci.yml`).
 
 ## Open Questions
 

@@ -94,8 +94,8 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  test-non-zk:
-    name: Test (non-zk ${{ matrix.shard }}/${{ strategy.job-total }})
+  test:
+    name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -109,17 +109,17 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          shared-key: ci-test-non-zk
+          shared-key: ci-test
           add-job-id-key: false
           cache-on-failure: true
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
-      - name: Run tests (all non-zk features)
+      - name: Run tests
         env:
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-non-zk-shard-${SHARD_INDEX}"
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-shard-${SHARD_INDEX}"
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
@@ -134,12 +134,12 @@ jobs:
             "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
             > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
           exit "$status"
-      - name: Upload non-zk shard artifact
+      - name: Upload test shard artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-test-pass-non-zk-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/ci-test-pass-non-zk-shard-${{ matrix.shard }}
+          name: ci-test-pass-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-test-pass-shard-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 7
 
@@ -167,20 +167,20 @@ jobs:
 
   test-timing:
     name: Test timing
-    needs: [test-non-zk]
-    if: always() && needs.test-non-zk.result != 'cancelled'
+    needs: [test]
+    if: always() && needs.test.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Test timing script fixtures
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
-      - name: Download non-zk shard artifacts
+      - name: Download test shard artifacts
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: ci-test-pass-non-zk-shard-*
+          pattern: ci-test-pass-shard-*
           merge-multiple: true
-          path: ${{ runner.temp }}/ci-test-pass-non-zk-shards
+          path: ${{ runner.temp }}/ci-test-pass-shards
       - name: Merge test timing artifact
         id: merge
         if: always()
@@ -190,7 +190,7 @@ jobs:
         run: |
           set +e
           python3 scripts/ci_test_timing_report.py prepare-pass \
-            --input-dir "$RUNNER_TEMP/ci-test-pass-non-zk-shards" \
+            --input-dir "$RUNNER_TEMP/ci-test-pass-shards" \
             --output-junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --output-timing "$RUNNER_TEMP/merged-non-zk-timing.json"
           NON_ZK_PREPARE_STATUS=$?
@@ -255,7 +255,7 @@ jobs:
       - name: Fail if test jobs failed
         if: always()
         run: |
-          if [ "${{ needs.test-non-zk.result }}" = "failure" ]; then
+          if [ "${{ needs.test.result }}" = "failure" ]; then
             exit 1
           fi
 
