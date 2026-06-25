@@ -58,7 +58,10 @@ pub use opening_batch::{
     GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
-pub use ring_relation::{RingRelationInstance, RingRelationSegmentLayout};
+pub use ring_relation::{
+    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLayout, RingRelationSegmentLengths,
+};
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
