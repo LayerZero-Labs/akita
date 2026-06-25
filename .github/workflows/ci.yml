@@ -238,6 +238,9 @@ jobs:
       - name: Fail if test jobs failed
         if: always()
         run: |
+          if [ "${{ steps.merge.outcome }}" = "failure" ]; then
+            exit 1
+          fi
           if [ "${{ needs.test.result }}" = "failure" ]; then
             exit 1
           fi
