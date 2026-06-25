@@ -1,4 +1,7 @@
-//! Compile-time ZK commitment masking helpers.
+//! LHL hiding-mask capacity math for the optional hiding-commitment layer.
+//!
+//! This module is always compiled. The transparent protocol does not use it;
+//! it documents the digit-plane sizing discipline and anchors post-audit ZK work.
 
 use akita_field::CanonicalField;
 
@@ -6,7 +9,7 @@ use akita_field::CanonicalField;
 pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;
 
 /// Number of fresh digit-ring planes needed for an output in
-/// `R_q^{output_ring_len}` when compiled with the `zk` feature.
+/// `R_q^{output_ring_len}`.
 ///
 /// The digit-source LHL target is joint over the public hash seed and output,
 /// `Delta((B, h_B(S)), (B, U))`.  For `kappa = output_ring_len`, each directly

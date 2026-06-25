@@ -382,7 +382,7 @@ fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
     envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     for lp in setup_level_params_from_runtime_schedule(&schedule.steps) {
-        let b_planes = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+        let b_planes = akita_types::lhl_blinding::blinding_digit_plane_count::<Cfg::Field>(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,
@@ -391,7 +391,7 @@ fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
             lp.b_key.row_len().checked_mul(b_planes).ok_or_else(|| {
                 AkitaError::InvalidSetup("ZK B setup envelope overflow".to_string())
             })?;
-        let d_planes = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+        let d_planes = akita_types::lhl_blinding::blinding_digit_plane_count::<Cfg::Field>(
             lp.d_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,
@@ -426,7 +426,7 @@ fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     )?;
     accumulate_matrix_envelope_for_level::<Cfg>(&hiding_params, &mut envelope.max_setup_len)?;
 
-    let b_blinding_cols = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+    let b_blinding_cols = akita_types::lhl_blinding::blinding_digit_plane_count::<Cfg::Field>(
         hiding_params.b_key.row_len(),
         hiding_params.ring_dimension,
         hiding_params.log_basis,

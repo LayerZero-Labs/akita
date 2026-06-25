@@ -12,6 +12,7 @@ pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
+pub mod lhl_blinding;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
@@ -19,8 +20,6 @@ pub mod setup_contribution;
 pub mod sis;
 pub mod trace_weight;
 pub mod transcript;
-#[cfg(feature = "zk")]
-pub mod zk;
 
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{

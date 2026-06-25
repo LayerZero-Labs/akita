@@ -353,12 +353,12 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
         .max(lp.d_key.row_len() * lp.d_matrix_width());
     assert_eq!(got, expected);
 
-    let b_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
+    let b_tail = akita_types::lhl_blinding::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
         lp.b_key.row_len(),
         lp.ring_dimension,
         lp.log_basis,
     );
-    let d_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
+    let d_tail = akita_types::lhl_blinding::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
         lp.d_key.row_len(),
         lp.ring_dimension,
         lp.log_basis,
@@ -393,7 +393,7 @@ fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
         )
         .unwrap();
     let blinding_cols =
-        akita_types::zk::blinding_digit_plane_count::<<Cfg as CommitmentConfig>::Field>(
+        akita_types::lhl_blinding::blinding_digit_plane_count::<<Cfg as CommitmentConfig>::Field>(
             hiding_params.b_key.row_len(),
             hiding_params.ring_dimension,
             hiding_params.log_basis,

@@ -103,7 +103,7 @@ where
     let max_zk_b_len = lp
         .b_key
         .row_len()
-        .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+        .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,
@@ -118,7 +118,7 @@ where
     let max_zk_d_len = lp
         .d_key
         .row_len()
-        .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+        .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
             lp.d_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,
