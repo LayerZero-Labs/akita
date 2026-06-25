@@ -414,12 +414,11 @@ where
     E: FieldCore,
 {
     let opening_batch = relation.opening_batch();
-    let num_claims = relation.opening_batch().num_polynomials();
-    let num_polys = opening_batch.num_polynomials();
+    let num_polynomials = opening_batch.num_polynomials();
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_polynomials, F::modulus_bits())?;
     if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".to_string(),
@@ -436,7 +435,6 @@ where
         ));
     }
 
-    let num_t_vectors = num_polys;
     let inner_width = lp
         .block_len
         .checked_mul(depth_commit)
@@ -446,7 +444,7 @@ where
             "A-key column width is too small for setup contribution layout".to_string(),
         ));
     }
-    let expected_b_width = num_polys
+    let expected_b_width = num_polynomials
         .checked_mul(lp.a_key.row_len())
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(lp.num_blocks))
@@ -479,9 +477,9 @@ where
 
     Ok(SetupContributionPlanInputs {
         eq_tau1,
-        num_t_vectors,
+        num_t_vectors: num_polynomials,
         num_blocks: lp.num_blocks,
-        num_claims,
+        num_claims: num_polynomials,
         depth_open,
         depth_commit,
         depth_fold,
@@ -493,7 +491,7 @@ where
         n_b: lp.b_key.row_len(),
         num_segments: 1,
         rows,
-        num_polys_per_segment: vec![num_polys],
+        num_polys_per_segment: vec![num_polynomials],
         num_public_rows: num_public_m_rows,
         // Stage-3 (recursive setup-contribution mode) tiered support is a
         // follow-up; the default Direct verifier path uses `eval_at_point`.
