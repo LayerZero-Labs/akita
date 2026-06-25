@@ -9,7 +9,7 @@
 | PR            | |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
 | Superseded-by | |
-| Book-chapter  | `how/architecture.md` (revise core-types / setup sections) |
+| Book-chapter  | book/src/how/architecture.md |
 
 ## Summary
 
